@@ -16,6 +16,7 @@ export default function App() {
               <Navbar />
               <Routes>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/dashboard/tenant/:tenantId" element={<Dashboard />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </div>
