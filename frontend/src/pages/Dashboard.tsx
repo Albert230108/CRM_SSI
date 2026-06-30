@@ -40,7 +40,7 @@ export default function Dashboard() {
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+      <div className="flex flex-row gap-4 flex-1 min-h-0 overflow-hidden">
         <section
           className={[
             'relative flex h-full shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300',
@@ -65,28 +65,34 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <div className="flex min-w-0 flex-1 gap-4 overflow-hidden">
-          <div className="flex min-w-0 flex-[0.25] flex-col gap-4 overflow-hidden">
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="flex h-full min-h-0 flex-1 overflow-hidden">
-                <FinanceBox tenantId={selectedTenantId} />
-              </div>
-            </section>
+        <div className="flex min-w-0 flex-none w-[320px] flex-col gap-4 h-full">
+          <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex h-full min-h-0 flex-1 overflow-auto">
+              <FinanceBox tenantId={selectedTenantId} />
+            </div>
+          </section>
 
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex h-full min-h-0 flex-1 overflow-auto">
               <OneDriveBox tenantId={selectedTenantId} />
-            </section>
-          </div>
-
-          <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex h-full min-h-0 flex-1 overflow-hidden">
-              <ThreadView tenantId={selectedTenantId} />
             </div>
           </section>
         </div>
+
+        <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+            <ThreadView tenantId={selectedTenantId} />
+          </div>
+        </section>
       </div>
 
       <ImportModal open={importModalOpen} onClose={() => setImportModalOpen(false)} />
     </main>
   )
 }
+
+
+
+
+
+
