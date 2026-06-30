@@ -7,7 +7,7 @@ from app.core.dependencies import get_current_user, get_db
 from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.schemas.tenant import TenantRead
+from app.schemas.tenant import TenantCreate, TenantRead
 from app.services.beds24_client import get_booking_detail, get_bookings, get_charges, get_payments
 
 router = APIRouter(tags=["tenants"])
@@ -35,6 +35,27 @@ def _normalize_amount(item: dict) -> Decimal:
 @router.get("/tenants", response_model=list[TenantRead])
 def list_tenants(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list[Tenant]:
     return db.query(Tenant).order_by(Tenant.id).all()
+
+
+@router.post("/tenants", response_model=TenantRead, status_code=status.HTTP_201_CREATED)
+def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Tenant:
+    existing = db.query(Tenant).filter(Tenant.booking_id == payload.booking_id).first()
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking already imported")
+
+    tenant = Tenant(**payload.model_dump())
+    db.add(tenant)
+    db.commit()
+    db.refresh(tenant)
+    return tenant
+
+
+@router.get("/tenants/{tenant_id}", response_model=TenantRead)
+def get_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Tenant:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return tenant
 
 
 @router.get("/beds24/bookings")
