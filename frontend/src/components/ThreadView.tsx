@@ -116,45 +116,45 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
   }
 
   return (
-    <div className="flex h-full min-h-[680px] flex-col rounded-2xl border border-slate-800 bg-slate-950/80">
-      <div className="border-b border-slate-800 px-5 py-4">
-        <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">Thread view</p>
-        <h2 className="mt-1 text-xl font-semibold text-white">{tenant ? tenant.name : 'No tenant selected'}</h2>
-        <p className="mt-1 text-sm text-slate-400">
+    <div className="flex h-full min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="border-b border-gray-200 px-5 py-4">
+        <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">Thread view</p>
+        <h2 className="mt-1 text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'No tenant selected'}</h2>
+        <p className="mt-1 text-sm text-gray-500">
           {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' · ') : 'Pick a tenant from the left pane.'}
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        {loading ? <p className="text-sm text-slate-400">Loading conversation...</p> : null}
+        {loading ? <p className="text-sm text-gray-500">Loading conversation...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-400">{error}</p> : null}
 
         <div className="space-y-4">
           {sortedItems.map((item) => {
             const isEmail = item.channel === 'email'
             return (
-              <article key={item.id} className={`max-w-[85%] rounded-2xl border px-4 py-3 ${isEmail ? 'ml-0 border-amber-500/30 bg-amber-500/10' : 'ml-auto border-cyan-500/30 bg-cyan-500/10'}`}>
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.25em] text-slate-400">
-                  <span className={`rounded-full px-2 py-1 font-semibold ${isEmail ? 'bg-amber-400/20 text-amber-200' : 'bg-cyan-400/20 text-cyan-200'}`}>
+              <article key={item.id} className={`max-w-[85%] rounded-2xl border px-4 py-3 ${isEmail ? 'ml-0 border-amber-200 bg-amber-50' : 'ml-auto border-cyan-200 bg-cyan-50'}`}>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.25em] text-gray-500">
+                  <span className={`rounded-full px-2 py-1 font-semibold ${isEmail ? 'bg-amber-100 text-amber-700' : 'bg-cyan-100 text-cyan-700'}`}>
                     {isEmail ? 'Email' : 'WhatsApp'}
                   </span>
                   <span>{new Date(item.created_at).toLocaleString()}</span>
                 </div>
-                {item.subject ? <p className="mt-2 text-sm font-semibold text-white">{item.subject}</p> : null}
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-200">{item.message}</p>
+                {item.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{item.subject}</p> : null}
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{item.message}</p>
               </article>
             )
           })}
-          {!sortedItems.length && !loading ? <p className="text-sm text-slate-500">No messages yet.</p> : null}
+          {!sortedItems.length && !loading ? <p className="text-sm text-gray-500">No messages yet.</p> : null}
         </div>
       </div>
 
-      <form onSubmit={handleSend} className="border-t border-slate-800 p-4">
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => setChannel('whatsapp')} className={`rounded-full px-3 py-1.5 text-sm font-semibold ${channel === 'whatsapp' ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
+      <form onSubmit={handleSend} className="border-t border-gray-200 p-4">
+        <div className="flex w-full gap-2">
+          <button type="button" onClick={() => setChannel('whatsapp')} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'whatsapp' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
             WhatsApp
           </button>
-          <button type="button" onClick={() => setChannel('email')} className={`rounded-full px-3 py-1.5 text-sm font-semibold ${channel === 'email' ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
+          <button type="button" onClick={() => setChannel('email')} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'email' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
             Email reply
           </button>
         </div>
@@ -164,7 +164,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
             value={subject}
             onChange={(event) => setSubject(event.target.value)}
             placeholder="Subject"
-            className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-500"
+            className="mt-3 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
           />
         ) : null}
 
@@ -173,14 +173,14 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
           onChange={(event) => setMessage(event.target.value)}
           rows={4}
           placeholder={channel === 'whatsapp' ? 'Write a WhatsApp message...' : 'Write an email reply...'}
-          className="mt-3 w-full resize-none rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-500"
+          className="mt-3 w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
         />
 
         <div className="mt-3 flex items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-gray-500">
             {channel === 'whatsapp' ? 'Sends through the WhatsApp backend integration.' : 'Stores and sends as an email-thread reply.'}
           </p>
-          <button type="submit" disabled={sending || !tenantId || !message.trim()} className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="submit" disabled={sending || !tenantId || !message.trim()} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
             {sending ? 'Sending...' : 'Send'}
           </button>
         </div>

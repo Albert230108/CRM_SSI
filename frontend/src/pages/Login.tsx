@@ -39,32 +39,32 @@ export default function Login() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.18),_transparent_35%),linear-gradient(180deg,_#020617_0%,_#0f172a_100%)] px-6">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/80 p-8 shadow-2xl shadow-cyan-950/20">
-        <p className="mb-2 text-sm uppercase tracking-[0.35em] text-cyan-400">CRM Access</p>
-        <h2 className="text-3xl font-semibold text-white">Sign in</h2>
-        <p className="mt-2 text-sm text-slate-400">Use your CRM credentials to continue.</p>
+    <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
+      <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-8 shadow-sm">
+        <p className="mb-2 text-sm uppercase tracking-[0.35em] text-cyan-600">CRM Access</p>
+        <h2 className="text-3xl font-semibold text-gray-900">Sign in</h2>
+        <p className="mt-2 text-sm text-gray-500">Use your CRM credentials to continue.</p>
 
         <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
           <div>
-            <label className="mb-2 block text-sm text-slate-300">Email</label>
+            <label className="mb-2 block text-sm text-gray-700">Email</label>
             <input
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               type="email"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none ring-0 placeholder:text-slate-600 focus:border-cyan-500"
+              className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500"
               placeholder="you@company.com"
               required
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm text-slate-300">Password</label>
+            <label className="mb-2 block text-sm text-gray-700">Password</label>
             <input
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none ring-0 placeholder:text-slate-600 focus:border-cyan-500"
+              className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500"
               placeholder="••••••••"
               required
             />
@@ -75,7 +75,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-cyan-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-70"
+            className="w-full rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {loading ? 'Signing in...' : 'Login'}
           </button>
