@@ -25,15 +25,22 @@ services:
     expose:
       - "8000"
 
+  frontend:
+    build:
+      context: ./frontend
+    expose:
+      - "5173"
+    depends_on:
+      - backend
+
   nginx:
     build:
       context: ./nginx
     depends_on:
       - backend
+      - frontend
     ports:
       - '80:80'
 
 volumes:
   postgres_data:
-
-
