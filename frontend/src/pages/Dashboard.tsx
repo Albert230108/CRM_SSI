@@ -4,6 +4,7 @@ import FinanceBox from '../components/FinanceBox'
 import ImportModal from '../components/ImportModal'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
+import ThreadView from '../components/ThreadView'
 
 export default function Dashboard() {
   const { tenantId } = useParams()
@@ -29,7 +30,7 @@ export default function Dashboard() {
         </button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[25%_35%_40%]">
+      <div className="grid gap-4 lg:grid-cols-[24%_24%_52%]">
         <section className="min-h-[220px] rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <TenantList selectedTenantId={selectedTenantId} />
         </section>
@@ -39,9 +40,18 @@ export default function Dashboard() {
         </section>
 
         <section className="min-h-[220px] rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <ThreadView tenantId={selectedTenantId} />
+        </section>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-[24%_24%_52%]">
+        <div />
+        <div />
+        <section className="min-h-[220px] rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <OneDriveBox tenantId={selectedTenantId} />
         </section>
       </div>
+
       <ImportModal open={importModalOpen} onClose={() => setImportModalOpen(false)} />
     </main>
   )

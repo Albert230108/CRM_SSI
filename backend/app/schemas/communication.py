@@ -3,6 +3,12 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class CommunicationCreate(BaseModel):
+    channel: str
+    message: str
+    subject: str | None = None
+
+
 class CommunicationRead(BaseModel):
     id: int
     tenant_id: int
