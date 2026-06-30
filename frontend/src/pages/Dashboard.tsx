@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import FinanceBox from '../components/FinanceBox'
 import ImportModal from '../components/ImportModal'
+import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
 
 export default function Dashboard() {
@@ -27,19 +29,17 @@ export default function Dashboard() {
         </button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[25%_25%_50%]">
+      <div className="grid gap-4 lg:grid-cols-[25%_35%_40%]">
         <section className="min-h-[220px] rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <TenantList selectedTenantId={selectedTenantId} />
         </section>
 
         <section className="min-h-[220px] rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-lg font-semibold text-white">Tasks</h2>
-          <p className="mt-2 text-sm text-slate-400">Center panel content.</p>
+          <FinanceBox tenantId={selectedTenantId} />
         </section>
 
         <section className="min-h-[220px] rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-lg font-semibold text-white">Workspace</h2>
-          <p className="mt-2 text-sm text-slate-400">Right panel content.</p>
+          <OneDriveBox tenantId={selectedTenantId} />
         </section>
       </div>
       <ImportModal open={importModalOpen} onClose={() => setImportModalOpen(false)} />

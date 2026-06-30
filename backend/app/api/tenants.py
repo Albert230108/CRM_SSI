@@ -1,5 +1,8 @@
 from decimal import Decimal
+import os
+from urllib.parse import quote
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -32,6 +35,40 @@ def _normalize_amount(item: dict) -> Decimal:
     return Decimal(str(value))
 
 
+async def _get_graph_access_token() -> str:
+    tenant_id = os.getenv("MS_GRAPH_TENANT_ID")
+    client_id = os.getenv("MS_GRAPH_CLIENT_ID")
+    client_secret = os.getenv("MS_GRAPH_CLIENT_SECRET")
+    if not tenant_id or not client_id or not client_secret:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Microsoft Graph is not configured")
+
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            token_url,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "client_credentials",
+                "scope": "https://graph.microsoft.com/.default",
+            },
+        )
+    if response.status_code >= 400:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to authenticate with Microsoft Graph")
+    payload = response.json()
+    token = payload.get("access_token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Microsoft Graph access token missing")
+    return str(token)
+
+
+def _build_one_drive_folder_path(tenant: Tenant) -> str:
+    if not tenant.booking_id or not tenant.first_name or not tenant.last_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant booking details are incomplete")
+    folder_name = f"{tenant.booking_id}_{tenant.first_name}_{tenant.last_name}".replace(" ", "_")
+    return f"/01. Rentals/02. Short-Stay Inn/Tenants/2026/{folder_name}"
+
+
 @router.get("/tenants", response_model=list[TenantRead])
 def list_tenants(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list[Tenant]:
     return db.query(Tenant).order_by(Tenant.id).all()
@@ -56,6 +93,96 @@ def get_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: User
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     return tenant
+
+
+@router.get("/tenants/{tenant_id}/finance")
+def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    items = (
+        db.query(Finance)
+        .filter(Finance.tenant_id == tenant_id)
+        .order_by(Finance.created_at.desc(), Finance.id.desc())
+        .all()
+    )
+    return {
+        "tenant": {
+            "id": tenant.id,
+            "booking_id": tenant.booking_id,
+            "name": tenant.name,
+        },
+        "items": [
+            {
+                "id": item.id,
+                "amount": str(item.amount),
+                "currency": item.currency,
+                "description": item.description,
+                "created_at": item.created_at,
+            }
+            for item in items
+        ],
+    }
+
+
+@router.get("/tenants/{tenant_id}/onedrive")
+async def get_tenant_onedrive_files(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    drive_id = os.getenv("MS_GRAPH_DRIVE_ID")
+    if not drive_id:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Microsoft Graph drive is not configured")
+
+    folder_path = _build_one_drive_folder_path(tenant)
+    access_token = await _get_graph_access_token()
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{quote(folder_path, safe='/')}:/children"
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(url, headers=headers)
+
+    if response.status_code == 404:
+        return {"tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name}, "folder_path": folder_path, "items": []}
+    if response.status_code >= 400:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to load Microsoft Graph folder contents")
+
+    payload = response.json()
+    items = payload.get("value") if isinstance(payload, dict) else []
+    result = []
+    for item in items or []:
+        if item.get("folder") is not None:
+            kind = "folder"
+        elif item.get("file") is not None:
+            kind = "file"
+        else:
+            kind = "item"
+        result.append(
+            {
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "web_url": item.get("webUrl"),
+                "kind": kind,
+                "size": item.get("size"),
+                "last_modified": item.get("lastModifiedDateTime"),
+            }
+        )
+
+    return {
+        "tenant": {
+            "id": tenant.id,
+            "booking_id": tenant.booking_id,
+            "name": tenant.name,
+        },
+        "folder_path": folder_path,
+        "items": result,
+    }
 
 
 @router.get("/beds24/bookings")
