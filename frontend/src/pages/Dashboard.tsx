@@ -66,21 +66,23 @@ export default function Dashboard() {
         </section>
 
         <div className="flex min-w-0 flex-1 gap-4 overflow-hidden">
-          <section className="flex h-full min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex h-full min-h-0 flex-1 overflow-hidden">
-              <FinanceBox tenantId={selectedTenantId} />
-            </div>
-          </section>
-
-          <div className="flex h-full min-w-0 flex-1 flex-col gap-4 overflow-hidden">
+          <div className="flex min-w-0 flex-[0.25] flex-col gap-4 overflow-hidden">
             <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-              <ThreadView tenantId={selectedTenantId} />
+              <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+                <FinanceBox tenantId={selectedTenantId} />
+              </div>
             </section>
 
             <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
               <OneDriveBox tenantId={selectedTenantId} />
             </section>
           </div>
+
+          <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+              <ThreadView tenantId={selectedTenantId} />
+            </div>
+          </section>
         </div>
       </div>
 
