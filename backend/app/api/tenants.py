@@ -33,6 +33,8 @@ def _extract_guest_fields(item: dict) -> dict:
     if isinstance(gd, list):
         gd = gd[0] if gd else {}
     gd = gd if isinstance(gd, dict) else {}
+    logger.warning("RAW item keys: %s", list(item.keys()))
+    logger.warning("RAW guestDetails keys: %s | values: %s", list(gd.keys()), dict(gd))
 
     first_name = str(gd.get("firstName") or gd.get("first_name") or gd.get("firstname") or "").strip() or None
     last_name = str(gd.get("lastName") or gd.get("last_name") or gd.get("lastname") or "").strip() or None
@@ -250,7 +252,7 @@ async def beds24_bookings(
         results.append(
             Beds24BookingPreview(
                 booking_id=booking_id,
-                name=fields["name"] or booking_id,
+                name=fields["name"],
                 imported=imported,
                 **{k: v for k, v in fields.items() if k != "name"},
             )
@@ -269,7 +271,7 @@ async def beds24_booking_preview(
     imported = db.query(Tenant).filter(Tenant.booking_id == booking_id).first() is not None
     return Beds24BookingPreview(
         booking_id=booking_id,
-        name=fields["name"] or booking_id,
+        name=fields["name"],
         imported=imported,
         **{k: v for k, v in fields.items() if k != "name"},
     )
@@ -314,6 +316,9 @@ async def import_tenant(
     db.commit()
     db.refresh(tenant)
     return tenant
+
+
+
 
 
 

@@ -13,6 +13,7 @@ type Booking = {
   mobile: string | null
   check_in: string | null
   check_out: string | null
+  notes: string | null
   booking_status: string | null
   responsible_comm: string | null
   imported: boolean
@@ -67,11 +68,15 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
       setImportingId(bookingId)
       const body = {
         booking_id: bookingId,
-        name: `${(editFields.first_name as string || booking.first_name || '')} ${(editFields.last_name as string || booking.last_name || '')}`.trim() || bookingId,
+        name: [editFields.first_name, editFields.last_name].filter(Boolean).join(' ').trim() || booking.name || bookingId,
         first_name: (editFields.first_name as string) || booking.first_name || null,
         last_name: (editFields.last_name as string) || booking.last_name || null,
         email: (editFields.email as string) || booking.email || null,
         phone: (editFields.phone as string) || booking.phone || null,
+        mobile: (editFields.mobile as string) || booking.mobile || null,
+        check_in: booking.check_in || null,
+        check_out: booking.check_out || null,
+        notes: booking.notes || null,
         booking_status: (editFields.booking_status as string) || booking.booking_status || null,
         responsible_comm: (editFields.responsible_comm as string) || booking.responsible_comm || null,
       }
@@ -118,7 +123,9 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
             <div key={booking.booking_id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-base font-semibold text-gray-900">{booking.name ?? booking.booking_id}</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {booking.name ?? <span className="italic text-gray-400">No name (ID: {booking.booking_id})</span>}
+                  </p>
                   <p className="mt-1 text-sm text-gray-500">Booking ID {booking.booking_id}</p>
                   <p className="mt-1 text-sm text-gray-500">{booking.booking_status || 'Unknown status'}</p>
                   {booking.responsible_comm && (
@@ -218,3 +225,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
     </div>
   )
 }
+
+
+
+
