@@ -10,7 +10,7 @@ from app.core.dependencies import get_current_user, get_db
 from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.schemas.tenant import TenantCreate, TenantRead
+from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.services.beds24_client import get_booking_detail, get_bookings, get_charges, get_payments
 
 router = APIRouter(tags=["tenants"])
@@ -21,18 +21,57 @@ def _pick_booking_id(item: dict) -> str | None:
     return str(value) if value is not None and str(value) else None
 
 
-def _pick_guest_name(item: dict) -> str:
-    first_name = item.get("first_name") or item.get("firstName") or ""
-    last_name = item.get("last_name") or item.get("lastName") or ""
-    name = item.get("guest_name") or item.get("guestName") or item.get("name")
-    if name:
-        return str(name)
-    return " ".join(part for part in [str(first_name).strip(), str(last_name).strip()] if part)
-
-
 def _normalize_amount(item: dict) -> Decimal:
     value = item.get("amount") or item.get("value") or item.get("total") or 0
     return Decimal(str(value))
+
+
+def _extract_guest_fields(item: dict) -> dict:
+    gd = item.get("guestDetails") or item.get("guests") or {}
+    if isinstance(gd, list):
+        gd = gd[0] if gd else {}
+    gd = gd if isinstance(gd, dict) else {}
+
+    first_name = str(
+        gd.get("firstName") or gd.get("firstname")
+        or item.get("firstName") or item.get("firstname") or ""
+    ).strip() or None
+    last_name = str(
+        gd.get("lastName") or gd.get("lastname")
+        or item.get("lastName") or item.get("lastname") or ""
+    ).strip() or None
+    email = str(gd.get("email") or item.get("email") or "").strip() or None
+    phone = str(
+        gd.get("phone") or gd.get("telephone") or gd.get("tel")
+        or item.get("phone") or item.get("telephone") or ""
+    ).strip() or None
+    mobile = str(
+        gd.get("mobile") or gd.get("mobilePhone") or gd.get("cellPhone")
+        or item.get("mobile") or item.get("mobilePhone") or ""
+    ).strip() or None
+    check_in = str(
+        item.get("arrival") or item.get("checkIn") or item.get("arrivalDate") or ""
+    ).strip() or None
+    check_out = str(
+        item.get("departure") or item.get("checkOut") or item.get("departureDate") or ""
+    ).strip() or None
+    booking_status = str(item.get("status") or "").strip() or None
+    notes = str(item.get("comments") or item.get("note") or "").strip() or None
+    name_parts = [p for p in [first_name or "", last_name or ""] if p]
+    name = " ".join(name_parts) if name_parts else None
+
+    return {
+        "first_name": first_name,
+        "last_name": last_name,
+        "name": name,
+        "email": email,
+        "phone": phone,
+        "mobile": mobile,
+        "check_in": check_in,
+        "check_out": check_out,
+        "booking_status": booking_status,
+        "notes": notes,
+    }
 
 
 async def _get_graph_access_token() -> str:
@@ -79,7 +118,6 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     existing = db.query(Tenant).filter(Tenant.booking_id == payload.booking_id).first()
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking already imported")
-
     tenant = Tenant(**payload.model_dump())
     db.add(tenant)
     db.commit()
@@ -100,7 +138,6 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-
     items = (
         db.query(Finance)
         .filter(Finance.tenant_id == tenant_id)
@@ -108,11 +145,7 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
         .all()
     )
     return {
-        "tenant": {
-            "id": tenant.id,
-            "booking_id": tenant.booking_id,
-            "name": tenant.name,
-        },
+        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name},
         "items": [
             {
                 "id": item.id,
@@ -154,123 +187,101 @@ async def get_tenant_onedrive_files(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to load Microsoft Graph folder contents")
 
     payload = response.json()
-    items = payload.get("value") if isinstance(payload, dict) else []
+    raw_items = payload.get("value") if isinstance(payload, dict) else []
     result = []
-    for item in items or []:
+    for item in raw_items or []:
         if item.get("folder") is not None:
             kind = "folder"
         elif item.get("file") is not None:
             kind = "file"
         else:
             kind = "item"
-        result.append(
-            {
-                "id": item.get("id"),
-                "name": item.get("name"),
-                "web_url": item.get("webUrl"),
-                "kind": kind,
-                "size": item.get("size"),
-                "last_modified": item.get("lastModifiedDateTime"),
-            }
-        )
+        result.append({
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "web_url": item.get("webUrl"),
+            "kind": kind,
+            "size": item.get("size"),
+            "last_modified": item.get("lastModifiedDateTime"),
+        })
 
     return {
-        "tenant": {
-            "id": tenant.id,
-            "booking_id": tenant.booking_id,
-            "name": tenant.name,
-        },
+        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name},
         "folder_path": folder_path,
         "items": result,
     }
 
 
-@router.get("/beds24/bookings")
-async def beds24_bookings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list[dict]:
-    bookings = await get_bookings()
-    booking_items = bookings.get("data") if isinstance(bookings, dict) else bookings
-    if isinstance(booking_items, dict):
-        booking_items = booking_items.get("bookings") or []
-
-    results: list[dict] = []
-    for item in booking_items or []:
+@router.get("/beds24/bookings", response_model=list[Beds24BookingPreview])
+async def beds24_bookings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[Beds24BookingPreview]:
+    booking_items = await get_bookings()
+    results: list[Beds24BookingPreview] = []
+    for item in booking_items:
         booking_id = _pick_booking_id(item)
         if not booking_id:
             continue
-        tenant = db.query(Tenant).filter(Tenant.booking_id == booking_id).first()
+        fields = _extract_guest_fields(item)
+        imported = db.query(Tenant).filter(Tenant.booking_id == booking_id).first() is not None
         results.append(
-            {
-                "booking_id": booking_id,
-                "guest_name": _pick_guest_name(item),
-                "status": item.get("status") or item.get("booking_status") or item.get("state"),
-                "imported": tenant is not None,
-            }
+            Beds24BookingPreview(
+                booking_id=booking_id,
+                name=fields["name"] or booking_id,
+                imported=imported,
+                **{k: v for k, v in fields.items() if k != "name"},
+            )
         )
     return results
 
 
-@router.post("/tenants/import/{booking_id}", response_model=TenantRead, status_code=status.HTTP_201_CREATED)
-async def import_tenant(booking_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Tenant:
-    existing = db.query(Tenant).filter(Tenant.booking_id == booking_id).first()
+@router.get("/beds24/bookings/{booking_id}/preview", response_model=Beds24BookingPreview)
+async def beds24_booking_preview(
+    booking_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Beds24BookingPreview:
+    item = await get_booking_detail(booking_id)
+    fields = _extract_guest_fields(item)
+    imported = db.query(Tenant).filter(Tenant.booking_id == booking_id).first() is not None
+    return Beds24BookingPreview(
+        booking_id=booking_id,
+        name=fields["name"] or booking_id,
+        imported=imported,
+        **{k: v for k, v in fields.items() if k != "name"},
+    )
+
+
+@router.post("/tenants/import", response_model=TenantRead, status_code=status.HTTP_201_CREATED)
+async def import_tenant(
+    payload: TenantCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Tenant:
+    existing = db.query(Tenant).filter(Tenant.booking_id == payload.booking_id).first()
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking already imported")
 
-    booking = await get_booking_detail(booking_id)
-    booking_data = booking.get("data") if isinstance(booking, dict) else booking
-    if isinstance(booking_data, list):
-        booking_data = booking_data[0] if booking_data else {}
-    booking_data = booking_data or {}
-
-    first_name = booking_data.get("first_name") or booking_data.get("firstName")
-    last_name = booking_data.get("last_name") or booking_data.get("lastName")
-    email = booking_data.get("email")
-    phone = booking_data.get("phone") or booking_data.get("phone_number")
-    booking_status = booking_data.get("status") or booking_data.get("booking_status") or booking_data.get("state")
-    responsible_comm = booking_data.get("RESPONSIBLE_COMM") or booking_data.get("responsible_comm")
-    name = booking_data.get("guest_name") or booking_data.get("guestName") or " ".join(
-        part for part in [str(first_name or "").strip(), str(last_name or "").strip()] if part
-    )
-
-    tenant = Tenant(
-        booking_id=booking_id,
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        phone=phone,
-        booking_status=booking_status,
-        responsible_comm=responsible_comm,
-        name=name or booking_id,
-    )
+    tenant = Tenant(**payload.model_dump())
     db.add(tenant)
     db.flush()
 
-    payments = await get_payments(booking_id)
-    payment_items = payments.get("data") if isinstance(payments, dict) else payments
-    if isinstance(payment_items, dict):
-        payment_items = payment_items.get("payments") or []
-    for item in payment_items or []:
-        db.add(
-            Finance(
-                tenant_id=tenant.id,
-                amount=_normalize_amount(item),
-                currency=item.get("currency") or item.get("currencyCode") or "EUR",
-                description=item.get("description") or item.get("type") or "payment",
-            )
-        )
+    for item in await get_payments(payload.booking_id):
+        db.add(Finance(
+            tenant_id=tenant.id,
+            amount=_normalize_amount(item),
+            currency=item.get("currency") or item.get("currencyCode") or "EUR",
+            description=item.get("description") or item.get("type") or "payment",
+        ))
 
-    charges = await get_charges(booking_id)
-    charge_items = charges.get("data") if isinstance(charges, dict) else charges
-    if isinstance(charge_items, dict):
-        charge_items = charge_items.get("charges") or []
-    for item in charge_items or []:
-        db.add(
-            Finance(
-                tenant_id=tenant.id,
-                amount=_normalize_amount(item),
-                currency=item.get("currency") or item.get("currencyCode") or "EUR",
-                description=item.get("description") or item.get("type") or "charge",
-            )
-        )
+    for item in await get_charges(payload.booking_id):
+        db.add(Finance(
+            tenant_id=tenant.id,
+            amount=_normalize_amount(item),
+            currency=item.get("currency") or item.get("currencyCode") or "EUR",
+            description=item.get("description") or item.get("type") or "charge",
+        ))
 
     db.commit()
     db.refresh(tenant)
