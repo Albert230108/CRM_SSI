@@ -8,7 +8,9 @@ class Finance(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, nullable=False, index=True)
+    type = Column(String(10), nullable=False, default="charge")
     amount = Column(Numeric(12, 2), nullable=False)
     currency = Column(String(3), nullable=False, default="EUR")
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+

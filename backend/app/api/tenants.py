@@ -236,18 +236,20 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
         .order_by(FinanceRecord.created_at.desc(), FinanceRecord.id.desc())
         .all()
     )
+    def _fmt(item: FinanceRecord) -> dict:
+        return {
+            "id": item.id,
+            "type": item.type,
+            "amount": str(item.amount),
+            "currency": item.currency,
+            "description": item.description,
+            "created_at": item.created_at,
+        }
+
     return {
         "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name},
-        "items": [
-            {
-                "id": item.id,
-                "amount": str(item.amount),
-                "currency": item.currency,
-                "description": item.description,
-                "created_at": item.created_at,
-            }
-            for item in items
-        ],
+        "charges": [_fmt(item) for item in items if item.type == "charge"],
+        "payments": [_fmt(item) for item in items if item.type == "payment"],
     }
 
 
@@ -354,6 +356,34 @@ async def import_tenant(
     booking_id = data.booking_id
     booking = await fetch_booking_with_invoice(booking_id)
 
+    def resolve_placeholders(text: str, booking: dict) -> str:
+        """Replace Beds24 template tokens with actual booking values."""
+        room_name = str(
+            booking.get("roomName") or booking.get("unitName") or booking.get("propName") or ""
+        ).strip()
+        arrival = str(
+            booking.get("arrival") or booking.get("arrivalDate") or booking.get("checkIn") or ""
+        ).strip()
+        departure = str(
+            booking.get("departure") or booking.get("departureDate") or booking.get("checkOut") or ""
+        ).strip()
+
+        replacements = {
+            "[ROOMNAME1]": room_name,
+            "[ROOMNAME2]": room_name,
+            "[FIRSTNIGHT]": arrival,
+            "[LEAVINGDAY]": departure,
+            "[CHECKIN]": arrival,
+            "[CHECKOUT]": departure,
+            "[BOOKINGID]": str(booking.get("id") or booking_id),
+            "[NUMADULTS]": str(booking.get("numAdult") or booking.get("adults") or ""),
+            "[NUMCHILDREN]": str(booking.get("numChild") or booking.get("children") or ""),
+        }
+        for token, value in replacements.items():
+            if value:
+                text = text.replace(token, value)
+        return text
+
     def clean_description(desc: str) -> str:
         desc = re.sub(r"<a[^>]*>.*?</a>", "", str(desc or ""), flags=re.DOTALL)
         desc = desc.replace("##NOLINK##", "").strip()
@@ -410,7 +440,10 @@ async def import_tenant(
     for item in booking.get("invoiceItems", []) or []:
         if not isinstance(item, dict):
             continue
-        cleaned = clean_description(item.get("description", ""))
+        cleaned = resolve_placeholders(
+            clean_description(item.get("description", "")),
+            booking
+        )
         line_qty = item.get("qty", 1) or 1
         line_amount = item.get("amount", 0) or 0
         line_total = Decimal(str(line_amount)) * Decimal(str(line_qty))
@@ -435,6 +468,7 @@ async def import_tenant(
             db.add(
                 FinanceRecord(
                     tenant_id=tenant.id,
+                    type=item_type,
                     amount=Decimal(str(line_total)),
                     currency=str(item.get("currency") or "EUR"),
                     description=cleaned,
@@ -451,3 +485,5 @@ async def import_tenant(
         "charges_imported": len(charges),
         "payments_imported": len(payments),
     }
+
+
