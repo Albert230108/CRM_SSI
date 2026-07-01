@@ -178,11 +178,10 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   }, [charges, payments])
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
-        <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">Finance</p>
-        <h2 className="mt-1 text-xl font-semibold text-gray-900">Payments and charges</h2>
-        <p className="mt-1 text-sm text-gray-500">{tenantId ? (summaryName || `Booking ${tenantId}`) : 'Select a tenant to view finance data'}</p>
+        <h2 className="text-xl font-semibold text-gray-900">Finance</h2>
+        <p className="mt-1 text-sm text-gray-500">{tenantId ? `Booking ${tenantId}` : 'Select a tenant'}</p>
       </div>
 
       {loading ? <p className="text-sm text-gray-500">Loading finance...</p> : null}
@@ -191,8 +190,8 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
       {!tenantId ? null : (
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-            <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Booking summary</p>
-            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Summary</p>
+            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Full name</p>
                 <p className="mt-1 text-sm font-medium text-gray-900">{summaryName}</p>
@@ -218,8 +217,8 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex gap-4 text-sm">
-              <span className="text-emerald-600">+ Payments {totals.payments.toFixed(2)}</span>
-              <span className="text-rose-500">- Charges {Math.abs(totals.charges).toFixed(2)}</span>
+              <span className="text-emerald-600">Payments {totals.payments.toFixed(2)}</span>
+              <span className="text-rose-500">Charges {Math.abs(totals.charges).toFixed(2)}</span>
             </div>
             <p className="text-sm font-semibold text-cyan-700">Balance {totals.total.toFixed(2)}</p>
           </div>

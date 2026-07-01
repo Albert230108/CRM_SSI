@@ -77,10 +77,9 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
-        <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">Tenants</p>
-        <h2 className="mt-1 text-xl font-semibold text-gray-900">Booking groups</h2>
+        <h2 className="text-xl font-semibold text-gray-900">Tenants</h2>
       </div>
 
       {loading ? <p className="text-sm text-gray-500">Loading tenants...</p> : null}
@@ -130,7 +129,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
                       </div>
                     </div>
                     <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500">Responsible comm</p>
+                      <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500">Contact</p>
                       <p className="mt-1 text-sm font-medium text-cyan-700">{tenant.responsible_comm || 'Unassigned'}</p>
                     </div>
                   </div>

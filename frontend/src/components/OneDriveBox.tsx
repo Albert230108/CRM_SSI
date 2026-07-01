@@ -63,14 +63,13 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
   }, [tenantId, token])
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
-        <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">OneDrive</p>
-        <h2 className="mt-1 text-xl font-semibold text-gray-900">Tenant folder</h2>
-        <p className="mt-1 text-sm text-gray-500">{tenantId ? folderPath || 'Loading folder path...' : 'Select a tenant to view files'}</p>
+        <h2 className="text-xl font-semibold text-gray-900">Files</h2>
+        <p className="mt-1 text-sm text-gray-500">{tenantId ? folderPath || 'Loading...' : 'Select a tenant'}</p>
       </div>
 
-      {loading ? <p className="text-sm text-gray-500">Loading files...</p> : null}
+      {loading ? <p className="text-sm text-gray-500">Loading...</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
       {tenantId ? (

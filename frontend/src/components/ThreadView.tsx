@@ -38,7 +38,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
     if (!tenantId) {
       setTenant(null)
       setItems([])
-      setError('Select a tenant to view the conversation.')
+      setError('Select a tenant')
       return
     }
 
@@ -118,15 +118,14 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
   return (
     <div className="flex h-full min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-200 px-5 py-4">
-        <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">Thread view</p>
-        <h2 className="mt-1 text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'No tenant selected'}</h2>
+        <h2 className="text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
         <p className="mt-1 text-sm text-gray-500">
-          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' · ') : 'Pick a tenant from the left pane.'}
+          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' ? ') : 'Select a tenant'}
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        {loading ? <p className="text-sm text-gray-500">Loading conversation...</p> : null}
+        {loading ? <p className="text-sm text-gray-500">Loading...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-400">{error}</p> : null}
 
         <div className="space-y-4">
@@ -145,7 +144,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
               </article>
             )
           })}
-          {!sortedItems.length && !loading ? <p className="text-sm text-gray-500">No messages yet.</p> : null}
+          {!sortedItems.length && !loading ? <p className="text-sm text-gray-500">No messages</p> : null}
         </div>
       </div>
 
@@ -155,7 +154,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
             WhatsApp
           </button>
           <button type="button" onClick={() => setChannel('email')} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'email' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-            Email reply
+            Email
           </button>
         </div>
 
@@ -172,13 +171,13 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           rows={4}
-          placeholder={channel === 'whatsapp' ? 'Write a WhatsApp message...' : 'Write an email reply...'}
+          placeholder={channel === 'whatsapp' ? 'Write a WhatsApp message...' : 'Write an email...'}
           className="mt-3 w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
         />
 
         <div className="mt-3 flex items-center justify-between gap-3">
           <p className="text-xs text-gray-500">
-            {channel === 'whatsapp' ? 'Sends through the WhatsApp backend integration.' : 'Stores and sends as an email-thread reply.'}
+            {channel === 'whatsapp' ? 'WhatsApp send.' : 'Email reply.'}
           </p>
           <button type="submit" disabled={sending || !tenantId || !message.trim()} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
             {sending ? 'Sending...' : 'Send'}

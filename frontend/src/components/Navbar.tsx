@@ -4,17 +4,14 @@ import crmLogo from '../assets/logo.jpg'
 export default function Navbar() {
   const userEmail = useAuthStore((state) => state.userEmail)
   const logout = useAuthStore((state) => state.logout)
-  console.log("Logo URL is:", import.meta.env.VITE_LOGO_URL); 
+
   return (
     <header className="w-full border-b border-gray-200 bg-white backdrop-blur">
       <div className="flex w-full items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           {/* <img src={import.meta.env.VITE_LOGO_URL} alt="CRM logo" className="h-8 w-auto" /> */}
           <img src={crmLogo} alt="CRM logo" className="h-8 w-auto" />
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-cyan-600">CRM</p>
-            <h1 className="text-lg font-semibold text-gray-900">Operations Dashboard</h1>
-          </div>
+          <h1 className="text-base font-semibold text-gray-900">CRM SSI</h1>
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-500">{userEmail ?? 'Signed in'}</span>

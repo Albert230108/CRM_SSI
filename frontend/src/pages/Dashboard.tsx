@@ -29,8 +29,7 @@ export default function Dashboard() {
     <main className="flex h-screen w-full flex-col overflow-hidden px-6 py-6">
       <div className="mb-5 flex w-full items-center justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">CRM Dashboard</p>
-          <h1 className="mt-1 text-3xl font-semibold text-gray-900">Tenant workspace</h1>
+          <h1 className="text-3xl font-semibold text-gray-900">Dashboard</h1>
         </div>
         <button
           type="button"
