@@ -25,7 +25,7 @@ export default function Dashboard() {
   }, [])
 
   return (
-    <main className="mx-auto flex h-screen max-w-7xl flex-col overflow-hidden px-6 py-6">
+    <main className="flex h-screen w-full flex-col overflow-hidden px-6 py-6">
       <div className="mb-5 flex items-center justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">CRM Dashboard</p>
@@ -80,7 +80,7 @@ export default function Dashboard() {
         </div>
 
         <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+          <div className="h-full w-full min-h-0 overflow-hidden">
             <ThreadView tenantId={selectedTenantId} />
           </div>
         </section>
