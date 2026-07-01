@@ -3,9 +3,11 @@ import logging
 import re
 import os
 from urllib.parse import quote
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
@@ -19,6 +21,21 @@ from app.services.beds24_service import fetch_booking_with_invoice
 
 router = APIRouter(tags=["tenants"])
 logger = logging.getLogger(__name__)
+
+
+class ImportTenantRequest(BaseModel):
+    booking_id: str
+    name: str
+    first_name: str
+    last_name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+    check_in: str
+    check_out: str
+    notes: Optional[str] = None
+    booking_status: Optional[str] = "confirmed"
+    responsible_comm: Optional[str] = None
 
 
 def _pick_booking_id(item: dict) -> str | None:
@@ -328,73 +345,109 @@ async def beds24_booking_preview(
     )
 
 
-@router.post("/tenants/import/{booking_id}")
+@router.post("/import")
 async def import_tenant(
-    booking_id: str,
+    data: ImportTenantRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    existing = db.query(Tenant).filter(Tenant.booking_id == booking_id).first()
-    if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking already imported")
-
+    booking_id = data.booking_id
     booking = await fetch_booking_with_invoice(booking_id)
-    fields = _extract_guest_fields(booking)
-    tenant = Tenant(
-        booking_id=booking_id,
-        first_name=fields["first_name"],
-        last_name=fields["last_name"],
-        email=fields["email"],
-        phone=fields["phone"],
-        mobile=fields["mobile"],
-        check_in=fields["check_in"],
-        check_out=fields["check_out"],
-        notes=fields["notes"],
-        booking_status=fields["booking_status"],
-        name=fields["name"] or booking_id,
-        responsible_comm=fields["responsible_comm"],
-    )
-    db.add(tenant)
+
+    def clean_description(desc: str) -> str:
+        desc = re.sub(r"<a[^>]*>.*?</a>", "", str(desc or ""), flags=re.DOTALL)
+        desc = desc.replace("##NOLINK##", "").strip()
+        return desc
+
+    first_name = (data.first_name or "").strip() or None
+    last_name = (data.last_name or "").strip() or None
+    name = (data.name or "").strip() or booking_id
+    email = (data.email or "").strip() or None
+    phone = (data.phone or "").strip() or None
+    mobile = (data.mobile or "").strip() or None
+    check_in = (data.check_in or "").strip() or None
+    check_out = (data.check_out or "").strip() or None
+    notes = (data.notes or "").strip() or None
+    booking_status = (data.booking_status or "confirmed").strip() or "confirmed"
+    responsible_comm = (data.responsible_comm or "").strip() or None
+
+    existing = db.query(Tenant).filter(Tenant.booking_id == booking_id).first()
+    if existing is None:
+        tenant = Tenant(
+            booking_id=booking_id,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone=phone,
+            mobile=mobile,
+            check_in=check_in,
+            check_out=check_out,
+            notes=notes,
+            booking_status=booking_status,
+            name=name,
+            responsible_comm=responsible_comm,
+        )
+        db.add(tenant)
+        db.flush()
+    else:
+        tenant = existing
+        tenant.first_name = first_name
+        tenant.last_name = last_name
+        tenant.email = email
+        tenant.phone = phone
+        tenant.mobile = mobile
+        tenant.check_in = check_in
+        tenant.check_out = check_out
+        tenant.notes = notes
+        tenant.booking_status = booking_status
+        tenant.name = name
+        tenant.responsible_comm = responsible_comm
+
+    db.query(FinanceRecord).filter(FinanceRecord.tenant_id == tenant.id).delete(synchronize_session=False)
+
+    charges: list[FinanceItem] = []
+    payments: list[FinanceItem] = []
+    for item in booking.get("invoiceItems", []) or []:
+        if not isinstance(item, dict):
+            continue
+        cleaned = clean_description(item.get("description", ""))
+        line_qty = item.get("qty", 1) or 1
+        line_amount = item.get("amount", 0) or 0
+        line_total = Decimal(str(line_amount)) * Decimal(str(line_qty))
+        vat_rate = Decimal(str(item.get("vatRate", 0) or 0))
+        vat_amount = line_total * (vat_rate / Decimal("100"))
+        record = {
+            "beds24_item_id": item.get("id"),
+            "description": cleaned,
+            "qty": line_qty,
+            "unit_amount": line_amount,
+            "line_total": line_total,
+            "vat_rate": vat_rate,
+            "vat_amount": vat_amount,
+            "status": item.get("status", ""),
+        }
+        item_type = str(item.get("type") or "").lower()
+        if item_type == "charge":
+            charges.append(FinanceItem(**record, type=item_type))
+        elif item_type == "payment":
+            payments.append(FinanceItem(**record, type=item_type))
+        if item_type in {"charge", "payment"}:
+            db.add(
+                FinanceRecord(
+                    tenant_id=tenant.id,
+                    amount=Decimal(str(line_total)),
+                    currency=str(item.get("currency") or "EUR"),
+                    description=cleaned,
+                )
+            )
+
     db.commit()
     db.refresh(tenant)
 
-    invoice_items = booking.get("invoiceItems") or []
-    charges: list[FinanceItem] = []
-    payments: list[FinanceItem] = []
-    for item in invoice_items if isinstance(invoice_items, list) else []:
-        if not isinstance(item, dict):
-            continue
-        item_type = str(item.get("type") or "").lower()
-        description = _sanitize_invoice_description(item.get("description"))
-        qty = Decimal(str(item.get("qty") or 1))
-        amount = Decimal(str(item.get("amount") or 0))
-        line_total = amount * qty
-        vat_rate = Decimal(str(item.get("vatRate") or 0))
-        vat_amount = line_total * (vat_rate / Decimal('100'))
-        parsed = FinanceItem(
-            id=item.get("id"),
-            type=item_type,
-            description=description,
-            status=str(item.get("status") or "").strip() or None,
-            qty=qty,
-            amount=amount,
-            line_total=line_total,
-            vat_rate=vat_rate,
-            vat_amount=vat_amount,
-        )
-        if item_type == "payment":
-            payments.append(parsed)
-        elif item_type == "charge":
-            charges.append(parsed)
-
     return {
-        "tenant": TenantRead.model_validate(tenant),
-        "finance": FinanceSchema(charges=charges, payments=payments),
+        "success": True,
+        "tenant_id": tenant.id,
+        "booking_id": data.booking_id,
+        "charges_imported": len(charges),
+        "payments_imported": len(payments),
     }
-
-
-
-
-
-
-
