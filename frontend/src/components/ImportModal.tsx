@@ -5,8 +5,12 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Booking = {
   booking_id: string
-  guest_name: string
-  status: string | null
+  name: string | null
+  first_name: string | null
+  last_name: string | null
+  check_in: string | null
+  check_out: string | null
+  booking_status: string | null
   imported: boolean
 }
 
@@ -86,9 +90,9 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
             <div key={booking.booking_id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-base font-semibold text-gray-900">{booking.guest_name}</p>
+                  <p className="text-base font-semibold text-gray-900">{booking.name ?? booking.booking_id}</p>
                   <p className="mt-1 text-sm text-gray-500">Booking ID {booking.booking_id}</p>
-                  <p className="mt-1 text-sm text-gray-500">{booking.status || 'Unknown status'}</p>
+                  <p className="mt-1 text-sm text-gray-500">{booking.booking_status || 'Unknown status'}</p>
                 </div>
 
                 <div className="flex items-center gap-3">

@@ -17,7 +17,7 @@ router = APIRouter(tags=["tenants"])
 
 
 def _pick_booking_id(item: dict) -> str | None:
-    value = item.get("booking_id") or item.get("id") or item.get("bookingId")
+    value = item.get("id")
     return str(value) if value is not None and str(value) else None
 
 
@@ -27,36 +27,33 @@ def _normalize_amount(item: dict) -> Decimal:
 
 
 def _extract_guest_fields(item: dict) -> dict:
-    gd = item.get("guestDetails") or item.get("guests") or {}
+    gd = item.get("guestDetails") or {}
     if isinstance(gd, list):
-        gd = gd[0] if gd else {}
+        gd = gd if gd else {}
     gd = gd if isinstance(gd, dict) else {}
 
-    first_name = str(
-        gd.get("firstName") or gd.get("firstname")
-        or item.get("firstName") or item.get("firstname") or ""
-    ).strip() or None
-    last_name = str(
-        gd.get("lastName") or gd.get("lastname")
-        or item.get("lastName") or item.get("lastname") or ""
-    ).strip() or None
-    email = str(gd.get("email") or item.get("email") or "").strip() or None
-    phone = str(
-        gd.get("phone") or gd.get("telephone") or gd.get("tel")
-        or item.get("phone") or item.get("telephone") or ""
-    ).strip() or None
-    mobile = str(
-        gd.get("mobile") or gd.get("mobilePhone") or gd.get("cellPhone")
-        or item.get("mobile") or item.get("mobilePhone") or ""
-    ).strip() or None
-    check_in = str(
-        item.get("arrival") or item.get("checkIn") or item.get("arrivalDate") or ""
-    ).strip() or None
-    check_out = str(
-        item.get("departure") or item.get("checkOut") or item.get("departureDate") or ""
-    ).strip() or None
-    booking_status = str(item.get("status") or "").strip() or None
-    notes = str(item.get("comments") or item.get("note") or "").strip() or None
+    first_name = str(gd.get("firstName") or "").strip() or None
+    last_name = str(gd.get("lastName") or "").strip() or None
+    email = str(gd.get("email") or "").strip() or None
+    phone = str(gd.get("tel") or "").strip() or None
+    mobile = str(gd.get("mobile") or "").strip() or None
+    check_in = str(item.get("arrival") or "").strip() or None
+    check_out = str(item.get("departure") or "").strip() or None
+    notes = str(item.get("message") or "").strip() or None
+    status_map = {
+        0: "Enquiry",
+        1: "Confirmed",
+        2: "Cancelled by guest",
+        3: "Cancelled by property",
+        4: "Request",
+        5: "Blocked",
+        10: "Confirmed (OTA)",
+    }
+    raw_status = item.get("status")
+    try:
+        booking_status = status_map.get(int(raw_status), f"Status {raw_status}")
+    except (TypeError, ValueError):
+        booking_status = str(raw_status).strip() or None
     name_parts = [p for p in [first_name or "", last_name or ""] if p]
     name = " ".join(name_parts) if name_parts else None
 
