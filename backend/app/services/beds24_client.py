@@ -64,7 +64,7 @@ async def _get_access_token() -> str:
     if cached and cached[1] > now:
         return cached[0]
 
-    url = f"{WRITE_BASE_URL}/authentication/token"
+    url = f"{READ_BASE_URL}/authentication/token"
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(url, headers={"accept": "application/json", "refreshToken": refresh})
         response.raise_for_status()
@@ -167,3 +167,4 @@ async def get_charges(booking_id: str) -> list[dict[str, Any]]:
     if isinstance(data, dict):
         data = data.get("charges") or []
     return [item for item in (data or []) if isinstance(item, dict)]
+

@@ -9,10 +9,10 @@ from app.api.users import router as users_router
 
 app = FastAPI(title="CRM API")
 
-app.include_router(auth_router)
-app.include_router(communications_router)
-app.include_router(tenants_router)
-app.include_router(users_router)
+app.include_router(auth_router, prefix="/api")
+app.include_router(communications_router, prefix="/api")
+app.include_router(tenants_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
 app.include_router(beds24_webhook_router)
 app.include_router(whatsapp_webhook_router)
 
@@ -20,3 +20,6 @@ app.include_router(whatsapp_webhook_router)
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+
