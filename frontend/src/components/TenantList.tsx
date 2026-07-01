@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Tenant = {
   id: number
@@ -73,7 +73,7 @@ export default function TenantList({ selectedTenantId }: TenantListProps) {
 
       <div className="space-y-4">
         {statusOrder.map((status) => (
-          <section key={status} className="space-y-3">
+          <section key={status} className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-gray-700">{status}</h3>
               <span className="rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500">{groupedTenants[status].length}</span>
