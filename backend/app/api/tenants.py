@@ -1,5 +1,6 @@
 from decimal import Decimal
 import logging
+import re
 import os
 from urllib.parse import quote
 
@@ -8,11 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.finance import Finance
+from app.models.finance import Finance as FinanceRecord
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
-from app.services.beds24_client import get_booking_detail, get_bookings, get_charges, get_payments
+from app.services.beds24_client import get_booking_detail, get_bookings
+from app.services.beds24_service import fetch_booking_with_invoice
 
 router = APIRouter(tags=["tenants"])
 logger = logging.getLogger(__name__)
@@ -211,8 +214,8 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     items = (
-        db.query(Finance)
-        .filter(Finance.tenant_id == tenant_id)
+        db.query(FinanceRecord)
+        .filter(FinanceRecord.tenant_id == tenant_id)
         .order_by(Finance.created_at.desc(), Finance.id.desc())
         .all()
     )
@@ -325,55 +328,69 @@ async def beds24_booking_preview(
     )
 
 
-@router.post("/tenants/import", response_model=TenantRead, status_code=status.HTTP_201_CREATED)
+@router.post("/tenants/import/{booking_id}")
 async def import_tenant(
-    payload: TenantCreate,
+    booking_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Tenant:
-    existing = db.query(Tenant).filter(Tenant.booking_id == payload.booking_id).first()
+) -> dict:
+    existing = db.query(Tenant).filter(Tenant.booking_id == booking_id).first()
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking already imported")
 
-    tenant = Tenant(**payload.model_dump())
+    booking = await fetch_booking_with_invoice(booking_id)
+    fields = _extract_guest_fields(booking)
+    tenant = Tenant(
+        booking_id=booking_id,
+        first_name=fields["first_name"],
+        last_name=fields["last_name"],
+        email=fields["email"],
+        phone=fields["phone"],
+        mobile=fields["mobile"],
+        check_in=fields["check_in"],
+        check_out=fields["check_out"],
+        notes=fields["notes"],
+        booking_status=fields["booking_status"],
+        name=fields["name"] or booking_id,
+        responsible_comm=fields["responsible_comm"],
+    )
     db.add(tenant)
-    db.flush()
-
-    try:
-        for item in await get_payments(payload.booking_id):
-            amount = _normalize_amount(item)
-            desc = (
-                item.get("description") or item.get("type") or
-                item.get("payType") or item.get("name") or "Payment"
-            )
-            db.add(Finance(
-                tenant_id=tenant.id,
-                amount=amount,
-                currency=item.get("currency") or item.get("currencyCode") or "EUR",
-                description=f"Payment: {desc}",
-            ))
-    except Exception as e:
-        logger.warning("Could not fetch payments for %s: %s", payload.booking_id, e)
-
-    try:
-        for item in await get_charges(payload.booking_id):
-            amount = _normalize_amount(item)
-            desc = (
-                item.get("description") or item.get("type") or
-                item.get("chargeType") or item.get("name") or "Charge"
-            )
-            db.add(Finance(
-                tenant_id=tenant.id,
-                amount=-abs(amount),
-                currency=item.get("currency") or item.get("currencyCode") or "EUR",
-                description=f"Charge: {desc}",
-            ))
-    except Exception as e:
-        logger.warning("Could not fetch charges for %s: %s", payload.booking_id, e)
-
     db.commit()
     db.refresh(tenant)
-    return tenant
+
+    invoice_items = booking.get("invoiceItems") or []
+    charges: list[FinanceItem] = []
+    payments: list[FinanceItem] = []
+    for item in invoice_items if isinstance(invoice_items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "").lower()
+        description = _sanitize_invoice_description(item.get("description"))
+        qty = Decimal(str(item.get("qty") or 1))
+        amount = Decimal(str(item.get("amount") or 0))
+        line_total = amount * qty
+        vat_rate = Decimal(str(item.get("vatRate") or 0))
+        vat_amount = line_total * (vat_rate / Decimal('100'))
+        parsed = FinanceItem(
+            id=item.get("id"),
+            type=item_type,
+            description=description,
+            status=str(item.get("status") or "").strip() or None,
+            qty=qty,
+            amount=amount,
+            line_total=line_total,
+            vat_rate=vat_rate,
+            vat_amount=vat_amount,
+        )
+        if item_type == "payment":
+            payments.append(parsed)
+        elif item_type == "charge":
+            charges.append(parsed)
+
+    return {
+        "tenant": TenantRead.model_validate(tenant),
+        "finance": FinanceSchema(charges=charges, payments=payments),
+    }
 
 
 
