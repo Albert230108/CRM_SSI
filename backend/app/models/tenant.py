@@ -15,11 +15,13 @@ class Tenant(Base):
     mobile = Column(String(100), nullable=True)
     check_in = Column(String(50), nullable=True)
     check_out = Column(String(50), nullable=True)
+    room_id = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
     booking_status = Column(String(100), nullable=True)
     name = Column(String(255), nullable=False, index=True)
     responsible_comm = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
 
 

@@ -47,6 +47,25 @@ def _normalize_amount(item: dict) -> Decimal:
     value = item.get("amount") or item.get("value") or item.get("total") or 0
     return Decimal(str(value))
 
+ROOM_ID_MAPPING = {
+    "House": 271050,
+    "Studio 1": 262377,
+    "Studio 2": 262375,
+    "Studio 3": 262379,
+    "Studio 4": 262376,
+    "Studio 5": 262380,
+    "Studio 6": 262378,
+    "Room 1": 262576,
+    "Room 2": 262578,
+    "Room 3": 262579,
+    "Room 4": 262580,
+    "Room 5": 262581,
+    "Under Request": 564014,
+    "Ground floor": 389957,
+    "Upper floor": 564867,
+    "Duplex Apartment": 286739,
+}
+
 
 def _extract_guest_fields(item: dict) -> dict:
     # Beds24 v2: guest data may be in guestDetails sub-object, guests list, OR top-level.
@@ -110,6 +129,11 @@ def _extract_guest_fields(item: dict) -> dict:
     ).strip() or None
     check_in = str(item.get("arrival") or item.get("checkIn") or item.get("arrivalDate") or "").strip() or None
     check_out = str(item.get("departure") or item.get("checkOut") or item.get("departureDate") or "").strip() or None
+    room_id_raw = item.get("roomId") or item.get("room_id") or item.get("accommodationId") or item.get("accommodation_id")
+    try:
+        room_id = int(room_id_raw) if room_id_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        room_id = None
     notes = str(item.get("comments") or item.get("comment") or item.get("note") or item.get("message") or "").strip() or None
     info_items = item.get("infoItems") or item.get("infoCodes") or []
     responsible_comm = None
@@ -152,6 +176,7 @@ def _extract_guest_fields(item: dict) -> dict:
         "booking_status": booking_status,
         "notes": notes,
         "responsible_comm": responsible_comm,
+        "room_id": room_id,
     }
 async def _get_graph_access_token() -> str:
     tenant_id = os.getenv("MS_GRAPH_TENANT_ID")
@@ -247,7 +272,7 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
         }
 
     return {
-        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name},
+        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name, "room_id": tenant.room_id},
         "charges": [_fmt(item) for item in items if item.type == "charge"],
         "payments": [_fmt(item) for item in items if item.type == "payment"],
     }
@@ -276,7 +301,7 @@ async def get_tenant_onedrive_files(
         response = await client.get(url, headers=headers)
 
     if response.status_code == 404:
-        return {"tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name}, "folder_path": folder_path, "items": []}
+        return {"tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name, "room_id": tenant.room_id}, "folder_path": folder_path, "items": []}
     if response.status_code >= 400:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to load Microsoft Graph folder contents")
 
@@ -300,7 +325,7 @@ async def get_tenant_onedrive_files(
         })
 
     return {
-        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name},
+        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name, "room_id": tenant.room_id},
         "folder_path": folder_path,
         "items": result,
     }
@@ -397,6 +422,8 @@ async def import_tenant(
     mobile = (data.mobile or "").strip() or None
     check_in = (data.check_in or "").strip() or None
     check_out = (data.check_out or "").strip() or None
+    room_name = str(booking.get("roomName") or booking.get("unitName") or booking.get("propName") or "").strip() or None
+    room_id = ROOM_ID_MAPPING.get(room_name) if room_name else None
     notes = (data.notes or "").strip() or None
     booking_status = (data.booking_status or "confirmed").strip() or "confirmed"
     responsible_comm = (data.responsible_comm or "").strip() or None
@@ -416,6 +443,7 @@ async def import_tenant(
             booking_status=booking_status,
             name=name,
             responsible_comm=responsible_comm,
+            room_id=room_id,
         )
         db.add(tenant)
         db.flush()
@@ -432,6 +460,7 @@ async def import_tenant(
         tenant.booking_status = booking_status
         tenant.name = name
         tenant.responsible_comm = responsible_comm
+        tenant.room_id = room_id
 
     db.query(FinanceRecord).filter(FinanceRecord.tenant_id == tenant.id).delete(synchronize_session=False)
 

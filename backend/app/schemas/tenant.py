@@ -12,6 +12,7 @@ class TenantCreate(BaseModel):
     mobile: str | None = None
     check_in: str | None = None
     check_out: str | None = None
+    room_id: int | None = None
     notes: str | None = None
     booking_status: str | None = None
     name: str
@@ -28,6 +29,7 @@ class TenantRead(BaseModel):
     mobile: str | None = None
     check_in: str | None = None
     check_out: str | None = None
+    room_id: int | None = None
     notes: str | None = None
     booking_status: str | None = None
     name: str
@@ -47,7 +49,9 @@ class Beds24BookingPreview(BaseModel):
     mobile: str | None = None
     check_in: str | None = None
     check_out: str | None = None
+    room_id: int | None = None
     notes: str | None = None
     booking_status: str | None = None
     responsible_comm: str | None = None
     imported: bool = False
+
