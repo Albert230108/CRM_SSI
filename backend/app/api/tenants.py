@@ -1,4 +1,5 @@
 from decimal import Decimal
+import logging
 import os
 from urllib.parse import quote
 
@@ -14,6 +15,7 @@ from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.services.beds24_client import get_booking_detail, get_bookings, get_charges, get_payments
 
 router = APIRouter(tags=["tenants"])
+logger = logging.getLogger(__name__)
 
 
 def _pick_booking_id(item: dict) -> str | None:
@@ -32,11 +34,13 @@ def _extract_guest_fields(item: dict) -> dict:
         gd = gd[0] if gd else {}
     gd = gd if isinstance(gd, dict) else {}
 
-    first_name = str(gd.get("firstName") or "").strip() or None
-    last_name = str(gd.get("lastName") or "").strip() or None
-    email = str(gd.get("email") or "").strip() or None
-    phone = str(gd.get("tel") or "").strip() or None
-    mobile = str(gd.get("mobile") or "").strip() or None
+    first_name = str(gd.get("firstName") or gd.get("first_name") or gd.get("firstname") or "").strip() or None
+    last_name = str(gd.get("lastName") or gd.get("last_name") or gd.get("lastname") or "").strip() or None
+    email = str(gd.get("email") or gd.get("Email") or "").strip() or None
+    phone = str(gd.get("tel") or gd.get("phone") or gd.get("telephone") or "").strip() or None
+    mobile = str(gd.get("mobile") or gd.get("mobilePhone") or gd.get("cell") or "").strip() or None
+    if not first_name and not last_name:
+        logger.warning("BEDS24 guestDetails keys: %s | item keys: %s", list(gd.keys()), list(item.keys()))
     check_in = str(item.get("arrival") or "").strip() or None
     check_out = str(item.get("departure") or "").strip() or None
     notes = str(item.get("message") or "").strip() or None
@@ -136,6 +140,19 @@ def get_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: User
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     return tenant
+
+
+@router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_tenant(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    db.delete(tenant)
+    db.commit()
 
 
 @router.get("/tenants/{tenant_id}/finance")
@@ -297,3 +314,6 @@ async def import_tenant(
     db.commit()
     db.refresh(tenant)
     return tenant
+
+
+

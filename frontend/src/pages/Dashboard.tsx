@@ -14,6 +14,7 @@ export default function Dashboard() {
   }, [tenantId])
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
+  const [tenantReloadSignal, setTenantReloadSignal] = useState(0)
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)')
@@ -61,7 +62,7 @@ export default function Dashboard() {
               tenantsCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <TenantList selectedTenantId={selectedTenantId} />
+            <TenantList selectedTenantId={selectedTenantId} reloadSignal={tenantReloadSignal} />
           </div>
         </section>
 
@@ -86,7 +87,11 @@ export default function Dashboard() {
         </section>
       </div>
 
-      <ImportModal open={importModalOpen} onClose={() => setImportModalOpen(false)} />
+      <ImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImported={() => setTenantReloadSignal((current) => current + 1)}
+      />
     </main>
   )
 }

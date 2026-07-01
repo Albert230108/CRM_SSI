@@ -21,9 +21,10 @@ type Booking = {
 type ImportModalProps = {
   open: boolean
   onClose: () => void
+  onImported?: () => void
 }
 
-export default function ImportModal({ open, onClose }: ImportModalProps) {
+export default function ImportModal({ open, onClose, onImported }: ImportModalProps) {
   const token = useAuthStore((state) => state.token)
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(false)
@@ -86,6 +87,7 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
       setConfirmBooking(null)
       setEditFields({})
+      onImported?.()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Import failed')
     } finally {
@@ -167,9 +169,10 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
                 <p className="text-sm font-medium text-gray-700">{confirmBooking.booking_id}</p>
               </div>
               <div className="mb-4 rounded-xl bg-gray-100 px-3 py-2">
-                <p className="text-xs text-gray-400">Full name (auto-composed)</p>
-                <p className="text-sm font-medium text-gray-700">{confirmBooking.name ?? '?'}</p>
+                <p className="text-xs text-gray-400">Full name (auto-composed from first + last)</p>
+                <p className="text-sm font-medium text-gray-700">{[editFields.first_name, editFields.last_name].filter(Boolean).join(' ') || '?'}</p>
               </div>
+              <div className="max-h-[55vh] overflow-y-auto pr-1">
               {([
                 ['first_name', 'First name'],
                 ['last_name', 'Last name'],
@@ -189,6 +192,7 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
                   />
                 </div>
               ))}
+              </div>
               <div className="mt-6 flex justify-end gap-3">
                 <button
                   type="button"

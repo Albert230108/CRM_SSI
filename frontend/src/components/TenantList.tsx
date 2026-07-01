@@ -13,9 +13,10 @@ type Tenant = {
 
 type TenantListProps = {
   selectedTenantId?: number
+  reloadSignal?: number
 }
 
-export default function TenantList({ selectedTenantId }: TenantListProps) {
+export default function TenantList({ selectedTenantId, reloadSignal }: TenantListProps) {
   const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
   const [tenants, setTenants] = useState<Tenant[]>([])
@@ -48,7 +49,7 @@ export default function TenantList({ selectedTenantId }: TenantListProps) {
 
     loadTenants()
     return () => controller.abort()
-  }, [token])
+  }, [token, reloadSignal])
 
   const groupedTenants = useMemo(() => {
     return tenants.reduce<Record<string, Tenant[]>>((groups, tenant) => {
@@ -60,6 +61,19 @@ export default function TenantList({ selectedTenantId }: TenantListProps) {
   }, [tenants])
 
   const statusOrder = useMemo(() => Object.keys(groupedTenants).sort((left, right) => left.localeCompare(right)), [groupedTenants])
+
+  const handleDelete = async (tenantId: number) => {
+    if (!confirm('Delete this tenant? This cannot be undone.')) return
+    const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
+      method: 'DELETE',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) {
+      setTenants((current) => current.filter((tenant) => tenant.id !== tenantId))
+    } else {
+      alert('Failed to delete tenant')
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -83,10 +97,8 @@ export default function TenantList({ selectedTenantId }: TenantListProps) {
               {groupedTenants[status].map((tenant) => {
                 const active = selectedTenantId === tenant.id
                 return (
-                  <button
+                  <div
                     key={tenant.id}
-                    type="button"
-                    onClick={() => navigate(`/dashboard/tenant/${tenant.id}`)}
                     className={[
                       'w-full rounded-2xl border p-4 text-left transition',
                       active
@@ -95,17 +107,33 @@ export default function TenantList({ selectedTenantId }: TenantListProps) {
                     ].join(' ')}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <button type="button" onClick={() => navigate(`/dashboard/tenant/${tenant.id}`)} className="min-w-0 flex-1 text-left">
                         <p className="text-base font-semibold text-gray-900">{tenant.name}</p>
                         <p className="mt-1 text-sm text-gray-500">Tenant ID {tenant.id}</p>
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">#{tenant.id}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(tenant.id)}
+                          className="rounded-lg p-2 text-rose-500 transition hover:bg-rose-50 hover:text-rose-700"
+                          aria-label={`Delete tenant ${tenant.id}`}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                            <path d="M3 6h18" />
+                            <path d="M8 6V4h8v2" />
+                            <path d="M19 6l-1 14H6L5 6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                          </svg>
+                        </button>
                       </div>
-                      <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">#{tenant.id}</span>
                     </div>
                     <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
                       <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500">Responsible comm</p>
                       <p className="mt-1 text-sm font-medium text-cyan-700">{tenant.responsible_comm || 'Unassigned'}</p>
                     </div>
-                  </button>
+                  </div>
                 )
               })}
             </div>
