@@ -10,6 +10,7 @@ type Booking = {
   last_name: string | null
   email: string | null
   phone: string | null
+  mobile: string | null
   check_in: string | null
   check_out: string | null
   booking_status: string | null
@@ -65,11 +66,11 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
       setImportingId(bookingId)
       const body = {
         booking_id: bookingId,
-        name: (editFields.name as string) || booking.name || bookingId,
+        name: `${(editFields.first_name as string || booking.first_name || '')} ${(editFields.last_name as string || booking.last_name || '')}`.trim() || bookingId,
         first_name: (editFields.first_name as string) || booking.first_name || null,
         last_name: (editFields.last_name as string) || booking.last_name || null,
-        email: booking.email ?? null,
-        phone: booking.phone ?? null,
+        email: (editFields.email as string) || booking.email || null,
+        phone: (editFields.phone as string) || booking.phone || null,
         booking_status: (editFields.booking_status as string) || booking.booking_status || null,
         responsible_comm: (editFields.responsible_comm as string) || booking.responsible_comm || null,
       }
@@ -135,11 +136,11 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
                     onClick={() => {
                       setConfirmBooking(booking)
                       setEditFields({
-                        name: booking.name ?? '',
                         first_name: booking.first_name ?? '',
                         last_name: booking.last_name ?? '',
-                        email: undefined,
-                        phone: undefined,
+                        email: booking.email ?? '',
+                        phone: booking.phone ?? '',
+                        mobile: booking.mobile ?? '',
                         booking_status: booking.booking_status ?? '',
                         responsible_comm: booking.responsible_comm ?? '',
                       })
@@ -159,15 +160,25 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
             <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="mb-4 text-xl font-semibold text-gray-900">Confirm import</h3>
               <p className="mb-6 text-xs text-gray-400">
-                Review and edit fields before importing. Booking ID: <strong>{confirmBooking.booking_id}</strong>
+                Review and edit fields before importing.
               </p>
+              <div className="mb-4 rounded-xl bg-gray-100 px-3 py-2">
+                <p className="text-xs text-gray-400">Booking ID</p>
+                <p className="text-sm font-medium text-gray-700">{confirmBooking.booking_id}</p>
+              </div>
+              <div className="mb-4 rounded-xl bg-gray-100 px-3 py-2">
+                <p className="text-xs text-gray-400">Full name (auto-composed)</p>
+                <p className="text-sm font-medium text-gray-700">{confirmBooking.name ?? '?'}</p>
+              </div>
               {([
-                ['name', 'Full name'],
                 ['first_name', 'First name'],
                 ['last_name', 'Last name'],
+                ['email', 'Email address'],
+                ['phone', 'Phone (tel)'],
+                ['mobile', 'Phone (mobile)'],
                 ['booking_status', 'Status'],
                 ['responsible_comm', 'Responsible person'],
-              ] as [keyof typeof editFields, string][]).map(([field, label]) => (
+              ] as [keyof Booking, string][]).map(([field, label]) => (
                 <div key={field} className="mb-3">
                   <label className="mb-1 block text-xs text-gray-500">{label}</label>
                   <input

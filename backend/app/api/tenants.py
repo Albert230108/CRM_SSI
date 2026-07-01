@@ -29,7 +29,7 @@ def _normalize_amount(item: dict) -> Decimal:
 def _extract_guest_fields(item: dict) -> dict:
     gd = item.get("guestDetails") or {}
     if isinstance(gd, list):
-        gd = gd if gd else {}
+        gd = gd[0] if gd else {}
     gd = gd if isinstance(gd, dict) else {}
 
     first_name = str(gd.get("firstName") or "").strip() or None
@@ -272,21 +272,27 @@ async def import_tenant(
     db.add(tenant)
     db.flush()
 
-    for item in await get_payments(payload.booking_id):
-        db.add(Finance(
-            tenant_id=tenant.id,
-            amount=_normalize_amount(item),
-            currency=item.get("currency") or item.get("currencyCode") or "EUR",
-            description=item.get("description") or item.get("type") or "payment",
-        ))
+    try:
+        for item in await get_payments(payload.booking_id):
+            db.add(Finance(
+                tenant_id=tenant.id,
+                amount=_normalize_amount(item),
+                currency=item.get("currency") or item.get("currencyCode") or "EUR",
+                description=item.get("description") or item.get("type") or "payment",
+            ))
+    except Exception:
+        pass
 
-    for item in await get_charges(payload.booking_id):
-        db.add(Finance(
-            tenant_id=tenant.id,
-            amount=_normalize_amount(item),
-            currency=item.get("currency") or item.get("currencyCode") or "EUR",
-            description=item.get("description") or item.get("type") or "charge",
-        ))
+    try:
+        for item in await get_charges(payload.booking_id):
+            db.add(Finance(
+                tenant_id=tenant.id,
+                amount=_normalize_amount(item),
+                currency=item.get("currency") or item.get("currencyCode") or "EUR",
+                description=item.get("description") or item.get("type") or "charge",
+            ))
+    except Exception:
+        pass
 
     db.commit()
     db.refresh(tenant)
