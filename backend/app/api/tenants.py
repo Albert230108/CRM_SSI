@@ -29,24 +29,74 @@ def _normalize_amount(item: dict) -> Decimal:
 
 
 def _extract_guest_fields(item: dict) -> dict:
-    # Beds24 API v2: guest fields are top-level on the booking object with "guest" prefix.
-    # Ref: https://beds24.com/api/v2/#/Bookings/get_bookings
-    # Changelog 2022-11-22: "name" was renamed to "lastName"
-    first_name = str(item.get("guestFirstName") or "").strip() or None
-    last_name = str(item.get("guestLastName") or "").strip() or None
-    email = str(item.get("guestEmail") or "").strip() or None
-    phone = str(item.get("guestPhone") or item.get("guestTel") or "").strip() or None
-    mobile = str(item.get("guestMobile") or "").strip() or None
-    check_in = str(item.get("arrival") or "").strip() or None
-    check_out = str(item.get("departure") or "").strip() or None
-    notes = str(item.get("message") or "").strip() or None
-    # responsible person from infoItems (keep existing logic)
-    info_items = item.get("infoItems") or []
+    # Beds24 v2: guest data may be in guestDetails sub-object, guests list, OR top-level.
+    gd_raw = item.get("guestDetails") or item.get("guests") or {}
+    if isinstance(gd_raw, list):
+        gd_raw = gd_raw if gd_raw else {}
+    gd: dict = gd_raw if isinstance(gd_raw, dict) else {}
+
+    title = str(gd.get("title") or item.get("title") or "").strip()
+    first_name = str(
+        gd.get("firstName")
+        or gd.get("firstname")
+        or item.get("firstName")
+        or item.get("firstname")
+        or item.get("guestFirstName")
+        or ""
+    ).strip() or None
+    last_name = str(
+        gd.get("lastName")
+        or gd.get("lastname")
+        or item.get("lastName")
+        or item.get("lastname")
+        or item.get("guestLastName")
+        or ""
+    ).strip() or None
+    name_parts = [p for p in [title, first_name or "", last_name or ""] if p]
+    name = " ".join(name_parts).strip() or str(
+        gd.get("fullName")
+        or item.get("fullName")
+        or item.get("name")
+        or item.get("guestName")
+        or ""
+    ).strip() or None
+
+    email = str(
+        gd.get("email")
+        or gd.get("Email")
+        or item.get("email")
+        or item.get("guestEmail")
+        or ""
+    ).strip() or None
+    phone = str(
+        gd.get("phone")
+        or gd.get("telephone")
+        or gd.get("tel")
+        or item.get("phone")
+        or item.get("telephone")
+        or item.get("tel")
+        or item.get("guestPhone")
+        or ""
+    ).strip() or None
+    mobile = str(
+        gd.get("mobile")
+        or gd.get("mobilePhone")
+        or gd.get("cellPhone")
+        or item.get("mobile")
+        or item.get("mobilePhone")
+        or item.get("cellPhone")
+        or item.get("guestMobile")
+        or ""
+    ).strip() or None
+    check_in = str(item.get("arrival") or item.get("checkIn") or item.get("arrivalDate") or "").strip() or None
+    check_out = str(item.get("departure") or item.get("checkOut") or item.get("departureDate") or "").strip() or None
+    notes = str(item.get("comments") or item.get("comment") or item.get("note") or item.get("message") or "").strip() or None
+    info_items = item.get("infoItems") or item.get("infoCodes") or []
     responsible_comm = None
     if isinstance(info_items, list):
         for info in info_items:
             if isinstance(info, dict) and info.get("code") == "QM_CREATED_BY":
-                responsible_comm = str(info.get("text") or "").strip() or None
+                responsible_comm = str(info.get("text") or info.get("description") or "").strip() or None
                 break
     status_map = {
         0: "Enquiry",
@@ -62,11 +112,13 @@ def _extract_guest_fields(item: dict) -> dict:
         booking_status = status_map.get(int(raw_status), f"Status {raw_status}")
     except (TypeError, ValueError):
         booking_status = str(raw_status).strip() or None
-    name_parts = [p for p in [first_name or "", last_name or ""] if p]
-    name = " ".join(name_parts) if name_parts else None
-    # Debug log - remove once confirmed working
-    if not first_name and not last_name:
-        logger.warning("BEDS24 no guest name found. Top-level keys: %s", list(item.keys()))
+    if not first_name and not last_name and not name:
+        logger.warning(
+            "BEDS24 no guest name. item keys=%s | guestDetails keys=%s | guestDetails=%s",
+            list(item.keys()),
+            list(gd.keys()),
+            dict(gd),
+        )
 
     return {
         "first_name": first_name,
@@ -81,8 +133,6 @@ def _extract_guest_fields(item: dict) -> dict:
         "notes": notes,
         "responsible_comm": responsible_comm,
     }
-
-
 async def _get_graph_access_token() -> str:
     tenant_id = os.getenv("MS_GRAPH_TENANT_ID")
     client_id = os.getenv("MS_GRAPH_CLIENT_ID")
@@ -314,6 +364,7 @@ async def import_tenant(
     db.commit()
     db.refresh(tenant)
     return tenant
+
 
 
 
