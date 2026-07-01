@@ -233,7 +233,7 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
     items = (
         db.query(FinanceRecord)
         .filter(FinanceRecord.tenant_id == tenant_id)
-        .order_by(Finance.created_at.desc(), Finance.id.desc())
+        .order_by(FinanceRecord.created_at.desc(), FinanceRecord.id.desc())
         .all()
     )
     return {
@@ -345,7 +345,7 @@ async def beds24_booking_preview(
     )
 
 
-@router.post("/import")
+@router.post("/tenants/import")
 async def import_tenant(
     data: ImportTenantRequest,
     db: Session = Depends(get_db),
@@ -420,7 +420,7 @@ async def import_tenant(
             "beds24_item_id": item.get("id"),
             "description": cleaned,
             "qty": line_qty,
-            "unit_amount": line_amount,
+            "amount": line_amount,
             "line_total": line_total,
             "vat_rate": vat_rate,
             "vat_amount": vat_amount,
