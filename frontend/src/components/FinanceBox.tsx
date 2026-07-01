@@ -5,6 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type FinanceItem = {
   id: number
+  type: 'charge' | 'payment'
   amount: string
   currency: string
   description: string | null
@@ -17,7 +18,8 @@ type FinanceResponse = {
     booking_id: string
     name: string
   }
-  items: FinanceItem[]
+  charges: FinanceItem[]
+  payments: FinanceItem[]
 }
 
 type FinanceBoxProps = {
@@ -26,14 +28,16 @@ type FinanceBoxProps = {
 
 export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   const token = useAuthStore((state) => state.token)
-  const [items, setItems] = useState<FinanceItem[]>([])
+  const [charges, setCharges] = useState<FinanceItem[]>([])
+  const [payments, setPayments] = useState<FinanceItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [tenantName, setTenantName] = useState<string>('')
 
   useEffect(() => {
     if (!tenantId) {
-      setItems([])
+      setCharges([])
+      setPayments([])
       setError('')
       setTenantName('')
       setLoading(false)
@@ -51,7 +55,8 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
         })
         if (!response.ok) throw new Error('Failed to load finance data')
         const data: FinanceResponse = await response.json()
-        setItems(data.items)
+        setCharges(data.charges ?? [])
+        setPayments(data.payments ?? [])
         setTenantName(data.tenant.name)
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -66,18 +71,20 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   }, [tenantId, token])
 
   const totals = useMemo(() => {
-    return items.reduce(
-      (acc, item) => {
-        const amount = Number(item.amount)
-        if (!Number.isFinite(amount)) return acc
-        if (amount >= 0) acc.payments += amount
-        else acc.charges += amount
-        acc.total += amount
-        return acc
-      },
-      { payments: 0, charges: 0, total: 0 },
-    )
-  }, [items])
+    const totalPayments = payments.reduce((sum, item) => {
+      const amount = Number(item.amount)
+      return Number.isFinite(amount) ? sum + amount : sum
+    }, 0)
+    const totalCharges = charges.reduce((sum, item) => {
+      const amount = Number(item.amount)
+      return Number.isFinite(amount) ? sum + amount : sum
+    }, 0)
+    return {
+      payments: totalPayments,
+      charges: totalCharges,
+      total: totalPayments - totalCharges,
+    }
+  }, [charges, payments])
 
   return (
     <div className="space-y-5">
@@ -110,18 +117,51 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
                 </tr>
               </thead>
               <tbody>
-                {items.length === 0 && !loading ? (
+                {charges.length === 0 && payments.length === 0 && !loading ? (
                   <tr>
                     <td className="px-3 py-4 text-gray-500" colSpan={3}>No finance entries found.</td>
                   </tr>
                 ) : null}
-                {items.map((item) => (
-                  <tr key={item.id} className="border-t border-gray-200">
-                    <td className="px-3 py-3 text-gray-500">{new Date(item.created_at).toLocaleDateString()}</td>
-                    <td className="px-3 py-3 text-gray-900">{item.description || 'Finance item'}</td>
-                    <td className="px-3 py-3 font-medium text-gray-900">{item.currency} {Number(item.amount).toFixed(2)}</td>
-                  </tr>
-                ))}
+                {charges.length > 0 ? (
+                  <>
+                    <tr className="bg-rose-50">
+                      <td colSpan={3} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-rose-500">
+                        Charges
+                      </td>
+                    </tr>
+                    {charges.map((item) => (
+                      <tr key={item.id} className="border-t border-gray-200">
+                        <td className="px-3 py-3 text-gray-500">
+                          {new Date(item.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-3 py-3 text-gray-900">{item.description || 'Charge'}</td>
+                        <td className="px-3 py-3 font-medium text-rose-600">
+                          {item.currency} {Number(item.amount).toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                ) : null}
+                {payments.length > 0 ? (
+                  <>
+                    <tr className="bg-emerald-50">
+                      <td colSpan={3} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-emerald-600">
+                        Payments
+                      </td>
+                    </tr>
+                    {payments.map((item) => (
+                      <tr key={item.id} className="border-t border-gray-200">
+                        <td className="px-3 py-3 text-gray-500">
+                          {new Date(item.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-3 py-3 text-gray-900">{item.description || 'Payment'}</td>
+                        <td className="px-3 py-3 font-medium text-emerald-600">
+                          {item.currency} {Number(item.amount).toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                ) : null}
               </tbody>
             </table>
           </div>
