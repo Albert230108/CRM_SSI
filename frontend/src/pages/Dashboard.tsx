@@ -42,6 +42,8 @@ export default function Dashboard() {
       </div>
 
       <div className="flex flex-row gap-4 flex-1 min-h-0 overflow-hidden">
+        
+        {/* LEFT COLUMN: Tenant List */}
         <section
           className={[
             'relative flex h-full shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300',
@@ -66,7 +68,13 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <div className="flex min-w-0 flex-none w-[320px] flex-col gap-4 h-full">
+        {/* MIDDLE COLUMN: Finance & OneDrive (UPDATED) */}
+        <div
+          className={[
+            'flex min-w-0 flex-none flex-col gap-4 h-full transition-all duration-300',
+            tenantsCollapsed ? 'w-[540px]' : 'w-[320px]',
+          ].join(' ')}
+        >
           <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="flex h-full min-h-0 flex-1 overflow-auto">
               <FinanceBox tenantId={selectedTenantId} />
@@ -80,6 +88,7 @@ export default function Dashboard() {
           </section>
         </div>
 
+        {/* RIGHT COLUMN: Thread View */}
         <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="h-full w-full min-h-0 overflow-hidden">
             <ThreadView tenantId={selectedTenantId} />
@@ -95,9 +104,3 @@ export default function Dashboard() {
     </main>
   )
 }
-
-
-
-
-
-
