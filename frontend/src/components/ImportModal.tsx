@@ -8,9 +8,12 @@ type Booking = {
   name: string | null
   first_name: string | null
   last_name: string | null
+  email: string | null
+  phone: string | null
   check_in: string | null
   check_out: string | null
   booking_status: string | null
+  responsible_comm: string | null
   imported: boolean
 }
 
@@ -25,6 +28,8 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [importingId, setImportingId] = useState<string | null>(null)
+  const [confirmBooking, setConfirmBooking] = useState<Booking | null>(null)
+  const [editFields, setEditFields] = useState<Partial<Booking>>({})
 
   useEffect(() => {
     if (!open) return
@@ -54,14 +59,34 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
   }, [open, token])
 
   const handleImport = async (bookingId: string) => {
+    const booking = bookings.find((item) => item.booking_id === bookingId)
+    if (!booking) return
     try {
       setImportingId(bookingId)
-      const response = await fetch(`${API_BASE_URL}/api/tenants/import/${bookingId}`, {
+      const body = {
+        booking_id: bookingId,
+        name: (editFields.name as string) || booking.name || bookingId,
+        first_name: (editFields.first_name as string) || booking.first_name || null,
+        last_name: (editFields.last_name as string) || booking.last_name || null,
+        email: booking.email ?? null,
+        phone: booking.phone ?? null,
+        booking_status: (editFields.booking_status as string) || booking.booking_status || null,
+        responsible_comm: (editFields.responsible_comm as string) || booking.responsible_comm || null,
+      }
+      const response = await fetch(`${API_BASE_URL}/api/tenants/import`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
       })
       if (!response.ok) throw new Error('Import failed')
-      setBookings((current) => current.map((booking) => (booking.booking_id === bookingId ? { ...booking, imported: true } : booking)))
+      setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
+      setConfirmBooking(null)
+      setEditFields({})
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Import failed')
     } finally {
       setImportingId(null)
     }
@@ -93,6 +118,9 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
                   <p className="text-base font-semibold text-gray-900">{booking.name ?? booking.booking_id}</p>
                   <p className="mt-1 text-sm text-gray-500">Booking ID {booking.booking_id}</p>
                   <p className="mt-1 text-sm text-gray-500">{booking.booking_status || 'Unknown status'}</p>
+                  {booking.responsible_comm && (
+                    <p className="mt-1 text-sm text-cyan-600">Responsible: {booking.responsible_comm}</p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -104,16 +132,73 @@ export default function ImportModal({ open, onClose }: ImportModalProps) {
                   <button
                     type="button"
                     disabled={booking.imported || importingId === booking.booking_id}
-                    onClick={() => handleImport(booking.booking_id)}
+                    onClick={() => {
+                      setConfirmBooking(booking)
+                      setEditFields({
+                        name: booking.name ?? '',
+                        first_name: booking.first_name ?? '',
+                        last_name: booking.last_name ?? '',
+                        email: undefined,
+                        phone: undefined,
+                        booking_status: booking.booking_status ?? '',
+                        responsible_comm: booking.responsible_comm ?? '',
+                      })
+                    }}
                     className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
                   >
-                    {importingId === booking.booking_id ? 'Importing...' : 'Import'}
+                    Import
                   </button>
                 </div>
               </div>
             </div>
           ))}
         </div>
+
+        {confirmBooking && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-gray-900/50 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h3 className="mb-4 text-xl font-semibold text-gray-900">Confirm import</h3>
+              <p className="mb-6 text-xs text-gray-400">
+                Review and edit fields before importing. Booking ID: <strong>{confirmBooking.booking_id}</strong>
+              </p>
+              {([
+                ['name', 'Full name'],
+                ['first_name', 'First name'],
+                ['last_name', 'Last name'],
+                ['booking_status', 'Status'],
+                ['responsible_comm', 'Responsible person'],
+              ] as [keyof typeof editFields, string][]).map(([field, label]) => (
+                <div key={field} className="mb-3">
+                  <label className="mb-1 block text-xs text-gray-500">{label}</label>
+                  <input
+                    type="text"
+                    value={(editFields[field] as string) ?? ''}
+                    onChange={(e) => setEditFields((prev) => ({ ...prev, [field]: e.target.value }))}
+                    className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                </div>
+              ))}
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmBooking(null)}
+                  className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={importingId === confirmBooking.booking_id}
+                  onClick={() => handleImport(confirmBooking.booking_id)}
+                  className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                >
+                  {importingId === confirmBooking.booking_id ? 'Importing...' : 'Confirm import'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   )

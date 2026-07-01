@@ -40,6 +40,13 @@ def _extract_guest_fields(item: dict) -> dict:
     check_in = str(item.get("arrival") or "").strip() or None
     check_out = str(item.get("departure") or "").strip() or None
     notes = str(item.get("message") or "").strip() or None
+    info_items = item.get("infoItems") or []
+    responsible_comm = None
+    if isinstance(info_items, list):
+        for info in info_items:
+            if isinstance(info, dict) and info.get("code") == "QM_CREATED_BY":
+                responsible_comm = str(info.get("text") or "").strip() or None
+                break
     status_map = {
         0: "Enquiry",
         1: "Confirmed",
@@ -68,6 +75,7 @@ def _extract_guest_fields(item: dict) -> dict:
         "check_out": check_out,
         "booking_status": booking_status,
         "notes": notes,
+        "responsible_comm": responsible_comm,
     }
 
 

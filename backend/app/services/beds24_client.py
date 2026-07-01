@@ -111,7 +111,7 @@ async def _get_with_retry(
 
 async def get_bookings() -> list[dict[str, Any]]:
     headers = await _async_headers()
-    params: dict[str, Any] = {"includeGuestDetails": "true"}
+    params: dict[str, Any] = {"includeGuestDetails": "true", "includeInfoItems": "true"}
     all_items: list[dict[str, Any]] = []
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
         next_url: str | None = f"{READ_BASE_URL}/bookings"
@@ -137,7 +137,7 @@ async def get_bookings() -> list[dict[str, Any]]:
 
 async def get_booking_detail(booking_id: str) -> dict[str, Any]:
     headers = await _async_headers()
-    params = {"includeGuestDetails": "true"}
+    params = {"includeGuestDetails": "true", "includeInfoItems": "true"}
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
         response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings/{booking_id}", params)
     payload = response.json()
