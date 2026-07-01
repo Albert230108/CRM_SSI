@@ -29,11 +29,13 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   const [items, setItems] = useState<FinanceItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [tenantName, setTenantName] = useState<string>('')
 
   useEffect(() => {
     if (!tenantId) {
       setItems([])
       setError('')
+      setTenantName('')
       setLoading(false)
       return
     }
@@ -50,6 +52,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
         if (!response.ok) throw new Error('Failed to load finance data')
         const data: FinanceResponse = await response.json()
         setItems(data.items)
+        setTenantName(data.tenant.name)
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load finance data')
@@ -66,10 +69,13 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     return items.reduce(
       (acc, item) => {
         const amount = Number(item.amount)
-        if (Number.isFinite(amount)) acc.total += amount
+        if (!Number.isFinite(amount)) return acc
+        if (amount >= 0) acc.payments += amount
+        else acc.charges += amount
+        acc.total += amount
         return acc
       },
-      { total: 0 },
+      { payments: 0, charges: 0, total: 0 },
     )
   }, [items])
 
@@ -78,7 +84,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
       <div>
         <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">Finance</p>
         <h2 className="mt-1 text-xl font-semibold text-gray-900">Payments and charges</h2>
-        <p className="mt-1 text-sm text-gray-500">{tenantId ? `Tenant #${tenantId}` : 'Select a tenant to view finance data'}</p>
+        <p className="mt-1 text-sm text-gray-500">{tenantId ? (tenantName || `Booking ${tenantId}`) : 'Select a tenant to view finance data'}</p>
       </div>
 
       {loading ? <p className="text-sm text-gray-500">Loading finance...</p> : null}
@@ -87,8 +93,11 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
       {!tenantId ? null : (
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-4">
-            <p className="text-sm text-gray-500">Entries</p>
-            <p className="text-sm font-semibold text-cyan-700">Total {totals.total.toFixed(2)}</p>
+            <div className="flex gap-4 text-sm">
+              <span className="text-emerald-600">+ Payments {totals.payments.toFixed(2)}</span>
+              <span className="text-rose-500">- Charges {Math.abs(totals.charges).toFixed(2)}</span>
+            </div>
+            <p className="text-sm font-semibold text-cyan-700">Balance {totals.total.toFixed(2)}</p>
           </div>
 
           <div className="mt-4 overflow-hidden rounded-xl border border-gray-200">

@@ -150,22 +150,24 @@ async def get_booking_detail(booking_id: str) -> dict[str, Any]:
 async def get_payments(booking_id: str) -> list[dict[str, Any]]:
     headers = await _async_headers()
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-        response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings/{booking_id}/payments")
+        response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings/{booking_id}/invoiceitems")
     payload = response.json()
     data = payload.get("data") if isinstance(payload, dict) else payload
     if isinstance(data, dict):
-        data = data.get("payments") or []
-    return [item for item in (data or []) if isinstance(item, dict)]
+        data = data.get("invoiceItems") or data.get("items") or []
+    items = [item for item in (data or []) if isinstance(item, dict)]
+    return [item for item in items if str(item.get("type", "")).lower() in ("payment", "pay", "deposit")]
 
 
 async def get_charges(booking_id: str) -> list[dict[str, Any]]:
     headers = await _async_headers()
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-        response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings/{booking_id}/charges")
+        response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings/{booking_id}/invoiceitems")
     payload = response.json()
     data = payload.get("data") if isinstance(payload, dict) else payload
     if isinstance(data, dict):
-        data = data.get("charges") or []
-    return [item for item in (data or []) if isinstance(item, dict)]
+        data = data.get("invoiceItems") or data.get("items") or []
+    items = [item for item in (data or []) if isinstance(item, dict)]
+    return [item for item in items if str(item.get("type", "")).lower() not in ("payment", "pay", "deposit")]
 
 

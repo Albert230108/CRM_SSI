@@ -6,6 +6,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Tenant = {
   id: number
+  booking_id: string
   name: string
   booking_status: string | null
   responsible_comm: string | null
@@ -109,10 +110,9 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
                     <div className="flex items-start justify-between gap-3">
                       <button type="button" onClick={() => navigate(`/dashboard/tenant/${tenant.id}`)} className="min-w-0 flex-1 text-left">
                         <p className="text-base font-semibold text-gray-900">{tenant.name}</p>
-                        <p className="mt-1 text-sm text-gray-500">Tenant ID {tenant.id}</p>
+                        <p className="mt-1 text-sm text-gray-500">Booking {tenant.booking_id}</p>
                       </button>
                       <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">#{tenant.id}</span>
                         <button
                           type="button"
                           onClick={() => handleDelete(tenant.id)}
@@ -143,3 +143,4 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
     </div>
   )
 }
+

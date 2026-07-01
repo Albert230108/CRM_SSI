@@ -341,25 +341,35 @@ async def import_tenant(
 
     try:
         for item in await get_payments(payload.booking_id):
+            amount = _normalize_amount(item)
+            desc = (
+                item.get("description") or item.get("type") or
+                item.get("payType") or item.get("name") or "Payment"
+            )
             db.add(Finance(
                 tenant_id=tenant.id,
-                amount=_normalize_amount(item),
+                amount=amount,
                 currency=item.get("currency") or item.get("currencyCode") or "EUR",
-                description=item.get("description") or item.get("type") or "payment",
+                description=f"Payment: {desc}",
             ))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Could not fetch payments for %s: %s", payload.booking_id, e)
 
     try:
         for item in await get_charges(payload.booking_id):
+            amount = _normalize_amount(item)
+            desc = (
+                item.get("description") or item.get("type") or
+                item.get("chargeType") or item.get("name") or "Charge"
+            )
             db.add(Finance(
                 tenant_id=tenant.id,
-                amount=_normalize_amount(item),
+                amount=-abs(amount),
                 currency=item.get("currency") or item.get("currencyCode") or "EUR",
-                description=item.get("description") or item.get("type") or "charge",
+                description=f"Charge: {desc}",
             ))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Could not fetch charges for %s: %s", payload.booking_id, e)
 
     db.commit()
     db.refresh(tenant)
