@@ -29,23 +29,18 @@ def _normalize_amount(item: dict) -> Decimal:
 
 
 def _extract_guest_fields(item: dict) -> dict:
-    gd = item.get("guestDetails") or {}
-    if isinstance(gd, list):
-        gd = gd[0] if gd else {}
-    gd = gd if isinstance(gd, dict) else {}
-    logger.warning("RAW item keys: %s", list(item.keys()))
-    logger.warning("RAW guestDetails keys: %s | values: %s", list(gd.keys()), dict(gd))
-
-    first_name = str(gd.get("firstName") or gd.get("first_name") or gd.get("firstname") or "").strip() or None
-    last_name = str(gd.get("lastName") or gd.get("last_name") or gd.get("lastname") or "").strip() or None
-    email = str(gd.get("email") or gd.get("Email") or "").strip() or None
-    phone = str(gd.get("tel") or gd.get("phone") or gd.get("telephone") or "").strip() or None
-    mobile = str(gd.get("mobile") or gd.get("mobilePhone") or gd.get("cell") or "").strip() or None
-    if not first_name and not last_name:
-        logger.warning("BEDS24 guestDetails keys: %s | item keys: %s", list(gd.keys()), list(item.keys()))
+    # Beds24 API v2: guest fields are top-level on the booking object with "guest" prefix.
+    # Ref: https://beds24.com/api/v2/#/Bookings/get_bookings
+    # Changelog 2022-11-22: "name" was renamed to "lastName"
+    first_name = str(item.get("guestFirstName") or "").strip() or None
+    last_name = str(item.get("guestLastName") or "").strip() or None
+    email = str(item.get("guestEmail") or "").strip() or None
+    phone = str(item.get("guestPhone") or item.get("guestTel") or "").strip() or None
+    mobile = str(item.get("guestMobile") or "").strip() or None
     check_in = str(item.get("arrival") or "").strip() or None
     check_out = str(item.get("departure") or "").strip() or None
     notes = str(item.get("message") or "").strip() or None
+    # responsible person from infoItems (keep existing logic)
     info_items = item.get("infoItems") or []
     responsible_comm = None
     if isinstance(info_items, list):
@@ -69,6 +64,9 @@ def _extract_guest_fields(item: dict) -> dict:
         booking_status = str(raw_status).strip() or None
     name_parts = [p for p in [first_name or "", last_name or ""] if p]
     name = " ".join(name_parts) if name_parts else None
+    # Debug log - remove once confirmed working
+    if not first_name and not last_name:
+        logger.warning("BEDS24 no guest name found. Top-level keys: %s", list(item.keys()))
 
     return {
         "first_name": first_name,
