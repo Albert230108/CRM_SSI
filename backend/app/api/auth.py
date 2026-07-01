@@ -6,7 +6,7 @@ from app.core.security import create_access_token, verify_password
 from app.models.user import User
 from app.schemas.auth import LoginRequest, Token
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=Token)
@@ -17,3 +17,4 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
 
     access_token = create_access_token({"sub": str(user.id)})
     return Token(access_token=access_token)
+
