@@ -27,3 +27,19 @@ class TenantRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class Beds24BookingPreview(BaseModel):
+    booking_id: str
+    first_name: str | None = None
+    last_name: str | None = None
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    check_in: str | None = None
+    check_out: str | None = None
+    booking_status: str | None = None
+    notes: str | None = None
+    responsible_comm: str | None = None
+    imported: bool = False
