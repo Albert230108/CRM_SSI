@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin_user, get_db
 from app.core.security import generate_secure_token, get_password_hash, hash_token
+from app.core.public_urls import get_public_frontend_base_url
 from app.models.invitation import Invitation
 from app.models.password_reset import PasswordResetToken
 from app.models.user import User
@@ -17,9 +18,7 @@ RESET_HOURS = 24
 
 
 def _public_base_url() -> str:
-    import os
-
-    return os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+    return get_public_frontend_base_url()
 
 
 @router.get("/", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])

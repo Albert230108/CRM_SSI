@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin_user, get_db
 from app.core.security import generate_secure_token, hash_token
+from app.core.public_urls import get_public_frontend_base_url
 from app.models.admin_invite import AdminInvite
 from app.models.user import User
 from app.schemas.user import AdminInviteCreate, AdminInviteRead
@@ -15,9 +16,7 @@ INVITATION_HOURS = 72
 
 
 def _public_base_url() -> str:
-    import os
-
-    return os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+    return get_public_frontend_base_url()
 
 
 def _invite_status(invite: AdminInvite) -> str:
