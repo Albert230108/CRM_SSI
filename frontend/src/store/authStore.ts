@@ -1,32 +1,35 @@
 import { create } from 'zustand'
 
+export type AuthUser = {
+  id: number
+  email: string
+  full_name: string | null
+  is_active: boolean
+  is_admin: boolean
+} | null
+
 type AuthState = {
   token: string | null
-  userEmail: string | null
+  user: AuthUser
   isAuthenticated: boolean
-  setAuth: (token: string, userEmail?: string | null) => void
+  setAuth: (token: string, user?: AuthUser) => void
+  setUser: (user: AuthUser) => void
   logout: () => void
 }
 
 const tokenKey = 'crm_auth_token'
-const emailKey = 'crm_auth_email'
 
 export const useAuthStore = create<AuthState>((set) => ({
   token: localStorage.getItem(tokenKey),
-  userEmail: localStorage.getItem(emailKey),
+  user: null,
   isAuthenticated: Boolean(localStorage.getItem(tokenKey)),
-  setAuth: (token, userEmail = null) => {
+  setAuth: (token, user = null) => {
     localStorage.setItem(tokenKey, token)
-    if (userEmail) {
-      localStorage.setItem(emailKey, userEmail)
-    } else {
-      localStorage.removeItem(emailKey)
-    }
-    set({ token, userEmail, isAuthenticated: true })
+    set({ token, user, isAuthenticated: true })
   },
+  setUser: (user) => set({ user }),
   logout: () => {
     localStorage.removeItem(tokenKey)
-    localStorage.removeItem(emailKey)
-    set({ token: null, userEmail: null, isAuthenticated: false })
+    set({ token: null, user: null, isAuthenticated: false })
   },
 }))

@@ -11,7 +11,7 @@ if backend_root not in sys.path:
     sys.path.insert(0, backend_root)
 
 from app.database import Base, DATABASE_URL
-from app.models import communication, finance, tenant, user  # noqa: F401
+from app.models import communication, finance, invitation, password_reset, tenant, user  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", DATABASE_URL)

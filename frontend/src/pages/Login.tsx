@@ -29,7 +29,7 @@ export default function Login() {
       }
 
       const data: { access_token: string } = await response.json()
-      setAuth(data.access_token, email)
+      setAuth(data.access_token)
       navigate('/', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
@@ -48,35 +48,17 @@ export default function Login() {
         <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
           <div>
             <label className="mb-2 block text-sm text-gray-700">Email</label>
-            <input
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              type="email"
-              className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500"
-              placeholder="you@company.com"
-              required
-            />
+            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500" placeholder="you@company.com" required />
           </div>
 
           <div>
             <label className="mb-2 block text-sm text-gray-700">Password</label>
-            <input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              type="password"
-              className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500"
-              placeholder="••••••••"
-              required
-            />
+            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500" placeholder="????????" required />
           </div>
 
           {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-70"
-          >
+          <button type="submit" disabled={loading} className="w-full rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-70">
             {loading ? 'Signing in...' : 'Login'}
           </button>
         </form>

@@ -27,3 +27,29 @@ class UserRead(UserBase):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class InviteCreate(BaseModel):
+    email: str
+    full_name: str | None = None
+    is_admin: bool = False
+
+
+class InviteRead(BaseModel):
+    token: str
+    invite_url: str
+
+
+class PasswordResetRequestCreate(BaseModel):
+    user_id: int
+
+
+class InvitationComplete(BaseModel):
+    full_name: str | None = None
+    password: str
+    password_confirmation: str
+
+
+class PasswordResetComplete(BaseModel):
+    password: str
+    password_confirmation: str
