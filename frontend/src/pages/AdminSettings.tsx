@@ -28,15 +28,56 @@ type InviteRow = {
   updated_at: string
 }
 
+type Beds24WebhookLogRow = {
+  id: number
+  received_at: string
+  event_type: string | null
+  status: string
+  booking_id: string | null
+  room_id: string | null
+  tenant_id: number | null
+  http_status: number | null
+  result_message: string | null
+  error_summary: string | null
+  error_traceback: string | null
+  raw_payload: Record<string, unknown>
+  parsed_fields: Record<string, unknown> | null
+}
+
+const logStatuses = ['', 'received', 'processed', 'failed', 'ignored', 'duplicate']
+
+function formatJson(value: unknown) {
+  return JSON.stringify(value ?? null, null, 2)
+}
+
 export default function AdminSettings() {
   const token = useAuthStore((state) => state.token)
   const [users, setUsers] = useState<UserRow[]>([])
   const [invites, setInvites] = useState<InviteRow[]>([])
+  const [webhookLogs, setWebhookLogs] = useState<Beds24WebhookLogRow[]>([])
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName] = useState('')
   const [invitePhone, setInvitePhone] = useState('')
   const [inviteRole, setInviteRole] = useState<'admin' | 'non-admin'>('non-admin')
   const [message, setMessage] = useState('')
+  const [logStatus, setLogStatus] = useState('')
+  const [logEventType, setLogEventType] = useState('')
+  const [logStart, setLogStart] = useState('')
+  const [logEnd, setLogEnd] = useState('')
+  const [expandedLogId, setExpandedLogId] = useState<number | null>(null)
+
+  const loadLogs = async () => {
+    const params = new URLSearchParams()
+    params.set('limit', '50')
+    if (logStatus) params.set('status', logStatus)
+    if (logEventType) params.set('event_type', logEventType)
+    if (logStart) params.set('start', logStart)
+    if (logEnd) params.set('end', logEnd)
+    const response = await fetch(`${API_BASE_URL}/api/webhooks/beds24/admin/logs?${params.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) setWebhookLogs(await response.json())
+  }
 
   useEffect(() => {
     const load = async () => {
@@ -46,6 +87,7 @@ export default function AdminSettings() {
       ])
       if (usersResponse.ok) setUsers(await usersResponse.json())
       if (invitesResponse.ok) setInvites(await invitesResponse.json())
+      await loadLogs()
     }
     load()
   }, [token])
@@ -57,6 +99,7 @@ export default function AdminSettings() {
     ])
     if (usersResponse.ok) setUsers(await usersResponse.json())
     if (invitesResponse.ok) setInvites(await invitesResponse.json())
+    await loadLogs()
   }
 
   const createInvite = async (event: FormEvent) => {
@@ -125,10 +168,15 @@ export default function AdminSettings() {
     setMessage(response.ok ? `Password reset link created: ${data.reset_url}` : data.detail ?? 'Failed to create reset link')
   }
 
+  const applyLogFilters = async (event: FormEvent) => {
+    event.preventDefault()
+    await loadLogs()
+  }
+
   return (
     <main className="mx-auto max-w-6xl px-6 py-6">
       <h1 className="text-2xl font-semibold text-gray-900">Admin Settings</h1>
-      <p className="mt-1 text-sm text-gray-500">User management, invite onboarding, and password resets.</p>
+      <p className="mt-1 text-sm text-gray-500">User management, invite onboarding, password resets, and Beds24 webhook logs.</p>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-gray-900">Generate invite link</h2>
@@ -167,6 +215,66 @@ export default function AdminSettings() {
                     <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => copyInvite(invite)} type="button" disabled={!invite.invite_url}>Copy link</button>
                     <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => revokeInvite(invite.id)} type="button" disabled={invite.status === 'revoked' || invite.status === 'completed'}>Revoke</button>
                     <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => regenerateInvite(invite.id)} type="button" disabled={invite.status === 'completed'}>Regenerate</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">Beds24 Webhook Logs</h2>
+        <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={applyLogFilters}>
+          <select className="rounded-xl border border-gray-300 px-4 py-3" value={logStatus} onChange={(e) => setLogStatus(e.target.value)}>
+            {logStatuses.map((status) => (
+              <option key={status || 'all'} value={status}>{status || 'All statuses'}</option>
+            ))}
+          </select>
+          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Event type" value={logEventType} onChange={(e) => setLogEventType(e.target.value)} />
+          <input className="rounded-xl border border-gray-300 px-4 py-3" type="datetime-local" value={logStart} onChange={(e) => setLogStart(e.target.value)} />
+          <input className="rounded-xl border border-gray-300 px-4 py-3" type="datetime-local" value={logEnd} onChange={(e) => setLogEnd(e.target.value)} />
+          <button className="rounded-xl bg-gray-900 px-4 py-3 font-semibold text-white md:col-span-4">Apply filters</button>
+        </form>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="text-left text-gray-500">
+              <tr>
+                <th className="py-2">Received</th><th>Event</th><th>Booking</th><th>Room</th><th>Tenant</th><th>Status</th><th>HTTP</th><th>Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {webhookLogs.map((log) => (
+                <tr key={log.id} className="border-t border-gray-100 align-top">
+                  <td className="py-3">{new Date(log.received_at).toLocaleString()}</td>
+                  <td>{log.event_type ?? '-'}</td>
+                  <td>{log.booking_id ?? '-'}</td>
+                  <td>{log.room_id ?? '-'}</td>
+                  <td>{log.tenant_id ?? '-'}</td>
+                  <td>{log.status}</td>
+                  <td>{log.http_status ?? '-'}</td>
+                  <td className="max-w-xs">
+                    <button className="text-left text-cyan-700 underline" type="button" onClick={() => setExpandedLogId((current) => (current === log.id ? null : log.id))}>
+                      {log.result_message ?? log.error_summary ?? 'View details'}
+                    </button>
+                    {expandedLogId === log.id ? (
+                      <div className="mt-3 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+                        <div>
+                          <div className="font-semibold text-gray-900">Raw payload</div>
+                          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{formatJson(log.raw_payload)}</pre>
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900">Parsed fields</div>
+                          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{formatJson(log.parsed_fields)}</pre>
+                        </div>
+                        {log.error_traceback ? (
+                          <div>
+                            <div className="font-semibold text-gray-900">Error details</div>
+                            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{log.error_traceback}</pre>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </td>
                 </tr>
               ))}
