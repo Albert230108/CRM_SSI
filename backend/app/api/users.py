@@ -45,6 +45,8 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         user.email = payload.email
     if payload.full_name is not None:
         user.full_name = payload.full_name
+    if payload.phone is not None:
+        user.phone = payload.phone
     if payload.password is not None:
         user.password_hash = get_password_hash(payload.password)
     if payload.is_active is not None:

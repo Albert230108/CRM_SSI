@@ -34,6 +34,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/invite/:token" element={<InvitationSetup />} />
+      <Route path="/invites/:token" element={<InvitationSetup />} />
       <Route path="/reset-password/:token" element={<PasswordReset />} />
       <Route
         path="/*"

@@ -7,50 +7,105 @@ type UserRow = {
   id: number
   email: string
   full_name: string | null
+  phone: string | null
   is_active: boolean
   is_admin: boolean
   created_at: string
 }
 
+type InviteRow = {
+  id: number
+  email: string | null
+  full_name: string | null
+  phone: string | null
+  role: 'admin' | 'non-admin'
+  status: 'pending' | 'completed' | 'expired' | 'revoked'
+  invite_url: string | null
+  expires_at: string
+  used_at: string | null
+  revoked_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export default function AdminSettings() {
   const token = useAuthStore((state) => state.token)
   const [users, setUsers] = useState<UserRow[]>([])
+  const [invites, setInvites] = useState<InviteRow[]>([])
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName] = useState('')
-  const [inviteAdmin, setInviteAdmin] = useState(false)
-  const [inviteUrl, setInviteUrl] = useState('')
+  const [invitePhone, setInvitePhone] = useState('')
+  const [inviteRole, setInviteRole] = useState<'admin' | 'non-admin'>('non-admin')
   const [message, setMessage] = useState('')
 
   useEffect(() => {
     const load = async () => {
-      const response = await fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
-      if (response.ok) setUsers(await response.json())
+      const [usersResponse, invitesResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+        fetch(`${API_BASE_URL}/api/admin/invites`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+      ])
+      if (usersResponse.ok) setUsers(await usersResponse.json())
+      if (invitesResponse.ok) setInvites(await invitesResponse.json())
     }
     load()
   }, [token])
 
   const refresh = async () => {
-    const response = await fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
-    if (response.ok) setUsers(await response.json())
+    const [usersResponse, invitesResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+      fetch(`${API_BASE_URL}/api/admin/invites`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+    ])
+    if (usersResponse.ok) setUsers(await usersResponse.json())
+    if (invitesResponse.ok) setInvites(await invitesResponse.json())
   }
 
   const createInvite = async (event: FormEvent) => {
     event.preventDefault()
     setMessage('')
-    setInviteUrl('')
-    const response = await fetch(`${API_BASE_URL}/api/users/invite`, {
+    const response = await fetch(`${API_BASE_URL}/api/admin/invites`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ email: inviteEmail, full_name: inviteName || null, is_admin: inviteAdmin }),
+      body: JSON.stringify({ email: inviteEmail || null, full_name: inviteName || null, phone: invitePhone || null, role: inviteRole }),
     })
     const data = await response.json()
     if (!response.ok) {
       setMessage(data.detail ?? 'Failed to create invite')
       return
     }
-    setInviteUrl(data.invite_url)
-    setMessage('Invitation created')
+    if (data.invite_url) {
+      await navigator.clipboard.writeText(data.invite_url).catch(() => undefined)
+      setInvites((current) => [{ ...data }, ...current.filter((invite) => invite.id !== data.id)])
+      setMessage(`Invitation created and copied: ${data.invite_url}`)
+    } else {
+      setMessage('Invitation created')
+    }
+    setInviteEmail('')
+    setInviteName('')
+    setInvitePhone('')
+    setInviteRole('non-admin')
     await refresh()
+  }
+
+  const copyInvite = async (invite: InviteRow) => {
+    if (!invite.invite_url) return
+    await navigator.clipboard.writeText(invite.invite_url)
+    setMessage('Invite link copied')
+  }
+
+  const revokeInvite = async (inviteId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/admin/invites/${inviteId}/revoke`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) await refresh()
+  }
+
+  const regenerateInvite = async (inviteId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/admin/invites/${inviteId}/regenerate`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) await refresh()
   }
 
   const toggleActive = async (userId: number) => {
@@ -73,18 +128,51 @@ export default function AdminSettings() {
   return (
     <main className="mx-auto max-w-6xl px-6 py-6">
       <h1 className="text-2xl font-semibold text-gray-900">Admin Settings</h1>
-      <p className="mt-1 text-sm text-gray-500">User management, invitations, and password resets.</p>
+      <p className="mt-1 text-sm text-gray-500">User management, invite onboarding, and password resets.</p>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
-        <h2 className="text-lg font-semibold text-gray-900">Invite user</h2>
-        <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={createInvite}>
-          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} required />
+        <h2 className="text-lg font-semibold text-gray-900">Generate invite link</h2>
+        <form className="mt-4 grid gap-3 md:grid-cols-5" onSubmit={createInvite}>
+          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Email (optional)" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
           <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Full name" value={inviteName} onChange={(e) => setInviteName(e.target.value)} />
-          <label className="flex items-center gap-2 rounded-xl border border-gray-300 px-4 py-3 text-sm text-gray-700"><input type="checkbox" checked={inviteAdmin} onChange={(e) => setInviteAdmin(e.target.checked)} /> Admin</label>
-          <button className="rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white">Create invite</button>
+          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Phone" value={invitePhone} onChange={(e) => setInvitePhone(e.target.value)} />
+          <select className="rounded-xl border border-gray-300 px-4 py-3" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'admin' | 'non-admin')}>
+            <option value="non-admin">Non-admin</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button className="rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white">Generate invite link</button>
         </form>
-        {inviteUrl ? <p className="mt-3 break-all text-sm text-cyan-700">{inviteUrl}</p> : null}
-        {message ? <p className="mt-2 text-sm text-gray-600">{message}</p> : null}
+        {message ? <p className="mt-3 text-sm text-gray-600">{message}</p> : null}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">Invite management</h2>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="text-left text-gray-500">
+              <tr>
+                <th className="py-2">Email</th><th>Name</th><th>Phone</th><th>Role</th><th>Status</th><th>Expires</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invites.map((invite) => (
+                <tr key={invite.id} className="border-t border-gray-100">
+                  <td className="py-3">{invite.email ?? '-'}</td>
+                  <td>{invite.full_name ?? '-'}</td>
+                  <td>{invite.phone ?? '-'}</td>
+                  <td>{invite.role}</td>
+                  <td>{invite.status}</td>
+                  <td>{new Date(invite.expires_at).toLocaleString()}</td>
+                  <td className="space-x-2 py-3">
+                    <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => copyInvite(invite)} type="button" disabled={!invite.invite_url}>Copy link</button>
+                    <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => revokeInvite(invite.id)} type="button" disabled={invite.status === 'revoked' || invite.status === 'completed'}>Revoke</button>
+                    <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => regenerateInvite(invite.id)} type="button" disabled={invite.status === 'completed'}>Regenerate</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
@@ -93,7 +181,7 @@ export default function AdminSettings() {
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="py-2">Name</th><th>Email</th><th>Status</th><th>Role</th><th>Created</th><th>Actions</th>
+                <th className="py-2">Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Role</th><th>Created</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -101,6 +189,7 @@ export default function AdminSettings() {
                 <tr key={user.id} className="border-t border-gray-100">
                   <td className="py-3">{user.full_name ?? '-'}</td>
                   <td>{user.email}</td>
+                  <td>{user.phone ?? '-'}</td>
                   <td>{user.is_active ? 'Active' : 'Inactive'}</td>
                   <td>{user.is_admin ? 'Admin' : 'User'}</td>
                   <td>{new Date(user.created_at).toLocaleString()}</td>
