@@ -1,6 +1,6 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
-import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
+import { getDirectoryHandleForUser } from '../lib/fileHandleStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -35,9 +35,6 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [unsupported, setUnsupported] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [stagedHandle, setStagedHandle] = useState<FileSystemDirectoryHandle | null>(null)
-  const [permissionState, setPermissionState] = useState<'granted' | 'prompt' | 'denied' | null>(null)
 
   useEffect(() => {
     setUnsupported(typeof window === 'undefined' || typeof window.showDirectoryPicker !== 'function')
@@ -164,18 +161,9 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
 
         if (perm === 'granted') {
           setRootHandle(savedHandle)
-          setPermissionState('granted')
-        } else if (perm === 'prompt') {
-          setRootHandle(savedHandle)
-          setPermissionState('prompt')
-        } else {
-          setRootHandle(null)
-          setPermissionState('denied')
         }
       } catch {
-        if (cancelled) return
-        setRootHandle(null)
-        setPermissionState('denied')
+        return
       }
     }
 
@@ -183,8 +171,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
     setYearHandle(null)
     setTenantHandle(null)
     setItems([])
-    setPermissionState(null)
-    setStagedHandle(null)
+    setError('')
     restoreHandle()
 
     return () => {
@@ -193,61 +180,10 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
   }, [userKey])
 
   useEffect(() => {
-    if (!rootHandle || permissionState !== 'granted' || !tenantBookingId) return
-    void resolveTenantFiles(rootHandle)
-  }, [tenantBookingId, rootHandle, permissionState])
-
-  const handleStageFolder = async () => {
-    if (unsupported) {
-      setError('Local folder access is not supported in this browser.')
-      return
+    if (rootHandle && tenantBookingId) {
+      void resolveTenantFiles(rootHandle)
     }
-
-    try {
-      const directoryPicker = window as Window & { showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle> }
-      const selectedRoot = await directoryPicker.showDirectoryPicker?.({ mode: 'read' })!
-      setStagedHandle(selectedRoot)
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      setError(err instanceof Error ? err.message : 'Failed to choose folder')
-    }
-  }
-
-  const handleSave = async () => {
-    if (!stagedHandle) return
-    await setDirectoryHandleForUser(userKey, stagedHandle)
-    setRootHandle(stagedHandle)
-    setPermissionState('granted')
-    setStagedHandle(null)
-    setSettingsOpen(false)
-    if (tenantBookingId) {
-      await resolveTenantFiles(stagedHandle)
-    }
-  }
-
-  const handleClear = async () => {
-    await clearDirectoryHandleForUser(userKey)
-    setRootHandle(null)
-    setYearHandle(null)
-    setTenantHandle(null)
-    setItems([])
-    setError('')
-    setPermissionState(null)
-    setStagedHandle(null)
-  }
-
-  const handleReconnect = async () => {
-    if (!rootHandle) return
-    try {
-      const perm = await rootHandle.requestPermission({ mode: 'read' })
-      setPermissionState(perm as 'granted' | 'prompt' | 'denied')
-      if (perm === 'granted' && tenantBookingId) {
-        await resolveTenantFiles(rootHandle)
-      }
-    } catch {
-      setPermissionState('denied')
-    }
-  }
+  }, [rootHandle, tenantBookingId])
 
   const handleOpenFile = async (fileHandle: FileSystemFileHandle) => {
     try {
@@ -266,59 +202,10 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Files</h2>
           <p className="mt-1 text-sm text-gray-500">
-            {!tenantId ? 'No tenant selected' : unsupported ? 'Local folder access is not supported in this browser.' : tenantBookingId ? `Booking ${tenantBookingId}` : 'Loading tenant...'}
+            {!tenantId ? 'No tenant selected' : unsupported ? 'Local folder access is not supported in this browser.' : !rootHandle ? 'No folder configured - go to Settings to connect a local folder.' : tenantBookingId ? `Booking ${tenantBookingId}` : 'Loading tenant...'}
           </p>
         </div>
-        {!unsupported ? (
-          <button
-            type="button"
-            onClick={() => setSettingsOpen((value) => !value)}
-            className="rounded-xl border border-gray-200 bg-white p-2 text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
-            aria-label="Folder settings"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
-              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 0 1-4 0v-.05a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 0 1 0-4h.05a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.05-.05a2 2 0 0 1 2.83-2.83l.05.05A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 0 1 4 0v.05a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.05-.05a2 2 0 0 1 2.83 2.83l-.05.05A1.7 1.7 0 0 0 19.4 9c.58.23.96.79.96 1.4v.2c0 .61-.38 1.17-.96 1.4Z" />
-            </svg>
-          </button>
-        ) : null}
       </div>
-
-      {settingsOpen && !unsupported ? (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            {rootHandle ? (
-              <p className="text-gray-700">{"\u{1F4C1}"} {rootHandle.name}</p>
-            ) : (
-              <p className="text-gray-500">No folder selected</p>
-            )}
-            {rootHandle && permissionState === 'granted' ? <span className="text-emerald-600">Connected</span> : null}
-            {rootHandle && permissionState === 'prompt' ? (
-              <button type="button" onClick={handleReconnect} className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-700">
-                Reconnect
-              </button>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={handleStageFolder} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-500">
-              Choose folder
-            </button>
-            {stagedHandle ? (
-              <>
-                <p className="self-center text-sm text-gray-500">Staged: {stagedHandle.name}</p>
-                <button type="button" onClick={handleSave} className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-700">
-                  Save
-                </button>
-              </>
-            ) : null}
-            {rootHandle ? (
-              <button type="button" onClick={handleClear} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">
-                Clear
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
 
       {loading ? <p className="text-sm text-gray-500">Loading...</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
@@ -337,7 +224,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
                   <p className="font-medium text-gray-900">{item.name}</p>
                   <p className="mt-1 text-xs uppercase tracking-[0.2em] text-gray-500">
                     {item.kind}
-                    {item.size !== undefined ? ` · ${item.size} bytes` : ''}
+                    {item.size !== undefined ? ` - ${item.size} bytes` : ''}
                   </p>
                 </div>
                 {item.kind === 'file' ? (
@@ -359,5 +246,3 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
     </div>
   )
 }
-
-
