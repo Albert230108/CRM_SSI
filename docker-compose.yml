@@ -31,7 +31,7 @@ services:
     build:
       context: ./frontend
     expose:
-      - "5173"
+      - "80"
     depends_on:
       - backend
 
@@ -43,7 +43,6 @@ services:
       - backend
       - frontend
     ports:
-      - '2500:80'
       - "80:80"
       - "443:443"
     volumes:
