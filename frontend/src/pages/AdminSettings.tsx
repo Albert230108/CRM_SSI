@@ -111,6 +111,21 @@ export default function AdminSettings() {
     load()
   }, [token])
 
+  useEffect(() => {
+    const refreshOnUsersUpdated = () => {
+      refresh()
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'crmssi:users-updated') refreshOnUsersUpdated()
+    }
+    window.addEventListener('focus', refreshOnUsersUpdated)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener('focus', refreshOnUsersUpdated)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [token])
+
   const refresh = async () => {
     const [usersResponse, invitesResponse] = await Promise.all([
       fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),

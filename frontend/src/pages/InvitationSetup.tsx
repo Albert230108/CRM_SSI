@@ -6,7 +6,6 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type InviteInfo = {
   email: string | null
-  full_name: string | null
   phone: string | null
   role: 'admin' | 'non-admin'
   expires_at: string
@@ -21,7 +20,6 @@ export default function InvitationSetup() {
   const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
-  const [fullName, setFullName] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [error, setError] = useState('')
@@ -38,7 +36,6 @@ export default function InvitationSetup() {
       }
       setInvite(data)
       setEmail(data.email ?? '')
-      setFullName(data.full_name ?? '')
       setPhone(data.phone ?? '')
     }
     load()
@@ -53,7 +50,6 @@ export default function InvitationSetup() {
       body: JSON.stringify({
         first_name: firstName || null,
         last_name: lastName || null,
-        full_name: fullName || null,
         email: email || null,
         phone: phone || null,
         password,
@@ -62,6 +58,7 @@ export default function InvitationSetup() {
     })
     const data = await response.json()
     if (!response.ok) return setError(data.detail ?? 'Failed to complete invitation')
+    localStorage.setItem('crmssi:users-updated', String(Date.now()))
     setAuth(data.access_token)
     setSuccess('Account created successfully. Redirecting...')
     setTimeout(() => navigate('/', { replace: true }), 1200)
@@ -76,7 +73,6 @@ export default function InvitationSetup() {
           <input className="w-full rounded-xl border px-4 py-3" placeholder="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           <input className="w-full rounded-xl border px-4 py-3" placeholder="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
         </div>
-        <input className="w-full rounded-xl border px-4 py-3" placeholder="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
         <input className="w-full rounded-xl border px-4 py-3" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <input className="w-full rounded-xl border px-4 py-3" placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
         <input className="w-full rounded-xl border px-4 py-3" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />

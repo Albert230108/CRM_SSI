@@ -50,8 +50,7 @@ def complete_invite(token: str, payload: InvitationComplete, db: Session = Depen
 
     first_name = (payload.first_name or "").strip()
     last_name = (payload.last_name or "").strip()
-    full_name = (payload.full_name or "").strip()
-    resolved_name = full_name or " ".join(part for part in [first_name, last_name] if part).strip() or invite.full_name
+    resolved_name = " ".join(part for part in [first_name, last_name] if part).strip() or invite.full_name
     resolved_email = (payload.email or invite.email or "").strip()
     if not resolved_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
