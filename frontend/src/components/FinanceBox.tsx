@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { formatDisplayDate } from '../lib/date'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -57,6 +58,10 @@ type FinanceResponse = {
     roomName?: string | null
     accommodation_id?: number | string | null
     accommodationId?: number | string | null
+    property_name?: string | null
+    propertyName?: string | null
+    property?: string | null
+    beds24_raw?: Record<string, unknown> | null
   }
   charges: FinanceItem[]
   payments: FinanceItem[]
@@ -132,10 +137,58 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     return null
   }
 
-  const getPropertyForRoom = (roomName: string | null): string | null => {
+  const getPropertyForRoom = (roomName: string | null, propertyName?: string | null): string | null => {
+    const explicitProperty = propertyName?.trim()
+    if (explicitProperty) return explicitProperty
     if (!roomName) return null
     const entry = Object.entries(PROPERTY_ROOMS).find(([, rooms]) => rooms.includes(roomName))
     return entry ? entry[0] : null
+  }
+
+  const readFirstString = (...values: unknown[]): string | null => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+    return null
+  }
+
+  const readRoomAndProperty = (tenantData: TenantSummary | null) => {
+    const raw = tenantData?.beds24_raw
+    const rawObject = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+    const rawRoomName = rawObject
+      ? readFirstString(
+          rawObject.roomName,
+          rawObject.room_name,
+          rawObject.unitName,
+          rawObject.unit_name,
+          rawObject.propName,
+          rawObject.propertyName,
+          rawObject.property_name,
+          rawObject.unit,
+        )
+      : null
+    const rawPropertyName = rawObject
+      ? readFirstString(
+          rawObject.propertyName,
+          rawObject.property_name,
+          rawObject.propName,
+          rawObject.property,
+        )
+      : null
+    const roomName = readFirstString(
+      tenantData?.room_name,
+      tenantData?.roomName,
+      rawRoomName,
+      roomIdToName(tenantData?.room_id ?? tenantData?.roomId ?? tenantData?.accommodation_id ?? tenantData?.accommodationId),
+    )
+    const propertyName = readFirstString(
+      tenantData?.property_name,
+      tenantData?.propertyName,
+      tenantData?.property,
+      rawPropertyName,
+      getPropertyForRoom(roomName, rawPropertyName),
+    )
+    return { roomName, propertyName }
   }
 
   const getDisplayGuestName = (tenantData: TenantSummary | null): string => {
@@ -148,14 +201,9 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     return 'Unknown guest'
   }
 
-  const formatDisplayDate = (value?: string | null): string => {
-    if (!value) return 'Not set'
-    const parsed = new Date(value)
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString()
-  }
-
-  const summaryRoomName = tenant?.room_name || tenant?.roomName || roomIdToName(tenant?.room_id ?? tenant?.roomId ?? tenant?.accommodation_id ?? tenant?.accommodationId) || null
-  const summaryProperty = getPropertyForRoom(summaryRoomName) || 'Unknown property'
+  const roomSummary = readRoomAndProperty(tenant)
+  const summaryRoomName = roomSummary.roomName
+  const summaryProperty = roomSummary.propertyName || 'Unknown property'
   const summaryRoom = summaryRoomName || 'Unknown room'
   const summaryName = getDisplayGuestName(tenant)
   const summaryCheckIn = formatDisplayDate(tenant?.check_in)
@@ -180,7 +228,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl font-semibold text-gray-900">Finance</h2>
+        <h2 className="text-xl font-semibold text-gray-900">Tenant Info</h2>
       </div>
 
       {loading ? <p className="text-sm text-gray-500">Loading finance...</p> : null}
@@ -247,7 +295,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
                     {charges.map((item) => (
                       <tr key={item.id} className="border-t border-gray-200">
                         <td className="px-3 py-3 text-gray-500">
-                          {new Date(item.created_at).toLocaleDateString()}
+                          {formatDisplayDate(item.created_at)}
                         </td>
                         <td className="px-3 py-3 text-gray-900">{item.description || 'Charge'}</td>
                         <td className="px-3 py-3 font-medium text-rose-600">
@@ -267,7 +315,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
                     {payments.map((item) => (
                       <tr key={item.id} className="border-t border-gray-200">
                         <td className="px-3 py-3 text-gray-500">
-                          {new Date(item.created_at).toLocaleDateString()}
+                          {formatDisplayDate(item.created_at)}
                         </td>
                         <td className="px-3 py-3 text-gray-900">{item.description || 'Payment'}</td>
                         <td className="px-3 py-3 font-medium text-emerald-600">

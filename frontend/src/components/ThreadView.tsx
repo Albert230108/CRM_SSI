@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { formatDisplayDate } from '../lib/date'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -137,7 +138,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                   <span className={`rounded-full px-2 py-1 font-semibold ${isEmail ? 'bg-amber-100 text-amber-700' : 'bg-cyan-100 text-cyan-700'}`}>
                     {isEmail ? 'Email' : 'WhatsApp'}
                   </span>
-                  <span>{new Date(item.created_at).toLocaleString()}</span>
+                  <span>{formatDisplayDate(item.created_at)}</span>
                 </div>
                 {item.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{item.subject}</p> : null}
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{item.message}</p>

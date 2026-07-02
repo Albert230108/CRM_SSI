@@ -66,6 +66,48 @@ ROOM_ID_MAPPING = {
     "Duplex Apartment": 286739,
 }
 
+PROPERTY_ROOMS = {
+    "Central-Day Inn": ["Studio 1", "Studio 2", "Studio 3", "Studio 4", "Studio 5", "Studio 6"],
+    "Ensche-Day Inn": ["Room 1", "Room 2", "Room 3", "Room 4", "Room 5"],
+    "Guest information": ["Under Request"],
+    "Hoogstraat 69": ["Ground floor", "Upper floor"],
+    "Blekerstraat": ["House"],
+    "Atjehstraat": ["Duplex Apartment"],
+}
+
+def _extract_room_details(item: dict) -> dict[str, str | int | None]:
+    room_name = str(
+        item.get("roomName")
+        or item.get("room_name")
+        or item.get("unitName")
+        or item.get("unit_name")
+        or item.get("propName")
+        or item.get("propertyName")
+        or item.get("property_name")
+        or item.get("property")
+        or item.get("unit")
+        or ""
+    ).strip() or None
+    room_id_raw = item.get("roomId") or item.get("room_id") or item.get("accommodationId") or item.get("accommodation_id") or item.get("unitId") or item.get("unit_id")
+    try:
+        room_id = int(room_id_raw) if room_id_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        room_id = None
+    property_name = str(
+        item.get("propertyName")
+        or item.get("property_name")
+        or item.get("propName")
+        or item.get("property")
+        or ""
+    ).strip() or None
+    if not property_name and room_name:
+        property_name = next((property_label for property_label, rooms in PROPERTY_ROOMS.items() if room_name in rooms), None)
+    if not room_name and room_id is not None:
+        room_name = next((name for name, mapped_id in ROOM_ID_MAPPING.items() if mapped_id == room_id), None)
+    return {"room_name": room_name, "room_id": room_id, "property_name": property_name}
+
+
+
 
 def _extract_guest_fields(item: dict) -> dict:
     # Beds24 v2: guest data may be in guestDetails sub-object, guests list, OR top-level.
@@ -119,7 +161,8 @@ def _extract_guest_fields(item: dict) -> dict:
         num_nights = None
     arrival_time = str(item.get("arrivalTime") or item.get("checkInTime") or "").strip() or None
     departure_time = str(item.get("departureTime") or item.get("checkOutTime") or "").strip() or None
-    room_name = str(item.get("roomName") or item.get("unitName") or item.get("propName") or "").strip() or None
+    room_details = _extract_room_details(item)
+    room_name = room_details["room_name"]
     source = str(item.get("source") or item.get("channel") or item.get("referer2") or item.get("portalId") or "").strip() or None
     referer = str(item.get("referer") or item.get("referralSource") or "").strip() or None
     try:
@@ -189,11 +232,7 @@ def _extract_guest_fields(item: dict) -> dict:
     ).strip() or None
     check_in = str(item.get("arrival") or item.get("checkIn") or item.get("arrivalDate") or "").strip() or None
     check_out = str(item.get("departure") or item.get("checkOut") or item.get("departureDate") or "").strip() or None
-    room_id_raw = item.get("roomId") or item.get("room_id") or item.get("accommodationId") or item.get("accommodation_id")
-    try:
-        room_id = int(room_id_raw) if room_id_raw not in (None, "") else None
-    except (TypeError, ValueError):
-        room_id = None
+    room_id = room_details["room_id"]
     notes = str(item.get("comments") or item.get("comment") or item.get("note") or item.get("message") or "").strip() or None
     info_items = item.get("infoItems") or item.get("infoCodes") or []
     responsible_comm = None
@@ -255,6 +294,7 @@ def _extract_guest_fields(item: dict) -> dict:
         "notes": notes,
         "responsible_comm": responsible_comm,
         "room_id": room_id,
+        "property_name": room_details["property_name"],
     }
 async def _get_graph_access_token() -> str:
     tenant_id = os.getenv("MS_GRAPH_TENANT_ID")
@@ -349,8 +389,9 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
             "created_at": item.created_at,
         }
 
+    room_details = _extract_room_details(tenant.beds24_raw or {})
     return {
-        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name, "room_id": tenant.room_id},
+        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name, "room_id": tenant.room_id, "room_name": tenant.room_name or room_details["room_name"], "property_name": room_details["property_name"], "check_in": tenant.check_in, "check_out": tenant.check_out, "beds24_raw": tenant.beds24_raw},
         "charges": [_fmt(item) for item in items if item.type == "charge"],
         "payments": [_fmt(item) for item in items if item.type == "payment"],
     }
@@ -402,8 +443,9 @@ async def get_tenant_onedrive_files(
             "last_modified": item.get("lastModifiedDateTime"),
         })
 
+    room_details = _extract_room_details(tenant.beds24_raw or {})
     return {
-        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name, "room_id": tenant.room_id},
+        "tenant": {"id": tenant.id, "booking_id": tenant.booking_id, "name": tenant.name, "room_id": tenant.room_id, "room_name": tenant.room_name or room_details["room_name"], "property_name": room_details["property_name"], "check_in": tenant.check_in, "check_out": tenant.check_out, "beds24_raw": tenant.beds24_raw},
         "folder_path": folder_path,
         "items": result,
     }

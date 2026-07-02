@@ -44,3 +44,24 @@ class Tenant(Base):
 
 
 
+
+    @property
+    def property_name(self) -> str | None:
+        raw = self.beds24_raw or {}
+        if isinstance(raw, dict):
+            value = raw.get("propertyName") or raw.get("property_name") or raw.get("propName") or raw.get("property")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if self.room_name in {"Studio 1", "Studio 2", "Studio 3", "Studio 4", "Studio 5", "Studio 6"}:
+            return "Central-Day Inn"
+        if self.room_name in {"Room 1", "Room 2", "Room 3", "Room 4", "Room 5"}:
+            return "Ensche-Day Inn"
+        if self.room_name == "Under Request":
+            return "Guest information"
+        if self.room_name in {"Ground floor", "Upper floor"}:
+            return "Hoogstraat 69"
+        if self.room_name == "House":
+            return "Blekerstraat"
+        if self.room_name == "Duplex Apartment":
+            return "Atjehstraat"
+        return None

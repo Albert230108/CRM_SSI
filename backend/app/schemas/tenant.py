@@ -24,6 +24,7 @@ class TenantCreate(BaseModel):
     arrival_time: str | None = None
     departure_time: str | None = None
     room_name: str | None = None
+    property_name: str | None = None
     source: str | None = None
     referer: str | None = None
     total_price: float | None = None
@@ -60,6 +61,7 @@ class TenantRead(BaseModel):
     arrival_time: str | None = None
     departure_time: str | None = None
     room_name: str | None = None
+    property_name: str | None = None
     source: str | None = None
     referer: str | None = None
     total_price: float | None = None
@@ -99,6 +101,7 @@ class Beds24BookingPreview(BaseModel):
     arrival_time: str | None = None
     departure_time: str | None = None
     room_name: str | None = None
+    property_name: str | None = None
     source: str | None = None
     referer: str | None = None
     total_price: float | None = None
