@@ -181,7 +181,6 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Finance</h2>
-        <p className="mt-1 text-sm text-gray-500">{tenantId ? `Booking ${tenantId}` : 'Select a tenant'}</p>
       </div>
 
       {loading ? <p className="text-sm text-gray-500">Loading finance...</p> : null}
@@ -286,3 +285,4 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     </div>
   )
 }
+
