@@ -6,7 +6,11 @@ from pydantic import BaseModel, ConfigDict
 
 class Beds24WebhookLogRead(BaseModel):
     id: int
+    provider: str
     received_at: datetime
+    processed_at: datetime | None = None
+    dedupe_key: str
+    external_event_id: str | None = None
     event_type: str | None = None
     status: str
     booking_id: str | None = None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import traceback
 from datetime import datetime, timezone
@@ -7,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.tenants import ROOM_ID_MAPPING, _extract_guest_fields
@@ -33,6 +35,11 @@ def _extract_booking_id(payload: dict[str, Any]) -> str | None:
     return str(value).strip() if value is not None and str(value).strip() else None
 
 
+def _extract_external_event_id(payload: dict[str, Any]) -> str | None:
+    value = payload.get("eventId") or payload.get("event_id") or payload.get("webhookId") or payload.get("webhook_id")
+    return str(value).strip() if value is not None and str(value).strip() else None
+
+
 def _is_authorized(request: Request, payload: dict[str, Any]) -> bool:
     expected_secret = os.getenv("BEDS24_WEBHOOK_SECRET", "")
     if not expected_secret:
@@ -41,6 +48,23 @@ def _is_authorized(request: Request, payload: dict[str, Any]) -> bool:
     header_secret = request.headers.get("X-Beds24-Secret")
     body_secret = payload.get("secret")
     return expected_secret in {query_secret, header_secret, body_secret}
+
+
+def _dedupe_key(event_type: str | None, booking_id: str | None, external_event_id: str | None, payload: dict[str, Any]) -> str:
+    if external_event_id:
+        return f"event:{external_event_id}"
+    digest = hashlib.sha256(repr(sorted(payload.items())).encode("utf-8")).hexdigest()
+    return f"booking:{booking_id or 'unknown'}:event:{event_type or 'unknown'}:hash:{digest}"
+
+
+def _summarize_payload(payload: dict[str, Any], booking_id: str | None, event_type: str | None, room_id: Any, tenant_id: Any) -> dict[str, Any]:
+    return {
+        "booking_id": booking_id,
+        "event_type": event_type,
+        "room_id": str(room_id) if room_id is not None else None,
+        "tenant_id": tenant_id,
+        "keys": sorted(list(payload.keys()))[:25],
+    }
 
 
 @router.get("/admin/logs", response_model=list[Beds24WebhookLogRead], dependencies=[Depends(get_current_admin_user)])
@@ -64,6 +88,14 @@ def list_beds24_webhook_logs(
     return query.order_by(Beds24WebhookLog.received_at.desc(), Beds24WebhookLog.id.desc()).limit(limit).all()
 
 
+@router.get("/admin/logs/{log_id}", response_model=Beds24WebhookLogRead, dependencies=[Depends(get_current_admin_user)])
+def get_beds24_webhook_log(log_id: int, db: Session = Depends(get_db)) -> Beds24WebhookLog:
+    log = db.query(Beds24WebhookLog).filter(Beds24WebhookLog.id == log_id).first()
+    if log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Log not found")
+    return log
+
+
 @router.post("")
 async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, str]:
     payload = await request.json()
@@ -73,14 +105,40 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     booking_id = _extract_booking_id(payload)
+    external_event_id = _extract_external_event_id(payload)
     event = str(payload.get("event") or payload.get("type") or payload.get("action") or "").lower()
+    dedupe_key = _dedupe_key(event or None, booking_id, external_event_id, payload)
+
+    existing = db.query(Beds24WebhookLog).filter(Beds24WebhookLog.provider == "beds24", Beds24WebhookLog.dedupe_key == dedupe_key).first()
+    if existing is not None:
+        duplicate = Beds24WebhookLog(
+            provider="beds24",
+            received_at=datetime.now(timezone.utc),
+            processed_at=datetime.now(timezone.utc),
+            dedupe_key=dedupe_key,
+            external_event_id=external_event_id,
+            event_type=event or None,
+            status="duplicate",
+            booking_id=booking_id,
+            raw_payload=payload,
+            parsed_fields=_summarize_payload(payload, booking_id, event or None, None, None),
+            http_status=200,
+            result_message="duplicate delivery ignored",
+        )
+        db.add(duplicate)
+        db.commit()
+        return {"status": "ok", "detail": "duplicate delivery ignored"}
+
     log = Beds24WebhookLog(
+        provider="beds24",
         received_at=datetime.now(timezone.utc),
+        dedupe_key=dedupe_key,
+        external_event_id=external_event_id,
         event_type=event or None,
         status="received",
         booking_id=booking_id,
         raw_payload=payload,
-        parsed_fields={},
+        parsed_fields=_summarize_payload(payload, booking_id, event or None, None, None),
     )
     db.add(log)
     db.flush()
@@ -89,6 +147,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         log.status = "failed"
         log.http_status = 400
         log.error_summary = "Missing booking_id"
+        log.processed_at = datetime.now(timezone.utc)
         db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing booking_id")
 
@@ -99,6 +158,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
             log.status = "ignored"
             log.http_status = 200
             log.result_message = "booking not found in Beds24"
+            log.processed_at = datetime.now(timezone.utc)
             db.commit()
             return {"status": "ok", "detail": "booking not found in Beds24"}
 
@@ -111,6 +171,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
                 log.status = "ignored"
                 log.http_status = 200
                 log.result_message = "cancellation for unknown booking, skipped"
+                log.processed_at = datetime.now(timezone.utc)
                 db.commit()
                 return {"status": "ok", "detail": "cancellation for unknown booking, skipped"}
             tenant = Tenant(booking_id=booking_id, name=fields.get("name") or booking_id)
@@ -170,7 +231,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         db.flush()
         log.tenant_id = tenant.id
         log.room_id = str(room_id) if room_id is not None else None
-        log.parsed_fields = fields
+        log.parsed_fields = _summarize_payload(payload, booking_id, event or None, room_id, tenant.id)
 
         invoice_items = booking.get("invoiceItems") or []
         if invoice_items:
@@ -199,6 +260,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         log.status = "processed"
         log.http_status = 200
         log.result_message = "tenant upserted"
+        log.processed_at = datetime.now(timezone.utc)
         db.commit()
         return {"status": "ok", "booking_id": booking_id}
     except Exception as exc:
@@ -207,6 +269,10 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         log.http_status = 500
         log.error_summary = str(exc).strip()[:500]
         log.error_traceback = traceback.format_exc()
+        log.processed_at = datetime.now(timezone.utc)
         db.add(log)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
         raise

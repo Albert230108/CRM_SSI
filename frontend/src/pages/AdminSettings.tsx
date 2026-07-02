@@ -30,7 +30,11 @@ type InviteRow = {
 
 type Beds24WebhookLogRow = {
   id: number
+  provider: string
   received_at: string
+  processed_at: string | null
+  dedupe_key: string
+  external_event_id: string | null
   event_type: string | null
   status: string
   booking_id: string | null
@@ -48,6 +52,21 @@ const logStatuses = ['', 'received', 'processed', 'failed', 'ignored', 'duplicat
 
 function formatJson(value: unknown) {
   return JSON.stringify(value ?? null, null, 2)
+}
+
+function statusClass(status: string) {
+  switch (status) {
+    case 'processed':
+      return 'bg-emerald-100 text-emerald-800'
+    case 'failed':
+      return 'bg-red-100 text-red-800'
+    case 'ignored':
+      return 'bg-amber-100 text-amber-800'
+    case 'duplicate':
+      return 'bg-slate-200 text-slate-800'
+    default:
+      return 'bg-cyan-100 text-cyan-800'
+  }
 }
 
 export default function AdminSettings() {
@@ -240,39 +259,59 @@ export default function AdminSettings() {
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="py-2">Received</th><th>Event</th><th>Booking</th><th>Room</th><th>Tenant</th><th>Status</th><th>HTTP</th><th>Summary</th>
+                <th className="py-2">Received</th><th>Processed</th><th>Provider</th><th>Event</th><th>Booking</th><th>Tenant</th><th>Status</th><th>HTTP</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {webhookLogs.map((log) => (
                 <tr key={log.id} className="border-t border-gray-100 align-top">
                   <td className="py-3">{new Date(log.received_at).toLocaleString()}</td>
-                  <td>{log.event_type ?? '-'}</td>
+                  <td>{log.processed_at ? new Date(log.processed_at).toLocaleString() : '-'}</td>
+                  <td>{log.provider}</td>
+                  <td>
+                    <div>{log.event_type ?? '-'}</div>
+                    {log.external_event_id ? <div className="text-xs text-gray-500">{log.external_event_id}</div> : null}
+                  </td>
                   <td>{log.booking_id ?? '-'}</td>
-                  <td>{log.room_id ?? '-'}</td>
                   <td>{log.tenant_id ?? '-'}</td>
-                  <td>{log.status}</td>
+                  <td><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${statusClass(log.status)}`}>{log.status}</span></td>
                   <td>{log.http_status ?? '-'}</td>
                   <td className="max-w-xs">
                     <button className="text-left text-cyan-700 underline" type="button" onClick={() => setExpandedLogId((current) => (current === log.id ? null : log.id))}>
-                      {log.result_message ?? log.error_summary ?? 'View details'}
+                      View details
                     </button>
                     {expandedLogId === log.id ? (
                       <div className="mt-3 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
                         <div>
+                          <div className="font-semibold text-gray-900">Summary</div>
+                          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{formatJson(log.parsed_fields)}</pre>
+                        </div>
+                        <div>
                           <div className="font-semibold text-gray-900">Raw payload</div>
                           <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{formatJson(log.raw_payload)}</pre>
                         </div>
-                        <div>
-                          <div className="font-semibold text-gray-900">Parsed fields</div>
-                          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{formatJson(log.parsed_fields)}</pre>
-                        </div>
+                        {log.result_message ? (
+                          <div>
+                            <div className="font-semibold text-gray-900">Result</div>
+                            <div className="mt-1">{log.result_message}</div>
+                          </div>
+                        ) : null}
+                        {log.error_summary ? (
+                          <div>
+                            <div className="font-semibold text-gray-900">Error summary</div>
+                            <div className="mt-1">{log.error_summary}</div>
+                          </div>
+                        ) : null}
                         {log.error_traceback ? (
                           <div>
                             <div className="font-semibold text-gray-900">Error details</div>
                             <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{log.error_traceback}</pre>
                           </div>
                         ) : null}
+                        <div>
+                          <div className="font-semibold text-gray-900">Dedupe key</div>
+                          <div className="mt-1 break-all">{log.dedupe_key}</div>
+                        </div>
                       </div>
                     ) : null}
                   </td>
