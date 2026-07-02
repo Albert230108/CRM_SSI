@@ -3,7 +3,7 @@ import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
 
 export default function Settings() {
-  const userEmail = useAuthStore((state) => state.userEmail)
+  const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [stagedHandle, setStagedHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -223,3 +223,4 @@ export default function Settings() {
     </main>
   )
 }
+

@@ -25,7 +25,7 @@ type OneDriveBoxProps = {
 
 export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
   const token = useAuthStore((state) => state.token)
-  const userEmail = useAuthStore((state) => state.userEmail)
+  const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -246,3 +246,4 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
     </div>
   )
 }
+
