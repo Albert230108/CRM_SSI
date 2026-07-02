@@ -75,6 +75,66 @@ def _extract_guest_fields(item: dict) -> dict:
     gd: dict = gd_raw if isinstance(gd_raw, dict) else {}
 
     title = str(gd.get("title") or item.get("title") or "").strip()
+    city = str(gd.get("city") or item.get("city") or item.get("guestCity") or "").strip() or None
+    country = str(
+        gd.get("country")
+        or gd.get("countryCode")
+        or item.get("country")
+        or item.get("countryCode")
+        or item.get("guestCountry")
+        or ""
+    ).strip() or None
+    zip_code = str(
+        gd.get("zip")
+        or gd.get("zipCode")
+        or gd.get("postalCode")
+        or item.get("zip")
+        or item.get("zipCode")
+        or item.get("postalCode")
+        or ""
+    ).strip() or None
+    address = str(gd.get("address") or gd.get("street") or item.get("address") or item.get("street") or "").strip() or None
+    company = str(
+        gd.get("company")
+        or gd.get("companyName")
+        or item.get("company")
+        or item.get("companyName")
+        or ""
+    ).strip() or None
+    language = str(gd.get("language") or gd.get("lang") or item.get("language") or item.get("lang") or "").strip() or None
+    num_adults_raw = item.get("numAdult") or item.get("numAdults") or item.get("adults") or 0
+    try:
+        num_adults = int(num_adults_raw) or None
+    except (TypeError, ValueError):
+        num_adults = None
+    num_children_raw = item.get("numChild") or item.get("numChildren") or item.get("children") or 0
+    try:
+        num_children = int(num_children_raw) or None
+    except (TypeError, ValueError):
+        num_children = None
+    num_nights_raw = item.get("numNights") or item.get("nights") or 0
+    try:
+        num_nights = int(num_nights_raw) or None
+    except (TypeError, ValueError):
+        num_nights = None
+    arrival_time = str(item.get("arrivalTime") or item.get("checkInTime") or "").strip() or None
+    departure_time = str(item.get("departureTime") or item.get("checkOutTime") or "").strip() or None
+    room_name = str(item.get("roomName") or item.get("unitName") or item.get("propName") or "").strip() or None
+    source = str(item.get("source") or item.get("channel") or item.get("referer2") or item.get("portalId") or "").strip() or None
+    referer = str(item.get("referer") or item.get("referralSource") or "").strip() or None
+    try:
+        total_price = Decimal(str(item.get("totalPrice") or item.get("price") or item.get("total") or 0)) or None
+    except (TypeError, ValueError, ArithmeticError):
+        total_price = None
+    try:
+        commission = Decimal(str(item.get("commission") or 0)) or None
+    except (TypeError, ValueError, ArithmeticError):
+        commission = None
+    try:
+        deposit = Decimal(str(item.get("deposit") or 0)) or None
+    except (TypeError, ValueError, ArithmeticError):
+        deposit = None
+    currency = str(item.get("currency") or gd.get("currency") or "").strip() or None
     first_name = str(
         gd.get("firstName")
         or gd.get("firstname")
@@ -173,6 +233,24 @@ def _extract_guest_fields(item: dict) -> dict:
         "mobile": mobile,
         "check_in": check_in,
         "check_out": check_out,
+        "city": city,
+        "country": country,
+        "zip_code": zip_code,
+        "address": address,
+        "company": company,
+        "language": language,
+        "num_adults": num_adults,
+        "num_children": num_children,
+        "num_nights": num_nights,
+        "arrival_time": arrival_time,
+        "departure_time": departure_time,
+        "room_name": room_name,
+        "source": source,
+        "referer": referer,
+        "total_price": total_price,
+        "commission": commission,
+        "deposit": deposit,
+        "currency": currency,
         "booking_status": booking_status,
         "notes": notes,
         "responsible_comm": responsible_comm,
@@ -424,6 +502,7 @@ async def import_tenant(
     check_out = (data.check_out or "").strip() or None
     room_name = str(booking.get("roomName") or booking.get("unitName") or booking.get("propName") or "").strip() or None
     room_id = ROOM_ID_MAPPING.get(room_name) if room_name else None
+    extracted = _extract_guest_fields(booking)
     notes = (data.notes or "").strip() or None
     booking_status = (data.booking_status or "confirmed").strip() or "confirmed"
     responsible_comm = (data.responsible_comm or "").strip() or None
@@ -444,6 +523,25 @@ async def import_tenant(
             name=name,
             responsible_comm=responsible_comm,
             room_id=room_id,
+            city=extracted.get("city"),
+            country=extracted.get("country"),
+            zip_code=extracted.get("zip_code"),
+            address=extracted.get("address"),
+            company=extracted.get("company"),
+            language=extracted.get("language"),
+            num_adults=extracted.get("num_adults"),
+            num_children=extracted.get("num_children"),
+            num_nights=extracted.get("num_nights"),
+            arrival_time=extracted.get("arrival_time"),
+            departure_time=extracted.get("departure_time"),
+            room_name=extracted.get("room_name"),
+            source=extracted.get("source"),
+            referer=extracted.get("referer"),
+            total_price=extracted.get("total_price"),
+            commission=extracted.get("commission"),
+            deposit=extracted.get("deposit"),
+            currency=extracted.get("currency"),
+            beds24_raw=booking,
         )
         db.add(tenant)
         db.flush()
@@ -461,6 +559,25 @@ async def import_tenant(
         tenant.name = name
         tenant.responsible_comm = responsible_comm
         tenant.room_id = room_id
+        tenant.city = extracted.get("city")
+        tenant.country = extracted.get("country")
+        tenant.zip_code = extracted.get("zip_code")
+        tenant.address = extracted.get("address")
+        tenant.company = extracted.get("company")
+        tenant.language = extracted.get("language")
+        tenant.num_adults = extracted.get("num_adults")
+        tenant.num_children = extracted.get("num_children")
+        tenant.num_nights = extracted.get("num_nights")
+        tenant.arrival_time = extracted.get("arrival_time")
+        tenant.departure_time = extracted.get("departure_time")
+        tenant.room_name = extracted.get("room_name")
+        tenant.source = extracted.get("source")
+        tenant.referer = extracted.get("referer")
+        tenant.total_price = extracted.get("total_price")
+        tenant.commission = extracted.get("commission")
+        tenant.deposit = extracted.get("deposit")
+        tenant.currency = extracted.get("currency")
+        tenant.beds24_raw = booking
 
     db.query(FinanceRecord).filter(FinanceRecord.tenant_id == tenant.id).delete(synchronize_session=False)
 
