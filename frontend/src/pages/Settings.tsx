@@ -1,8 +1,20 @@
-import { useEffect, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+type GmailAccount = {
+  id: number
+  email_address: string
+  display_name: string | null
+  is_active: boolean
+  last_synced_at: string | null
+  last_history_id: string | null
+}
+
 export default function Settings() {
+  const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -10,6 +22,18 @@ export default function Settings() {
   const [permissionState, setPermissionState] = useState<'granted' | 'prompt' | 'denied' | null>(null)
   const [unsupported, setUnsupported] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [gmailAccounts, setGmailAccounts] = useState<GmailAccount[]>([])
+  const [gmailEmail, setGmailEmail] = useState('')
+  const [gmailDisplayName, setGmailDisplayName] = useState('')
+  const [gmailCredentialsJson, setGmailCredentialsJson] = useState('')
+  const [gmailMessage, setGmailMessage] = useState('')
+
+  const loadGmailAccounts = async () => {
+    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) setGmailAccounts(await response.json())
+  }
 
   useEffect(() => {
     setUnsupported(typeof window === 'undefined' || typeof window.showDirectoryPicker !== 'function')
@@ -49,11 +73,12 @@ export default function Settings() {
     setStagedHandle(null)
     setPermissionState(null)
     loadHandle()
+    loadGmailAccounts()
 
     return () => {
       cancelled = true
     }
-  }, [userKey])
+  }, [userKey, token])
 
   const handleStage = async () => {
     if (unsupported) return
@@ -104,6 +129,63 @@ export default function Settings() {
     }
   }
 
+  const handleAddGmailAccount = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setGmailMessage('')
+    let parsedCredentials: unknown
+    try {
+      parsedCredentials = JSON.parse(gmailCredentialsJson)
+    } catch {
+      setGmailMessage('Credentials JSON is not valid JSON')
+      return
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        email_address: gmailEmail,
+        display_name: gmailDisplayName || null,
+        credentials_json: parsedCredentials,
+      }),
+    })
+    const data = await response.json().catch(() => null)
+    if (!response.ok) {
+      setGmailMessage(data?.detail ?? 'Failed to save Gmail account')
+      return
+    }
+    setGmailEmail('')
+    setGmailDisplayName('')
+    setGmailCredentialsJson('')
+    setGmailMessage('Gmail account saved')
+    await loadGmailAccounts()
+  }
+
+  const syncGmailAccount = async (accountId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/${accountId}/sync`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) {
+      await loadGmailAccounts()
+      setGmailMessage('Gmail account synced')
+    }
+  }
+
+  const deleteGmailAccount = async (accountId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/${accountId}`, {
+      method: 'DELETE',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) {
+      await loadGmailAccounts()
+      setGmailMessage('Gmail account removed')
+    }
+  }
+
   const statusDot = (tone: 'green' | 'yellow' | 'red' | 'gray') => {
     const classes = {
       green: 'bg-green-500',
@@ -116,11 +198,60 @@ export default function Settings() {
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-6">
+    <main className="mx-auto max-w-4xl px-6 py-6">
       <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
       <p className="text-sm text-gray-500">{userEmail ?? 'Signed in'}</p>
 
       <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">Shared Gmail setup</h2>
+        <p className="mt-2 text-sm text-gray-500">
+          Configure Gmail accounts once for the organization. All users use the same synced mailbox list.
+        </p>
+
+        <form className="mt-4 grid gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={handleAddGmailAccount}>
+          <div className="grid gap-3 md:grid-cols-2">
+            <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Gmail address" value={gmailEmail} onChange={(e) => setGmailEmail(e.target.value)} />
+            <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Display name" value={gmailDisplayName} onChange={(e) => setGmailDisplayName(e.target.value)} />
+          </div>
+          <textarea
+            className="min-h-40 rounded-xl border border-gray-300 px-4 py-3 font-mono text-sm"
+            placeholder='Paste Gmail OAuth authorized-user JSON here'
+            value={gmailCredentialsJson}
+            onChange={(e) => setGmailCredentialsJson(e.target.value)}
+          />
+          <button className="w-fit rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white">Save Gmail account</button>
+        </form>
+
+        {gmailMessage ? <p className="mt-3 text-sm text-gray-600">{gmailMessage}</p> : null}
+
+        <div className="mt-5 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="text-left text-gray-500">
+              <tr>
+                <th className="py-2">Email</th><th>Display</th><th>Status</th><th>Last sync</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {gmailAccounts.map((account) => (
+                <tr key={account.id} className="border-t border-gray-100">
+                  <td className="py-3">{account.email_address}</td>
+                  <td>{account.display_name ?? '-'}</td>
+                  <td>
+                    <div className="flex items-center gap-2">{account.is_active ? statusDot('green') : statusDot('gray')}<span>{account.is_active ? 'Active' : 'Inactive'}</span></div>
+                  </td>
+                  <td>{account.last_synced_at ? new Date(account.last_synced_at).toLocaleString() : '-'}</td>
+                  <td className="space-x-2 py-3">
+                    <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => syncGmailAccount(account.id)}>Sync</button>
+                    <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => deleteGmailAccount(account.id)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-gray-900">Local Folder</h2>
         <p className="mt-2 text-sm text-gray-500">
           Select the root folder on your computer where tenant files are stored. This setting is saved per user and restored on each visit.
@@ -141,81 +272,20 @@ export default function Settings() {
               {!savedHandle ? 'No folder selected' : null}
             </div>
 
-            {stagedHandle ? (
-              <p className="text-sm text-gray-600">Staged: {stagedHandle.name}</p>
-            ) : null}
+            {stagedHandle ? <p className="text-sm text-gray-600">Staged: {stagedHandle.name}</p> : null}
 
             <div className="flex flex-wrap gap-3">
-              {savedHandle && permissionState === 'granted' ? (
-                <button
-                  type="button"
-                  onClick={handleStage}
-                  disabled={saving}
-                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Change folder
-                </button>
-              ) : null}
-              {savedHandle && permissionState === 'prompt' ? (
-                <button
-                  type="button"
-                  onClick={handleReconnect}
-                  disabled={saving}
-                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Reconnect
-                </button>
-              ) : null}
-              {savedHandle && permissionState === 'denied' ? (
-                <button
-                  type="button"
-                  onClick={handleStage}
-                  disabled={saving}
-                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Choose new folder
-                </button>
-              ) : null}
-              {!savedHandle ? (
-                <button
-                  type="button"
-                  onClick={handleStage}
-                  disabled={saving}
-                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Choose folder
-                </button>
-              ) : null}
+              {savedHandle && permissionState === 'granted' ? <button type="button" onClick={handleStage} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">Change folder</button> : null}
+              {savedHandle && permissionState === 'prompt' ? <button type="button" onClick={handleReconnect} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">Reconnect</button> : null}
+              {savedHandle && permissionState === 'denied' ? <button type="button" onClick={handleStage} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">Choose new folder</button> : null}
+              {!savedHandle ? <button type="button" onClick={handleStage} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">Choose folder</button> : null}
               {stagedHandle ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStagedHandle(null)}
-                    disabled={saving}
-                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Cancel
-                  </button>
+                  <button type="button" onClick={handleSave} disabled={saving} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60">Save</button>
+                  <button type="button" onClick={() => setStagedHandle(null)} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
                 </>
               ) : null}
-              {savedHandle ? (
-                <button
-                  type="button"
-                  onClick={handleClear}
-                  disabled={saving}
-                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Disconnect
-                </button>
-              ) : null}
+              {savedHandle ? <button type="button" onClick={handleClear} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">Disconnect</button> : null}
             </div>
           </div>
         )}
@@ -223,4 +293,3 @@ export default function Settings() {
     </main>
   )
 }
-
