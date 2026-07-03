@@ -96,7 +96,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_conversations_id"), table_name="conversations")
     op.drop_table("conversations")
 
-    op.drop_index(op.f("ix_gmail_accounts_google_account_id"), table_name="gmail_accounts")
+    op.drop_index(op.f("ix_gmail_accounts_google_account_id"), table_name="gmail_accounts", if_exists=True)
     op.drop_index(op.f("ix_gmail_accounts_email_address"), table_name="gmail_accounts")
     op.drop_index(op.f("ix_gmail_accounts_id"), table_name="gmail_accounts")
     op.drop_table("gmail_accounts")
