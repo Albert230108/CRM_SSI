@@ -3,16 +3,21 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class GmailOAuthStartRead(BaseModel):
+    authorization_url: str
+
+
 class GmailAccountCreate(BaseModel):
     email_address: str
     display_name: str | None = None
-    credentials_json: dict
+    credentials_json: dict | None = None
 
 
 class GmailAccountRead(BaseModel):
     id: int
     email_address: str
     display_name: str | None = None
+    google_account_id: str | None = None
     is_active: bool
     last_synced_at: datetime | None = None
     last_history_id: str | None = None
@@ -38,6 +43,8 @@ class ConversationRead(BaseModel):
     id: int
     provider: str
     provider_account_id: int | None = None
+    provider_account_email: str | None = None
+    provider_account_display_name: str | None = None
     provider_thread_id: str
     tenant_id: int | None = None
     subject: str | None = None
@@ -45,4 +52,3 @@ class ConversationRead(BaseModel):
     preview_text: str | None = None
     messages: list[ConversationMessageRead]
     model_config = ConfigDict(from_attributes=True)
-

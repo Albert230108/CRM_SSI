@@ -20,6 +20,8 @@ type Conversation = {
   id: number
   provider: string
   provider_account_id: number | null
+  provider_account_email: string | null
+  provider_account_display_name: string | null
   provider_thread_id: string
   tenant_id: number | null
   subject: string | null
@@ -171,6 +173,9 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                     </div>
                     <p className="mt-2 truncate text-sm font-semibold text-gray-900">{conversation.subject || latestMessage?.subject || 'Untitled conversation'}</p>
                     <p className="mt-1 truncate text-sm text-gray-600">{conversation.preview_text || latestMessage?.body || 'No preview available'}</p>
+                    <p className="mt-2 text-xs font-medium text-gray-500">
+                      {conversation.provider_account_display_name || conversation.provider_account_email ? `Mailbox: ${conversation.provider_account_display_name || conversation.provider_account_email}` : 'Mailbox: unknown'}
+                    </p>
                   </div>
                   <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
                     {expanded ? 'Collapse' : `${conversation.messages.length} messages`}
@@ -184,11 +189,14 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                         const isOutbound = item.direction === 'outbound'
                         return (
                           <article key={item.id} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
-                            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
                               <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
                                 {isOutbound ? 'Outbound' : 'Inbound'}
                               </span>
                               <span>{formatDisplayDate(item.sent_at)}</span>
+                              <span className="normal-case tracking-normal">
+                                {conversation.provider_account_display_name || conversation.provider_account_email ? `Mailbox: ${conversation.provider_account_display_name || conversation.provider_account_email}` : 'Mailbox: unknown'}
+                              </span>
                             </div>
                             {item.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{item.subject}</p> : null}
                             <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{item.body}</p>

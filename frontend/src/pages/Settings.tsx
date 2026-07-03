@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
 
@@ -8,6 +8,7 @@ type GmailAccount = {
   id: number
   email_address: string
   display_name: string | null
+  google_account_id: string | null
   is_active: boolean
   last_synced_at: string | null
   last_history_id: string | null
@@ -23,9 +24,6 @@ export default function Settings() {
   const [unsupported, setUnsupported] = useState(false)
   const [saving, setSaving] = useState(false)
   const [gmailAccounts, setGmailAccounts] = useState<GmailAccount[]>([])
-  const [gmailEmail, setGmailEmail] = useState('')
-  const [gmailDisplayName, setGmailDisplayName] = useState('')
-  const [gmailCredentialsJson, setGmailCredentialsJson] = useState('')
   const [gmailMessage, setGmailMessage] = useState('')
 
   const loadGmailAccounts = async () => {
@@ -129,39 +127,19 @@ export default function Settings() {
     }
   }
 
-  const handleAddGmailAccount = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const startGmailOAuth = async (accountId?: number) => {
     setGmailMessage('')
-    let parsedCredentials: unknown
-    try {
-      parsedCredentials = JSON.parse(gmailCredentialsJson)
-    } catch {
-      setGmailMessage('Credentials JSON is not valid JSON')
-      return
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        email_address: gmailEmail,
-        display_name: gmailDisplayName || null,
-        credentials_json: parsedCredentials,
-      }),
+    const params = new URLSearchParams()
+    if (accountId) params.set('account_id', String(accountId))
+    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/oauth/start${params.toString() ? `?${params.toString()}` : ''}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     const data = await response.json().catch(() => null)
     if (!response.ok) {
-      setGmailMessage(data?.detail ?? 'Failed to save Gmail account')
+      setGmailMessage(data?.detail ?? 'Failed to start Google OAuth')
       return
     }
-    setGmailEmail('')
-    setGmailDisplayName('')
-    setGmailCredentialsJson('')
-    setGmailMessage('Gmail account saved')
-    await loadGmailAccounts()
+    window.location.assign(data.authorization_url)
   }
 
   const syncGmailAccount = async (accountId: number) => {
@@ -175,14 +153,30 @@ export default function Settings() {
     }
   }
 
-  const deleteGmailAccount = async (accountId: number) => {
-    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/${accountId}`, {
-      method: 'DELETE',
+  const syncAllGmailAccounts = async () => {
+    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-all`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    const data = await response.json().catch(() => null)
+    if (response.ok) {
+      await loadGmailAccounts()
+      setGmailMessage(`Synced ${data?.synced_accounts ?? 0} accounts and ${data?.synced_threads ?? 0} threads`)
+    }
+  }
+
+  const reconnectGmailAccount = async (accountId: number) => {
+    await startGmailOAuth(accountId)
+  }
+
+  const disconnectGmailAccount = async (accountId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/${accountId}/disconnect`, {
+      method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     if (response.ok) {
       await loadGmailAccounts()
-      setGmailMessage('Gmail account removed')
+      setGmailMessage('Gmail account disconnected')
     }
   }
 
@@ -205,22 +199,20 @@ export default function Settings() {
       <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-gray-900">Shared Gmail setup</h2>
         <p className="mt-2 text-sm text-gray-500">
-          Configure Gmail accounts once for the organization. All users use the same synced mailbox list.
+          Connect Gmail accounts once for the organization. All users use the same synced mailbox list.
         </p>
 
-        <form className="mt-4 grid gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={handleAddGmailAccount}>
-          <div className="grid gap-3 md:grid-cols-2">
-            <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Gmail address" value={gmailEmail} onChange={(e) => setGmailEmail(e.target.value)} />
-            <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Display name" value={gmailDisplayName} onChange={(e) => setGmailDisplayName(e.target.value)} />
-          </div>
-          <textarea
-            className="min-h-40 rounded-xl border border-gray-300 px-4 py-3 font-mono text-sm"
-            placeholder='Paste Gmail OAuth authorized-user JSON here'
-            value={gmailCredentialsJson}
-            onChange={(e) => setGmailCredentialsJson(e.target.value)}
-          />
-          <button className="w-fit rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white">Save Gmail account</button>
-        </form>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button type="button" className="rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white" onClick={() => startGmailOAuth()}>
+            Connect Gmail account
+          </button>
+          <button type="button" className="rounded-xl border border-gray-300 px-4 py-3 font-semibold text-gray-900" onClick={loadGmailAccounts}>
+            Refresh list
+          </button>
+          <button type="button" className="rounded-xl border border-gray-300 px-4 py-3 font-semibold text-gray-900" onClick={syncAllGmailAccounts}>
+            Sync all active
+          </button>
+        </div>
 
         {gmailMessage ? <p className="mt-3 text-sm text-gray-600">{gmailMessage}</p> : null}
 
@@ -237,12 +229,13 @@ export default function Settings() {
                   <td className="py-3">{account.email_address}</td>
                   <td>{account.display_name ?? '-'}</td>
                   <td>
-                    <div className="flex items-center gap-2">{account.is_active ? statusDot('green') : statusDot('gray')}<span>{account.is_active ? 'Active' : 'Inactive'}</span></div>
+                    <div className="flex items-center gap-2">{account.is_active ? statusDot('green') : statusDot('gray')}<span>{account.is_active ? 'Active' : 'Disconnected'}</span></div>
                   </td>
                   <td>{account.last_synced_at ? new Date(account.last_synced_at).toLocaleString() : '-'}</td>
                   <td className="space-x-2 py-3">
-                    <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => syncGmailAccount(account.id)}>Sync</button>
-                    <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => deleteGmailAccount(account.id)}>Delete</button>
+                    <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => syncGmailAccount(account.id)} disabled={!account.is_active}>Sync</button>
+                    <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => reconnectGmailAccount(account.id)}>Reconnect</button>
+                    <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => disconnectGmailAccount(account.id)} disabled={!account.is_active}>Disconnect</button>
                   </td>
                 </tr>
               ))}
