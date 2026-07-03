@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
@@ -27,6 +28,8 @@ router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 PROVIDER_GMAIL = "gmail"
 FRONTEND_SETTINGS_PATH = "/settings"
+logger = logging.getLogger(__name__)
+_oauth_code_verifiers: dict[str, tuple[str, datetime]] = {}
 
 
 def _require_env(name: str) -> str:
@@ -68,6 +71,37 @@ def _decrypt_refresh_token(encrypted_refresh_token: str | None) -> str | None:
 
 def _build_flow(state: str | None = None) -> Flow:
     return Flow.from_client_config(_oauth_client_config(), scopes=GMAIL_SCOPES, state=state)
+
+
+def _oauth_state_key(state: str | None) -> str | None:
+    if not state:
+        return None
+    try:
+        payload = jwt.decode(state, SECRET_KEY, algorithms=[ALGORITHM])
+    except Exception:
+        return state
+    nonce = payload.get("nonce")
+    return str(nonce) if nonce else state
+
+
+def _store_oauth_code_verifier(state: str | None, code_verifier: str) -> None:
+    state_key = _oauth_state_key(state)
+    if not state_key:
+        return
+    _oauth_code_verifiers[state_key] = (code_verifier, datetime.now(timezone.utc) + timedelta(minutes=15))
+
+
+def _pop_oauth_code_verifier(state: str | None) -> str | None:
+    state_key = _oauth_state_key(state)
+    if not state_key:
+        return None
+    stored = _oauth_code_verifiers.pop(state_key, None)
+    if not stored:
+        return None
+    code_verifier, expires_at = stored
+    if expires_at < datetime.now(timezone.utc):
+        return None
+    return code_verifier
 
 
 def _account_credentials(account: GmailAccount) -> Credentials:
@@ -304,6 +338,9 @@ def start_oauth(
     )
     flow = _build_flow(state=state)
     flow.redirect_uri = _oauth_redirect_uri()
+    code_verifier = generate_secure_token() + generate_secure_token()
+    flow.code_verifier = code_verifier
+    _store_oauth_code_verifier(state, code_verifier)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
@@ -333,9 +370,24 @@ def oauth_callback(
     if account_id is not None:
         account_id = int(account_id)
 
+    stored_code_verifier = _pop_oauth_code_verifier(state)
     flow = _build_flow(state=state)
     flow.redirect_uri = _oauth_redirect_uri()
-    flow.fetch_token(code=code)
+    flow.code_verifier = stored_code_verifier
+    logger.debug(
+        "Gmail OAuth callback: pkce_enabled=%s stored_verifier_found=%s code_verifier_length=%s redirect_uri=%s",
+        True,
+        stored_code_verifier is not None,
+        len(stored_code_verifier) if stored_code_verifier else 0,
+        flow.redirect_uri,
+    )
+    if not stored_code_verifier:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OAuth PKCE code verifier")
+    try:
+        flow.fetch_token(code=code)
+    except Exception as exc:
+        logger.exception("Gmail OAuth token exchange failed")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gmail token exchange failed") from exc
     credentials = flow.credentials
 
     account = _upsert_account_from_credentials(
