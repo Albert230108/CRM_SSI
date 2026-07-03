@@ -460,3 +460,4 @@ def get_tenant_conversations(tenant_id: int, db: Session = Depends(get_db), curr
         setattr(conversation, "provider_account_display_name", mailbox.display_name if mailbox else None)
         result.append(conversation)
     return result
+
