@@ -124,8 +124,11 @@ async def _get_with_retry(
             delay = delay if delay > 0 else base_delay * (2 ** attempt)
             await asyncio.sleep(min(delay, 20.0))
             continue
+        if response.status_code in (401, 403):
+            logger.warning("Beds24 upstream auth failed url=%s status=%s body=%s", url, response.status_code, _response_snippet(response))
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Beds24 credentials were rejected")
         if response.status_code >= 400:
-            logger.warning("Beds24 upstream error url=%s status=%s", url, response.status_code)
+            logger.warning("Beds24 upstream error url=%s status=%s body=%s", url, response.status_code, _response_snippet(response))
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 upstream error ({response.status_code})")
         return response
 

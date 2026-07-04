@@ -1,5 +1,6 @@
 from decimal import Decimal
 import logging
+import traceback
 import re
 import os
 from urllib.parse import quote
@@ -502,7 +503,36 @@ async def import_tenant(
     if not booking_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="booking_id is required")
     logger.info("Beds24 import requested booking_id=%s user_id=%s", booking_id, getattr(current_user, "id", None))
-    booking = await fetch_booking_with_invoice(booking_id)
+    try:
+        booking = await fetch_booking_with_invoice(booking_id)
+    except HTTPException as exc:
+        detail = str(exc.detail) if exc.detail is not None else "Beds24 import failed"
+        status_code = exc.status_code
+        if status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+            category = "transient_connectivity"
+        elif status_code == status.HTTP_401_UNAUTHORIZED:
+            category = "credential_issue"
+        elif status_code == status.HTTP_400_BAD_REQUEST:
+            category = "payload_validation"
+        else:
+            category = "upstream_api_failure"
+        logger.warning(
+            "Beds24 import failed booking_id=%s user_id=%s category=%s status=%s detail=%s",
+            booking_id,
+            getattr(current_user, "id", None),
+            category,
+            status_code,
+            detail,
+        )
+        raise HTTPException(status_code=status_code, detail={"error": category, "detail": detail, "booking_id": booking_id}) from exc
+    except Exception as exc:
+        logger.exception(
+            "Beds24 import crashed booking_id=%s user_id=%s trace=%s",
+            booking_id,
+            getattr(current_user, "id", None),
+            traceback.format_exc(limit=8),
+        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"error": "unexpected_backend_exception", "detail": "Beds24 import crashed", "booking_id": booking_id}) from exc
 
     def resolve_placeholders(text: str, booking: dict) -> str:
         """Replace Beds24 template tokens with actual booking values."""
@@ -666,8 +696,20 @@ async def import_tenant(
                 )
             )
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Beds24 import database commit failed booking_id=%s tenant_id=%s user_id=%s",
+            booking_id,
+            getattr(tenant, 'id', None),
+            getattr(current_user, 'id', None),
+        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"error": "database_error", "detail": "Failed to persist imported tenant", "booking_id": booking_id, "tenant_id": getattr(tenant, 'id', None)}) from exc
     db.refresh(tenant)
+
+    logger.info("Beds24 import completed booking_id=%s tenant_id=%s user_id=%s", booking_id, tenant.id, getattr(current_user, 'id', None))
 
     return {
         "success": True,

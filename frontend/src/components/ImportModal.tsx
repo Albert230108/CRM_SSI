@@ -47,9 +47,10 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
           signal: controller.signal,
         })
         if (!response.ok) {
-        const payload = await response.json().catch(() => null)
-        throw new Error((payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string') ? payload.detail : 'Failed to load Beds24 bookings')
-      }
+          const payload = await response.json().catch(() => null)
+          const detail = payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : null
+          throw new Error(typeof detail === 'string' ? detail : (detail && typeof detail === 'object' && 'detail' in detail && typeof detail.detail === 'string' ? detail.detail : 'Failed to load Beds24 bookings'))
+        }
         const data: Booking[] = await response.json()
         setBookings(data)
       } catch (err) {
@@ -93,7 +94,8 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
       })
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
-        throw new Error((payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string') ? payload.detail : 'Import failed')
+        const detail = payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : null
+        throw new Error(typeof detail === 'string' ? detail : (detail && typeof detail === 'object' && 'detail' in detail && typeof detail.detail === 'string' ? detail.detail : 'Import failed'))
       }
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
       setConfirmBooking(null)

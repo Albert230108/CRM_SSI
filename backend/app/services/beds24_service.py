@@ -15,6 +15,15 @@ _token_cache: dict[str, dict[str, float | str]] = {}
 logger = logging.getLogger(__name__)
 
 
+def _response_snippet(response: httpx.Response, limit: int = 240) -> str:
+    try:
+        text = response.text
+    except Exception:
+        return '<unreadable>'
+    text = ' '.join(text.split())
+    return text[:limit] + ('...' if len(text) > limit else '')
+
+
 def _refresh_token() -> str:
     token = os.getenv('BEDS24_REFRESH_TOKEN', '').strip()
     if not token:
@@ -41,7 +50,7 @@ async def _get_beds24_api_token(refresh_token: str) -> str:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Beds24 token exchange timed out') from exc
         except httpx.HTTPStatusError as exc:
             upstream_status = exc.response.status_code if exc.response is not None else 502
-            logger.warning('Beds24 token exchange failed upstream_status=%s', upstream_status)
+            logger.warning('Beds24 token exchange failed upstream_status=%s body=%s', upstream_status, _response_snippet(exc.response) if exc.response is not None else '<no response>')
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Beds24 token exchange failed') from exc
         except httpx.HTTPError as exc:
             logger.warning('Beds24 token exchange network error: %s', type(exc).__name__)
@@ -82,17 +91,17 @@ async def fetch_booking_with_invoice(booking_id: str) -> dict[str, Any]:
             response.raise_for_status()
             payload = response.json()
         except httpx.TimeoutException as exc:
-            logger.warning('Beds24 booking fetch timed out booking_id=%s', booking_id)
+            logger.warning('Beds24 booking fetch timed out booking_id=%s endpoint=%s', booking_id, 'https://beds24.com/api/v2/bookings')
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Beds24 booking fetch timed out') from exc
         except httpx.HTTPStatusError as exc:
             upstream_status = exc.response.status_code if exc.response is not None else 502
-            logger.warning('Beds24 booking fetch failed booking_id=%s upstream_status=%s', booking_id, upstream_status)
+            logger.warning('Beds24 booking fetch failed booking_id=%s endpoint=%s upstream_status=%s body=%s', booking_id, 'https://beds24.com/api/v2/bookings', upstream_status, _response_snippet(exc.response) if exc.response is not None else '<no response>')
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'Beds24 booking fetch failed ({upstream_status})') from exc
         except httpx.HTTPError as exc:
-            logger.warning('Beds24 booking fetch network error booking_id=%s error=%s', booking_id, type(exc).__name__)
+            logger.warning('Beds24 booking fetch network error booking_id=%s endpoint=%s error=%s', booking_id, 'https://beds24.com/api/v2/bookings', type(exc).__name__)
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Beds24 booking fetch unavailable') from exc
         except ValueError as exc:
-            logger.warning('Beds24 booking fetch returned invalid JSON booking_id=%s', booking_id)
+            logger.warning('Beds24 booking fetch returned invalid JSON booking_id=%s endpoint=%s', booking_id, 'https://beds24.com/api/v2/bookings')
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Beds24 booking fetch returned invalid JSON') from exc
     data = payload.get('data') if isinstance(payload, dict) else payload
     if isinstance(data, list):
