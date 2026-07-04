@@ -7,6 +7,7 @@ from app.api.communications import router as communications_router
 from app.api.gmail_integration import router as gmail_integration_router
 from app.api.invites import router as invites_router
 from app.api.tenants import router as tenants_router
+from app.api.tenant_channel_endpoints import router as tenant_channel_endpoints_router
 from app.api.users import router as users_router
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
@@ -18,6 +19,7 @@ app.include_router(invites_router, prefix="/api")
 app.include_router(communications_router, prefix="/api")
 app.include_router(gmail_integration_router)
 app.include_router(tenants_router, prefix="/api")
+app.include_router(tenant_channel_endpoints_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(beds24_webhook_router, prefix="/api")
 app.include_router(whatsapp_webhook_router)

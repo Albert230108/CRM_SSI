@@ -21,7 +21,7 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id"), nullable=False),
         sa.Column("channel_type", sa.String(length=50), nullable=False),
         sa.Column("provider", sa.String(length=100), nullable=False),
-        sa.Column("external_account_id", sa.String(length=255), nullable=False),
+        sa.Column("external_account_id", sa.String(length=255), nullable=True),
         sa.Column("external_phone_id", sa.String(length=255), nullable=True),
         sa.Column("external_chat_namespace", sa.String(length=255), nullable=True),
         sa.Column("webhook_token", sa.String(length=255), nullable=True),
@@ -31,7 +31,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.UniqueConstraint("channel_type", "provider", "external_account_id", name="uq_tenant_channel_endpoints_route"),
     )
-    op.create_index(op.f("ix_tenant_channel_endpoints_id"), "tenant_channel_endpoints", ["id"], unique=False)
     op.create_index(op.f("ix_tenant_channel_endpoints_tenant_id"), "tenant_channel_endpoints", ["tenant_id"], unique=False)
     op.create_index(op.f("ix_tenant_channel_endpoints_channel_type"), "tenant_channel_endpoints", ["channel_type"], unique=False)
     op.create_index(op.f("ix_tenant_channel_endpoints_provider"), "tenant_channel_endpoints", ["provider"], unique=False)
@@ -49,5 +48,6 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_tenant_channel_endpoints_provider"), table_name="tenant_channel_endpoints")
     op.drop_index(op.f("ix_tenant_channel_endpoints_channel_type"), table_name="tenant_channel_endpoints")
     op.drop_index(op.f("ix_tenant_channel_endpoints_tenant_id"), table_name="tenant_channel_endpoints")
-    op.drop_index(op.f("ix_tenant_channel_endpoints_id"), table_name="tenant_channel_endpoints")
     op.drop_table("tenant_channel_endpoints")
+
+
