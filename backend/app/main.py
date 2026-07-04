@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+import os
 
 from app.api.admin_invites import router as admin_invites_router
 from app.api.admin_sync import router as admin_sync_router
@@ -13,6 +14,9 @@ from app.api.users import router as users_router
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
 app = FastAPI(title="CRM API")
+
+resolved_whatsapp_service_url = os.getenv("WHATSAPP_SERVICE_URL", "").strip() or "<unset>"
+print(f"[backend] WHATSAPP_SERVICE_URL={resolved_whatsapp_service_url}")
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(admin_invites_router, prefix="/api")
