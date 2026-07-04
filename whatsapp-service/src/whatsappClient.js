@@ -548,27 +548,38 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
       const chatName = getChatName(chat);
       const isGroup = Boolean(chat?.isGroup || String(chatId || "").endsWith("@g.us"));
       let syncHistorySuccess = false;
+      let syncHistoryResult = null;
       if (typeof chat.syncHistory === "function") {
-        await chat.syncHistory();
+        syncHistoryResult = await chat.syncHistory();
         syncHistorySuccess = true;
         await sleep(postSyncDelayMs);
       }
       let messages = [];
+      let fromMeMessages = [];
       try {
         messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit: messageLimit }) : [];
+        fromMeMessages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit: messageLimit, fromMe: true }) : [];
       } catch (error) {
         samples.push({
           chat_id: chatId,
           chat_name: chatName,
           isGroup,
           sync_history_success: syncHistorySuccess,
+          sync_history_result: syncHistoryResult,
           fetch_error: error instanceof Error ? error.message : String(error),
         });
         continue;
       }
       const ordered = Array.isArray(messages) ? messages.slice().sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0)) : [];
+      const orderedFromMe = Array.isArray(fromMeMessages) ? fromMeMessages.slice().sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0)) : [];
       const chatSamples = ordered.slice(0, 10).map((message) => ({
         whatsapp_message_id: message?.id?._serialized || null,
+        timestamp: Number(message?.timestamp || 0),
+        fromMe: Boolean(message?.fromMe),
+      }));
+      const fromMeSamples = orderedFromMe.slice(0, 10).map((message) => ({
+        whatsapp_message_id: message?.id?._serialized || null,
+        timestamp: Number(message?.timestamp || 0),
         fromMe: Boolean(message?.fromMe),
       }));
       const chatInbound = ordered.filter((message) => !message?.fromMe).length;
@@ -581,10 +592,13 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
         chat_name: chatName,
         isGroup,
         sync_history_success: syncHistorySuccess,
-        messages_count: ordered.length,
-        inbound_count: chatInbound,
-        outbound_count: chatOutbound,
-        sample_messages: chatSamples,
+        sync_history_result: syncHistoryResult,
+        fetch_messages_count: ordered.length,
+        fetch_messages_inbound_count: chatInbound,
+        fetch_messages_outbound_count: chatOutbound,
+        fetch_messages_sample: chatSamples,
+        fetch_messages_from_me_count: orderedFromMe.length,
+        fetch_messages_from_me_sample: fromMeSamples,
       });
     } catch (error) {
       samples.push({
@@ -605,9 +619,7 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
     outbound_messages: outboundMessages,
     samples,
   };
-}
-
-async function shutdownClient() {
+}async function shutdownClient() {
   shuttingDown = true;
   ready = false;
 

@@ -90,6 +90,8 @@ Messages sent by the local account and status updates are ignored for inbound fo
 
 Historical backfill uses the same payload shape, supports both inbound and outbound messages, sorts messages chronologically before forwarding, and skips messages already seen in this process by `whatsapp_message_id`.
 
+If WhatsApp Web only exposes a partial message window in this session, the service will still import whatever fetchMessages() returns and continue with incremental capture from that point forward. It does not promise a complete historic backfill unless the diagnostic route proves history retrieval works in this linked-device session.
+
 Backfill can be triggered in either of these ways:
 
 - Set `WHATSAPP_HISTORY_BACKFILL_ENABLED=true` to run automatically after the client becomes ready.
