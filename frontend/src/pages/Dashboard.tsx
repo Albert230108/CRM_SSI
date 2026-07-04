@@ -26,7 +26,7 @@ function formatSyncSummary(summary: SyncSummary | null) {
     `Emails imported: ${summary.emails_imported}`,
     `WhatsApp messages imported: ${summary.whatsapp_messages_imported}`,
     `Tenant threads updated: ${summary.tenant_threads_updated}`,
-  ].join(' · ')
+  ].join(' ï¿½ ')
 }
 
 export default function Dashboard() {
@@ -59,7 +59,9 @@ export default function Dashboard() {
       setSyncRunning(true)
       setSyncError('')
       setSyncSummary(null)
-      const response = await fetch(`${API_BASE_URL}/api/admin/sync-all`, {
+      const syncUrl = `${API_BASE_URL}/api/admin/sync-all`
+      console.info('[frontend] Sync button clicked', { syncUrl })
+      const response = await fetch(syncUrl, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       })
