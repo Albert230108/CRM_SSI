@@ -81,6 +81,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
   const [error, setError] = useState('')
   const [expandedConversationIds, setExpandedConversationIds] = useState<number[]>([])
   const [expandedWhatsappBlockIds, setExpandedWhatsappBlockIds] = useState<string[]>([])
+  const [selectedWhatsappGroup, setSelectedWhatsappGroup] = useState<WhatsappGroupItem | null>(null)
   const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp')
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
@@ -91,6 +92,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
       setTenant(null)
       setItems([])
       setError('Select a tenant')
+      setSelectedWhatsappGroup(null)
       return
     }
 
@@ -132,6 +134,19 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
     return () => controller.abort()
   }, [tenantId, token])
 
+  useEffect(() => {
+    if (!selectedWhatsappGroup) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedWhatsappGroup(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedWhatsappGroup])
+
   const toggleConversation = (conversationId: number) => {
     setExpandedConversationIds((current) =>
       current.includes(conversationId) ? current.filter((id) => id !== conversationId) : [...current, conversationId],
@@ -142,6 +157,10 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
     setExpandedWhatsappBlockIds((current) =>
       current.includes(blockId) ? current.filter((id) => id !== blockId) : [...current, blockId],
     )
+  }
+
+  const openWhatsappGroup = (group: WhatsappGroupItem) => {
+    setSelectedWhatsappGroup(group)
   }
 
   const handleSend = async (event: FormEvent<HTMLFormElement>) => {
@@ -317,7 +336,11 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
             const lastMessage = item.messages[item.messages.length - 1]
             return (
               <article key={item.group_id} className="rounded-2xl border border-emerald-200 bg-emerald-50">
-                <div className="flex items-start justify-between gap-4 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => openWhatsappGroup(item)}
+                  className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-emerald-100/70"
+                >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
                       <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">WhatsApp Group</span>
@@ -331,13 +354,87 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                   <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
                     {item.message_count} messages
                   </span>
-                </div>
+                </button>
               </article>
             )
           })}
           {!items.length && !loading ? <p className="text-sm text-gray-500">No timeline items synced yet.</p> : null}
         </div>
       </div>
+
+
+      {selectedWhatsappGroup ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm"
+          onClick={() => setSelectedWhatsappGroup(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="whatsapp-group-modal-title"
+            className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp Group</p>
+                <h3 id="whatsapp-group-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
+                  {tenant?.name || 'WhatsApp conversation'}
+                </h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {formatDisplayDate(selectedWhatsappGroup.start_timestamp || selectedWhatsappGroup.messages[0]?.created_at || selectedWhatsappGroup.messages[selectedWhatsappGroup.messages.length - 1]?.created_at || new Date().toISOString())}
+                  {selectedWhatsappGroup.end_timestamp ? ` ? ${formatDisplayDate(selectedWhatsappGroup.end_timestamp)}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedWhatsappGroup(null)}
+                className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-[72vh] overflow-y-auto px-6 py-5">
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-900">
+                    {selectedWhatsappGroup.message_count === 1 ? '1 message' : `${selectedWhatsappGroup.message_count} messages`}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {selectedWhatsappGroup.start_timestamp && selectedWhatsappGroup.end_timestamp
+                    ? `${formatDisplayDate(selectedWhatsappGroup.start_timestamp)} - ${formatDisplayDate(selectedWhatsappGroup.end_timestamp)}`
+                    : 'Latest timestamp shown above'}
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {selectedWhatsappGroup.messages.map((blockMessage) => {
+                  const isOutbound = blockMessage.direction === 'outbound'
+                  return (
+                    <article
+                      key={blockMessage.id}
+                      className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                        <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {isOutbound ? 'Outbound' : 'Inbound'}
+                        </span>
+                        <span>{formatDisplayDate(blockMessage.created_at)}</span>
+                        <span className="normal-case tracking-normal">WhatsApp</span>
+                      </div>
+                      {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
+                    </article>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <form onSubmit={handleSend} className="border-t border-gray-200 p-4">
         <div className="flex w-full gap-2">
