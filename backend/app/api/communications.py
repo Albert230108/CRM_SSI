@@ -58,9 +58,6 @@ async def send_tenant_communication(
             {
                 "to": tenant.phone,
                 "message": message,
-                "tenant_id": tenant.id,
-                "tenant_name": tenant.name,
-                "subject": payload.subject,
             }
         )
 
