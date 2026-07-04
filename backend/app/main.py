@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.admin_invites import router as admin_invites_router
+from app.api.admin_sync import router as admin_sync_router
 from app.api.auth import router as auth_router
 from app.api.beds24_webhooks import router as beds24_webhook_router
 from app.api.communications import router as communications_router
@@ -15,6 +16,7 @@ app = FastAPI(title="CRM API")
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(admin_invites_router, prefix="/api")
+app.include_router(admin_sync_router, prefix="/api")
 app.include_router(invites_router, prefix="/api")
 app.include_router(communications_router, prefix="/api")
 app.include_router(gmail_integration_router)
