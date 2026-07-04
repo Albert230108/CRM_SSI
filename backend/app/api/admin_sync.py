@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.gmail_integration import sync_account
-from app.api.tenants import _import_tenant
+from app.api.tenants import ImportTenantRequest, _extract_guest_fields, _import_tenant
 from app.core.dependencies import get_current_admin_user, get_db
 from app.models.gmail_integration import GmailAccount
-from app.models.tenant import Tenant
 from app.models.user import User
+from app.services.beds24_client import get_bookings
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 
 router = APIRouter(prefix="/admin", tags=["admin-sync"])
@@ -26,25 +26,27 @@ def _to_int(value: Any) -> int:
 
 
 async def _sync_beds24(db: Session, current_user: User) -> int:
-    tenants = db.query(Tenant).order_by(Tenant.id.asc()).all()
     updated = 0
-    for tenant in tenants:
-        if not tenant.booking_id:
+    bookings = await get_bookings()
+    for booking in bookings:
+        booking_id = str(booking.get("id") or "").strip()
+        if not booking_id:
             continue
-        payload = {
-            "booking_id": tenant.booking_id,
-            "name": tenant.name,
-            "first_name": tenant.first_name or "",
-            "last_name": tenant.last_name or "",
-            "email": tenant.email,
-            "phone": tenant.phone,
-            "mobile": tenant.mobile,
-            "check_in": tenant.check_in or "",
-            "check_out": tenant.check_out or "",
-            "notes": tenant.notes,
-            "booking_status": tenant.booking_status,
-            "responsible_comm": tenant.responsible_comm,
-        }
+        fields = _extract_guest_fields(booking)
+        payload = ImportTenantRequest(
+            booking_id=booking_id,
+            name=fields.get("name") or booking_id,
+            first_name=fields.get("first_name") or "",
+            last_name=fields.get("last_name") or "",
+            email=fields.get("email"),
+            phone=fields.get("phone"),
+            mobile=fields.get("mobile"),
+            check_in=fields.get("check_in") or "",
+            check_out=fields.get("check_out") or "",
+            notes=fields.get("notes"),
+            booking_status=fields.get("booking_status") or "confirmed",
+            responsible_comm=fields.get("responsible_comm"),
+        )
         await _import_tenant(data=payload, db=db, current_user=current_user)
         updated += 1
     return updated
@@ -103,9 +105,10 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
         summary["partial_failures"].append({"step": "whatsapp", "error": str(exc)})
 
     try:
-        tenants = db.query(Tenant).order_by(Tenant.id.asc()).all()
+        tenants = db.query(User).count()
         summary["tenant_threads_updated"] = 0
-        for tenant in tenants:
+        from app.models.tenant import Tenant
+        for tenant in db.query(Tenant).order_by(Tenant.id.asc()).all():
             build_tenant_thread_timeline(db, tenant.id)
             summary["tenant_threads_updated"] += 1
     except Exception as exc:
