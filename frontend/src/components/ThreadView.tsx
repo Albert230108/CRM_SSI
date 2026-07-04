@@ -80,6 +80,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [expandedConversationIds, setExpandedConversationIds] = useState<number[]>([])
+  const [expandedWhatsappBlockIds, setExpandedWhatsappBlockIds] = useState<string[]>([])
   const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp')
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
@@ -137,6 +138,12 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
     )
   }
 
+  const toggleWhatsappBlock = (blockId: string) => {
+    setExpandedWhatsappBlockIds((current) =>
+      current.includes(blockId) ? current.filter((id) => id !== blockId) : [...current, blockId],
+    )
+  }
+
   const handleSend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!tenantId || !message.trim()) return
@@ -187,6 +194,18 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
             if (item.type === 'email_thread') {
               const expanded = expandedConversationIds.includes(item.id)
               const latestMessage = item.messages[item.messages.length - 1]
+              const timelineEntries = [
+                ...item.messages.map((messageItem) => ({
+                  kind: 'email' as const,
+                  timestamp: messageItem.sent_at,
+                  messageItem,
+                })),
+                ...item.whatsapp_blocks.map((block) => ({
+                  kind: 'whatsapp_block' as const,
+                  timestamp: block.start_at || block.end_at || new Date().toISOString(),
+                  block,
+                })),
+              ].sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
               return (
                 <article key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50">
                   <button
@@ -213,21 +232,77 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                   {expanded ? (
                     <div className="border-t border-gray-200 bg-white px-4 py-3">
                       <div className="space-y-3">
-                        {item.messages.map((messageItem) => {
-                          const isOutbound = messageItem.direction === 'outbound'
+                        {timelineEntries.map((entry) => {
+                          if (entry.kind === 'email') {
+                            const messageItem = entry.messageItem
+                            const isOutbound = messageItem.direction === 'outbound'
+                            return (
+                              <article key={`email-${messageItem.id}`} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
+                                <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                                  <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
+                                    {isOutbound ? 'Outbound' : 'Inbound'}
+                                  </span>
+                                  <span>{formatDisplayDate(messageItem.sent_at)}</span>
+                                  <span className="normal-case tracking-normal">
+                                    {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
+                                  </span>
+                                </div>
+                                {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
+                                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body}</p>
+                              </article>
+                            )
+                          }
+
+                          const block = entry.block
+                          const blockExpanded = expandedWhatsappBlockIds.includes(block.block_id)
+                          const firstBlockMessage = block.messages[0]
+                          const lastBlockMessage = block.messages[block.messages.length - 1]
                           return (
-                            <article key={messageItem.id} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
-                              <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                                <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                                  {isOutbound ? 'Outbound' : 'Inbound'}
+                            <article key={`whatsapp-${block.block_id}`} className="rounded-2xl border border-emerald-200 bg-emerald-50">
+                              <button
+                                type="button"
+                                onClick={() => toggleWhatsappBlock(block.block_id)}
+                                className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
+                                    <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">WhatsApp</span>
+                                    <span>{formatDisplayDate(block.start_at || firstBlockMessage?.sent_at || lastBlockMessage?.sent_at || new Date().toISOString())}</span>
+                                  </div>
+                                  <p className="mt-2 truncate text-sm font-semibold text-gray-900">
+                                    {block.message_count === 1 ? '1 message' : `${block.message_count} messages`}
+                                  </p>
+                                  <p className="mt-1 truncate text-sm text-gray-600">
+                                    {blockExpanded ? 'Tap to collapse WhatsApp bubbles' : 'Tap to expand WhatsApp bubbles'}
+                                  </p>
+                                </div>
+                                <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
+                                  {blockExpanded ? 'Collapse' : 'Expand'}
                                 </span>
-                                <span>{formatDisplayDate(messageItem.sent_at)}</span>
-                                <span className="normal-case tracking-normal">
-                                  {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
-                                </span>
-                              </div>
-                              {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
-                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body}</p>
+                              </button>
+
+                              {blockExpanded ? (
+                                <div className="border-t border-emerald-200 bg-white px-4 py-3">
+                                  <div className="space-y-3">
+                                    {block.messages.map((blockMessage) => {
+                                      const isOutbound = blockMessage.direction === 'outbound'
+                                      return (
+                                        <article key={blockMessage.id} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
+                                          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                                            <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
+                                              {isOutbound ? 'Outbound' : 'Inbound'}
+                                            </span>
+                                            <span>{formatDisplayDate(blockMessage.sent_at)}</span>
+                                            <span className="normal-case tracking-normal">WhatsApp</span>
+                                          </div>
+                                          {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
+                                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.body}</p>
+                                        </article>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ) : null}
                             </article>
                           )
                         })}
