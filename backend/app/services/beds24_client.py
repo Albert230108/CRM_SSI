@@ -111,7 +111,7 @@ async def _get_with_retry(
 
 async def get_bookings() -> list[dict[str, Any]]:
     headers = await _async_headers()
-    params: dict[str, Any] = {"includeInfoItems": "true", "status": ["confirmed"]}
+    params: dict[str, Any] = {"includeInfoItems": "true", "status": ["confirmed", "request", "enquiry", "inquiry"]}
     all_items: list[dict[str, Any]] = []
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
         next_url: str | None = f"{READ_BASE_URL}/bookings"
@@ -169,5 +169,3 @@ async def get_charges(booking_id: str) -> list[dict[str, Any]]:
         data = data.get("invoiceItems") or data.get("items") or []
     items = [item for item in (data or []) if isinstance(item, dict)]
     return [item for item in items if str(item.get("type", "")).lower() not in ("payment", "pay", "deposit")]
-
-

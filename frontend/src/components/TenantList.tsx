@@ -85,7 +85,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
       {loading ? <p className="text-sm text-gray-500">Loading tenants...</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
-      <div className="space-y-4">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
         {statusOrder.map((status) => (
           <section key={status} className="space-y-4">
             <div className="flex items-center justify-between">
@@ -142,4 +142,3 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
     </div>
   )
 }
-
