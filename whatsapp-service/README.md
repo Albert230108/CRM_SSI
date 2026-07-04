@@ -62,11 +62,11 @@ Successful responses return:
 { "ok": true }
 ```
 
-## Inbound forwarding
+## CRM forwarding
 
 Incoming user messages are forwarded to the CRM webhook as a compact JSON payload with these fields:
 
-- `direction`
+- `direction`: `inbound`
 - `from` and `sender`
 - `sender_raw` and `sender_normalized`
 - `message`, `body`, and `text`
@@ -75,9 +75,25 @@ Incoming user messages are forwarded to the CRM webhook as a compact JSON payloa
 - `whatsapp_chat_id`
 - `whatsapp_author`
 - `whatsapp_type`
+- `whatsapp_client_id`
+- `provider`
+- `external_account_id`
 - `is_group`
 
-Messages sent by the local account and status updates are ignored.
+Outbound replies sent by the local account are also forwarded with the same shape, plus:
+
+- `direction`: `outbound`
+- `to`
+- `recipient`
+
+Messages sent by the local account and status updates are ignored for inbound forwarding.
+
+Historical backfill uses the same payload shape, supports both inbound and outbound messages, sorts messages chronologically before forwarding, and skips messages already seen in this process by `whatsapp_message_id`.
+
+Backfill can be triggered in either of these ways:
+
+- Set `WHATSAPP_HISTORY_BACKFILL_ENABLED=true` to run automatically after the client becomes ready.
+- Call `POST /admin/backfill` with `X-API-Key` to run it manually.
 
 ## systemd
 

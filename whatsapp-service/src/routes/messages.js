@@ -1,6 +1,6 @@
 const express = require("express");
 
-function createMessageRouter({ requireApiKey, sendTextMessage }) {
+function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill }) {
   const router = express.Router();
 
   router.post("/send", requireApiKey, async (req, res) => {
@@ -26,6 +26,19 @@ function createMessageRouter({ requireApiKey, sendTextMessage }) {
         status = 400;
       }
       console.error("Failed to handle /send request:", error);
+      return res.status(status).json({ ok: false, error: message });
+    }
+  });
+
+  router.post("/admin/backfill", requireApiKey, async (req, res) => {
+    try {
+      const limit = Number.parseInt(String(req.body?.limit || req.query?.limit || ""), 10);
+      const result = await runHistoryBackfill(Number.isFinite(limit) ? { limit } : undefined);
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to backfill WhatsApp history";
+      const status = message.includes("not ready") ? 503 : 500;
+      console.error("Failed to handle /admin/backfill request:", error);
       return res.status(status).json({ ok: false, error: message });
     }
   });
