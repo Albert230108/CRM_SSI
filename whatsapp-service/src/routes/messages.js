@@ -1,6 +1,6 @@
 const express = require("express");
 
-function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill }) {
+function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample }) {
   const router = express.Router();
 
   router.post("/send", requireApiKey, async (req, res) => {
@@ -33,12 +33,32 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
   router.post("/admin/backfill", requireApiKey, async (req, res) => {
     try {
       const limit = Number.parseInt(String(req.body?.limit || req.query?.limit || ""), 10);
-      const result = await runHistoryBackfill(Number.isFinite(limit) ? { limit } : undefined);
+      const onlyOutbound = String(req.body?.onlyOutbound ?? req.query?.onlyOutbound ?? "").toLowerCase() === "true";
+      const result = await runHistoryBackfill(Number.isFinite(limit) ? { limit, onlyOutbound } : { onlyOutbound });
       return res.json({ ok: true, ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to backfill WhatsApp history";
       const status = message.includes("not ready") ? 503 : 500;
       console.error("Failed to handle /admin/backfill request:", error);
+      return res.status(status).json({ ok: false, error: message });
+    }
+  });
+
+  router.post("/admin/debug/whatsapp-history-sync", requireApiKey, async (req, res) => {
+    try {
+      const limit = Number.parseInt(String(req.body?.limit || req.query?.limit || ""), 10);
+      const onlyOutbound = String(req.body?.onlyOutbound ?? req.query?.onlyOutbound ?? "").toLowerCase() === "true";
+      const chatCount = Number.parseInt(String(req.body?.chatCount || req.query?.chatCount || ""), 10);
+      const sample = await runHistoryDebugSample({
+        chatCount: Number.isFinite(chatCount) ? chatCount : 3,
+        messageLimit: Number.isFinite(limit) ? limit : 50,
+        onlyOutbound,
+      });
+      return res.json({ ok: true, ready: true, ...sample });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to debug WhatsApp history sync";
+      const status = message.includes("not ready") ? 503 : 500;
+      console.error("Failed to handle /admin/debug/whatsapp-history-sync request:", error);
       return res.status(status).json({ ok: false, error: message });
     }
   });

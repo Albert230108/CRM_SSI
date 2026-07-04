@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -108,7 +107,22 @@ async def _sync_whatsapp() -> int:
         response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json={"limit": 200})
         response.raise_for_status()
         payload = response.json()
-    return _to_int(payload.get("forwarded"))
+    return _to_int(payload.get("imported") or payload.get("forwarded"))
+
+
+async def _debug_whatsapp_history_sync() -> dict[str, Any]:
+    import os
+
+    whatsapp_service_url = os.getenv("WHATSAPP_SERVICE_URL", "").strip()
+    whatsapp_api_key = os.getenv("WHATSAPP_API_KEY", "").strip()
+    if not whatsapp_service_url or not whatsapp_api_key:
+        return {"ready": False, "error": "WhatsApp service URL or API key is not configured"}
+
+    url = whatsapp_service_url.rstrip("/") + "/admin/debug/whatsapp-history-sync"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json={"chatCount": 3, "limit": 50})
+        response.raise_for_status()
+        return response.json()
 
 
 @router.post("/sync-all")
@@ -148,3 +162,8 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
 
     summary["completed_at"] = datetime.now(timezone.utc)
     return summary
+
+
+@router.post("/debug/whatsapp-history-sync")
+async def debug_whatsapp_history_sync(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)) -> dict[str, Any]:
+    return await _debug_whatsapp_history_sync()
