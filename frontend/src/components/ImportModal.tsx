@@ -46,7 +46,10 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           signal: controller.signal,
         })
-        if (!response.ok) throw new Error('Failed to load Beds24 bookings')
+        if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error((payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string') ? payload.detail : 'Failed to load Beds24 bookings')
+      }
         const data: Booking[] = await response.json()
         setBookings(data)
       } catch (err) {
@@ -88,7 +91,10 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         },
         body: JSON.stringify(body),
       })
-      if (!response.ok) throw new Error('Import failed')
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error((payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string') ? payload.detail : 'Import failed')
+      }
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
       setConfirmBooking(null)
       setEditFields({})

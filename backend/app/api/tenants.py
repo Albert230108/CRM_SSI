@@ -498,7 +498,10 @@ async def import_tenant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    booking_id = data.booking_id
+    booking_id = (data.booking_id or "").strip()
+    if not booking_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="booking_id is required")
+    logger.info("Beds24 import requested booking_id=%s user_id=%s", booking_id, getattr(current_user, "id", None))
     booking = await fetch_booking_with_invoice(booking_id)
 
     def resolve_placeholders(text: str, booking: dict) -> str:
