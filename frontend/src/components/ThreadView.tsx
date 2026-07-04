@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+﻿import { useEffect, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-type ConversationMessage = {
+type TimelineMessage = {
   id: number
   provider: string
   provider_message_id: string
@@ -16,18 +16,50 @@ type ConversationMessage = {
   sent_at: string
 }
 
-type Conversation = {
+type EmailThreadItem = {
+  type: 'email_thread'
   id: number
-  provider: string
   provider_account_id: number | null
   provider_account_email: string | null
   provider_account_display_name: string | null
+  thread_id: number
   provider_thread_id: string
-  tenant_id: number | null
   subject: string | null
-  last_message_at: string | null
   preview_text: string | null
-  messages: ConversationMessage[]
+  anchor_timestamp: string
+  messages: TimelineMessage[]
+  whatsapp_blocks: {
+    block_id: string
+    start_at: string | null
+    end_at: string | null
+    messages: TimelineMessage[]
+    message_count: number
+  }[]
+}
+
+type WhatsappGroupItem = {
+  type: 'whatsapp_group'
+  group_id: string
+  start_timestamp: string | null
+  end_timestamp: string | null
+  messages: {
+    id: number
+    tenant_id: number
+    channel: string
+    direction: 'inbound' | 'outbound' | string
+    subject: string | null
+    message: string
+    created_at: string
+  }[]
+  message_count: number
+}
+
+type ThreadItem = EmailThreadItem | WhatsappGroupItem
+
+type GroupedThreadResponse = {
+  tenant_id: number
+  tenant_name: string
+  items: ThreadItem[]
 }
 
 type TenantSummary = {
@@ -44,7 +76,7 @@ type ThreadViewProps = {
 export default function ThreadView({ tenantId }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
-  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [expandedConversationIds, setExpandedConversationIds] = useState<number[]>([])
@@ -56,7 +88,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
   useEffect(() => {
     if (!tenantId) {
       setTenant(null)
-      setConversations([])
+      setItems([])
       setError('Select a tenant')
       return
     }
@@ -67,26 +99,26 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
       try {
         setLoading(true)
         setError('')
-        const [tenantResponse, conversationsResponse] = await Promise.all([
+        const [tenantResponse, threadResponse] = await Promise.all([
           fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
           }),
-          fetch(`${API_BASE_URL}/api/integrations/gmail/tenants/${tenantId}/conversations`, {
+          fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/grouped-thread`, {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
           }),
         ])
 
-        if (!tenantResponse.ok || !conversationsResponse.ok) {
+        if (!tenantResponse.ok || !threadResponse.ok) {
           throw new Error('Failed to load thread')
         }
 
         const tenantData: TenantSummary = await tenantResponse.json()
-        const conversationsData: Conversation[] = await conversationsResponse.json()
+        const groupedThreadData: GroupedThreadResponse = await threadResponse.json()
         setTenant(tenantData)
-        setConversations(conversationsData)
-        setExpandedConversationIds(conversationsData.map((conversation) => conversation.id))
+        setItems(groupedThreadData.items)
+        setExpandedConversationIds(groupedThreadData.items.filter((item): item is EmailThreadItem => item.type === 'email_thread').map((item) => item.id))
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load thread')
@@ -98,11 +130,6 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
     loadThread()
     return () => controller.abort()
   }, [tenantId, token])
-
-  const sortedConversations = useMemo(
-    () => [...conversations].sort((left, right) => new Date(right.last_message_at ?? 0).getTime() - new Date(left.last_message_at ?? 0).getTime()),
-    [conversations],
-  )
 
   const toggleConversation = (conversationId: number) => {
     setExpandedConversationIds((current) =>
@@ -147,7 +174,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
       <div className="border-b border-gray-200 px-5 py-4">
         <h2 className="text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
         <p className="mt-1 text-sm text-gray-500">
-          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' � ') : 'Select a tenant'}
+          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' · ') : 'Select a tenant'}
         </p>
       </div>
 
@@ -156,60 +183,84 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
         {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
 
         <div className="space-y-4">
-          {sortedConversations.map((conversation) => {
-            const expanded = expandedConversationIds.includes(conversation.id)
-            const latestMessage = conversation.messages[conversation.messages.length - 1]
-            return (
-              <article key={conversation.id} className="rounded-2xl border border-gray-200 bg-gray-50">
-                <button
-                  type="button"
-                  onClick={() => toggleConversation(conversation.id)}
-                  className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                      <span className="rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-700">Gmail Thread</span>
-                      <span>{formatDisplayDate(conversation.last_message_at || latestMessage?.sent_at || new Date().toISOString())}</span>
+          {items.map((item) => {
+            if (item.type === 'email_thread') {
+              const expanded = expandedConversationIds.includes(item.id)
+              const latestMessage = item.messages[item.messages.length - 1]
+              return (
+                <article key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50">
+                  <button
+                    type="button"
+                    onClick={() => toggleConversation(item.id)}
+                    className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                        <span className="rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-700">Gmail Thread</span>
+                        <span>{formatDisplayDate(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
+                      </div>
+                      <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
+                      <p className="mt-1 truncate text-sm text-gray-600">{item.preview_text || latestMessage?.body || 'No preview available'}</p>
+                      <p className="mt-2 text-xs font-medium text-gray-500">
+                        {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
+                      </p>
                     </div>
-                    <p className="mt-2 truncate text-sm font-semibold text-gray-900">{conversation.subject || latestMessage?.subject || 'Untitled conversation'}</p>
-                    <p className="mt-1 truncate text-sm text-gray-600">{conversation.preview_text || latestMessage?.body || 'No preview available'}</p>
-                    <p className="mt-2 text-xs font-medium text-gray-500">
-                      {conversation.provider_account_display_name || conversation.provider_account_email ? `Mailbox: ${conversation.provider_account_display_name || conversation.provider_account_email}` : 'Mailbox: unknown'}
-                    </p>
-                  </div>
-                  <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
-                    {expanded ? 'Collapse' : `${conversation.messages.length} messages`}
-                  </span>
-                </button>
+                    <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
+                      {expanded ? 'Collapse' : `${item.messages.length} messages`}
+                    </span>
+                  </button>
 
-                {expanded ? (
-                  <div className="border-t border-gray-200 bg-white px-4 py-3">
-                    <div className="space-y-3">
-                      {conversation.messages.map((item) => {
-                        const isOutbound = item.direction === 'outbound'
-                        return (
-                          <article key={item.id} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
-                            <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                              <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {isOutbound ? 'Outbound' : 'Inbound'}
-                              </span>
-                              <span>{formatDisplayDate(item.sent_at)}</span>
-                              <span className="normal-case tracking-normal">
-                                {conversation.provider_account_display_name || conversation.provider_account_email ? `Mailbox: ${conversation.provider_account_display_name || conversation.provider_account_email}` : 'Mailbox: unknown'}
-                              </span>
-                            </div>
-                            {item.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{item.subject}</p> : null}
-                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{item.body}</p>
-                          </article>
-                        )
-                      })}
+                  {expanded ? (
+                    <div className="border-t border-gray-200 bg-white px-4 py-3">
+                      <div className="space-y-3">
+                        {item.messages.map((messageItem) => {
+                          const isOutbound = messageItem.direction === 'outbound'
+                          return (
+                            <article key={messageItem.id} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                                <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
+                                  {isOutbound ? 'Outbound' : 'Inbound'}
+                                </span>
+                                <span>{formatDisplayDate(messageItem.sent_at)}</span>
+                                <span className="normal-case tracking-normal">
+                                  {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
+                                </span>
+                              </div>
+                              {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
+                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body}</p>
+                            </article>
+                          )
+                        })}
+                      </div>
                     </div>
+                  ) : null}
+                </article>
+              )
+            }
+
+            const firstMessage = item.messages[0]
+            const lastMessage = item.messages[item.messages.length - 1]
+            return (
+              <article key={item.group_id} className="rounded-2xl border border-emerald-200 bg-emerald-50">
+                <div className="flex items-start justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
+                      <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">WhatsApp Group</span>
+                      <span>{formatDisplayDate(item.start_timestamp || firstMessage?.created_at || lastMessage?.created_at || new Date().toISOString())}</span>
+                    </div>
+                    <p className="mt-2 truncate text-sm font-semibold text-gray-900">
+                      {item.messages.length === 1 ? 'WhatsApp message' : `WhatsApp messages (${item.message_count})`}
+                    </p>
+                    <p className="mt-1 truncate text-sm text-gray-600">{firstMessage?.message || lastMessage?.message || 'No preview available'}</p>
                   </div>
-                ) : null}
+                  <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
+                    {item.message_count} messages
+                  </span>
+                </div>
               </article>
             )
           })}
-          {!sortedConversations.length && !loading ? <p className="text-sm text-gray-500">No Gmail conversations synced yet.</p> : null}
+          {!items.length && !loading ? <p className="text-sm text-gray-500">No timeline items synced yet.</p> : null}
         </div>
       </div>
 
