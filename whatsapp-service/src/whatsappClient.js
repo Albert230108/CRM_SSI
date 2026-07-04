@@ -51,6 +51,7 @@ function buildInboundPayload(message) {
     whatsapp_chat_id: message?.from || null,
     whatsapp_author: message?.author || null,
     whatsapp_type: message?.type || null,
+    whatsapp_client_id: whatsappClientId || null,
     is_group: Boolean(message?.from && String(message.from).endsWith("@g.us")),
   };
 }
@@ -73,6 +74,14 @@ async function forwardInboundMessage(message) {
   const payload = buildInboundPayload(message);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), crmWebhookTimeoutMs);
+
+  console.info(
+    "Forwarding inbound WhatsApp message to CRM: sender=%s chat_id=%s client_id=%s secret_present=%s",
+    payload.sender_normalized || payload.sender_raw || payload.sender,
+    payload.whatsapp_chat_id,
+    payload.whatsapp_client_id,
+    Boolean(crmWebhookSecret),
+  );
 
   try {
     const response = await fetch(crmWebhookUrl, {
