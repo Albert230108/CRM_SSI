@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
 
@@ -227,12 +227,12 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
       <div className="border-b border-gray-200 px-5 py-4">
         <h2 className="text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
         <p className="mt-1 text-sm text-gray-500">
-          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' · ') : 'Select a tenant'}
+          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' � ') : 'Select a tenant'}
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        {loading ? <p className="text-sm text-gray-500">Loading thread...</p> : null}
+        {loading ? <p className="text-sm text-gray-500">Loading tenant thread...</p> : null}
         {sending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
 
@@ -262,7 +262,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                        <span className="rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-700">Gmail Thread</span>
+                        <span className="rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-700">Email Thread</span>
                         <span>{formatDisplayDate(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
                       </div>
                       <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
@@ -386,7 +386,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
               </article>
             )
           })}
-          {!items.length && !loading ? <p className="text-sm text-gray-500">No timeline items synced yet.</p> : null}
+          {!items.length && !loading ? <p className="text-sm text-gray-500">No tenant thread items synced yet.</p> : null}
         </div>
       </div>
 
@@ -502,3 +502,5 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
     </div>
   )
 }
+
+

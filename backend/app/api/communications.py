@@ -78,7 +78,7 @@ async def send_tenant_communication(
         tenant_id=tenant.id,
         channel=channel,
         direction="outbound",
-        subject=payload.subject.strip() if payload.subject else None,
+        subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
         message=message,
         created_at=datetime.now(timezone.utc),
     )
@@ -86,6 +86,7 @@ async def send_tenant_communication(
     db.commit()
     db.refresh(communication)
     return communication
+
 
 
 
