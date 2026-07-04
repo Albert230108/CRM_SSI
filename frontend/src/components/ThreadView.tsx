@@ -157,9 +157,10 @@ type TenantSummary = {
 
 type ThreadViewProps = {
   tenantId?: number
+  reloadSignal?: number
 }
 
-export default function ThreadView({ tenantId }: ThreadViewProps) {
+export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
   const [items, setItems] = useState<ThreadItem[]>([])
@@ -207,7 +208,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
         const groupedThreadData: GroupedThreadResponse = await threadResponse.json()
         setTenant(tenantData)
         setItems(groupedThreadData.items)
-        setExpandedConversationIds(groupedThreadData.items.filter((item): item is EmailThreadItem => item.type === 'email_thread').map((item) => item.id))
+        setExpandedConversationIds([])
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load thread')
@@ -218,7 +219,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
 
     loadThread()
     return () => controller.abort()
-  }, [tenantId, token])
+  }, [tenantId, token, reloadSignal])
 
   useEffect(() => {
     if (!selectedWhatsappGroup) return
@@ -263,7 +264,6 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
 
     const groupedThreadData: GroupedThreadResponse = await response.json()
     setItems(groupedThreadData.items)
-    setExpandedConversationIds(groupedThreadData.items.filter((item): item is EmailThreadItem => item.type === 'email_thread').map((item) => item.id))
     setSelectedWhatsappGroup((current) => {
       if (!current) return current
       const refreshedGroup = groupedThreadData.items.find((item): item is WhatsappGroupItem => item.type === 'whatsapp_group' && item.group_id === current.group_id)

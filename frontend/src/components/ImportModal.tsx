@@ -116,6 +116,16 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         const payload = await readJsonSafely(response)
         throw new Error(getErrorMessage(payload, 'Import failed'))
       }
+
+      const syncResponse = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-all`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!syncResponse.ok) {
+        const payload = await readJsonSafely(syncResponse)
+        throw new Error(getErrorMessage(payload, 'Gmail sync failed after import'))
+      }
+
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
       setConfirmBooking(null)
       setEditFields({})

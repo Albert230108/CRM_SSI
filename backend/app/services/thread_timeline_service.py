@@ -285,7 +285,7 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
         start_timestamp = group.start_timestamp or datetime.min.replace(tzinfo=timezone.utc)
         combined.append((start_timestamp, -1, "whatsapp_group", group))
 
-    combined.sort(key=lambda item: (item[0], item[1], 0 if item[2] == "email_thread" else 1))
+    combined.sort(key=lambda item: (item[0], item[1], 0 if item[2] == "email_thread" else 1), reverse=True)
     items = [item[3] for item in combined]
 
     return MixedTimelineRead(

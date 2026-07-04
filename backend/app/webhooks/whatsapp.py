@@ -48,7 +48,21 @@ def _find_tenant(db: Session, sender: str | None, payload: dict[str, Any]) -> Te
             if tenant is not None:
                 return tenant
 
-    candidates = phone_match_candidates(sender)
+    candidate_sources = [
+        sender,
+        payload.get("sender_raw"),
+        payload.get("sender_normalized"),
+        payload.get("whatsapp_chat_id"),
+        payload.get("whatsapp_author"),
+    ]
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for source in candidate_sources:
+        for candidate in phone_match_candidates(source if isinstance(source, str) else None):
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+
     if not candidates:
         return None
 

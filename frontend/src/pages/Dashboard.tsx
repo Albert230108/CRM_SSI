@@ -92,7 +92,7 @@ export default function Dashboard() {
         {/* RIGHT COLUMN: Thread View */}
         <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="h-full w-full min-h-0 overflow-hidden">
-            <ThreadView tenantId={selectedTenantId} />
+            <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} />
           </div>
         </section>
       </div>
