@@ -98,7 +98,7 @@ const renderMessageBody = (message: Pick<TimelineMessage, 'body' | 'body_text' |
   if (html) {
     return { __html: sanitizeHtml(html) }
   }
-  return null
+  return undefined
 }
 type EmailThreadItem = {
   type: 'email_thread'
@@ -350,7 +350,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                         <span>{formatDisplayDate(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
                       </div>
                       <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
-                      <p className="mt-1 truncate text-sm text-gray-600">{item.preview_text || (latestMessage ? extractPreviewText(latestMessage) : 'No preview available')}</p>
+                      <p className="mt-1 truncate text-sm text-gray-600">{item.messages[0] ? extractPreviewText({ body: item.messages[0].message, body_text: item.messages[0].message, body_html: null }) : 'No preview available'}</p>
                       <p className="mt-2 text-xs font-medium text-gray-500">
                         {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
                       </p>
@@ -461,7 +461,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                     <p className="mt-2 truncate text-sm font-semibold text-gray-900">
                       {item.messages.length === 1 ? 'WhatsApp message' : `WhatsApp messages (${item.message_count})`}
                     </p>
-                    <p className="mt-1 truncate text-sm text-gray-600">{item.preview_text || (latestMessage ? extractPreviewText(latestMessage) : 'No preview available')}</p>
+                    <p className="mt-1 truncate text-sm text-gray-600">{item.messages[0] ? extractPreviewText({ body: item.messages[0].message, body_text: item.messages[0].message, body_html: null }) : 'No preview available'}</p>
                   </div>
                   <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
                     {item.message_count} messages
