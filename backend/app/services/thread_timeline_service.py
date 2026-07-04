@@ -272,7 +272,7 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
                     subject=window.thread.subject,
                     preview_text=window.thread.preview_text,
                     anchor_timestamp=window.anchor_timestamp,
-                    messages=[TimelineMessageRead.model_validate(message) for message in messages],
+                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "sent_at": message.sent_at}) for message in messages],
                     whatsapp_blocks=whatsapp_blocks_by_thread_id.get(window.thread.id, []),
                 ),
             )

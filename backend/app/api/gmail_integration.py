@@ -146,6 +146,20 @@ def _extract_text(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_html(payload: dict[str, Any]) -> str:
+    body = payload.get("body") or {}
+    data = body.get("data")
+    if data and str(payload.get("mimeType") or "").lower() == "text/html":
+        return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="ignore")
+    for part in payload.get("parts") or []:
+        if part.get("mimeType") == "text/html" and (part.get("body") or {}).get("data"):
+            return base64.urlsafe_b64decode(part["body"]["data"].encode("utf-8")).decode("utf-8", errors="ignore")
+        nested = _extract_html(part)
+        if nested:
+            return nested
+    return ""
+
+
 def _headers_map(headers: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
     for header in headers:
@@ -228,9 +242,9 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
             continue
 
         body_text = _extract_text(payload)
+        body_html = _extract_html(payload)
         recipient_email = _email_address(headers.get("to"))
         direction = "outbound" if sender_email and sender_email == account_email else "inbound"
-
         db.add(
             ConversationMessage(
                 conversation_id=conversation.id,
@@ -242,7 +256,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                 subject=headers.get("subject"),
                 body=body_text,
                 sent_at=sent_at,
-                raw_payload={"gmail": message},
+                raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html},
             )
         )
 

@@ -4,6 +4,9 @@ import { formatDisplayDate } from '../lib/date'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
+const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'BLOCKQUOTE', 'DIV', 'DL', 'DT', 'DD', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'LI', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL'])
+const ALLOWED_TAGS = new Set(['A', 'B', 'BR', 'CODE', 'DIV', 'EM', 'I', 'LI', 'OL', 'P', 'PRE', 'SPAN', 'STRONG', 'SUB', 'SUP', 'U', 'UL', 'BLOCKQUOTE'])
+const ALLOWED_ATTRS = new Set(['href', 'title', 'target', 'rel'])
 type TimelineMessage = {
   id: number
   provider: string
@@ -13,9 +16,90 @@ type TimelineMessage = {
   recipient_email: string | null
   subject: string | null
   body: string
+  body_text: string | null
+  body_html: string | null
   sent_at: string
 }
 
+const decodeHtmlEntities = (value: string) => {
+  const textarea = document.createElement('textarea')
+  textarea.innerHTML = value
+  return textarea.value
+}
+
+const htmlToPlainText = (html: string) => {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const chunks: string[] = []
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || ''
+      if (text.trim()) chunks.push(text)
+      return
+    }
+    if (!(node instanceof HTMLElement)) return
+    const tag = node.tagName
+    if (tag === 'BR') {
+      chunks.push('\n')
+      return
+    }
+    const isBlock = BLOCK_TAGS.has(tag)
+    if (isBlock && chunks.length && !chunks[chunks.length - 1]?.endsWith('\n')) chunks.push('\n')
+    node.childNodes.forEach(walk)
+    if (isBlock && !chunks[chunks.length - 1]?.endsWith('\n')) chunks.push('\n')
+  }
+  doc.body.childNodes.forEach(walk)
+  return decodeHtmlEntities(chunks.join(' ').replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').replace(/[ \t]{2,}/g, ' ').trim())
+}
+
+const sanitizeHtml = (html: string) => {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) return
+    if (!(node instanceof HTMLElement)) return
+    if (!ALLOWED_TAGS.has(node.tagName)) {
+      const parent = node.parentNode
+      if (!parent) return
+      while (node.firstChild) parent.insertBefore(node.firstChild, node)
+      parent.removeChild(node)
+      return
+    }
+    Array.from(node.attributes).forEach((attr) => {
+      if (!ALLOWED_ATTRS.has(attr.name.toLowerCase())) {
+        node.removeAttribute(attr.name)
+        return
+      }
+      if (attr.name.toLowerCase() === 'href') {
+        const value = attr.value.trim()
+        if (!/^https?:|^mailto:|^tel:/i.test(value)) {
+          node.removeAttribute(attr.name)
+          return
+        }
+        node.setAttribute('target', '_blank')
+        node.setAttribute('rel', 'noreferrer noopener')
+      }
+    })
+    Array.from(node.childNodes).forEach(walk)
+  }
+  Array.from(doc.body.childNodes).forEach(walk)
+  return doc.body.innerHTML
+}
+
+const extractPreviewText = (message: Pick<TimelineMessage, 'body' | 'body_text' | 'body_html'>) => {
+  const source = message.body_text || message.body_html || message.body || ''
+  if (!source) return ''
+  if (message.body_html || /<[^>]+>/.test(source)) {
+    return htmlToPlainText(source).replace(/\s+/g, ' ').trim()
+  }
+  return source.replace(/\s+/g, ' ').trim()
+}
+
+const renderMessageBody = (message: Pick<TimelineMessage, 'body' | 'body_text' | 'body_html'>) => {
+  const html = message.body_html || ''
+  if (html) {
+    return { __html: sanitizeHtml(html) }
+  }
+  return null
+}
 type EmailThreadItem = {
   type: 'email_thread'
   id: number
@@ -227,7 +311,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
       <div className="border-b border-gray-200 px-5 py-4">
         <h2 className="text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
         <p className="mt-1 text-sm text-gray-500">
-          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' · ') : 'Select a tenant'}
+          {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' ï¿½ ') : 'Select a tenant'}
         </p>
       </div>
 
@@ -266,7 +350,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                         <span>{formatDisplayDate(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
                       </div>
                       <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
-                      <p className="mt-1 truncate text-sm text-gray-600">{item.preview_text || latestMessage?.body || 'No preview available'}</p>
+                      <p className="mt-1 truncate text-sm text-gray-600">{item.preview_text || (latestMessage ? extractPreviewText(latestMessage) : 'No preview available')}</p>
                       <p className="mt-2 text-xs font-medium text-gray-500">
                         {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
                       </p>
@@ -295,7 +379,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                                   </span>
                                 </div>
                                 {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
-                                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body}</p>
+                                {renderMessageBody(messageItem) ? (<div className="prose prose-sm max-w-none mt-2 overflow-x-auto text-sm leading-6 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600" dangerouslySetInnerHTML={renderMessageBody(messageItem)} />) : (<p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body_text || messageItem.body}</p>)}
                               </article>
                             )
                           }
@@ -377,7 +461,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
                     <p className="mt-2 truncate text-sm font-semibold text-gray-900">
                       {item.messages.length === 1 ? 'WhatsApp message' : `WhatsApp messages (${item.message_count})`}
                     </p>
-                    <p className="mt-1 truncate text-sm text-gray-600">{firstMessage?.message || lastMessage?.message || 'No preview available'}</p>
+                    <p className="mt-1 truncate text-sm text-gray-600">{item.preview_text || (latestMessage ? extractPreviewText(latestMessage) : 'No preview available')}</p>
                   </div>
                   <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
                     {item.message_count} messages
