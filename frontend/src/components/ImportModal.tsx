@@ -25,6 +25,24 @@ type ImportModalProps = {
   onImported?: () => void
 }
 
+function getErrorMessage(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== 'object') return fallback
+  const detail = 'detail' in payload ? (payload as { detail?: unknown }).detail : undefined
+  if (typeof detail === 'string') return detail
+  if (detail && typeof detail === 'object' && 'detail' in detail && typeof (detail as { detail?: unknown }).detail === 'string') {
+    return (detail as { detail: string }).detail
+  }
+  return fallback
+}
+
+async function readJsonSafely(response: Response) {
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
 export default function ImportModal({ open, onClose, onImported }: ImportModalProps) {
   const token = useAuthStore((state) => state.token)
   const [bookings, setBookings] = useState<Booking[]>([])
@@ -47,11 +65,13 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
           signal: controller.signal,
         })
         if (!response.ok) {
-          const payload = await response.json().catch(() => null)
-          const detail = payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : null
-          throw new Error(typeof detail === 'string' ? detail : (detail && typeof detail === 'object' && 'detail' in detail && typeof detail.detail === 'string' ? detail.detail : 'Failed to load Beds24 bookings'))
+          const payload = await readJsonSafely(response)
+          throw new Error(getErrorMessage(payload, 'Failed to load Beds24 bookings'))
         }
-        const data: Booking[] = await response.json()
+        const data = await readJsonSafely(response)
+        if (!Array.isArray(data)) {
+          throw new Error('Beds24 bookings response was malformed')
+        }
         setBookings(data)
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -93,16 +113,15 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         body: JSON.stringify(body),
       })
       if (!response.ok) {
-        const payload = await response.json().catch(() => null)
-        const detail = payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : null
-        throw new Error(typeof detail === 'string' ? detail : (detail && typeof detail === 'object' && 'detail' in detail && typeof detail.detail === 'string' ? detail.detail : 'Import failed'))
+        const payload = await readJsonSafely(response)
+        throw new Error(getErrorMessage(payload, 'Import failed'))
       }
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
       setConfirmBooking(null)
       setEditFields({})
       onImported?.()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Import failed')
+      setError(err instanceof Error ? err.message : 'Import failed')
     } finally {
       setImportingId(null)
     }
