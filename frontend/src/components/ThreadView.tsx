@@ -163,13 +163,39 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
     setSelectedWhatsappGroup(group)
   }
 
+  const loadGroupedThread = async () => {
+    if (!tenantId) return
+
+    const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/grouped-thread`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null)
+      throw new Error(payload?.detail || 'Failed to load thread')
+    }
+
+    const groupedThreadData: GroupedThreadResponse = await response.json()
+    setItems(groupedThreadData.items)
+    setExpandedConversationIds(groupedThreadData.items.filter((item): item is EmailThreadItem => item.type === 'email_thread').map((item) => item.id))
+    setSelectedWhatsappGroup((current) => {
+      if (!current) return current
+      const refreshedGroup = groupedThreadData.items.find((item): item is WhatsappGroupItem => item.type === 'whatsapp_group' && item.group_id === current.group_id)
+      return refreshedGroup || current
+    })
+  }
+
   const handleSend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!tenantId || !message.trim()) return
+    if (!tenantId || !message.trim() || sending) return
 
     try {
       setSending(true)
       setError('')
+      if (channel === 'whatsapp') {
+        await loadGroupedThread()
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
         method: 'POST',
         headers: {
@@ -184,6 +210,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
         throw new Error(payload?.detail || 'Failed to send message')
       }
 
+      await loadGroupedThread()
       setMessage('')
       if (channel === 'email') {
         setSubject('')
@@ -205,7 +232,8 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        {loading ? <p className="text-sm text-gray-500">Loading...</p> : null}
+        {loading ? <p className="text-sm text-gray-500">Loading thread...</p> : null}
+        {sending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
 
         <div className="space-y-4">
@@ -438,10 +466,10 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
 
       <form onSubmit={handleSend} className="border-t border-gray-200 p-4">
         <div className="flex w-full gap-2">
-          <button type="button" onClick={() => setChannel('whatsapp')} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'whatsapp' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+          <button type="button" onClick={() => setChannel('whatsapp')} disabled={sending} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'whatsapp' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:cursor-not-allowed disabled:opacity-50`}>
             WhatsApp
           </button>
-          <button type="button" onClick={() => setChannel('email')} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'email' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+          <button type="button" onClick={() => setChannel('email')} disabled={sending} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'email' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:cursor-not-allowed disabled:opacity-50`}>
             Email
           </button>
         </div>
@@ -460,12 +488,13 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
           onChange={(event) => setMessage(event.target.value)}
           rows={4}
           placeholder={channel === 'whatsapp' ? 'Write a WhatsApp message...' : 'Write an email...'}
-          className="mt-3 w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          disabled={sending}
+          className="mt-3 w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
         />
 
         <div className="mt-3 flex items-center justify-between gap-3">
           <p className="text-xs text-gray-500">{channel === 'whatsapp' ? 'WhatsApp send.' : 'Email reply.'}</p>
-          <button type="submit" disabled={sending || !tenantId || !message.trim()} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="submit" disabled={sending || loading || !tenantId || !message.trim()} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
             {sending ? 'Sending...' : 'Send'}
           </button>
         </div>
