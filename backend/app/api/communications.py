@@ -12,7 +12,7 @@ from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_client import send_whatsapp_message
 
-router = APIRouter(prefix="/api/communications", tags=["communications"])
+router = APIRouter(prefix="/communications", tags=["communications"])
 
 
 @router.get("/tenants/{tenant_id}/timeline", response_model=list[CommunicationRead])
@@ -65,11 +65,12 @@ async def send_tenant_communication(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
 
     if channel == "whatsapp":
-        if not tenant.phone:
+        whatsapp_to = (tenant.phone or tenant.mobile or "").strip()
+        if not whatsapp_to:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant phone is required for WhatsApp")
         await send_whatsapp_message(
             {
-                "to": tenant.phone,
+                "to": whatsapp_to,
                 "message": message,
             }
         )

@@ -77,7 +77,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full min-h-0 flex-col space-y-4">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Tenants</h2>
       </div>
@@ -85,7 +85,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
       {loading ? <p className="text-sm text-gray-500">Loading tenants...</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2 [scrollbar-width:thin] [scrollbar-color:rgba(34,197,94,0.35)_transparent]">
         {statusOrder.map((status) => (
           <section key={status} className="space-y-4">
             <div className="flex items-center justify-between">

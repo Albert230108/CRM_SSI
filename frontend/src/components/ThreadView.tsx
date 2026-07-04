@@ -223,7 +223,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
   }
 
   return (
-    <div className="flex h-full min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
+    <div className="flex h-full min-h-0 min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-200 px-5 py-4">
         <h2 className="text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
         <p className="mt-1 text-sm text-gray-500">
@@ -231,7 +231,7 @@ export default function ThreadView({ tenantId }: ThreadViewProps) {
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">
         {loading ? <p className="text-sm text-gray-500">Loading tenant thread...</p> : null}
         {sending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
