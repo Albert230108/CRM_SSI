@@ -12,5 +12,6 @@ module.exports = {
   reconnectDelayMs: Math.max(1000, toInteger(process.env.RECONNECT_DELAY_MS, 5000)),
   crmWebhookUrl: String(process.env.CRM_WHATSAPP_WEBHOOK_URL || "").trim(),
   crmWebhookSecret: String(process.env.CRM_WEBHOOK_SECRET || "").trim(),
+  crmWebhookRouteToken: String(process.env.CRM_WEBHOOK_ROUTE_TOKEN || "").trim(),
   crmWebhookTimeoutMs: Math.max(1000, toInteger(process.env.CRM_WEBHOOK_TIMEOUT_MS, 5000)),
 };

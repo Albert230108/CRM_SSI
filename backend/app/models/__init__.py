@@ -6,4 +6,5 @@ from app.models.gmail_integration import Conversation, ConversationMessage, Gmai
 from app.models.invitation import Invitation
 from app.models.password_reset import PasswordResetToken
 from app.models.tenant import Tenant
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User

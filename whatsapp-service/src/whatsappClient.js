@@ -1,7 +1,7 @@
 const qrcode = require("qrcode-terminal");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 
-const { crmWebhookSecret, crmWebhookTimeoutMs, crmWebhookUrl, reconnectDelayMs, whatsappClientId } = require("./config");
+const { crmWebhookRouteToken, crmWebhookSecret, crmWebhookTimeoutMs, crmWebhookUrl, reconnectDelayMs, whatsappClientId } = require("./config");
 
 let client = null;
 let ready = false;
@@ -52,6 +52,8 @@ function buildInboundPayload(message) {
     whatsapp_author: message?.author || null,
     whatsapp_type: message?.type || null,
     whatsapp_client_id: whatsappClientId || null,
+    provider: "whatsapp-service",
+    external_account_id: whatsappClientId || null,
     is_group: Boolean(message?.from && String(message.from).endsWith("@g.us")),
   };
 }
@@ -88,6 +90,7 @@ async function forwardInboundMessage(message) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(crmWebhookRouteToken ? { "X-Webhook-Token": crmWebhookRouteToken } : {}),
         ...(crmWebhookSecret ? { "X-Webhook-Secret": crmWebhookSecret } : {}),
       },
       body: JSON.stringify(payload),
