@@ -8,7 +8,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
@@ -457,23 +457,51 @@ async def beds24_bookings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Beds24BookingPreview]:
-    booking_items = await get_bookings()
-    results: list[Beds24BookingPreview] = []
-    for item in booking_items:
-        booking_id = _pick_booking_id(item)
-        if not booking_id:
-            continue
-        fields = _extract_guest_fields(item)
-        imported = db.query(Tenant).filter(Tenant.booking_id == booking_id).first() is not None
-        results.append(
-            Beds24BookingPreview(
-                booking_id=booking_id,
-                name=fields["name"],
-                imported=imported,
-                **{k: v for k, v in fields.items() if k != "name"},
-            )
-        )
-    return results
+    try:
+        booking_items = await get_bookings()
+        results: list[Beds24BookingPreview] = []
+        for item in booking_items:
+            booking_id = _pick_booking_id(item)
+            if not booking_id:
+                continue
+            fields = _extract_guest_fields(item)
+            imported = db.query(Tenant).filter(Tenant.booking_id == booking_id).first() is not None
+            try:
+                results.append(
+                    Beds24BookingPreview(
+                        booking_id=booking_id,
+                        name=fields["name"],
+                        imported=imported,
+                        **{k: v for k, v in fields.items() if k != "name"},
+                    )
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "Beds24 booking preview validation failed booking_id=%s item_keys=%s error=%s",
+                    booking_id,
+                    sorted(list(item.keys())) if isinstance(item, dict) else type(item).__name__,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={
+                        "error": "beds24_booking_preview_validation_failed",
+                        "detail": "Beds24 booking preview data was malformed",
+                        "booking_id": booking_id,
+                    },
+                ) from exc
+        return results
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Beds24 booking list crashed user_id=%s", getattr(current_user, "id", None))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "unexpected_backend_exception",
+                "detail": "Beds24 booking list crashed",
+            },
+        ) from exc
 
 
 @router.get("/beds24/bookings/{booking_id}/preview", response_model=Beds24BookingPreview)
@@ -482,19 +510,29 @@ async def beds24_booking_preview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Beds24BookingPreview:
-    item = await get_booking_detail(booking_id)
-    fields = _extract_guest_fields(item)
-    imported = db.query(Tenant).filter(Tenant.booking_id == booking_id).first() is not None
-    return Beds24BookingPreview(
-        booking_id=booking_id,
-        name=fields["name"],
-        imported=imported,
-        **{k: v for k, v in fields.items() if k != "name"},
-    )
+    try:
+        item = await get_booking_detail(booking_id)
+        fields = _extract_guest_fields(item)
+        imported = db.query(Tenant).filter(Tenant.booking_id == booking_id).first() is not None
+        return Beds24BookingPreview(
+            booking_id=booking_id,
+            name=fields["name"],
+            imported=imported,
+            **{k: v for k, v in fields.items() if k != "name"},
+        )
+    except ValidationError as exc:
+        logger.warning("Beds24 booking preview validation failed booking_id=%s error=%s", booking_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "error": "beds24_booking_preview_validation_failed",
+                "detail": "Beds24 booking preview data was malformed",
+                "booking_id": booking_id,
+            },
+        ) from exc
 
 
-@router.post("/tenants/import")
-async def import_tenant(
+async def _import_tenant(
     data: ImportTenantRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -718,5 +756,23 @@ async def import_tenant(
         "charges_imported": len(charges),
         "payments_imported": len(payments),
     }
+
+
+@router.post("/tenants/import")
+async def import_tenant(
+    data: ImportTenantRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return await _import_tenant(data=data, db=db, current_user=current_user)
+
+
+@router.post("/beds24/bookings")
+async def import_beds24_booking(
+    data: ImportTenantRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return await _import_tenant(data=data, db=db, current_user=current_user)
 
 
