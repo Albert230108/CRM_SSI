@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
+from app.core.phone_normalization import phone_match_candidates
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 
@@ -40,18 +41,22 @@ def _pick_timestamp(payload: dict[str, Any]) -> datetime:
 
 
 def _find_tenant(db: Session, sender: str | None, payload: dict[str, Any]) -> Tenant | None:
-    candidates = []
-    if sender:
-        candidates.append(sender)
     for key in ("email", "customer_email", "tenant_email"):
         value = payload.get(key)
         if value:
             tenant = db.query(Tenant).filter(Tenant.email == str(value)).first()
             if tenant is not None:
                 return tenant
-    for candidate in candidates:
-        tenant = db.query(Tenant).filter(Tenant.phone == candidate).first()
-        if tenant is not None:
+
+    candidates = phone_match_candidates(sender)
+    if not candidates:
+        return None
+
+    tenants = db.query(Tenant).filter(Tenant.phone.isnot(None)).all()
+    tenants.extend(db.query(Tenant).filter(Tenant.mobile.isnot(None)).all())
+    for tenant in tenants:
+        tenant_candidates = phone_match_candidates(tenant.phone) + phone_match_candidates(tenant.mobile)
+        if any(candidate in tenant_candidates for candidate in candidates):
             return tenant
     return None
 
@@ -71,6 +76,7 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> d
         Communication(
             tenant_id=tenant.id,
             channel="whatsapp",
+            direction="inbound",
             subject=payload.get("subject"),
             message=_first_text(payload),
             created_at=_pick_timestamp(payload),
