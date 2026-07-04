@@ -136,9 +136,25 @@ async def _get_with_retry(
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Beds24 upstream retry exhausted")
 
 
+def _extract_beds24_data(payload: Any, *, endpoint: str) -> Any:
+    if isinstance(payload, dict):
+        if payload.get("errors"):
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 {endpoint} returned an error response")
+        if payload.get("error"):
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 {endpoint} returned an error response")
+        if isinstance(payload.get("message"), str) and payload.get("message", "").strip() and "data" not in payload:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 {endpoint} returned an unexpected response")
+        return payload.get("data") if "data" in payload else payload
+    return payload
+
+
+def _booking_type_filters() -> list[str]:
+    return ["confirmed", "requestWithManualConfirmation", "requestWithCreditCard"]
+
+
 async def get_bookings() -> list[dict[str, Any]]:
     headers = await _async_headers()
-    params: dict[str, Any] = {"includeInfoItems": "true", "status": ["confirmed", "request", "enquiry", "inquiry"]}
+    params: dict[str, Any] = {"includeInfoItems": "true", "bookingType": _booking_type_filters()}
     all_items: list[dict[str, Any]] = []
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
         next_url: str | None = f"{READ_BASE_URL}/bookings"
@@ -150,12 +166,14 @@ async def get_bookings() -> list[dict[str, Any]]:
             except ValueError as exc:
                 logger.warning("Beds24 bookings response invalid JSON url=%s", next_url)
                 raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 bookings response was not valid JSON") from exc
-            data = payload.get("data") if isinstance(payload, dict) else payload
+            data = _extract_beds24_data(payload, endpoint="bookings")
             if isinstance(data, list):
                 all_items.extend(item for item in data if isinstance(item, dict))
             elif isinstance(data, dict):
                 sub = data.get("bookings") or []
                 all_items.extend(item for item in sub if isinstance(item, dict))
+            else:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 bookings response shape was unexpected")
             pages = payload.get("pages", {}) if isinstance(payload, dict) else {}
             if isinstance(pages, dict) and pages.get("nextPageExists") and pages.get("nextPageLink"):
                 next_url = str(pages["nextPageLink"])
@@ -176,7 +194,7 @@ async def get_booking_detail(booking_id: str) -> dict[str, Any]:
     except ValueError as exc:
         logger.warning("Beds24 booking detail invalid JSON booking_id=%s", booking_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 booking detail response was not valid JSON") from exc
-    data = payload.get("data") if isinstance(payload, dict) else payload
+    data = _extract_beds24_data(payload, endpoint="booking detail")
     if isinstance(data, list):
         data = data[0] if data else {}
     if not isinstance(data, dict):
@@ -193,7 +211,7 @@ async def get_payments(booking_id: str) -> list[dict[str, Any]]:
     except ValueError as exc:
         logger.warning("Beds24 payments invalid JSON booking_id=%s", booking_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 payments response was not valid JSON") from exc
-    data = payload.get("data") if isinstance(payload, dict) else payload
+    data = _extract_beds24_data(payload, endpoint="payments")
     if isinstance(data, dict):
         data = data.get("invoiceItems") or data.get("items") or []
     items = [item for item in (data or []) if isinstance(item, dict)]
@@ -209,7 +227,7 @@ async def get_charges(booking_id: str) -> list[dict[str, Any]]:
     except ValueError as exc:
         logger.warning("Beds24 charges invalid JSON booking_id=%s", booking_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 charges response was not valid JSON") from exc
-    data = payload.get("data") if isinstance(payload, dict) else payload
+    data = _extract_beds24_data(payload, endpoint="charges")
     if isinstance(data, dict):
         data = data.get("invoiceItems") or data.get("items") or []
     items = [item for item in (data or []) if isinstance(item, dict)]
