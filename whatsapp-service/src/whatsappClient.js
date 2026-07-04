@@ -210,7 +210,6 @@ function sleep(ms) {
 
 async function backfillChatHistory(chat, options = {}) {
   const limit = Math.max(1, Number.parseInt(String(options.limit || whatsappHistoryBackfillLimit || 100), 10) || whatsappHistoryBackfillLimit || 100);
-  const onlyOutbound = Boolean(options.onlyOutbound);
   if (!chat) {
     return { imported: 0, deduped: 0, failed: 0, inbound: 0, outbound: 0, fetched: 0 };
   }
@@ -219,20 +218,40 @@ async function backfillChatHistory(chat, options = {}) {
     return { imported: 0, deduped: 0, failed: 0, inbound: 0, outbound: 0, fetched: 0, skippedChat: true };
   }
 
+  const chatId = getChatId(chat);
+  const chatName = getChatName(chat);
+  const logBase = {
+    chat_id: chatId,
+    chat_name: chatName,
+    isGroup: Boolean(chat?.isGroup || String(chatId || "").endsWith("@g.us")),
+  };
+
   if (typeof chat.syncHistory === "function") {
     try {
       await chat.syncHistory();
+      console.info(JSON.stringify({ event: "whatsapp_history_sync_success", ...logBase }));
       await sleep(Number.parseInt(String(options.postSyncDelayMs || 1500), 10) || 1500);
     } catch (error) {
-      console.warn(JSON.stringify({
+      console.error(JSON.stringify({
         event: "whatsapp_history_sync_failure",
-        chat_id: chat?.id?._serialized || chat?.id || null,
+        ...logBase,
         error: error instanceof Error ? error.message : String(error),
       }));
     }
   }
 
-  const messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit, fromMe: onlyOutbound ? true : undefined }) : [];
+  let messages = [];
+  try {
+    messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit }) : [];
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "whatsapp_history_fetch_failure",
+      ...logBase,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    throw error;
+  }
+
   const ordered = Array.isArray(messages)
     ? messages.slice().sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0))
     : [];
@@ -260,10 +279,6 @@ async function backfillChatHistory(chat, options = {}) {
     }
 
     const direction = message?.fromMe ? "outbound" : "inbound";
-    if (onlyOutbound && direction !== "outbound") {
-      deduped += 1;
-      continue;
-    }
     if (direction === "outbound") {
       outbound += 1;
     } else {
@@ -284,7 +299,7 @@ async function backfillChatHistory(chat, options = {}) {
       failed += 1;
       console.error(JSON.stringify({
         event: "whatsapp_history_import_failure",
-        chat_id: chat?.id?._serialized || chat?.id || null,
+        ...logBase,
         whatsapp_message_id: whatsappMessageId,
         direction,
         error: error instanceof Error ? error.message : String(error),
@@ -294,27 +309,26 @@ async function backfillChatHistory(chat, options = {}) {
 
   console.info(JSON.stringify({
     event: "whatsapp_history_chat_summary",
-    chat_id: chat?.id?._serialized || chat?.id || null,
+    ...logBase,
     fetched_count: fetched,
     inbound_count: inbound,
     outbound_count: outbound,
     imported_count: imported,
     deduped_count: deduped,
     failed_count: failed,
-    only_outbound: onlyOutbound,
   }));
 
   return { imported, deduped, failed, inbound, outbound, fetched };
 }
 
-async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, onlyOutbound = false, postSyncDelayMs = 1500 } = {}) {
+async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 1500 } = {}) {
   if (!client || !ready) {
     throw new Error("WhatsApp client is not ready");
   }
 
   const chats = typeof client.getChats === "function" ? await client.getChats() : [];
   const orderedChats = Array.isArray(chats)
-    ? chats.slice().sort((a, b) => String(a?.id?.serialized || a?.id?._serialized || a?.id || "").localeCompare(String(b?.id?.serialized || b?.id?._serialized || b?.id || "")))
+    ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
     : [];
 
   let scanned = 0;
@@ -328,24 +342,19 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, onlyOutb
   for (const chat of orderedChats) {
     scanned += 1;
     try {
-      const result = await backfillChatHistory(chat, { limit, onlyOutbound, postSyncDelayMs });
+      const result = await backfillChatHistory(chat, { limit, postSyncDelayMs });
       imported += result.imported;
       deduped += result.deduped;
       failed += result.failed;
       inbound += result.inbound;
       outbound += result.outbound;
       fetched += result.fetched;
-      console.info(JSON.stringify({
-        event: "whatsapp_history_sync_success",
-        chat_id: chat?.id?._serialized || chat?.id || null,
-        fetched_count: result.fetched,
-        imported_count: result.imported,
-      }));
     } catch (error) {
       failed += 1;
       console.error(JSON.stringify({
         event: "whatsapp_history_sync_failure",
-        chat_id: chat?.id?._serialized || chat?.id || null,
+        chat_id: getChatId(chat),
+        chat_name: getChatName(chat),
         error: error instanceof Error ? error.message : String(error),
       }));
     }
@@ -360,7 +369,6 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, onlyOutb
     imported_count: imported,
     deduped_count: deduped,
     failed_count: failed,
-    only_outbound: onlyOutbound,
   }));
 
   return { chats: orderedChats.length, scanned, fetched, inbound, outbound, imported, deduped, failed };
@@ -516,17 +524,17 @@ async function sendTextMessage(to, message) {
 }
 
 async function runHistoryBackfill(options = {}) {
-  return backfillAllChats({ ...options, onlyOutbound: Boolean(options.onlyOutbound), postSyncDelayMs: options.postSyncDelayMs || 1500 });
+  return backfillAllChats({ ...options, postSyncDelayMs: options.postSyncDelayMs || 1500 });
 }
 
-async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, onlyOutbound = false, postSyncDelayMs = 1500 } = {}) {
+async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyncDelayMs = 1500 } = {}) {
   if (!client || !ready) {
     throw new Error("WhatsApp client is not ready");
   }
 
   const chats = typeof client.getChats === "function" ? await client.getChats() : [];
   const orderedChats = Array.isArray(chats)
-    ? chats.slice().filter(isRelevantChat).sort((a, b) => String(a?.id?._serialized || a?.id || "").localeCompare(String(b?.id?._serialized || b?.id || ""))).slice(0, chatCount)
+    ? chats.slice().filter(isRelevantChat).sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || ""))).slice(0, chatCount)
     : [];
 
   const samples = [];
@@ -536,11 +544,28 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, onlyOut
 
   for (const chat of orderedChats) {
     try {
+      const chatId = getChatId(chat);
+      const chatName = getChatName(chat);
+      const isGroup = Boolean(chat?.isGroup || String(chatId || "").endsWith("@g.us"));
+      let syncHistorySuccess = false;
       if (typeof chat.syncHistory === "function") {
         await chat.syncHistory();
+        syncHistorySuccess = true;
         await sleep(postSyncDelayMs);
       }
-      const messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit: messageLimit, fromMe: onlyOutbound ? true : undefined }) : [];
+      let messages = [];
+      try {
+        messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit: messageLimit }) : [];
+      } catch (error) {
+        samples.push({
+          chat_id: chatId,
+          chat_name: chatName,
+          isGroup,
+          sync_history_success: syncHistorySuccess,
+          fetch_error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
       const ordered = Array.isArray(messages) ? messages.slice().sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0)) : [];
       const chatSamples = ordered.slice(0, 10).map((message) => ({
         whatsapp_message_id: message?.id?._serialized || null,
@@ -552,7 +577,10 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, onlyOut
       inboundMessages += chatInbound;
       outboundMessages += chatOutbound;
       samples.push({
-        chat_id: chat?.id?._serialized || chat?.id || null,
+        chat_id: chatId,
+        chat_name: chatName,
+        isGroup,
+        sync_history_success: syncHistorySuccess,
         messages_count: ordered.length,
         inbound_count: chatInbound,
         outbound_count: chatOutbound,
@@ -560,19 +588,22 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, onlyOut
       });
     } catch (error) {
       samples.push({
-        chat_id: chat?.id?._serialized || chat?.id || null,
+        chat_id: getChatId(chat),
+        chat_name: getChatName(chat),
+        isGroup: Boolean(chat?.isGroup || String(getChatId(chat) || "").endsWith("@g.us")),
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
   return {
+    ready: Boolean(ready),
+    total_chats_found: Array.isArray(chats) ? chats.length : 0,
     chats_scanned: orderedChats.length,
     total_messages: totalMessages,
     inbound_messages: inboundMessages,
     outbound_messages: outboundMessages,
     samples,
-    only_outbound: onlyOutbound,
   };
 }
 
@@ -604,3 +635,4 @@ module.exports = {
   runHistoryBackfill,
   runHistoryDebugSample,
 };
+

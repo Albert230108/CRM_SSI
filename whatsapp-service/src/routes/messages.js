@@ -54,7 +54,7 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
         messageLimit: Number.isFinite(limit) ? limit : 50,
         onlyOutbound,
       });
-      return res.json({ ok: true, ready: true, ...sample });
+      return res.json({ ok: true, ...sample });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to debug WhatsApp history sync";
       const status = message.includes("not ready") ? 503 : 500;
