@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
@@ -12,6 +13,13 @@ from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_chan
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp-webhooks"])
 logger = logging.getLogger(__name__)
+
+
+class WhatsAppWebhookResponse(BaseModel):
+    ok: bool
+    routing_strategy: str | None = None
+    tenant_id: int | None = None
+    message: str | None = None
 
 
 def _first_text(payload: dict[str, Any]) -> str:
@@ -46,8 +54,8 @@ def _secret_present(request: Request) -> bool:
     return bool(request.headers.get("X-Webhook-Secret") or request.query_params.get("secret") or request.query_params.get("webhook_secret") or request.headers.get("X-Webhook-Token"))
 
 
-@router.post("")
-async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, str]:
+@router.post("", response_model=WhatsAppWebhookResponse)
+async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> WhatsAppWebhookResponse | JSONResponse:
     payload = await request.json()
     if not isinstance(payload, dict):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
@@ -81,4 +89,4 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> d
         )
     )
     db.commit()
-    return {"ok": True, "routing_strategy": routing_result.strategy}
+    return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_result.strategy, tenant_id=tenant.id)
