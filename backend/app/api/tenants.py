@@ -488,6 +488,7 @@ async def beds24_bookings(
                         "error": "beds24_booking_preview_validation_failed",
                         "detail": "Beds24 booking preview data was malformed",
                         "booking_id": booking_id,
+                        "error_type": type(exc).__name__,
                     },
                 ) from exc
         return results
@@ -499,6 +500,7 @@ async def beds24_bookings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "error": "unexpected_backend_exception",
+                "error_type": type(exc).__name__,
                 "detail": "Beds24 booking list crashed",
             },
         ) from exc
@@ -528,6 +530,7 @@ async def beds24_booking_preview(
                 "error": "beds24_booking_preview_validation_failed",
                 "detail": "Beds24 booking preview data was malformed",
                 "booking_id": booking_id,
+                "error_type": type(exc).__name__,
             },
         ) from exc
 
