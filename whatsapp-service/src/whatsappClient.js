@@ -45,19 +45,19 @@ function extractText(message) {
 function buildCrmPayload(message, direction, overrides = {}) {
   const text = extractText(message);
   const timestamp = message?.timestamp;
-  const chatId = overrides.whatsapp_chat_id || message?.chatId || message?.from || null;
+  const chatId = overrides.whatsapp_chat_id || message?.chatId || message?.from || message?.to || null;
   const author = message?.author || null;
   const sender = overrides.sender || author || message?.from || null;
   const recipient = overrides.to || message?.to || message?.from || null;
 
   return {
     direction,
-    from: direction === "inbound" ? sender : null,
-    sender: direction === "inbound" ? sender : null,
-    sender_raw: direction === "inbound" ? sender : null,
-    sender_normalized: direction === "inbound" ? normalizeWhatsAppId(sender) : null,
-    to: direction === "outbound" ? recipient : null,
-    recipient: direction === "outbound" ? recipient : null,
+    from: sender,
+    sender,
+    sender_raw: sender,
+    sender_normalized: normalizeWhatsAppId(sender),
+    to: recipient,
+    recipient,
     message: text,
     body: text,
     text,
@@ -116,11 +116,6 @@ async function forwardCrmMessage(payload, contextLabel) {
       throw new Error(`CRM webhook responded with ${response.status}${responseText ? `: ${responseText}` : ""}`);
     }
 
-    console.info(
-      "Successfully forwarded %s WhatsApp message to CRM: message_id=%s",
-      contextLabel,
-      payload.whatsapp_message_id,
-    );
     if (payload.whatsapp_message_id) {
       forwardedMessageIds.add(payload.whatsapp_message_id);
     }
@@ -131,8 +126,11 @@ async function forwardCrmMessage(payload, contextLabel) {
 }
 
 async function forwardInboundMessage(message) {
-  if (!message || message?.fromMe || message?.isStatus) {
+  if (!message || message?.isStatus) {
     return false;
+  }
+  if (message?.fromMe) {
+    return forwardOutboundMessage(message, message?.chatId || message?.to || message?.from || null, message?.to || null);
   }
 
   const text = extractText(message);
@@ -176,7 +174,11 @@ function normalizeRecipient(input) {
   return `${digits}@c.us`;
 }
 
-async function backfillChatHistory(chat, limit = whatsappHistoryBackfillLimit) {
+function subtractDays(date, days) {
+  return new Date(date.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+async function backfillChatHistory(chat, limit = whatsappHistoryBackfillLimit, days = 365) {
   if (!chat) {
     return { forwarded: 0, skipped: 0 };
   }
@@ -189,15 +191,12 @@ async function backfillChatHistory(chat, limit = whatsappHistoryBackfillLimit) {
     }
   }
 
-  const messages = typeof chat.fetchMessages === "function"
-    ? await chat.fetchMessages(limit)
-    : [];
+  const messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages(limit) : [];
+  const cutoff = subtractDays(new Date(), days).getTime();
   const ordered = Array.isArray(messages)
-    ? messages.slice().sort((a, b) => {
-        const left = Number(a?.timestamp || 0);
-        const right = Number(b?.timestamp || 0);
-        return left - right;
-      })
+    ? messages
+        .filter((message) => Number(message?.timestamp || 0) * 1000 >= cutoff)
+        .sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0))
     : [];
 
   let forwarded = 0;
@@ -238,7 +237,7 @@ async function backfillChatHistory(chat, limit = whatsappHistoryBackfillLimit) {
   return { forwarded, skipped };
 }
 
-async function backfillAllChats({ limit = whatsappHistoryBackfillLimit } = {}) {
+async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, days = 365 } = {}) {
   if (!client || !ready) {
     throw new Error("WhatsApp client is not ready");
   }
@@ -252,7 +251,7 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit } = {}) {
   let skipped = 0;
 
   for (const chat of orderedChats) {
-    const result = await backfillChatHistory(chat, limit);
+    const result = await backfillChatHistory(chat, limit, days);
     forwarded += result.forwarded;
     skipped += result.skipped;
   }
@@ -267,7 +266,7 @@ async function maybeRunStartupBackfill() {
 
   startupBackfillTriggered = true;
   try {
-    const result = await backfillAllChats({ limit: whatsappHistoryBackfillLimit });
+    const result = await backfillAllChats({ limit: whatsappHistoryBackfillLimit, days: 365 });
     console.info(
       "Startup WhatsApp history backfill finished: chats=%s forwarded=%s skipped=%s",
       result.chats,
@@ -298,6 +297,12 @@ function attachClientEvents(nextClient) {
   nextClient.on("message", (message) => {
     void forwardInboundMessage(message).catch((error) => {
       console.error("Failed to forward inbound WhatsApp message to CRM:", error);
+    });
+  });
+
+  nextClient.on("message_create", (message) => {
+    void forwardOutboundMessage(message, message?.chatId || message?.to || message?.from || null, message?.to || null).catch((error) => {
+      console.error("Failed to forward outbound WhatsApp message to CRM:", error);
     });
   });
 
@@ -400,7 +405,7 @@ async function sendTextMessage(to, message) {
 }
 
 async function runHistoryBackfill(options = {}) {
-  return backfillAllChats(options);
+  return backfillAllChats({ ...options, days: 365 });
 }
 
 async function shutdownClient() {

@@ -59,6 +59,8 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
     legacy_sources = [
         payload.get("sender"),
         payload.get("from"),
+        payload.get("recipient"),
+        payload.get("to"),
         payload.get("sender_raw"),
         payload.get("sender_normalized"),
         chat_namespace,
