@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
@@ -155,6 +155,13 @@ def _build_whatsapp_block_id(thread_id: int, index: int, start: datetime | None,
     return f"thread-{thread_id}:whatsapp-{index}:{start_key}:{end_key}:{count}"
 
 
+def _as_whatsapp_message(message: Communication) -> TimelineWhatsappMessageRead | None:
+    try:
+        return TimelineWhatsappMessageRead.model_validate(message)
+    except ValidationError:
+        return None
+
+
 def _group_whatsapp_by_thread_windows(
     whatsapp_messages: list[Communication],
     thread_windows: list[_EmailThreadWindow],
@@ -180,16 +187,19 @@ def _build_whatsapp_groups(whatsapp_messages: list[Communication], thread_window
     for index, bucket in enumerate(buckets):
         if not bucket:
             continue
+        rendered_messages = [message for message in (_as_whatsapp_message(item) for item in bucket) if message is not None]
+        if not rendered_messages:
+            continue
         start_timestamp = _ensure_utc(bucket[0].created_at)
         end_timestamp = _ensure_utc(bucket[-1].created_at)
         group_label = "before_first_thread" if index == 0 else "after_last_thread" if index == len(thread_windows) else f"between_thread_{index}_and_{index + 1}"
         groups.append(
             TimelineWhatsappGroupRead(
-                group_id=_build_whatsapp_group_id(group_label, start_timestamp, end_timestamp, len(bucket)),
+                group_id=_build_whatsapp_group_id(group_label, start_timestamp, end_timestamp, len(rendered_messages)),
                 start_timestamp=start_timestamp,
                 end_timestamp=end_timestamp,
-                messages=[TimelineWhatsappMessageRead.model_validate(message) for message in bucket],
-                message_count=len(bucket),
+                messages=rendered_messages,
+                message_count=len(rendered_messages),
             )
         )
     return groups
@@ -208,7 +218,7 @@ def _build_whatsapp_blocks_for_thread(
     for message_index in range(len(messages) - 1):
         left = _ensure_utc(messages[message_index].sent_at)
         right = _ensure_utc(messages[message_index + 1].sent_at)
-        block_messages: list[Communication] = []
+        block_messages: list[TimelineWhatsappMessageRead] = []
         while whatsapp_index < len(whatsapp_messages):
             candidate = whatsapp_messages[whatsapp_index]
             candidate_at = _ensure_utc(candidate.created_at)
@@ -217,7 +227,9 @@ def _build_whatsapp_blocks_for_thread(
                 continue
             if candidate_at > right:
                 break
-            block_messages.append(candidate)
+            rendered = _as_whatsapp_message(candidate)
+            if rendered is not None:
+                block_messages.append(rendered)
             whatsapp_index += 1
         if block_messages:
             blocks.append(
@@ -225,7 +237,7 @@ def _build_whatsapp_blocks_for_thread(
                     block_id=_build_whatsapp_block_id(thread.id, message_index, left, right, len(block_messages)),
                     start_at=_ensure_utc(block_messages[0].created_at),
                     end_at=_ensure_utc(block_messages[-1].created_at),
-                    messages=[TimelineWhatsappMessageRead.model_validate(message) for message in block_messages],
+                    messages=block_messages,
                     message_count=len(block_messages),
                 )
             )
@@ -293,4 +305,3 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
         tenant_name=tenant.name,
         items=items,
     )
-
