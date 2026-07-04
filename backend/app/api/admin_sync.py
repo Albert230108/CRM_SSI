@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -8,11 +9,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.gmail_integration import sync_account
-from app.api.tenants import ImportTenantRequest, _extract_guest_fields, _import_tenant
+from app.api.tenants import _extract_guest_fields
 from app.core.dependencies import get_current_admin_user, get_db
 from app.models.gmail_integration import GmailAccount
+from app.models.tenant import Tenant
 from app.models.user import User
-from app.services.beds24_client import get_bookings
+from app.services.beds24_client import get_bookings, get_booking_detail
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 
 router = APIRouter(prefix="/admin", tags=["admin-sync"])
@@ -25,6 +27,42 @@ def _to_int(value: Any) -> int:
         return 0
 
 
+def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, Any]) -> None:
+    fields = _extract_guest_fields(booking)
+    tenant.first_name = fields.get("first_name")
+    tenant.last_name = fields.get("last_name")
+    tenant.email = fields.get("email")
+    tenant.phone = fields.get("phone")
+    tenant.mobile = fields.get("mobile")
+    tenant.check_in = fields.get("check_in")
+    tenant.check_out = fields.get("check_out")
+    tenant.city = fields.get("city")
+    tenant.country = fields.get("country")
+    tenant.zip_code = fields.get("zip_code")
+    tenant.address = fields.get("address")
+    tenant.company = fields.get("company")
+    tenant.language = fields.get("language")
+    tenant.num_adults = fields.get("num_adults")
+    tenant.num_children = fields.get("num_children")
+    tenant.num_nights = fields.get("num_nights")
+    tenant.arrival_time = fields.get("arrival_time")
+    tenant.departure_time = fields.get("departure_time")
+    tenant.room_name = fields.get("room_name")
+    tenant.source = fields.get("source")
+    tenant.referer = fields.get("referer")
+    tenant.total_price = fields.get("total_price")
+    tenant.commission = fields.get("commission")
+    tenant.deposit = fields.get("deposit")
+    tenant.currency = fields.get("currency")
+    tenant.notes = fields.get("notes")
+    tenant.booking_status = fields.get("booking_status")
+    tenant.responsible_comm = fields.get("responsible_comm")
+    tenant.name = fields.get("name") or tenant.name
+    tenant.beds24_raw = booking
+    room_id = fields.get("room_id")
+    tenant.room_id = room_id if room_id is not None else tenant.room_id
+
+
 async def _sync_beds24(db: Session, current_user: User) -> int:
     updated = 0
     bookings = await get_bookings()
@@ -32,23 +70,19 @@ async def _sync_beds24(db: Session, current_user: User) -> int:
         booking_id = str(booking.get("id") or "").strip()
         if not booking_id:
             continue
-        fields = _extract_guest_fields(booking)
-        payload = ImportTenantRequest(
-            booking_id=booking_id,
-            name=fields.get("name") or booking_id,
-            first_name=fields.get("first_name") or "",
-            last_name=fields.get("last_name") or "",
-            email=fields.get("email"),
-            phone=fields.get("phone"),
-            mobile=fields.get("mobile"),
-            check_in=fields.get("check_in") or "",
-            check_out=fields.get("check_out") or "",
-            notes=fields.get("notes"),
-            booking_status=fields.get("booking_status") or "confirmed",
-            responsible_comm=fields.get("responsible_comm"),
-        )
-        await _import_tenant(data=payload, db=db, current_user=current_user)
+
+        tenant = db.query(Tenant).filter(Tenant.booking_id == booking_id).first()
+        if tenant is None:
+            continue
+
+        try:
+            booking_detail = await get_booking_detail(booking_id)
+        except Exception:
+            booking_detail = booking
+
+        _update_tenant_from_beds24(db, tenant, booking_detail if isinstance(booking_detail, dict) else booking)
         updated += 1
+    db.commit()
     return updated
 
 
@@ -105,9 +139,7 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
         summary["partial_failures"].append({"step": "whatsapp", "error": str(exc)})
 
     try:
-        tenants = db.query(User).count()
         summary["tenant_threads_updated"] = 0
-        from app.models.tenant import Tenant
         for tenant in db.query(Tenant).order_by(Tenant.id.asc()).all():
             build_tenant_thread_timeline(db, tenant.id)
             summary["tenant_threads_updated"] += 1
