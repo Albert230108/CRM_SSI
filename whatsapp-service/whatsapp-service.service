@@ -1,0 +1,18 @@
+[Unit]
+Description=SwiftHK WhatsApp service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ssi-edi-server/Sweeply-SSI-Version/whatsapp-service
+EnvironmentFile=/home/ssi-edi-server/Sweeply-SSI-Version/whatsapp-service/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=5
+User=ssi-edi-server
+Group=ssi-edi-server
+
+[Install]
+WantedBy=multi-user.target
