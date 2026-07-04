@@ -9,6 +9,7 @@ from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
+from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_client import send_whatsapp_message
 
 router = APIRouter(prefix="/api/communications", tags=["communications"])
@@ -31,6 +32,18 @@ def get_tenant_timeline(
         .all()
     )
 
+
+@router.get("/tenants/{tenant_id}/grouped-thread", response_model=MixedTimelineRead)
+def get_tenant_grouped_thread(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MixedTimelineRead:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    return build_tenant_thread_timeline(db, tenant_id)
 
 @router.post("/tenants/{tenant_id}/send", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)
 async def send_tenant_communication(
@@ -73,3 +86,6 @@ async def send_tenant_communication(
     db.commit()
     db.refresh(communication)
     return communication
+
+
+
