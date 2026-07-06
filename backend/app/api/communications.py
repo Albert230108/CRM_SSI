@@ -72,6 +72,7 @@ async def send_tenant_communication(
             {
                 "to": whatsapp_to,
                 "message": message,
+                "tenant_id": tenant.id,
             }
         )
 

@@ -7,6 +7,7 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
     try {
       const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
       const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+      const tenantId = req.body?.tenant_id;
 
       if (!to || !message) {
         return res.status(400).json({
@@ -15,7 +16,7 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
         });
       }
 
-      await sendTextMessage(to, message);
+      await sendTextMessage(to, message, tenantId);
       return res.json({ ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send WhatsApp message";

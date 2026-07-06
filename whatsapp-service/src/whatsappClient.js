@@ -68,6 +68,7 @@ function buildCrmPayload(message, direction, overrides = {}) {
     whatsapp_author: author,
     whatsapp_type: message?.type || null,
     whatsapp_client_id: whatsappClientId || null,
+    tenant_id: overrides.tenant_id ?? null,
     provider: "whatsapp-service",
     external_account_id: whatsappClientId || null,
     is_group: Boolean(chatId && String(chatId).endsWith("@g.us")),
@@ -146,7 +147,7 @@ async function forwardInboundMessage(message) {
   return forwardCrmMessage(payload, "inbound");
 }
 
-async function forwardOutboundMessage(message, chatId, recipient) {
+async function forwardOutboundMessage(message, chatId, recipient, tenantId = null) {
   const text = extractText(message);
   if (!text) {
     return false;
@@ -156,16 +157,17 @@ async function forwardOutboundMessage(message, chatId, recipient) {
     to: recipient || chatId || message?.to || null,
     whatsapp_chat_id: chatId || message?.from || message?.to || null,
     whatsapp_message_id: message?.id?._serialized || null,
+    tenant_id: tenantId,
   });
   return forwardCrmMessage(payload, "outbound");
 }
 
-async function forwardOutboundCapturedMessage(message, chatId, recipient, contextLabel = "outbound") {
+async function forwardOutboundCapturedMessage(message, chatId, recipient, contextLabel = "outbound", tenantId = null) {
   if (!message?.fromMe) {
     return false;
   }
 
-  const sent = await forwardOutboundMessage(message, chatId, recipient);
+  const sent = await forwardOutboundMessage(message, chatId, recipient, tenantId);
   if (sent) {
     outboundCaptureCount += 1;
     console.info(JSON.stringify({
@@ -506,7 +508,7 @@ function isReady() {
   return ready;
 }
 
-async function sendTextMessage(to, message) {
+async function sendTextMessage(to, message, tenantId) {
   if (!client || !ready) {
     throw new Error("WhatsApp client is not ready");
   }
@@ -517,7 +519,7 @@ async function sendTextMessage(to, message) {
   }
 
   const sentMessage = await client.sendMessage(chatId, message);
-  void forwardOutboundCapturedMessage(sentMessage, chatId, to, "sendMessage").catch((error) => {
+  void forwardOutboundCapturedMessage(sentMessage, chatId, to, "sendMessage", tenantId).catch((error) => {
     console.error("Failed to forward outbound WhatsApp message to CRM:", error);
   });
   return true;

@@ -16,6 +16,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
 
     to = payload.get("to")
     message = payload.get("message")
+    tenant_id = payload.get("tenant_id")
     if not to:
         raise RuntimeError("WhatsApp payload is missing 'to'")
     if not message:
@@ -27,7 +28,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
         response = await client.post(
             url,
             headers={"X-API-Key": WHATSAPP_API_KEY},
-            json={"to": to, "message": message},
+            json={"to": to, "message": message, "tenant_id": tenant_id},
         )
         response.raise_for_status()
         if response.headers.get("content-type", "").startswith("application/json"):
