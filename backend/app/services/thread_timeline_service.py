@@ -32,6 +32,12 @@ class TimelineWhatsappMessageRead(BaseModel):
     tenant_id: int
     channel: str
     direction: str
+    provider: str | None = None
+    external_account_id: str | None = None
+    external_phone_id: str | None = None
+    external_chat_namespace: str | None = None
+    whatsapp_chat_id: str | None = None
+    provider_message_id: str | None = None
     subject: str | None = None
     message: str
     created_at: datetime

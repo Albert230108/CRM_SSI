@@ -1,3 +1,4 @@
+from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
@@ -45,7 +46,7 @@ def test_tenant_resolution_by_webhook_token(db_session):
     assert result.strategy == "webhook_token"
 
 
-def test_tenant_resolution_by_provider_and_external_account_id(db_session):
+def test_whatsapp_provider_external_account_id_does_not_resolve_tenant(db_session):
     tenant = create_tenant(db_session, name="Tenant C", booking_id="B-3")
     endpoint = TenantChannelEndpoint(
         tenant_id=tenant.id,
@@ -58,8 +59,8 @@ def test_tenant_resolution_by_provider_and_external_account_id(db_session):
     db_session.commit()
 
     result = resolve_tenant_for_inbound_channel(db_session, {"provider": "whatsapp-service", "external_account_id": "client-3"}, {}, {})
-    assert result.tenant.id == tenant.id
-    assert result.strategy == "provider_external_account_id"
+    assert result.tenant is None
+    assert result.strategy == "unresolved"
 
 
 def test_inactive_endpoint_ignored(db_session):
@@ -80,8 +81,34 @@ def test_inactive_endpoint_ignored(db_session):
     assert result.strategy == "unresolved"
 
 
+def test_inbound_whatsapp_fans_out_to_multiple_tenants(client, db_session):
+    tenant_one = create_tenant(db_session, name="Tenant E", booking_id="B-5")
+    tenant_one.phone = "+31 6 12345678"
+    tenant_two = create_tenant(db_session, name="Tenant F", booking_id="B-6")
+    tenant_two.mobile = "0031 6 12345678"
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "client-5",
+            "sender": "+31612345678",
+            "sender_normalized": "31612345678",
+            "whatsapp_message_id": "msg-123",
+            "message": "Hello there",
+        },
+    )
+    assert response.status_code == 200
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-123").all()
+    assert {item.tenant_id for item in saved} == {tenant_one.id, tenant_two.id}
+    assert len(saved) == 2
+
+
 def test_fallback_still_works_for_unmigrated_tenants(db_session):
-    tenant = create_tenant(db_session, name="Tenant E", booking_id="B-5")
+    tenant = create_tenant(db_session, name="Tenant G", booking_id="B-7")
     tenant.phone = "+31 6 12345678"
     db_session.commit()
 

@@ -8,6 +8,8 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
       const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
       const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
       const tenantId = req.body?.tenant_id;
+      const externalAccountId = typeof req.body?.external_account_id === "string" ? req.body.external_account_id.trim() : "";
+      const whatsappEndpointId = req.body?.whatsapp_endpoint_id ?? null;
 
       if (!to || !message) {
         return res.status(400).json({
@@ -16,14 +18,14 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
         });
       }
 
-      await sendTextMessage(to, message, tenantId);
-      return res.json({ ok: true });
+      const result = await sendTextMessage({ to, message, tenantId, externalAccountId, whatsappEndpointId });
+      return res.json({ ok: true, ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send WhatsApp message";
       let status = 500;
       if (message.includes("not ready")) {
         status = 503;
-      } else if (message.includes("Invalid recipient phone number")) {
+      } else if (message.includes("Invalid recipient phone number") || message.includes("account id mismatch") || message.includes("missing external_account_id")) {
         status = 400;
       }
       console.error("Failed to handle /send request:", error);

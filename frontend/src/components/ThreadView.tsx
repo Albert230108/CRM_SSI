@@ -128,15 +128,7 @@ type WhatsappGroupItem = {
   group_id: string
   start_timestamp: string | null
   end_timestamp: string | null
-  messages: {
-    id: number
-    tenant_id: number
-    channel: string
-    direction: 'inbound' | 'outbound' | string
-    subject: string | null
-    message: string
-    created_at: string
-  }[]
+  messages: WhatsappTimelineMessage[]
   message_count: number
 }
 
@@ -155,6 +147,34 @@ type TenantSummary = {
   phone: string | null
 }
 
+type WhatsappEndpointOption = {
+  id: number
+  tenant_id: number
+  channel_type: string
+  provider: string
+  external_account_id: string | null
+  external_phone_id: string | null
+  external_chat_namespace: string | null
+  routing_strategy: string
+  is_active: boolean
+}
+
+type WhatsappTimelineMessage = {
+  id: number
+  tenant_id: number
+  channel: string
+  direction: 'inbound' | 'outbound' | string
+  provider: string | null
+  external_account_id: string | null
+  external_phone_id: string | null
+  external_chat_namespace: string | null
+  whatsapp_chat_id: string | null
+  provider_message_id: string | null
+  subject: string | null
+  message: string
+  created_at: string
+}
+
 type ThreadViewProps = {
   tenantId?: number
   reloadSignal?: number
@@ -169,6 +189,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [expandedConversationIds, setExpandedConversationIds] = useState<number[]>([])
   const [expandedWhatsappBlockIds, setExpandedWhatsappBlockIds] = useState<string[]>([])
   const [selectedWhatsappGroup, setSelectedWhatsappGroup] = useState<WhatsappGroupItem | null>(null)
+  const [whatsappEndpoints, setWhatsappEndpoints] = useState<WhatsappEndpointOption[]>([])
+  const [selectedWhatsappEndpointId, setSelectedWhatsappEndpointId] = useState<string>('')
   const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp')
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
@@ -180,6 +202,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
       setItems([])
       setError('Select a tenant')
       setSelectedWhatsappGroup(null)
+      setWhatsappEndpoints([])
+      setSelectedWhatsappEndpointId('')
       return
     }
 
@@ -189,7 +213,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
       try {
         setLoading(true)
         setError('')
-        const [tenantResponse, threadResponse] = await Promise.all([
+        const [tenantResponse, threadResponse, endpointResponse] = await Promise.all([
           fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
@@ -198,16 +222,28 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
           }),
+          fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/whatsapp-endpoints`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            signal: controller.signal,
+          }),
         ])
 
-        if (!tenantResponse.ok || !threadResponse.ok) {
+        if (!tenantResponse.ok || !threadResponse.ok || !endpointResponse.ok) {
           throw new Error('Failed to load thread')
         }
 
         const tenantData: TenantSummary = await tenantResponse.json()
         const groupedThreadData: GroupedThreadResponse = await threadResponse.json()
+        const endpointData: WhatsappEndpointOption[] = await endpointResponse.json()
         setTenant(tenantData)
         setItems(groupedThreadData.items)
+        setWhatsappEndpoints(endpointData)
+        setSelectedWhatsappEndpointId((current) => {
+          if (current && endpointData.some((endpoint) => String(endpoint.id) === current)) {
+            return current
+          }
+          return endpointData.length === 1 ? String(endpointData[0].id) : ''
+        })
         setExpandedConversationIds([])
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -278,6 +314,10 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     try {
       setSending(true)
       setError('')
+      if (channel === 'whatsapp' && !selectedWhatsappEndpointId) {
+        throw new Error('Choose a WhatsApp account before sending')
+      }
+
       if (channel === 'whatsapp') {
         await loadGroupedThread()
       }
@@ -288,7 +328,12 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ channel, subject: subject.trim() || null, message }),
+        body: JSON.stringify({
+          channel,
+          subject: subject.trim() || null,
+          message,
+          whatsapp_endpoint_id: channel === 'whatsapp' ? Number(selectedWhatsappEndpointId) : null,
+        }),
       })
 
       if (!response.ok) {
@@ -426,7 +471,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                                               {isOutbound ? 'Outbound' : 'Inbound'}
                                             </span>
                                             <span>{formatDisplayDate(blockMessage.sent_at)}</span>
-                                            <span className="normal-case tracking-normal">WhatsApp</span>
+                                            <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
                                           </div>
                                           {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                                           <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.body}</p>
@@ -537,7 +582,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                           {isOutbound ? 'Outbound' : 'Inbound'}
                         </span>
                         <span>{formatDisplayDate(blockMessage.created_at)}</span>
-                        <span className="normal-case tracking-normal">WhatsApp</span>
+                        <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
                       </div>
                       {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
@@ -569,6 +614,28 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
           />
         ) : null}
 
+        {channel === 'whatsapp' ? (
+          <div className="mt-3 space-y-2">
+            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="whatsapp-endpoint-selector">
+              WhatsApp account
+            </label>
+            <select
+              id="whatsapp-endpoint-selector"
+              value={selectedWhatsappEndpointId}
+              onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
+              disabled={sending || !whatsappEndpoints.length}
+              className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+            >
+              <option value="">Choose an account</option>
+              {whatsappEndpoints.map((endpoint) => (
+                <option key={endpoint.id} value={endpoint.id}>
+                  {endpoint.external_account_id || `Endpoint ${endpoint.id}`}{endpoint.external_phone_id ? ` - ${endpoint.external_phone_id}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
         <textarea
           value={message}
           onChange={(event) => setMessage(event.target.value)}
@@ -580,7 +647,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
         <div className="mt-3 flex items-center justify-between gap-3">
           <p className="text-xs text-gray-500">{channel === 'whatsapp' ? 'WhatsApp send.' : 'Email reply.'}</p>
-          <button type="submit" disabled={sending || loading || !tenantId || !message.trim()} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="submit" disabled={sending || loading || !tenantId || !message.trim() || (channel === 'whatsapp' && !selectedWhatsappEndpointId)} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
             {sending ? 'Sending...' : 'Send'}
           </button>
         </div>

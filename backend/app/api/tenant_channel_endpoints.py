@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def _routing_strategy(endpoint: TenantChannelEndpoint) -> str:
-    return "webhook_token" if endpoint.webhook_token else "provider_external_account_id"
+    return "webhook_token" if endpoint.webhook_token else "whatsapp_account_registry"
 
 
 def _mask(value: str | None) -> str | None:
