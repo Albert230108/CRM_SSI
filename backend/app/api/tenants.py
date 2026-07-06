@@ -8,12 +8,14 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.finance import Finance as FinanceRecord
 from app.models.tenant import Tenant
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
 from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
@@ -365,8 +367,19 @@ def delete_tenant(
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    endpoints = db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant_id).all()
+    for endpoint in endpoints:
+        db.delete(endpoint)
     db.delete(tenant)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        logger.exception("Failed to delete tenant %s due to dependent records", tenant_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tenant could not be deleted because dependent records still exist",
+        ) from exc
 
 
 @router.get("/tenants/{tenant_id}/finance")
