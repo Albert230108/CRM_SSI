@@ -226,19 +226,26 @@ async def send_tenant_communication(
         endpoint_provider = (selected_endpoint.provider or "").strip().lower()
         if not endpoint_provider.startswith("whatsapp"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected endpoint is not WhatsApp-capable")
+        tenant_id_from_path = tenant.id
         selected_external_account_id = (selected_endpoint.external_account_id or "").strip()
         if not selected_external_account_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected WhatsApp account is missing an external account id")
-        print("WA DEBUG backend send outbound tenant_id=", tenant.id, "external_account_id=", selected_external_account_id, "whatsapp_endpoint_id=", selected_endpoint.id)
-        whatsapp_result = await send_whatsapp_message(
-            {
-                "to": whatsapp_to,
-                "message": message,
-                "tenant_id": tenant.id,
-                "whatsapp_endpoint_id": selected_endpoint.id,
-                "external_account_id": selected_external_account_id,
-            }
+        whatsapp_payload = {
+            "to": whatsapp_to,
+            "message": message,
+            "tenant_id": tenant_id_from_path,
+            "whatsapp_endpoint_id": selected_endpoint.id,
+            "external_account_id": selected_external_account_id,
+        }
+        print(
+            "WA DEBUG backend send outbound request tenant_id=",
+            tenant_id_from_path,
+            "path=",
+            f"/api/communications/tenants/{tenant_id_from_path}/send",
+            "payload=",
+            whatsapp_payload,
         )
+        whatsapp_result = await send_whatsapp_message(whatsapp_payload)
         print("WA DEBUG backend send response tenant_id=", tenant.id, "external_account_id=", selected_external_account_id, "message_id=", (whatsapp_result.get("whatsapp_message_id") if isinstance(whatsapp_result, dict) else None))
     else:
         whatsapp_result = None

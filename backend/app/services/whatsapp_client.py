@@ -41,18 +41,20 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
         raise RuntimeError("WhatsApp payload is missing 'message'")
 
     url = urljoin(service_url.rstrip("/") + "/", "send")
+    request_body = {
+        "to": to,
+        "message": message,
+        "tenant_id": tenant_id,
+        "external_account_id": external_account_id,
+        "whatsapp_endpoint_id": whatsapp_endpoint_id,
+    }
+    print("WA DEBUG backend to Node request", {"url": url, "payload": request_body})
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             url,
             headers={"X-API-Key": WHATSAPP_API_KEY},
-            json={
-                "to": to,
-                "message": message,
-                "tenant_id": tenant_id,
-                "external_account_id": external_account_id,
-                "whatsapp_endpoint_id": whatsapp_endpoint_id,
-            },
+            json=request_body,
         )
         response.raise_for_status()
         if response.headers.get("content-type", "").startswith("application/json"):

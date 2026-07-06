@@ -11,14 +11,37 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
       const externalAccountId = typeof req.body?.external_account_id === "string" ? req.body.external_account_id.trim() : "";
       const whatsappEndpointId = req.body?.whatsapp_endpoint_id ?? null;
 
+      console.info("[whatsapp] /send request body", {
+        to,
+        message,
+        tenant_id: tenantId ?? null,
+        external_account_id: externalAccountId || null,
+        whatsapp_endpoint_id: whatsappEndpointId,
+      });
+
       if (!to || !message) {
         return res.status(400).json({
           ok: false,
           error: 'Both "to" and "message" are required.',
         });
       }
+      if (tenantId == null) {
+        console.error("[whatsapp] /send rejected because tenant_id is missing", {
+          body: req.body || null,
+        });
+        return res.status(400).json({
+          ok: false,
+          error: 'tenant_id is required for tenant-scoped WhatsApp sends',
+        });
+      }
 
-      const result = await sendTextMessage({ to, message, tenantId, externalAccountId, whatsappEndpointId });
+      const result = await sendTextMessage({
+        to,
+        message,
+        tenant_id: tenantId,
+        external_account_id: externalAccountId,
+        whatsapp_endpoint_id: whatsappEndpointId,
+      });
       return res.json({ ok: true, ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send WhatsApp message";

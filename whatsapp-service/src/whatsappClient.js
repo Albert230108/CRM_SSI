@@ -637,6 +637,17 @@ async function sendTextMessage(payload) {
   const externalAccountId = String(payload?.external_account_id || "").trim();
   const whatsappEndpointId = payload?.whatsapp_endpoint_id ?? null;
 
+  if (tenantId == null) {
+    console.error(JSON.stringify({
+      event: "whatsapp_outbound_send_missing_tenant_id",
+      to: to || null,
+      external_account_id: externalAccountId || null,
+      whatsapp_endpoint_id: whatsappEndpointId,
+      reason: "tenant_id is required for tenant-scoped CRM sends",
+    }));
+    throw new Error("WhatsApp payload is missing tenant_id");
+  }
+
   if (!externalAccountId) {
     throw new Error("WhatsApp payload is missing external_account_id");
   }

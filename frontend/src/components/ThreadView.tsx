@@ -325,20 +325,26 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         await loadGroupedThread()
       }
 
+      const requestBody = {
+        channel,
+        subject: subject.trim() || null,
+        message,
+        whatsapp_endpoint_id: channel === 'whatsapp' ? Number(selectedWhatsappEndpointId) : null,
+      }
+      console.info('[crm] ThreadView outbound send request', {
+        path: `/api/communications/tenants/${tenantId}/send`,
+        tenant_id: tenantId,
+        body: requestBody,
+      })
+
       const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({
-          channel,
-          subject: subject.trim() || null,
-          message,
-          whatsapp_endpoint_id: channel === 'whatsapp' ? Number(selectedWhatsappEndpointId) : null,
-        }),
+        body: JSON.stringify(requestBody),
       })
-
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
         throw new Error(payload?.detail || 'Failed to send message')
