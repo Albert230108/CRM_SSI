@@ -90,8 +90,19 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
         return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"ok": False, "error": "Tenant not found", "routing_strategy": routing_result.strategy})
 
     provider_message_id = str(payload.get("whatsapp_message_id") or payload.get("provider_message_id") or "").strip() or None
-    if provider_message_id and db.query(Communication).filter(Communication.provider_message_id == provider_message_id).first() is not None:
-        return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_result.strategy, tenant_id=tenant.id, message="duplicate skipped")
+    if provider_message_id:
+        if db.query(Communication).filter(Communication.provider_message_id == provider_message_id).first() is not None:
+            return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_result.strategy, tenant_id=tenant.id, message="duplicate skipped")
+    else:
+        msg_text = _first_text(payload)
+        ts = _pick_timestamp(payload)
+        if db.query(Communication).filter(
+            Communication.tenant_id == tenant.id,
+            Communication.channel == "whatsapp",
+            Communication.message == msg_text,
+            Communication.created_at == ts,
+        ).first() is not None:
+            return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_result.strategy, tenant_id=tenant.id, message="duplicate skipped")
 
     db.add(
         Communication(
