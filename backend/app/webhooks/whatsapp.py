@@ -73,10 +73,6 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     provider = str(payload.get("provider") or request.headers.get("X-Provider") or "whatsapp-service").strip()
     external_account_id = str(payload.get("external_account_id") or payload.get("whatsapp_client_id") or request.headers.get("X-External-Account-Id") or "").strip()
     routing_payload = dict(payload)
-    if recipient and not routing_payload.get("sender"):
-        routing_payload["sender"] = recipient
-    if recipient and not routing_payload.get("from"):
-        routing_payload["from"] = recipient
     routing_result = resolve_tenant_for_inbound_channel(db, routing_payload, dict(request.headers), dict(request.query_params))
     logger.info(
         "WhatsApp webhook received sender=%s recipient=%s provider=%s external_account_id=%s routing_strategy=%s secret_present=%s",
