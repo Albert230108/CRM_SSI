@@ -205,6 +205,12 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
         if target_tenants:
             routing_strategy = "whatsapp_phone_match"
             routing_matched_value = _normalize_phone_candidates(payload)[0] if _normalize_phone_candidates(payload) else None
+    if not target_tenants and account_endpoint:
+        tenant = db.query(Tenant).filter(Tenant.id == account_endpoint.tenant_id).first()
+        if tenant:
+            target_tenants = [tenant]
+            routing_strategy = "account_identity"
+            routing_matched_value = external_account_id
     print("WA DEBUG inbound matched_tenants=", [matched_tenant.id for matched_tenant in target_tenants])
     print("WA DEBUG routing_strategy=", routing_strategy, "matched_value=", routing_matched_value, "tenant_id=", target_tenants[0].id if target_tenants else None)
     logger.info(

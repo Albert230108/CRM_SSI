@@ -115,3 +115,98 @@ def test_fallback_still_works_for_unmigrated_tenants(db_session):
     result = resolve_tenant_for_inbound_channel(db_session, {"sender": "+31612345678"}, {}, {})
     assert result.tenant.id == tenant.id
     assert result.strategy == "legacy_phone_inference"
+
+
+def test_inbound_whatsapp_routes_by_account_identity_when_phone_match_missing(client, db_session):
+    tenant = create_tenant(db_session, name="Tenant WhatsApp Account", booking_id="B-8")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="swifthk-whatsapp",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "swifthk-whatsapp",
+            "sender": "+31999999999",
+            "sender_normalized": "31999999999",
+            "whatsapp_message_id": "msg-account-identity",
+            "message": "Hello from account identity",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "account_identity"
+    assert payload["tenant_id"] == tenant.id
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-account-identity").all()
+    assert len(saved) == 1
+    assert saved[0].tenant_id == tenant.id
+
+
+def test_inbound_whatsapp_prefers_unique_phone_match_over_account_identity(client, db_session):
+    phone_tenant = create_tenant(db_session, name="Tenant WhatsApp Phone", booking_id="B-9")
+    phone_tenant.phone = "+31 6 12345678"
+    account_tenant = create_tenant(db_session, name="Tenant WhatsApp Account Priority", booking_id="B-10")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=account_tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="swifthk-whatsapp",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "swifthk-whatsapp",
+            "sender": "+31612345678",
+            "sender_normalized": "31612345678",
+            "whatsapp_message_id": "msg-phone-priority",
+            "message": "Hello from phone match",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "whatsapp_phone_match"
+    assert payload["tenant_id"] == phone_tenant.id
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-phone-priority").all()
+    assert len(saved) == 1
+    assert saved[0].tenant_id == phone_tenant.id
+
+
+def test_inbound_whatsapp_remains_unrouted_without_phone_or_account_identity(client, db_session):
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "unknown-whatsapp-account",
+            "sender": "+31988888888",
+            "sender_normalized": "31988888888",
+            "whatsapp_message_id": "msg-unrouted",
+            "message": "Hello from nowhere",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "ignored"
+    assert payload["tenant_id"] is None
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-unrouted").all()
+    assert saved == []
