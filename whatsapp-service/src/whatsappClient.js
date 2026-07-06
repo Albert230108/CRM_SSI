@@ -19,6 +19,7 @@ let reconnectTimer = null;
 let shuttingDown = false;
 let startupBackfillTriggered = false;
 let forwardedMessageIds = new Set();
+const pendingOutboundTenantByMessageId = new Map();
 let outboundCaptureCount = 0;
 
 function normalizeWhatsAppId(input) {
@@ -166,6 +167,13 @@ async function forwardOutboundCapturedMessage(message, chatId, recipient, contex
   if (!message?.fromMe) {
     return false;
   }
+
+  console.info(
+    "Resolved outbound WhatsApp tenant for %s: message_id=%s tenant_id=%s",
+    contextLabel,
+    message?.id?._serialized || null,
+    tenantId || null,
+  );
 
   const sent = await forwardOutboundMessage(message, chatId, recipient, tenantId);
   if (sent) {
@@ -422,9 +430,28 @@ function attachClientEvents(nextClient) {
     if (!message?.fromMe) {
       return;
     }
-    void forwardOutboundCapturedMessage(message, message?.chatId || message?.to || message?.from || null, message?.to || null, "message_create").catch((error) => {
-      console.error("Failed to forward outbound WhatsApp message to CRM:", error);
-    });
+    const messageId = message?.id?._serialized || null;
+    const tenantId = messageId ? pendingOutboundTenantByMessageId.get(messageId) ?? null : null;
+    console.info(
+      "message_create outbound WhatsApp hook: message_id=%s tenant_id=%s",
+      messageId,
+      tenantId || null,
+    );
+    setTimeout(() => {
+      const resolvedTenantId = messageId ? pendingOutboundTenantByMessageId.get(messageId) ?? tenantId : tenantId;
+      if (messageId && forwardedMessageIds.has(messageId)) {
+        return;
+      }
+      void forwardOutboundCapturedMessage(
+        message,
+        message?.chatId || message?.to || message?.from || null,
+        message?.to || null,
+        "message_create",
+        resolvedTenantId,
+      ).catch((error) => {
+        console.error("Failed to forward outbound WhatsApp message to CRM:", error);
+      });
+    }, 150);
   });
 
   nextClient.on("auth_failure", (message) => {
@@ -519,6 +546,14 @@ async function sendTextMessage(to, message, tenantId) {
   }
 
   const sentMessage = await client.sendMessage(chatId, message);
+  if (sentMessage?.id?._serialized) {
+    pendingOutboundTenantByMessageId.set(sentMessage.id._serialized, tenantId || null);
+    console.info(
+      "sendMessage outbound WhatsApp hook: message_id=%s tenant_id=%s",
+      sentMessage.id._serialized,
+      tenantId || null,
+    );
+  }
   void forwardOutboundCapturedMessage(sentMessage, chatId, to, "sendMessage", tenantId).catch((error) => {
     console.error("Failed to forward outbound WhatsApp message to CRM:", error);
   });
