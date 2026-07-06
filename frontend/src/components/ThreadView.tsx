@@ -18,6 +18,9 @@ type TimelineMessage = {
   body: string
   body_text: string | null
   body_html: string | null
+  external_account_id?: string | null
+  external_phone_id?: string | null
+  whatsapp_chat_id?: string | null
   sent_at: string
 }
 
