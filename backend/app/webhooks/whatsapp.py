@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
+from app.core.phone_normalization import phone_match_candidates
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
@@ -97,11 +98,21 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
             tenant = db.query(Tenant).filter(Tenant.id == tenant_lookup_id).first()
             routing_strategy = "explicit_tenant_id"
             routing_matched_value = str(tenant_id)
-    if tenant is None:
+    else:
+        inbound_candidates = []
+        seen_candidates: set[str] = set()
+        for value in [payload.get("sender_normalized"), payload.get("sender"), payload.get("from"), payload.get("sender_raw"), payload.get("whatsapp_chat_id")]:
+            for candidate in phone_match_candidates(value if isinstance(value, str) else None):
+                if candidate not in seen_candidates:
+                    seen_candidates.add(candidate)
+                    inbound_candidates.append(candidate)
+        print("WA DEBUG inbound candidates=", inbound_candidates)
         routing_result = resolve_tenant_for_inbound_channel(db, routing_payload, dict(request.headers), dict(request.query_params))
         tenant = routing_result.tenant
         routing_strategy = routing_result.strategy
         routing_matched_value = getattr(routing_result, 'matched_value', None)
+        print("WA DEBUG inbound routing_strategy=", routing_strategy)
+        print("WA DEBUG inbound tenant_id=", getattr(tenant, 'id', None))
     print("WA DEBUG routing_strategy=", routing_strategy, "matched_value=", routing_matched_value, "tenant_id=", getattr(tenant, 'id', None))
     logger.info(
         "WhatsApp webhook received sender=%s recipient=%s provider=%s external_account_id=%s routing_strategy=%s secret_present=%s",

@@ -25,12 +25,31 @@ def _first_non_empty(*values: Any) -> str | None:
     return None
 
 
+
+
+def _normalized_phone_candidates(*values: Any) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for candidate in phone_match_candidates(value if isinstance(value, str) else None):
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+    return candidates
+
 def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], request_headers: dict[str, str], query_params: dict[str, str]) -> RoutingResult:
     provider = _first_non_empty(payload.get("provider"), query_params.get("provider"), request_headers.get("x-provider"), request_headers.get("X-Provider"))
     external_account_id = _first_non_empty(payload.get("external_account_id"), payload.get("whatsapp_client_id"), query_params.get("external_account_id"), request_headers.get("x-external-account-id"), request_headers.get("X-External-Account-Id"))
     webhook_token = _first_non_empty(payload.get("webhook_token"), request_headers.get("x-webhook-token"), request_headers.get("X-Webhook-Token"), query_params.get("webhook_token"))
     external_phone_id = _first_non_empty(payload.get("external_phone_id"), query_params.get("external_phone_id"))
     chat_namespace = _first_non_empty(payload.get("external_chat_namespace"), payload.get("whatsapp_chat_id"))
+    inbound_phone_candidates = _normalized_phone_candidates(
+        payload.get("sender_normalized"),
+        payload.get("sender"),
+        payload.get("from"),
+        payload.get("sender_raw"),
+        payload.get("whatsapp_chat_id"),
+    )
 
     if webhook_token:
         endpoint = db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.webhook_token == webhook_token, TenantChannelEndpoint.is_active.is_(True)).first()
@@ -39,6 +58,31 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
             if tenant:
                 logger.info("Resolved inbound tenant by webhook_token")
                 return RoutingResult(tenant=tenant, strategy="webhook_token", matched_value=endpoint.webhook_token)
+
+    logger.info("Inbound WhatsApp normalized phone candidates: %s", inbound_phone_candidates)
+    if provider == "whatsapp-service" and inbound_phone_candidates:
+        matched_tenants: dict[int, Tenant] = {}
+        matched_value: str | None = None
+        for candidate in inbound_phone_candidates:
+            tenant_matches: list[Tenant] = []
+            for tenant in db.query(Tenant).filter((Tenant.phone.isnot(None)) | (Tenant.mobile.isnot(None))).all():
+                tenant_candidates = phone_match_candidates(tenant.phone) + phone_match_candidates(tenant.mobile)
+                if candidate in tenant_candidates and tenant.id is not None:
+                    tenant_matches.append(tenant)
+            if len(tenant_matches) > 1:
+                logger.warning("Ambiguous inbound WhatsApp phone match candidate=%s tenant_ids=%s", candidate, [tenant.id for tenant in tenant_matches])
+                return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=candidate)
+            if len(tenant_matches) == 1:
+                tenant = tenant_matches[0]
+                matched_tenants[tenant.id] = tenant
+                matched_value = candidate
+        if len(matched_tenants) == 1:
+            tenant = next(iter(matched_tenants.values()))
+            logger.info("Resolved inbound tenant by whatsapp_phone_match tenant_id=%s matched_value=%s", tenant.id, matched_value)
+            return RoutingResult(tenant=tenant, strategy="whatsapp_phone_match", matched_value=matched_value)
+        if len(matched_tenants) > 1:
+            logger.warning("Ambiguous inbound WhatsApp phone match tenant_ids=%s", sorted(matched_tenants.keys()))
+            return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=matched_value)
 
     if provider and external_account_id:
         endpoint = (
@@ -53,16 +97,12 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
         if endpoint:
             tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
             if tenant:
-                logger.info("Resolved inbound tenant by provider+external_account_id")
+                logger.info("Resolved inbound tenant by provider+external_account_id fallback")
                 return RoutingResult(tenant=tenant, strategy="provider_external_account_id", matched_value=external_account_id)
 
     legacy_sources = [
-        payload.get("sender"),
-        payload.get("from"),
         payload.get("recipient"),
         payload.get("to"),
-        payload.get("sender_raw"),
-        payload.get("sender_normalized"),
         chat_namespace,
         external_phone_id,
         payload.get("tenant_email"),
@@ -77,21 +117,30 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                 logger.info("Resolved inbound tenant by legacy_email_inference")
                 return RoutingResult(tenant=tenant, strategy=f"legacy_email:{email_key}", matched_value=value)
 
-    candidates: list[str] = []
-    seen: set[str] = set()
-    for source in legacy_sources:
-        for candidate in phone_match_candidates(source if isinstance(source, str) else None):
-            if candidate not in seen:
-                seen.add(candidate)
-                candidates.append(candidate)
+    candidates = _normalized_phone_candidates(*legacy_sources)
 
     if candidates:
-        tenants = db.query(Tenant).filter(Tenant.phone.isnot(None)).all()
-        tenants.extend(db.query(Tenant).filter(Tenant.mobile.isnot(None)).all())
-        for tenant in tenants:
-            tenant_candidates = phone_match_candidates(tenant.phone) + phone_match_candidates(tenant.mobile)
-            if any(candidate in tenant_candidates for candidate in candidates):
-                logger.info("Resolved inbound tenant by legacy_phone_inference")
-                return RoutingResult(tenant=tenant, strategy="legacy_phone_inference", matched_value=candidates[0])
+        matched_tenants: dict[int, Tenant] = {}
+        matched_value: str | None = None
+        for candidate in candidates:
+            tenant_matches: list[Tenant] = []
+            for tenant in db.query(Tenant).filter((Tenant.phone.isnot(None)) | (Tenant.mobile.isnot(None))).all():
+                tenant_candidates = phone_match_candidates(tenant.phone) + phone_match_candidates(tenant.mobile)
+                if candidate in tenant_candidates and tenant.id is not None:
+                    tenant_matches.append(tenant)
+            if len(tenant_matches) > 1:
+                logger.warning("Ambiguous legacy phone match candidate=%s tenant_ids=%s", candidate, [tenant.id for tenant in tenant_matches])
+                return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=candidate)
+            if len(tenant_matches) == 1:
+                tenant = tenant_matches[0]
+                matched_tenants[tenant.id] = tenant
+                matched_value = candidate
+        if len(matched_tenants) == 1:
+            tenant = next(iter(matched_tenants.values()))
+            logger.info("Resolved inbound tenant by legacy_phone_inference tenant_id=%s matched_value=%s", tenant.id, matched_value)
+            return RoutingResult(tenant=tenant, strategy="legacy_phone_inference", matched_value=matched_value)
+        if len(matched_tenants) > 1:
+            logger.warning("Ambiguous legacy phone match tenant_ids=%s", sorted(matched_tenants.keys()))
+            return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=matched_value)
 
     return RoutingResult(tenant=None, strategy="unresolved")
