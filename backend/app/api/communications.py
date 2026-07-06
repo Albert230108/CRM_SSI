@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
@@ -15,6 +16,16 @@ from app.services.thread_timeline_service import MixedTimelineRead, build_tenant
 from app.services.whatsapp_client import send_whatsapp_message
 
 router = APIRouter(prefix="/communications", tags=["communications"])
+
+
+class WhatsAppOutboundResolutionRead(BaseModel):
+    found: bool
+    tenant_id: int | None = None
+    communication_id: int | None = None
+    provider_message_id: str | None = None
+    whatsapp_chat_id: str | None = None
+    external_account_id: str | None = None
+    resolution_strategy: str | None = None
 
 
 def _mask_endpoint_value(value: str | None) -> str | None:
@@ -97,6 +108,71 @@ def get_tenant_grouped_thread(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
     return build_tenant_thread_timeline(db, tenant_id)
+
+
+@router.get("/whatsapp/outbound-resolution", response_model=WhatsAppOutboundResolutionRead)
+def resolve_whatsapp_outbound_communication(
+    provider_message_id: str | None = None,
+    whatsapp_chat_id: str | None = None,
+    external_account_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> WhatsAppOutboundResolutionRead:
+    provider_message_id = provider_message_id.strip() if isinstance(provider_message_id, str) else None
+    whatsapp_chat_id = whatsapp_chat_id.strip() if isinstance(whatsapp_chat_id, str) else None
+    external_account_id = external_account_id.strip() if isinstance(external_account_id, str) else None
+
+    if provider_message_id:
+        communication = (
+            db.query(Communication)
+            .filter(
+                Communication.channel == "whatsapp",
+                Communication.direction == "outbound",
+                Communication.provider_message_id == provider_message_id,
+            )
+            .order_by(Communication.created_at.desc(), Communication.id.desc())
+            .first()
+        )
+        if communication is not None:
+            return WhatsAppOutboundResolutionRead(
+                found=True,
+                tenant_id=communication.tenant_id,
+                communication_id=communication.id,
+                provider_message_id=communication.provider_message_id,
+                whatsapp_chat_id=communication.whatsapp_chat_id,
+                external_account_id=communication.external_account_id,
+                resolution_strategy="provider_message_id",
+            )
+
+    if whatsapp_chat_id and external_account_id:
+        communication = (
+            db.query(Communication)
+            .filter(
+                Communication.channel == "whatsapp",
+                Communication.direction == "outbound",
+                Communication.whatsapp_chat_id == whatsapp_chat_id,
+                Communication.external_account_id == external_account_id,
+            )
+            .order_by(Communication.created_at.desc(), Communication.id.desc())
+            .first()
+        )
+        if communication is not None:
+            return WhatsAppOutboundResolutionRead(
+                found=True,
+                tenant_id=communication.tenant_id,
+                communication_id=communication.id,
+                provider_message_id=communication.provider_message_id,
+                whatsapp_chat_id=communication.whatsapp_chat_id,
+                external_account_id=communication.external_account_id,
+                resolution_strategy="chat_id_external_account_id",
+            )
+
+    return WhatsAppOutboundResolutionRead(
+        found=False,
+        resolution_strategy="unresolved",
+        provider_message_id=provider_message_id,
+        whatsapp_chat_id=whatsapp_chat_id,
+        external_account_id=external_account_id,
+    )
 
 
 @router.post("/tenants/{tenant_id}/send", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)

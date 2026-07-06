@@ -6,11 +6,13 @@ const {
   crmWebhookSecret,
   crmWebhookTimeoutMs,
   crmWebhookUrl,
+  crmOutboundResolutionUrl,
   reconnectDelayMs,
   whatsappClientId,
   whatsappHistoryBackfillLimit,
   whatsappHistoryBackfillEnabled,
 } = require("./config");
+const { resolveOutboundTenantOwnership } = require("./outboundResolution");
 
 let client = null;
 let ready = false;
@@ -22,6 +24,60 @@ let forwardedMessageIds = new Set();
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
 let outboundCaptureCount = 0;
+
+function getMemoryTenantId({ messageId, chatId }) {
+  if (messageId && pendingOutboundTenantByMessageId.has(messageId)) {
+    return pendingOutboundTenantByMessageId.get(messageId) ?? null;
+  }
+  if (chatId && pendingOutboundTenantByChatId.has(chatId)) {
+    return pendingOutboundTenantByChatId.get(chatId) ?? null;
+  }
+  return null;
+}
+
+async function lookupDurableOutboundTenant({ messageId, chatId, externalAccountId }) {
+  if (!crmOutboundResolutionUrl) {
+    return { found: false, resolution_strategy: "unconfigured" };
+  }
+
+  const query = new URLSearchParams();
+  if (messageId) {
+    query.set("provider_message_id", messageId);
+  }
+  if (chatId) {
+    query.set("whatsapp_chat_id", chatId);
+  }
+  if (externalAccountId) {
+    query.set("external_account_id", externalAccountId);
+  }
+
+  const headers = {};
+  if (crmWebhookSecret) {
+    headers["X-Webhook-Secret"] = crmWebhookSecret;
+  }
+  if (crmWebhookRouteToken) {
+    headers["X-Webhook-Token"] = crmWebhookRouteToken;
+  }
+
+  const url = `${crmOutboundResolutionUrl}?${query.toString()}`;
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return payload || { found: false, resolution_strategy: `http_${response.status}` };
+    }
+    return payload || { found: false, resolution_strategy: "empty_response" };
+  } catch (error) {
+    return {
+      found: false,
+      resolution_strategy: "lookup_error",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
 
 function normalizeWhatsAppId(input) {
   const value = String(input || "").trim();
@@ -437,42 +493,51 @@ function attachClientEvents(nextClient) {
     }
     const messageId = message?.id?._serialized || null;
     const chatId = message?.chatId || message?.to || message?.from || null;
-    const resolveTenantId = () => {
-      if (messageId && pendingOutboundTenantByMessageId.has(messageId)) {
-        return pendingOutboundTenantByMessageId.get(messageId) ?? null;
-      }
-      if (chatId && pendingOutboundTenantByChatId.has(chatId)) {
-        return pendingOutboundTenantByChatId.get(chatId) ?? null;
-      }
-      return null;
+    const externalAccountId = whatsappClientId || null;
+    const logBase = {
+      event: "whatsapp_outbound_resolution",
+      message_id: messageId,
+      chat_id: chatId,
+      external_account_id: externalAccountId,
+      tenant_id_received: null,
     };
-    console.info(
-      "message_create outbound WhatsApp hook: message_id=%s tenant_id=%s",
-      messageId,
-      resolveTenantId() || null,
-    );
     const attemptForward = async (remainingAttempts = 10) => {
-      const resolvedTenantId = resolveTenantId();
       if (messageId && forwardedMessageIds.has(messageId)) {
         return;
       }
-      if (!resolvedTenantId && remainingAttempts > 0) {
+      const resolved = await resolveOutboundTenantOwnership({
+        messageId,
+        chatId,
+        externalAccountId,
+        lookupDurableTenant: lookupDurableOutboundTenant,
+        getMemoryTenantId,
+      });
+      if (!resolved && remainingAttempts > 0) {
         await sleep(100);
         return attemptForward(remainingAttempts - 1);
       }
-      if (!resolvedTenantId) {
-        console.warn("Skipping outbound WhatsApp CRM forward because tenant_id could not be resolved", {
-          message_id: messageId,
-          chat_id: chatId,
-        });
+      if (!resolved) {
+        console.warn(JSON.stringify({
+          ...logBase,
+          resolution_source: "unresolved",
+          resolution_strategy: "unresolved",
+          reason: "tenant_id could not be resolved",
+        }));
         return;
       }
+      console.info(JSON.stringify({
+        ...logBase,
+        tenant_id_received: resolved.tenantId,
+        resolution_source: resolved.resolutionSource,
+        resolution_strategy: resolved.resolutionStrategy,
+        matched_value: resolved.matchedValue,
+      }));
       void forwardOutboundCapturedMessage(
         message,
         chatId,
         message?.to || null,
         "message_create",
-        resolvedTenantId,
+        resolved.tenantId,
       ).catch((error) => {
         console.error("Failed to forward outbound WhatsApp message to CRM:", error);
       });
@@ -588,13 +653,15 @@ async function sendTextMessage(payload) {
   const sentMessage = await client.sendMessage(chatId, message);
   if (sentMessage?.id?._serialized) {
     pendingOutboundTenantByMessageId.set(sentMessage.id._serialized, tenantId || null);
-    console.info(
-      "sendMessage outbound WhatsApp hook: message_id=%s tenant_id=%s external_account_id=%s whatsapp_endpoint_id=%s",
-      sentMessage.id._serialized,
-      tenantId || null,
-      externalAccountId,
-      whatsappEndpointId,
-    );
+    console.info(JSON.stringify({
+      event: "whatsapp_outbound_send",
+      message_id: sentMessage.id._serialized,
+      chat_id: chatId,
+      external_account_id: externalAccountId,
+      tenant_id_received: tenantId || null,
+      whatsapp_endpoint_id: whatsappEndpointId,
+      resolution_source: "send_payload",
+    }));
   }
   void forwardOutboundCapturedMessage(sentMessage, chatId, to, "sendMessage", tenantId).catch((error) => {
     console.error("Failed to forward outbound WhatsApp message to CRM:", error);
@@ -733,4 +800,7 @@ module.exports = {
   runHistoryBackfill,
   runHistoryDebugSample,
 };
+
+
+
 
