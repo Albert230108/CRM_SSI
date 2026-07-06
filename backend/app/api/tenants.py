@@ -370,6 +370,7 @@ def delete_tenant(
     endpoints = db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant_id).all()
     for endpoint in endpoints:
         db.delete(endpoint)
+    db.flush()
     db.delete(tenant)
     try:
         db.commit()
