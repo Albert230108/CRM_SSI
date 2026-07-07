@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.phone_normalization import phone_match_candidates
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
-from app.services.tenant_phone_aliases import build_tenant_phone_candidate_map
+from app.services.tenant_phone_aliases import get_tenant_phone_identity_maps
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +63,9 @@ def _lookup_whatsapp_endpoint_by_account_identity(db: Session, provider: str, ex
 def _match_phone_tenant(db: Session, candidates: list[str]) -> tuple[Tenant | None, str | None, dict[int, Tenant]]:
     matched_tenants: dict[int, Tenant] = {}
     matched_value: str | None = None
-    tenant_candidates_by_id = build_tenant_phone_candidate_map(db)
-    tenant_lookup = {tenant.id: tenant for tenant in db.query(Tenant).all() if tenant.id is not None}
+    identity_maps = get_tenant_phone_identity_maps(db)
+    tenant_candidates_by_id = identity_maps.candidate_map
+    tenant_lookup = identity_maps.tenant_lookup
     for candidate in candidates:
         tenant_matches: list[Tenant] = []
         for tenant_id, tenant in tenant_lookup.items():

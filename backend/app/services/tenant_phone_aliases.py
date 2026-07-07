@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Iterable
 
 from sqlalchemy.orm import Session
@@ -16,6 +17,16 @@ class TenantPhoneAliasWrite:
     normalized_phone: str
     is_primary: bool
     source: str | None = None
+
+
+@dataclass(frozen=True)
+class TenantPhoneIdentityMaps:
+    tenant_lookup: dict[int, Tenant]
+    candidate_map: dict[int, list[str]]
+
+
+_TENANT_PHONE_IDENTITY_MAPS_CACHE: tuple[float, TenantPhoneIdentityMaps] | None = None
+_TENANT_PHONE_IDENTITY_MAPS_CACHE_TTL_SECONDS = 30.0
 
 
 def _normalize_raw_phone(value: str | None) -> str | None:
@@ -75,6 +86,7 @@ def sync_tenant_phone_aliases(
                 source=phone_write.source,
             )
         )
+    invalidate_tenant_phone_identity_maps_cache()
 
 
 def get_tenant_phone_alias_rows(db: Session, tenant_id: int) -> list[TenantPhoneAlias]:
@@ -84,6 +96,63 @@ def get_tenant_phone_alias_rows(db: Session, tenant_id: int) -> list[TenantPhone
         .order_by(TenantPhoneAlias.is_primary.desc(), TenantPhoneAlias.id.asc())
         .all()
     )
+
+
+def invalidate_tenant_phone_identity_maps_cache() -> None:
+    global _TENANT_PHONE_IDENTITY_MAPS_CACHE
+    _TENANT_PHONE_IDENTITY_MAPS_CACHE = None
+
+
+def _build_tenant_phone_identity_maps(db: Session) -> TenantPhoneIdentityMaps:
+    tenants = [tenant for tenant in db.query(Tenant).all() if tenant.id is not None]
+    alias_rows = db.query(TenantPhoneAlias).order_by(TenantPhoneAlias.tenant_id.asc(), TenantPhoneAlias.is_primary.desc(), TenantPhoneAlias.id.asc()).all()
+
+    aliases_by_tenant_id: dict[int, list[str]] = {}
+    for alias in alias_rows:
+        aliases_by_tenant_id.setdefault(alias.tenant_id, []).append(alias.normalized_phone)
+
+    tenant_lookup: dict[int, Tenant] = {}
+    candidate_map: dict[int, list[str]] = {}
+    for tenant in tenants:
+        if tenant.id is None:
+            continue
+        tenant_lookup[tenant.id] = tenant
+        if tenant.id in aliases_by_tenant_id and aliases_by_tenant_id[tenant.id]:
+            alias_candidates: list[str] = []
+            seen_alias: set[str] = set()
+            for normalized_phone in aliases_by_tenant_id[tenant.id]:
+                for candidate in phone_match_candidates(normalized_phone):
+                    if candidate not in seen_alias:
+                        seen_alias.add(candidate)
+                        alias_candidates.append(candidate)
+            if alias_candidates:
+                candidate_map[tenant.id] = alias_candidates
+            continue
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for value in (tenant.phone, tenant.mobile):
+            for candidate in phone_match_candidates(value):
+                if candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+        if candidates:
+            candidate_map[tenant.id] = candidates
+
+    return TenantPhoneIdentityMaps(tenant_lookup=tenant_lookup, candidate_map=candidate_map)
+
+
+def get_tenant_phone_identity_maps(db: Session, *, refresh: bool = False) -> TenantPhoneIdentityMaps:
+    global _TENANT_PHONE_IDENTITY_MAPS_CACHE
+    now = time.monotonic()
+    if not refresh and _TENANT_PHONE_IDENTITY_MAPS_CACHE is not None:
+        cached_at, cached_maps = _TENANT_PHONE_IDENTITY_MAPS_CACHE
+        if now - cached_at < _TENANT_PHONE_IDENTITY_MAPS_CACHE_TTL_SECONDS:
+            return cached_maps
+
+    maps = _build_tenant_phone_identity_maps(db)
+    _TENANT_PHONE_IDENTITY_MAPS_CACHE = (now, maps)
+    return maps
 
 
 def get_tenant_primary_phone_raw(db: Session, tenant: Tenant) -> str | None:
@@ -101,19 +170,13 @@ def get_tenant_primary_phone_raw(db: Session, tenant: Tenant) -> str | None:
 
 
 def get_tenant_phone_candidates(db: Session, tenant: Tenant) -> list[str]:
+    if tenant.id is not None:
+        cached_candidates = get_tenant_phone_identity_maps(db).candidate_map.get(tenant.id)
+        if cached_candidates:
+            return list(cached_candidates)
+
     candidates: list[str] = []
     seen: set[str] = set()
-
-    alias_rows = get_tenant_phone_alias_rows(db, tenant.id) if tenant.id is not None else []
-    for alias in alias_rows:
-        for candidate in phone_match_candidates(alias.raw_phone or alias.normalized_phone):
-            if candidate not in seen:
-                seen.add(candidate)
-                candidates.append(candidate)
-
-    if candidates:
-        return candidates
-
     for value in (tenant.phone, tenant.mobile):
         for candidate in phone_match_candidates(value):
             if candidate not in seen:
@@ -123,35 +186,4 @@ def get_tenant_phone_candidates(db: Session, tenant: Tenant) -> list[str]:
 
 
 def build_tenant_phone_candidate_map(db: Session) -> dict[int, list[str]]:
-    tenants = db.query(Tenant).all()
-    alias_rows = db.query(TenantPhoneAlias).order_by(TenantPhoneAlias.tenant_id.asc(), TenantPhoneAlias.is_primary.desc(), TenantPhoneAlias.id.asc()).all()
-
-    aliases_by_tenant_id: dict[int, list[str]] = {}
-    for alias in alias_rows:
-        aliases_by_tenant_id.setdefault(alias.tenant_id, []).append(alias.normalized_phone)
-
-    candidate_map: dict[int, list[str]] = {}
-    for tenant in tenants:
-        if tenant.id is None:
-            continue
-        if tenant.id in aliases_by_tenant_id and aliases_by_tenant_id[tenant.id]:
-            alias_candidates: list[str] = []
-            seen_alias: set[str] = set()
-            for normalized_phone in aliases_by_tenant_id[tenant.id]:
-                for candidate in phone_match_candidates(normalized_phone):
-                    if candidate not in seen_alias:
-                        seen_alias.add(candidate)
-                        alias_candidates.append(candidate)
-            candidate_map[tenant.id] = alias_candidates
-            continue
-
-        candidates: list[str] = []
-        seen: set[str] = set()
-        for value in (tenant.phone, tenant.mobile):
-            for candidate in phone_match_candidates(value):
-                if candidate not in seen:
-                    seen.add(candidate)
-                    candidates.append(candidate)
-        if candidates:
-            candidate_map[tenant.id] = candidates
-    return candidate_map
+    return get_tenant_phone_identity_maps(db).candidate_map

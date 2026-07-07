@@ -402,6 +402,11 @@ function describeChatSkipReason(chat, eligibleIdentityIndex) {
   return "no_crm_identity_match";
 }
 
+function shouldProbeChatEligibility(chat) {
+  const chatId = String(getChatId(chat) || "").trim().toLowerCase();
+  return Boolean(chatId && chatId.endsWith("@lid"));
+}
+
 async function probeChatEligibility(chat, { postSyncDelayMs = 1500, limit = 5 } = {}) {
   if (!chat) {
     return { eligible: false, reason: "missing_chat" };
@@ -868,6 +873,8 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
 
   const crmEligibleChats = [];
   const skippedChats = [];
+  const skippedChatReasons = new Map();
+  const skippedChatSamples = [];
 
   for (const chat of orderedChats) {
     if (all) {
@@ -880,29 +887,35 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
       continue;
     }
 
-    const probe = await probeChatEligibility(chat, { postSyncDelayMs, limit: Math.max(1, Math.min(5, Number.parseInt(String(limit || 5), 10) || 5)) });
-    if (probe.eligible) {
-      crmEligibleChats.push(chat);
-      console.info(JSON.stringify({
-        event: "whatsapp_history_chat_probe_match",
-        chat_id: getChatId(chat),
-        chat_name: getChatName(chat),
-        scope: "crm_scoped",
-        tenant_id: probe.tenant_id || null,
-        matched_field: probe.matched_field || null,
-        matched_value: probe.matched_value || null,
-      }));
-      continue;
+    let skipReason = describeChatSkipReason(chat, resolvedEligibleIdentityIndex);
+    if (shouldProbeChatEligibility(chat)) {
+      const probe = await probeChatEligibility(chat, { postSyncDelayMs, limit: Math.max(1, Math.min(5, Number.parseInt(String(limit || 5), 10) || 5)) });
+      if (probe.eligible) {
+        crmEligibleChats.push(chat);
+        console.info(JSON.stringify({
+          event: "whatsapp_history_chat_probe_match",
+          chat_id: getChatId(chat),
+          chat_name: getChatName(chat),
+          scope: "crm_scoped",
+          tenant_id: probe.tenant_id || null,
+          matched_field: probe.matched_field || null,
+          matched_value: probe.matched_value || null,
+        }));
+        continue;
+      }
+      skipReason = probe.reason || skipReason;
     }
 
+    skipReason = skipReason || "no_crm_identity_match";
     skippedChats.push(chat);
-    console.info(JSON.stringify({
-      event: "whatsapp_history_chat_skipped",
-      chat_id: getChatId(chat),
-      chat_name: getChatName(chat),
-      reason: probe.reason || describeChatSkipReason(chat, resolvedEligibleIdentityIndex),
-      scope: "crm_scoped",
-    }));
+    skippedChatReasons.set(skipReason, (skippedChatReasons.get(skipReason) || 0) + 1);
+    if (skippedChatSamples.length < 10) {
+      skippedChatSamples.push({
+        chat_id: getChatId(chat),
+        chat_name: getChatName(chat),
+        reason: skipReason,
+      });
+    }
   }
 
   const chatsToSync = crmEligibleChats;
@@ -940,6 +953,8 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
     crm_eligible_chats_count: crmEligibleChats.length,
     chats_synced_count: chatsToSync.length,
     skipped_chats_count: skippedChats.length,
+    skipped_chat_reason_counts: Object.fromEntries(Array.from(skippedChatReasons.entries()).sort(([left], [right]) => left.localeCompare(right))),
+    skipped_chat_samples: skippedChatSamples,
     imported_count: imported,
     deduped_count: deduped,
     failed_count: failed,

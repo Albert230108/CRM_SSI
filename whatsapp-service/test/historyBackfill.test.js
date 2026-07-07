@@ -72,7 +72,11 @@ test('backfillAllChats processes only CRM-eligible chats by default', async () =
     process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
     process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
 
+    let resolveCalls = 0;
     global.fetch = async (url, options = {}) => {
+      if (String(url).includes('/resolve')) {
+        resolveCalls += 1;
+      }
       if (String(url).includes('/backfill-identities')) {
         return {
           ok: true,
@@ -149,6 +153,7 @@ test('backfillAllChats processes only CRM-eligible chats by default', async () =
     assert.equal(result.inbound, 1);
     assert.equal(result.outbound, 1);
     assert.equal(result.deduped, 0);
+    assert.equal(resolveCalls, 0);
   } finally {
     global.fetch = originalFetch;
     if (originalEnv.CRM_API_BASE_URL === undefined) delete process.env.CRM_API_BASE_URL; else process.env.CRM_API_BASE_URL = originalEnv.CRM_API_BASE_URL;
@@ -174,7 +179,11 @@ test('backfillAllChats probes lid chats and includes trusted tenant-linked histo
     process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
     process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
 
+    let resolveCalls = 0;
     global.fetch = async (url, options = {}) => {
+      if (String(url).includes('/resolve')) {
+        resolveCalls += 1;
+      }
       if (String(url).includes('/backfill-identities')) {
         return {
           ok: true,
@@ -281,6 +290,7 @@ test('backfillAllChats probes lid chats and includes trusted tenant-linked histo
     assert.equal(result.failed, 0);
     assert.equal(result.inbound, 1);
     assert.equal(result.outbound, 0);
+    assert.equal(resolveCalls, 1);
   } finally {
     global.fetch = originalFetch;
     if (originalEnv.CRM_API_BASE_URL === undefined) delete process.env.CRM_API_BASE_URL; else process.env.CRM_API_BASE_URL = originalEnv.CRM_API_BASE_URL;

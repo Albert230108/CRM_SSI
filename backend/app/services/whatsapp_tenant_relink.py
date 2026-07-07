@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.phone_normalization import phone_match_candidates
 from app.models.communication import Communication
 from app.models.tenant import Tenant
-from app.services.tenant_phone_aliases import build_tenant_phone_candidate_map
+from app.services.tenant_phone_aliases import get_tenant_phone_identity_maps
 
 
 @dataclass(frozen=True)
@@ -41,8 +41,9 @@ def _safe_whatsapp_phone_candidates(*values: str | None) -> list[str]:
 
 
 def _iter_matching_tenants(db: Session, phone_candidates: Iterable[str]) -> list[Tenant]:
-    tenant_lookup = {tenant.id: tenant for tenant in db.query(Tenant).all() if tenant.id is not None}
-    tenant_candidates_by_id = build_tenant_phone_candidate_map(db)
+    identity_maps = get_tenant_phone_identity_maps(db)
+    tenant_lookup = identity_maps.tenant_lookup
+    tenant_candidates_by_id = identity_maps.candidate_map
     matched: dict[int, Tenant] = {}
     matched_value: str | None = None
 

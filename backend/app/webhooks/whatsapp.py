@@ -16,7 +16,7 @@ from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
-from app.services.tenant_phone_aliases import build_tenant_phone_candidate_map, get_tenant_phone_candidates
+from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp-webhooks"])
@@ -288,7 +288,7 @@ def _build_backfill_identity_entries(
     for endpoint in active_endpoints:
         if endpoint.tenant_id is None:
             continue
-        tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
+        tenant = identity_maps.tenant_lookup.get(endpoint.tenant_id)
         if tenant is None:
             continue
         entry = entries_by_tenant_id.setdefault(
@@ -337,7 +337,7 @@ def _build_backfill_identity_entries(
     for tenant_id_value, whatsapp_chat_id, whatsapp_identity_key, whatsapp_normalized_phone, communication_external_account_id in communication_rows:
         if tenant_id_value is None:
             continue
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id_value).first()
+        tenant = identity_maps.tenant_lookup.get(tenant_id_value)
         if tenant is None:
             continue
         entry = entries_by_tenant_id.setdefault(
@@ -385,8 +385,9 @@ def _normalize_phone_candidates(payload: dict[str, Any]) -> list[str]:
 
 def _match_tenants_by_phone(db: Session, candidates: list[str]) -> list[Tenant]:
     matched: dict[int, Tenant] = {}
-    tenant_candidates_by_id = build_tenant_phone_candidate_map(db)
-    tenant_lookup = {tenant.id: tenant for tenant in db.query(Tenant).all() if tenant.id is not None}
+    identity_maps = get_tenant_phone_identity_maps(db)
+    tenant_candidates_by_id = identity_maps.candidate_map
+    tenant_lookup = identity_maps.tenant_lookup
     for candidate in candidates:
         for tenant_id, tenant in tenant_lookup.items():
             tenant_candidates = tenant_candidates_by_id.get(tenant_id, [])
