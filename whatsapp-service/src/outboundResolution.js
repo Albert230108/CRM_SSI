@@ -40,15 +40,6 @@ async function resolveOutboundTenantOwnership({
         },
       });
     }
-    if (normalizedNormalizedPhone) {
-      durableCandidates.push({
-        strategy: "normalized_phone_external_account_id",
-        params: {
-          whatsapp_normalized_phone: normalizedNormalizedPhone,
-          external_account_id: normalizedExternalAccountId,
-        },
-      });
-    }
     if (normalizedChatId) {
       durableCandidates.push({
         strategy: "chat_id_external_account_id",
@@ -71,7 +62,7 @@ async function resolveOutboundTenantOwnership({
           tenantId: resolution.tenant_id,
           resolutionSource: "durable",
           resolutionStrategy: candidate.strategy,
-          matchedValue: candidate.strategy === "provider_message_id" ? normalizedMessageId : candidate.strategy === "identity_key_external_account_id" ? normalizedIdentityKey : candidate.strategy === "normalized_phone_external_account_id" ? normalizedNormalizedPhone : normalizedChatId,
+          matchedValue: candidate.strategy === "provider_message_id" ? normalizedMessageId : candidate.strategy === "identity_key_external_account_id" ? normalizedIdentityKey : normalizedChatId,
           durableResolution: resolution,
         };
       }
@@ -83,7 +74,6 @@ async function resolveOutboundTenantOwnership({
       messageId: normalizedMessageId,
       chatId: normalizedChatId,
       identityKey: normalizedIdentityKey,
-      normalizedPhone: normalizedNormalizedPhone,
       externalAccountId: normalizedExternalAccountId,
     });
     if (memoryTenantId != null) {

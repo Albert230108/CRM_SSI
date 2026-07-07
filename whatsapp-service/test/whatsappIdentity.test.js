@@ -4,33 +4,56 @@ const assert = require('node:assert/strict');
 const { getCanonicalWhatsAppIdentity, normalizeWhatsAppChatId, normalizeWhatsAppPhone } = require('../src/whatsappIdentity');
 const { resolveOutboundTenantOwnership } = require('../src/outboundResolution');
 
-test('normalizes WhatsApp phone and preserves raw group chat ids', () => {
-  const inbound = getCanonicalWhatsAppIdentity({
+test('normalizes WhatsApp phones, preserves linked-device ids, and keeps groups raw', () => {
+  const lidWithoutTrustedPhone = getCanonicalWhatsAppIdentity({
     direction: 'inbound',
     whatsapp_chat_id: '155066153590862@lid',
-    sender: '+31 6 123 456 78',
+  }, { direction: 'inbound' });
+
+  const lidWithTrustedPhone = getCanonicalWhatsAppIdentity({
+    direction: 'inbound',
+    whatsapp_chat_id: '155066153590862@lid',
     sender_normalized: '31612345678',
+  }, { direction: 'inbound' });
+
+  const personChat = getCanonicalWhatsAppIdentity({
+    direction: 'inbound',
+    whatsapp_chat_id: '31612345678@c.us',
   }, { direction: 'inbound' });
 
   const group = getCanonicalWhatsAppIdentity({
     direction: 'inbound',
     whatsapp_chat_id: '123456789@G.US',
-    sender: '+31 6 123 456 78',
-    sender_normalized: '31612345678',
+  }, { direction: 'inbound' });
+
+  const systemChat = getCanonicalWhatsAppIdentity({
+    direction: 'inbound',
+    whatsapp_chat_id: '0@c.us',
   }, { direction: 'inbound' });
 
   assert.equal(normalizeWhatsAppPhone('+31 6 123 456 78'), '31612345678');
+  assert.equal(normalizeWhatsAppPhone('155066153590862@lid'), null);
+  assert.equal(normalizeWhatsAppPhone('31612345678@c.us'), '31612345678');
   assert.equal(normalizeWhatsAppChatId('155066153590862@lid'), '155066153590862@lid');
-  assert.equal(inbound.rawChatId, '155066153590862@lid');
-  assert.equal(inbound.normalizedPhone, '31612345678');
-  assert.equal(inbound.canonicalChatId, '31612345678');
-  assert.equal(inbound.isGroup, false);
+  assert.equal(lidWithoutTrustedPhone.rawChatId, '155066153590862@lid');
+  assert.equal(lidWithoutTrustedPhone.normalizedPhone, null);
+  assert.equal(lidWithoutTrustedPhone.canonicalChatId, '155066153590862@lid');
+  assert.equal(lidWithoutTrustedPhone.isGroup, false);
+  assert.equal(lidWithTrustedPhone.normalizedPhone, '31612345678');
+  assert.equal(lidWithTrustedPhone.canonicalChatId, '31612345678');
+  assert.equal(personChat.rawChatId, '31612345678@c.us');
+  assert.equal(personChat.normalizedPhone, '31612345678');
+  assert.equal(personChat.canonicalChatId, '31612345678');
   assert.equal(group.rawChatId, '123456789@g.us');
   assert.equal(group.canonicalChatId, '123456789@g.us');
   assert.equal(group.isGroup, true);
+  assert.equal(systemChat.rawChatId, '0@c.us');
+  assert.equal(systemChat.normalizedPhone, null);
+  assert.equal(systemChat.canonicalChatId, '0@c.us');
+  assert.equal(systemChat.isGroup, false);
 });
 
-test('resolveOutboundTenantOwnership prefers canonical identity before raw chat id', async () => {
+test('resolveOutboundTenantOwnership prioritizes provider message id, identity key, then raw chat id', async () => {
   const calls = [];
   const result = await resolveOutboundTenantOwnership({
     messageId: 'msg-identity',

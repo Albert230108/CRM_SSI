@@ -95,9 +95,10 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
         payload.get("sender"),
         payload.get("from"),
         payload.get("sender_raw"),
-        payload.get("whatsapp_chat_id"),
-        payload.get("whatsapp_identity_key"),
         payload.get("whatsapp_normalized_phone"),
+        payload.get("recipient_normalized"),
+        payload.get("recipient"),
+        payload.get("to"),
     )
 
     if explicit_tenant_id:

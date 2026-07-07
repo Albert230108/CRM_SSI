@@ -8,7 +8,25 @@ function firstNonEmpty(...values) {
 }
 
 function normalizeWhatsAppPhone(value) {
-  const digits = String(value || "").replace(/\D+/g, "");
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return null;
+  }
+  const lowered = raw.toLowerCase();
+  if (lowered.endsWith("@c.us")) {
+    const digits = lowered.split("@", 1)[0].replace(/\D+/g, "");
+    if (digits.length < 7 || /^0+$/.test(digits)) {
+      return null;
+    }
+    return digits;
+  }
+  if (lowered.includes("@")) {
+    return null;
+  }
+  const digits = raw.replace(/\D+/g, "");
+  if (digits.length < 7 || /^0+$/.test(digits)) {
+    return null;
+  }
   return digits || null;
 }
 
@@ -41,6 +59,8 @@ function getCanonicalWhatsAppIdentity(input = {}, { direction = null } = {}) {
     resolvedDirection === "outbound" ? firstNonEmpty(input.recipient, input.to) : firstNonEmpty(input.sender, input.from),
     input.wa_id,
     input.phone_number,
+    input.whatsapp_chat_id,
+    input.whatsapp_raw_chat_id,
     input.sender_raw,
     input.sender,
     input.from,
@@ -56,9 +76,8 @@ function getCanonicalWhatsAppIdentity(input = {}, { direction = null } = {}) {
     }
   }
 
-  if (!normalizedPhone && rawChatId && !isGroup) {
-    const base = rawChatId.includes("@") ? rawChatId.split("@", 1)[0] : rawChatId;
-    normalizedPhone = normalizeWhatsAppPhone(base) || null;
+  if (!normalizedPhone && rawChatId && !isGroup && rawChatId.endsWith("@c.us")) {
+    normalizedPhone = normalizeWhatsAppPhone(rawChatId) || null;
   }
 
   let canonicalChatId = normalizeWhatsAppChatId(

@@ -9,8 +9,18 @@ _WHATSAPP_ID_RE = re.compile(r"^wa_id[:=]\s*", re.IGNORECASE)
 def normalize_phone(value: str | None) -> str | None:
     if value is None:
         return None
-    digits = "".join(_DIGIT_RE.findall(value))
-    return digits or None
+    raw = value.strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered.endswith("@c.us"):
+        raw = lowered.split("@", 1)[0]
+    elif "@" in lowered:
+        return None
+    digits = "".join(_DIGIT_RE.findall(raw))
+    if len(digits) < 7 or set(digits) == {"0"}:
+        return None
+    return digits
 
 
 def phone_match_candidates(value: str | None) -> list[str]:
@@ -30,7 +40,7 @@ def phone_match_candidates(value: str | None) -> list[str]:
     add(raw)
     add(_WHATSAPP_ID_RE.sub("", raw))
 
-    if "@" in raw:
+    if raw.lower().endswith("@c.us"):
         add(raw.split("@", 1)[0])
 
     if raw.startswith("+"):

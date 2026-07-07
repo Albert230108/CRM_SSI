@@ -127,7 +127,6 @@ def resolve_whatsapp_outbound_communication(
     provider_message_id = provider_message_id.strip() if isinstance(provider_message_id, str) else None
     whatsapp_chat_id = whatsapp_chat_id.strip() if isinstance(whatsapp_chat_id, str) else None
     whatsapp_identity_key = whatsapp_identity_key.strip() if isinstance(whatsapp_identity_key, str) else None
-    whatsapp_normalized_phone = whatsapp_normalized_phone.strip() if isinstance(whatsapp_normalized_phone, str) else None
     external_account_id = external_account_id.strip() if isinstance(external_account_id, str) else None
 
     if provider_message_id:
@@ -157,7 +156,6 @@ def resolve_whatsapp_outbound_communication(
     if external_account_id:
         for match_field, match_value in (
             ("whatsapp_identity_key", whatsapp_identity_key),
-            ("whatsapp_normalized_phone", whatsapp_normalized_phone),
             ("whatsapp_chat_id", whatsapp_chat_id),
         ):
             if not match_value:
@@ -181,7 +179,6 @@ def resolve_whatsapp_outbound_communication(
                     provider_message_id=communication.provider_message_id,
                     whatsapp_chat_id=communication.whatsapp_chat_id,
                     whatsapp_identity_key=communication.whatsapp_identity_key,
-                    whatsapp_normalized_phone=communication.whatsapp_normalized_phone,
                     external_account_id=communication.external_account_id,
                     resolution_strategy=("chat_id_external_account_id" if match_field == "whatsapp_chat_id" else f"{match_field}_external_account_id"),
                 )
@@ -192,7 +189,6 @@ def resolve_whatsapp_outbound_communication(
         provider_message_id=provider_message_id,
         whatsapp_chat_id=whatsapp_chat_id,
         whatsapp_identity_key=whatsapp_identity_key,
-        whatsapp_normalized_phone=whatsapp_normalized_phone,
         external_account_id=external_account_id,
     )
 

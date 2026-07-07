@@ -242,7 +242,7 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
 def _normalize_phone_candidates(payload: dict[str, Any]) -> list[str]:
     inbound_candidates: list[str] = []
     seen_candidates: set[str] = set()
-    for value in [payload.get("sender_normalized"), payload.get("recipient_normalized"), payload.get("whatsapp_normalized_phone"), payload.get("sender"), payload.get("from"), payload.get("sender_raw"), payload.get("recipient"), payload.get("to"), payload.get("whatsapp_chat_id"), payload.get("whatsapp_identity_key")]:
+    for value in [payload.get("sender_normalized"), payload.get("recipient_normalized"), payload.get("whatsapp_normalized_phone"), payload.get("sender"), payload.get("from"), payload.get("sender_raw"), payload.get("recipient"), payload.get("to")]:
         for candidate in phone_match_candidates(value if isinstance(value, str) else None):
             if candidate not in seen_candidates:
                 seen_candidates.add(candidate)
@@ -307,8 +307,6 @@ def _find_existing_inbound_whatsapp_communication(
         duplicate_query = duplicate_query.filter(Communication.external_account_id == external_account_id)
     if whatsapp_identity_key:
         duplicate_query = duplicate_query.filter(Communication.whatsapp_identity_key == whatsapp_identity_key)
-    elif whatsapp_normalized_phone:
-        duplicate_query = duplicate_query.filter(Communication.whatsapp_normalized_phone == whatsapp_normalized_phone)
     elif whatsapp_chat_id:
         duplicate_query = duplicate_query.filter(Communication.whatsapp_chat_id == whatsapp_chat_id)
     return duplicate_query.filter(Communication.message == message, Communication.created_at == created_at).first()

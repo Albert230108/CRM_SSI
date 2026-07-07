@@ -130,7 +130,6 @@ def _find_outbound_communication(
     if external_account_id:
         for match_field, match_value in (
             ("whatsapp_identity_key", whatsapp_identity_key),
-            ("whatsapp_normalized_phone", whatsapp_normalized_phone),
             ("whatsapp_chat_id", whatsapp_chat_id),
         ):
             if not match_value:

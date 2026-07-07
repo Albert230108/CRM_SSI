@@ -58,7 +58,7 @@ function getMemoryTenantId({ messageId, chatId, identityKey }) {
   return null;
 }
 
-async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, normalizedPhone, externalAccountId }) {
+async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, externalAccountId }) {
   if (!crmOutboundResolutionUrl) {
     return { found: false, resolution_strategy: "unconfigured" };
   }
@@ -72,9 +72,6 @@ async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, nor
   }
   if (identityKey) {
     query.set("whatsapp_identity_key", identityKey);
-  }
-  if (normalizedPhone) {
-    query.set("whatsapp_normalized_phone", normalizedPhone);
   }
   if (externalAccountId) {
     query.set("external_account_id", externalAccountId);
@@ -118,7 +115,21 @@ function normalizePhoneIdentity(input) {
   if (!value) {
     return null;
   }
+  const lowered = value.toLowerCase();
+  if (lowered.endsWith("@c.us")) {
+    const digits = lowered.split("@", 1)[0].replace(/\D+/g, "");
+    if (digits.length < 7 || /^0+$/.test(digits)) {
+      return null;
+    }
+    return digits;
+  }
+  if (lowered.includes("@")) {
+    return null;
+  }
   const digits = value.replace(/\D+/g, "");
+  if (digits.length < 7 || /^0+$/.test(digits)) {
+    return null;
+  }
   return digits || null;
 }
 
@@ -149,7 +160,7 @@ function buildPhoneCandidateKeys(input) {
   add(raw);
   add(raw.replace(/^wa_id[:=]\s*/i, ""));
 
-  if (raw.includes("@")) {
+  if (raw.toLowerCase().endsWith("@c.us")) {
     add(raw.split("@", 1)[0]);
   }
   if (raw.startsWith("+")) {
@@ -185,16 +196,19 @@ function buildChatCandidateKeys(input) {
   const atIndex = raw.indexOf("@");
   const base = atIndex >= 0 ? raw.slice(0, atIndex) : raw;
   const suffix = atIndex >= 0 ? raw.slice(atIndex + 1) : "";
-  if (base) {
-    add(base);
+  if (suffix === "g.us") {
+    return candidates;
   }
-  if (suffix !== "g.us") {
-    const digits = base.replace(/\D+/g, "");
-    if (digits) {
-      add(digits);
-      add(`${digits}@c.us`);
-      add(`${digits}@lid`);
+  if (suffix === "c.us") {
+    const phone = normalizePhoneIdentity(raw);
+    if (phone) {
+      add(phone);
+      add(`${phone}@c.us`);
     }
+    return candidates;
+  }
+  if (base && !raw.includes("@")) {
+    add(base);
   }
   return candidates;
 }
