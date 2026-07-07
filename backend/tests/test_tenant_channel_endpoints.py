@@ -230,3 +230,45 @@ def test_inbound_whatsapp_remains_unrouted_without_phone_or_account_identity(cli
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-unrouted").all()
     assert saved == []
+
+async def fake_whatsapp_booking(booking_id):
+    return {
+        "id": booking_id,
+        "roomName": "Studio 1",
+        "arrival": "2026-07-01",
+        "departure": "2026-07-02",
+        "invoiceItems": [],
+    }
+
+def test_inbound_whatsapp_routes_after_import_creates_endpoint(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_whatsapp_booking)
+    response = client.post("/api/tenants/import", json={
+        "booking_id": "IMPORT-WA-1",
+        "name": "Tenant Import WhatsApp",
+        "first_name": "WhatsApp",
+        "last_name": "Import",
+        "check_in": "2026-07-07",
+        "check_out": "2026-07-08",
+    })
+    assert response.status_code == 200
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-WA-1").first()
+    assert tenant is not None
+
+    webhook = client.post('/webhooks/whatsapp', json={
+        "direction": "inbound",
+        "provider": "whatsapp-service",
+        "external_account_id": "swifthk-whatsapp",
+        "sender": "+31912345678",
+        "sender_normalized": "31912345678",
+        "whatsapp_message_id": "msg-import-created-mapping",
+        "message": "Hello after import",
+    })
+    assert webhook.status_code == 200
+    payload = webhook.json()
+    assert payload["routing_strategy"] == "account_identity"
+    assert payload["tenant_id"] == tenant.id
+    assert payload["unresolved_reason"] is None
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-import-created-mapping").all()
+    assert len(saved) == 1
+    assert saved[0].tenant_id == tenant.id

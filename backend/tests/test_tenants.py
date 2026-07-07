@@ -26,6 +26,15 @@ def create_endpoint(db_session, tenant_id, external_account_id, webhook_token):
     db_session.refresh(endpoint)
     return endpoint
 
+async def fake_whatsapp_booking(booking_id):
+    return {
+        "id": booking_id,
+        "roomName": "Studio 1",
+        "arrival": "2026-07-01",
+        "departure": "2026-07-02",
+        "invoiceItems": [],
+    }
+
 
 def test_delete_tenant_without_endpoints_succeeds(client, db_session):
     tenant = create_tenant(db_session, name='Tenant Delete A', booking_id='DEL-A')
@@ -69,3 +78,65 @@ def test_delete_tenant_returns_controlled_error_when_commit_fails(client, db_ses
     assert response.status_code == 409
     assert response.json()['detail'] == 'Tenant could not be deleted because dependent records still exist'
     assert db_session.query(Tenant).filter(Tenant.id == tenant.id).first() is not None
+
+def test_create_tenant_creates_whatsapp_endpoint_mapping(client, db_session):
+    response = client.post('/api/tenants', json={'booking_id': 'CREATE-A', 'name': 'Tenant Create A'})
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["booking_id"] == "CREATE-A"
+    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == payload["id"], TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "swifthk-whatsapp").first()
+    assert endpoint is not None
+    assert endpoint.is_active is True
+
+def test_import_tenant_creates_whatsapp_endpoint_mapping(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_whatsapp_booking)
+    response = client.post('/api/tenants/import', json={
+        "booking_id": "IMPORT-A",
+        "name": "Tenant Import A",
+        "first_name": "Import",
+        "last_name": "Tenant",
+        "check_in": "2026-07-01",
+        "check_out": "2026-07-02",
+    })
+    assert response.status_code == 200
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-A").first()
+    assert tenant is not None
+    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id, TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "swifthk-whatsapp").first()
+    assert endpoint is not None
+    assert endpoint.is_active is True
+
+def test_repeat_import_does_not_duplicate_whatsapp_endpoint_mapping(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_whatsapp_booking)
+    payload = {
+        "booking_id": "IMPORT-B",
+        "name": "Tenant Import B",
+        "first_name": "Repeat",
+        "last_name": "Tenant",
+        "check_in": "2026-07-03",
+        "check_out": "2026-07-04",
+    }
+    first = client.post("/api/tenants/import", json=payload)
+    second = client.post("/api/tenants/import", json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-B").first()
+    assert tenant is not None
+    endpoints = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id, TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "swifthk-whatsapp").all()
+    assert len(endpoints) == 1
+
+def test_delete_imported_tenant_removes_whatsapp_endpoint_mapping(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_whatsapp_booking)
+    response = client.post("/api/tenants/import", json={
+        "booking_id": "IMPORT-C",
+        "name": "Tenant Import C",
+        "first_name": "Delete",
+        "last_name": "Tenant",
+        "check_in": "2026-07-05",
+        "check_out": "2026-07-06",
+    })
+    assert response.status_code == 200
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-C").first()
+    assert tenant is not None
+    delete_response = client.delete(f"/api/tenants/{tenant.id}")
+    assert delete_response.status_code == 204
+    assert db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id).count() == 0
