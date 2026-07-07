@@ -18,7 +18,7 @@ const crmApiBaseUrl = String(process.env.CRM_API_BASE_URL || "").trim() || deriv
 const crmOutboundResolutionUrl = String(process.env.CRM_OUTBOUND_RESOLUTION_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/api/communications/whatsapp/outbound-resolution` : "");
 
 module.exports = {
-  port: toInteger(process.env.PORT, 3000),
+  port: toInteger(process.env.PORT, 3001),
   apiKey: String(process.env.API_KEY || "").trim(),
   whatsappClientId: String(process.env.WHATSAPP_CLIENT_ID || "swifthk-whatsapp").trim(),
   reconnectDelayMs: Math.max(1000, toInteger(process.env.RECONNECT_DELAY_MS, 5000)),
@@ -31,3 +31,4 @@ module.exports = {
   whatsappHistoryBackfillEnabled: String(process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED || "").trim().toLowerCase() === "true",
   whatsappHistoryBackfillLimit: Math.max(1, toInteger(process.env.WHATSAPP_HISTORY_BACKFILL_LIMIT, 100)),
 };
+

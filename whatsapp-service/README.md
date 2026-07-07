@@ -12,7 +12,7 @@ Headless Node.js microservice that sends WhatsApp messages for SwiftHK through `
 
 2. Copy `.env.example` to `.env` and set:
    - `API_KEY`
-   - `PORT` if you do not want the default `3000`
+   - `PORT` if you do not want the default `3001`
    - `CRM_WHATSAPP_WEBHOOK_URL`
    - `CRM_WEBHOOK_SECRET` if your CRM expects a shared secret header
 
@@ -118,3 +118,4 @@ Backfill can be triggered in either of these ways:
    ```bash
    journalctl -u whatsapp-service -f
    ```
+
