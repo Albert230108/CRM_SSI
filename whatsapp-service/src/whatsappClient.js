@@ -213,6 +213,31 @@ function buildChatCandidateKeys(input) {
   return candidates;
 }
 
+function buildContactCandidateKeys(contact) {
+  if (!contact || typeof contact !== 'object') {
+    return [];
+  }
+
+  const candidates = [];
+  const seen = new Set();
+  const add = (value) => {
+    for (const candidate of buildPhoneCandidateKeys(value)) {
+      if (!seen.has(candidate)) {
+        seen.add(candidate);
+        candidates.push(candidate);
+      }
+    }
+  };
+
+  add(contact?.number);
+  add(contact?.phoneNumber);
+  add(contact?.id?.user);
+  add(contact?.id?._serialized);
+  add(contact?.wa_id);
+
+  return candidates;
+}
+
 function buildEligibleIdentityIndex(payload) {
   const chatIds = new Set();
   const phoneNumbers = new Set();
@@ -301,7 +326,25 @@ async function fetchCrmEligibleChatIdentities() {
 }
 
 function getChatIdentityCandidates(chat) {
-  return buildChatCandidateKeys(getChatId(chat));
+  const candidates = [];
+  const seen = new Set();
+  const add = (values) => {
+    for (const value of values) {
+      if (!value) {
+        continue;
+      }
+      const normalized = String(value).trim().toLowerCase();
+      if (normalized && !seen.has(normalized)) {
+        seen.add(normalized);
+        candidates.push(normalized);
+      }
+    }
+  };
+
+  add(buildChatCandidateKeys(getChatId(chat)));
+  add(buildContactCandidateKeys(chat?.contact));
+
+  return candidates;
 }
 
 function isCrmEligibleChat(chat, eligibleIdentityIndex) {
