@@ -159,6 +159,138 @@ test('backfillAllChats processes only CRM-eligible chats by default', async () =
   }
 });
 
+test('backfillAllChats probes lid chats and includes trusted tenant-linked history on first backfill', async () => {
+  const originalFetch = global.fetch;
+  const originalEnv = {
+    CRM_API_BASE_URL: process.env.CRM_API_BASE_URL,
+    CRM_WEBHOOK_URL: process.env.CRM_WEBHOOK_URL,
+    CRM_WEBHOOK_SECRET: process.env.CRM_WEBHOOK_SECRET,
+  };
+  const modulePath = require.resolve('../src/whatsappClient');
+  const configPath = require.resolve('../src/config');
+
+  try {
+    process.env.CRM_API_BASE_URL = 'http://crm.test';
+    process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
+    process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
+
+    global.fetch = async (url, options = {}) => {
+      if (String(url).includes('/backfill-identities')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          json: async () => ({
+            ok: true,
+            total_tenants: 1,
+            total_active_endpoints: 1,
+            total_identity_records: 1,
+            entries: [
+              {
+                tenant_id: 7,
+                tenant_name: 'Tenant Eligible',
+                booking_id: 'B-eligible',
+                phone_numbers: ['31612345678'],
+                chat_ids: ['31612345678@c.us'],
+                external_phone_ids: [],
+                external_chat_namespaces: [],
+                external_account_ids: [],
+              },
+            ],
+          }),
+          text: async () => '',
+        };
+      }
+
+      if (String(url).includes('/webhooks/whatsapp/resolve')) {
+        const body = JSON.parse(options.body || '{}');
+        if (body.sender_normalized === '31612345678' || body.recipient_normalized === '31612345678') {
+          return {
+            ok: true,
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            json: async () => ({
+              ok: true,
+              routing_strategy: 'whatsapp_phone_match',
+              tenant_id: 7,
+              matched_field: 'phone',
+              matched_value: '31612345678',
+              unresolved_reason: null,
+            }),
+            text: async () => '',
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          json: async () => ({
+            ok: true,
+            routing_strategy: 'unresolved',
+            tenant_id: null,
+            unresolved_reason: 'no_deterministic_match',
+          }),
+          text: async () => '',
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        json: async () => ({ ok: true, echoed: options.method || 'GET' }),
+        text: async () => '',
+      };
+    };
+
+    delete require.cache[modulePath];
+    delete require.cache[configPath];
+    const reloaded = require('../src/whatsappClient');
+
+    const result = await reloaded.backfillAllChats({
+      clientOverride: {
+        getChats: async () => [
+          {
+            id: { _serialized: '155066153590862@lid', user: '155066153590862' },
+            isGroup: false,
+            syncHistory: async () => {},
+            fetchMessages: async () => ([
+              { timestamp: 1710000000, body: 'Historical inbound', fromMe: false, from: '31612345678@c.us', to: '15550000000@c.us', id: { _serialized: 'msg-backfill-lid-inbound' } },
+            ]),
+          },
+          {
+            id: { _serialized: '31699999999@c.us', user: '31699999999' },
+            isGroup: false,
+            syncHistory: async () => {},
+            fetchMessages: async () => ([
+              { timestamp: 1710000002, body: 'Unrelated historical chat', fromMe: false, from: '31699999999@c.us', to: '15550000000@c.us', id: { _serialized: 'msg-backfill-unrelated' } },
+            ]),
+          },
+        ],
+      },
+      readyOverride: true,
+      limit: 10,
+      postSyncDelayMs: 1,
+    });
+
+    assert.equal(result.total_chats_in_whatsapp, 2);
+    assert.equal(result.total_crm_eligible_chats, 1);
+    assert.equal(result.total_synced_chats, 1);
+    assert.equal(result.skipped_chats, 1);
+    assert.equal(result.imported, 1);
+    assert.equal(result.failed, 0);
+    assert.equal(result.inbound, 1);
+    assert.equal(result.outbound, 0);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalEnv.CRM_API_BASE_URL === undefined) delete process.env.CRM_API_BASE_URL; else process.env.CRM_API_BASE_URL = originalEnv.CRM_API_BASE_URL;
+    if (originalEnv.CRM_WEBHOOK_URL === undefined) delete process.env.CRM_WEBHOOK_URL; else process.env.CRM_WEBHOOK_URL = originalEnv.CRM_WEBHOOK_URL;
+    if (originalEnv.CRM_WEBHOOK_SECRET === undefined) delete process.env.CRM_WEBHOOK_SECRET; else process.env.CRM_WEBHOOK_SECRET = originalEnv.CRM_WEBHOOK_SECRET;
+    delete require.cache[modulePath];
+    delete require.cache[configPath];
+  }
+});
+
 test('backfillAllChats can be forced to sync every chat with all=true', async () => {
   const originalFetch = global.fetch;
   const originalEnv = {

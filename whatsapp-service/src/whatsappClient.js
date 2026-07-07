@@ -8,6 +8,7 @@ const {
   crmWebhookUrl,
   crmOutboundResolutionUrl,
   crmBackfillIdentitiesUrl,
+  crmWhatsAppResolveUrl,
   reconnectDelayMs,
   whatsappClientId,
   whatsappHistoryBackfillLimit,
@@ -325,6 +326,34 @@ async function fetchCrmEligibleChatIdentities() {
   return buildEligibleIdentityIndex(payload);
 }
 
+async function probeCrmInboundResolution(payload) {
+  if (!crmWhatsAppResolveUrl) {
+    throw new Error("CRM WhatsApp resolve URL is not configured");
+  }
+
+  const headers = { "Content-Type": "application/json" };
+  if (crmWebhookSecret) {
+    headers["X-Webhook-Secret"] = crmWebhookSecret;
+  }
+  if (crmWebhookRouteToken) {
+    headers["X-Webhook-Token"] = crmWebhookRouteToken;
+  }
+
+  const response = await fetch(crmWhatsAppResolveUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = result && typeof result === "object"
+      ? String(result.error || result.detail || `HTTP ${response.status}`)
+      : `HTTP ${response.status}`;
+    throw new Error(`CRM WhatsApp resolve probe failed: ${message}`);
+  }
+  return result && typeof result === "object" ? result : null;
+}
+
 function getChatIdentityCandidates(chat) {
   const candidates = [];
   const seen = new Set();
@@ -371,6 +400,70 @@ function describeChatSkipReason(chat, eligibleIdentityIndex) {
     return null;
   }
   return "no_crm_identity_match";
+}
+
+async function probeChatEligibility(chat, { postSyncDelayMs = 1500, limit = 5 } = {}) {
+  if (!chat) {
+    return { eligible: false, reason: "missing_chat" };
+  }
+
+  if (typeof chat.syncHistory === "function") {
+    try {
+      await chat.syncHistory();
+      await sleep(Number.parseInt(String(postSyncDelayMs || 1500), 10) || 1500);
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: "whatsapp_history_probe_sync_failure",
+        chat_id: getChatId(chat),
+        chat_name: getChatName(chat),
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  let messages = [];
+  try {
+    messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit }) : [];
+  } catch (error) {
+    return {
+      eligible: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const orderedMessages = Array.isArray(messages) ? messages.slice().sort(sortBackfillMessages) : [];
+  for (const message of orderedMessages) {
+    const payload = buildCrmPayload(message, message?.fromMe ? "outbound" : "inbound", {
+      sender: message?.author || message?.from || null,
+      to: message?.to || message?.from || null,
+      whatsapp_chat_id: chat?.id?._serialized || chat?.id || message?.from || message?.to || null,
+      whatsapp_message_id: message?.id?._serialized || null,
+    });
+    delete payload.provider;
+    delete payload.external_account_id;
+    delete payload.whatsapp_client_id;
+    delete payload.whatsapp_endpoint_id;
+    delete payload.tenant_id;
+    try {
+      const resolution = await probeCrmInboundResolution(payload);
+      if (resolution && resolution.tenant_id) {
+        return {
+          eligible: true,
+          reason: "trusted_message_probe_match",
+          tenant_id: resolution.tenant_id,
+          matched_field: resolution.matched_field || null,
+          matched_value: resolution.matched_value || null,
+        };
+      }
+    } catch (error) {
+      return {
+        eligible: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  return { eligible: false, reason: "no_crm_identity_match" };
 }
 
 
@@ -773,24 +866,46 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
     }
   }
 
-  const crmEligibleChats = all
-    ? orderedChats.filter((chat) => isCrmEligibleChat(chat, resolvedEligibleIdentityIndex))
-    : orderedChats.filter((chat) => isCrmEligibleChat(chat, resolvedEligibleIdentityIndex));
-  const chatsToSync = all ? orderedChats : crmEligibleChats;
-  const skippedChats = orderedChats.length - chatsToSync.length;
+  const crmEligibleChats = [];
+  const skippedChats = [];
 
   for (const chat of orderedChats) {
-    if (all || isCrmEligibleChat(chat, resolvedEligibleIdentityIndex)) {
+    if (all) {
+      crmEligibleChats.push(chat);
       continue;
     }
+
+    if (isCrmEligibleChat(chat, resolvedEligibleIdentityIndex)) {
+      crmEligibleChats.push(chat);
+      continue;
+    }
+
+    const probe = await probeChatEligibility(chat, { postSyncDelayMs, limit: Math.max(1, Math.min(5, Number.parseInt(String(limit || 5), 10) || 5)) });
+    if (probe.eligible) {
+      crmEligibleChats.push(chat);
+      console.info(JSON.stringify({
+        event: "whatsapp_history_chat_probe_match",
+        chat_id: getChatId(chat),
+        chat_name: getChatName(chat),
+        scope: "crm_scoped",
+        tenant_id: probe.tenant_id || null,
+        matched_field: probe.matched_field || null,
+        matched_value: probe.matched_value || null,
+      }));
+      continue;
+    }
+
+    skippedChats.push(chat);
     console.info(JSON.stringify({
       event: "whatsapp_history_chat_skipped",
       chat_id: getChatId(chat),
       chat_name: getChatName(chat),
-      reason: describeChatSkipReason(chat, resolvedEligibleIdentityIndex),
+      reason: probe.reason || describeChatSkipReason(chat, resolvedEligibleIdentityIndex),
       scope: "crm_scoped",
     }));
   }
+
+  const chatsToSync = crmEligibleChats;
 
   let imported = 0;
   let deduped = 0;
@@ -824,7 +939,7 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
     chats_in_whatsapp_count: orderedChats.length,
     crm_eligible_chats_count: crmEligibleChats.length,
     chats_synced_count: chatsToSync.length,
-    skipped_chats_count: skippedChats,
+    skipped_chats_count: skippedChats.length,
     imported_count: imported,
     deduped_count: deduped,
     failed_count: failed,
@@ -837,7 +952,7 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
     total_chats_in_whatsapp: orderedChats.length,
     total_crm_eligible_chats: crmEligibleChats.length,
     total_synced_chats: chatsToSync.length,
-    skipped_chats: skippedChats,
+    skipped_chats: skippedChats.length,
     chats: chatsToSync.length,
     scanned: orderedChats.length,
     fetched,

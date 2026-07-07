@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 
 def create_tenant(db_session, name="Tenant Secure", booking_id="B-secure"):
@@ -136,3 +137,30 @@ def test_whatsapp_backfill_identities_exports_crm_known_chat_keys(client, db_ses
     trusted_identity = payload["trusted_identities"][0]
     assert trusted_identity["tenant_id"] == tenant.id
     assert trusted_identity["external_account_id"] == "edi-crm-whatsapp"
+
+
+def test_whatsapp_resolve_uses_phone_alias_without_account_identity(client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-secure-resolve", phone="+31 6 1234 5678")
+    tenant.mobile = "0031 6 9876 5432"
+    db_session.commit()
+    sync_tenant_phone_aliases(db_session, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp/resolve",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "sender": "+31 6 1234 5678",
+            "sender_normalized": "31612345678",
+            "whatsapp_chat_id": "155066153590862@lid",
+            "message": "Resolve-only probe",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["tenant_id"] == tenant.id
+    assert body["routing_strategy"] == "whatsapp_phone_match"
+    assert body["matched_field"] == "phone"

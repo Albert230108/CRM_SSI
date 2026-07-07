@@ -31,6 +31,15 @@ class WhatsAppWebhookResponse(BaseModel):
     unresolved_reason: str | None = None
 
 
+class WhatsAppResolveResponse(BaseModel):
+    ok: bool
+    routing_strategy: str | None = None
+    tenant_id: int | None = None
+    matched_field: str | None = None
+    matched_value: str | None = None
+    unresolved_reason: str | None = None
+
+
 class WhatsAppBackfillIdentityEntry(BaseModel):
     tenant_id: int
     tenant_name: str
@@ -596,6 +605,31 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     db.commit()
     print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)
+
+
+@router.post("/resolve", response_model=WhatsAppResolveResponse)
+async def whatsapp_resolve(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WhatsAppResolveResponse | JSONResponse:
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+
+    secret_error = _validate_webhook_secret(request, payload)
+    if secret_error is not None:
+        return secret_error
+
+    resolved = resolve_tenant_for_inbound_channel(db, payload, dict(request.headers), dict(request.query_params))
+    return WhatsAppResolveResponse(
+        ok=True,
+        routing_strategy=resolved.strategy,
+        tenant_id=resolved.tenant.id if resolved.tenant else None,
+        matched_field=resolved.matched_field,
+        matched_value=resolved.matched_value,
+        unresolved_reason=resolved.unresolved_reason,
+    )
+
 
 @router.get("/backfill-identities", response_model=WhatsAppBackfillIdentitiesResponse)
 def whatsapp_backfill_identities(
