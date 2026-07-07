@@ -1,4 +1,4 @@
-"""add tenant phone aliases
+﻿"""add tenant phone aliases
 
 Revision ID: 0017_tenant_phone_aliases
 Revises: 0016_whatsapp_identity_canonicalization
@@ -40,7 +40,7 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
         sa.Column("normalized_phone", sa.String(length=64), nullable=False),
         sa.Column("raw_phone", sa.String(length=100), nullable=True),
-        sa.Column("is_primary", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("is_primary", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("source", sa.String(length=100), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
@@ -71,7 +71,7 @@ def upgrade() -> None:
                     "tenant_id": tenant_id,
                     "normalized_phone": normalized_phone,
                     "raw_phone": str(raw_phone).strip() if raw_phone is not None else normalized_phone,
-                    "is_primary": 1 if is_primary else 0,
+                    "is_primary": True if is_primary else False,
                     "source": source,
                 },
             )
