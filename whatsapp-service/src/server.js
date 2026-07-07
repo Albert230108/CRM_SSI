@@ -50,7 +50,7 @@ async function main() {
   });
 
   const server = app.listen(port, "0.0.0.0", () => {
-    console.log(`SwiftHK WhatsApp service listening on port ${port}`);
+    console.log(`EDI_CRM WhatsApp service listening on port ${port}`);
     console.log(`WhatsApp client ready: ${isReady() ? "yes" : "no"}`);
   });
 

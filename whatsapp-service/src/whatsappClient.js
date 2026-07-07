@@ -25,6 +25,21 @@ const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
 let outboundCaptureCount = 0;
 
+function getChatId(chat) {
+  return chat?.id?._serialized || chat?.id?.serialized || chat?.id || null;
+}
+
+function getChatName(chat) {
+  return (
+    chat?.name ||
+    chat?.formattedTitle ||
+    chat?.contact?.pushname ||
+    chat?.contact?.name ||
+    chat?.id?._serialized ||
+    null
+  );
+}
+
 function getMemoryTenantId({ messageId, chatId }) {
   if (messageId && pendingOutboundTenantByMessageId.has(messageId)) {
     return pendingOutboundTenantByMessageId.get(messageId) ?? null;

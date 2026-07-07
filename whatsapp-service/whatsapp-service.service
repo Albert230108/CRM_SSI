@@ -1,12 +1,12 @@
 [Unit]
-Description=SwiftHK WhatsApp service
+Description=EDI_CRM WhatsApp service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/ssi-edi-server/Sweeply-SSI-Version/whatsapp-service
-EnvironmentFile=/home/ssi-edi-server/Sweeply-SSI-Version/whatsapp-service/.env
+WorkingDirectory=/home/ssi-edi-server/CRM-SSI/CRM_SSI/whatsapp-service
+EnvironmentFile=/home/ssi-edi-server/CRM-SSI/CRM_SSI/whatsapp-service/.env
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node src/server.js
 Restart=always
