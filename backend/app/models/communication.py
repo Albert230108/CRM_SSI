@@ -5,7 +5,9 @@ from app.database import Base
 
 class Communication(Base):
     __tablename__ = "communications"
-    __table_args__ = (UniqueConstraint("tenant_id", "provider_message_id", name="uq_communications_tenant_provider_message_id"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "provider_message_id", name="uq_communications_tenant_provider_message_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, nullable=False, index=True)

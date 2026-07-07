@@ -101,6 +101,34 @@ function extractText(message) {
   return "";
 }
 
+function normalizeHistoryValue(value) {
+  return String(value || "").trim();
+}
+
+function sortBackfillMessages(left, right) {
+  const leftTimestamp = Number(left?.timestamp || 0);
+  const rightTimestamp = Number(right?.timestamp || 0);
+  if (leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+  return String(left?.id?._serialized || "").localeCompare(String(right?.id?._serialized || ""));
+}
+
+function buildHistoryDedupeKey(message, chatId, direction) {
+  const text = extractText(message);
+  const timestamp = Number(message?.timestamp || 0);
+  const sender = normalizeHistoryValue(message?.author || message?.from || null);
+  const recipient = normalizeHistoryValue(message?.to || chatId || null);
+  return [
+    normalizeHistoryValue(chatId),
+    normalizeHistoryValue(direction),
+    timestamp,
+    text,
+    sender,
+    recipient,
+  ].join("|");
+}
+
 function buildCrmPayload(message, direction, overrides = {}) {
   const text = extractText(message);
   const timestamp = message?.timestamp;
@@ -324,7 +352,7 @@ async function backfillChatHistory(chat, options = {}) {
   }
 
   const ordered = Array.isArray(messages)
-    ? messages.slice().sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0))
+    ? messages.slice().sort(sortBackfillMessages)
     : [];
 
   let imported = 0;
@@ -337,19 +365,19 @@ async function backfillChatHistory(chat, options = {}) {
 
   for (const message of ordered) {
     const whatsappMessageId = message?.id?._serialized || null;
-    if (!whatsappMessageId || seenIds.has(whatsappMessageId)) {
+    const direction = message?.fromMe ? "outbound" : "inbound";
+    const dedupeKey = whatsappMessageId || buildHistoryDedupeKey(message, chatId, direction);
+    if (seenIds.has(dedupeKey)) {
       deduped += 1;
       continue;
     }
-    seenIds.add(whatsappMessageId);
+    seenIds.add(dedupeKey);
 
     const text = extractText(message);
     if (!text) {
       deduped += 1;
       continue;
     }
-
-    const direction = message?.fromMe ? "outbound" : "inbound";
     if (direction === "outbound") {
       outbound += 1;
     } else {
@@ -392,12 +420,14 @@ async function backfillChatHistory(chat, options = {}) {
   return { imported, deduped, failed, inbound, outbound, fetched };
 }
 
-async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 1500 } = {}) {
-  if (!client || !ready) {
+async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 1500, clientOverride = null, readyOverride = null } = {}) {
+  const activeClient = clientOverride || client;
+  const isClientReady = readyOverride ?? ready;
+  if (!activeClient || !isClientReady) {
     throw new Error("WhatsApp client is not ready");
   }
 
-  const chats = typeof client.getChats === "function" ? await client.getChats() : [];
+  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
   const orderedChats = Array.isArray(chats)
     ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
     : [];
@@ -734,8 +764,8 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
         });
         continue;
       }
-      const ordered = Array.isArray(messages) ? messages.slice().sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0)) : [];
-      const orderedFromMe = Array.isArray(fromMeMessages) ? fromMeMessages.slice().sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0)) : [];
+      const ordered = Array.isArray(messages) ? messages.slice().sort(sortBackfillMessages) : [];
+      const orderedFromMe = Array.isArray(fromMeMessages) ? fromMeMessages.slice().sort(sortBackfillMessages) : [];
       const chatSamples = ordered.slice(0, 10).map((message) => ({
         whatsapp_message_id: message?.id?._serialized || null,
         timestamp: Number(message?.timestamp || 0),
@@ -809,7 +839,10 @@ module.exports = {
   sendTextMessage,
   shutdownClient,
   runHistoryBackfill,
+  backfillAllChats,
   runHistoryDebugSample,
+  buildHistoryDedupeKey,
+  sortBackfillMessages,
 };
 
 

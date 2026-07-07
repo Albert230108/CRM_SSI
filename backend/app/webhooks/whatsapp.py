@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
+import hmac
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
@@ -12,6 +14,8 @@ from app.core.phone_normalization import phone_match_candidates
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
+from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp-webhooks"])
 logger = logging.getLogger(__name__)
@@ -22,6 +26,7 @@ class WhatsAppWebhookResponse(BaseModel):
     routing_strategy: str | None = None
     tenant_id: int | None = None
     message: str | None = None
+    unresolved_reason: str | None = None
 
 
 def _first_text(payload: dict[str, Any]) -> str:
@@ -60,8 +65,40 @@ def _pick_timestamp(payload: dict[str, Any]) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _secret_present(request: Request) -> bool:
-    return bool(request.headers.get("X-Webhook-Secret") or request.query_params.get("secret") or request.query_params.get("webhook_secret") or request.headers.get("X-Webhook-Token"))
+def _configured_webhook_secret() -> str | None:
+    secret = os.getenv("CRM_WEBHOOK_SECRET", "").strip()
+    return secret or None
+
+
+def _provided_webhook_secret(request: Request, payload: dict[str, Any]) -> str | None:
+    for value in (
+        request.headers.get("X-Webhook-Secret"),
+        request.query_params.get("secret"),
+        request.query_params.get("webhook_secret"),
+        payload.get("secret"),
+        payload.get("webhook_secret"),
+    ):
+        if value:
+            return str(value).strip()
+    return None
+
+
+def _validate_webhook_secret(request: Request, payload: dict[str, Any]) -> JSONResponse | None:
+    expected_secret = _configured_webhook_secret()
+    if not expected_secret:
+        logger.error("WhatsApp webhook secret is not configured")
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"ok": False, "error": "Webhook secret is not configured"})
+
+    provided_secret = _provided_webhook_secret(request, payload)
+    if not provided_secret:
+        logger.warning("WhatsApp webhook rejected: missing secret")
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"ok": False, "error": "Missing webhook secret"})
+
+    if not hmac.compare_digest(provided_secret, expected_secret):
+        logger.warning("WhatsApp webhook rejected: invalid secret")
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"ok": False, "error": "Invalid webhook secret"})
+
+    return None
 
 
 def _normalize_phone_candidates(payload: dict[str, Any]) -> list[str]:
@@ -99,12 +136,51 @@ def _endpoint_from_account_identity(db: Session, provider: str, external_account
     )
 
 
+def _find_existing_inbound_whatsapp_communication(
+    db: Session,
+    *,
+    tenant_id: int,
+    provider_message_id: str | None,
+    whatsapp_chat_id: str | None,
+    external_account_id: str | None,
+    message: str,
+    created_at: datetime,
+) -> Communication | None:
+    if provider_message_id:
+        return (
+            db.query(Communication)
+            .filter(
+                Communication.tenant_id == tenant_id,
+                Communication.channel == "whatsapp",
+                Communication.direction == "inbound",
+                Communication.provider_message_id == provider_message_id,
+            )
+            .first()
+        )
+
+    duplicate_query = db.query(Communication).filter(
+        Communication.tenant_id == tenant_id,
+        Communication.channel == "whatsapp",
+        Communication.direction == "inbound",
+    )
+    if whatsapp_chat_id:
+        duplicate_query = duplicate_query.filter(Communication.whatsapp_chat_id == whatsapp_chat_id)
+    if external_account_id:
+        duplicate_query = duplicate_query.filter(Communication.external_account_id == external_account_id)
+    return duplicate_query.filter(Communication.message == message, Communication.created_at == created_at).first()
+
+
 @router.post("", response_model=WhatsAppWebhookResponse)
 async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> WhatsAppWebhookResponse | JSONResponse:
     payload = await request.json()
     if not isinstance(payload, dict):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
 
+    secret_error = _validate_webhook_secret(request, payload)
+    if secret_error is not None:
+        return secret_error
+
+    secret_valid = True
     sender = _pick_sender(payload)
     recipient = _pick_recipient(payload)
     provider = str(payload.get("provider") or request.headers.get("X-Provider") or "whatsapp-service").strip()
@@ -125,145 +201,123 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     print("WA DEBUG direction=", direction)
     print("WA DEBUG provider=", provider)
     print("WA DEBUG external_account_id=", external_account_id)
-    print("WA DEBUG secret_present=", _secret_present(request))
+    print("WA DEBUG secret_valid=", secret_valid)
     print("WA DEBUG account_identity endpoint_id=", getattr(account_endpoint, 'id', None), "tenant_id=", getattr(account_endpoint, 'tenant_id', None))
 
     if direction == "outbound":
-        if tenant_id is None or str(tenant_id).strip() == "":
-            logger.warning("WhatsApp outbound webhook missing tenant_id provider=%s external_account_id=%s", provider, external_account_id or None)
-            return WhatsAppWebhookResponse(ok=True, routing_strategy="outbound_missing_tenant", tenant_id=None, message="outbound ignored")
-        try:
-            tenant_lookup_id = int(tenant_id)
-        except (TypeError, ValueError):
-            tenant_lookup_id = None
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_lookup_id).first() if tenant_lookup_id is not None else None
-        routing_strategy = "explicit_tenant_id"
-        routing_matched_value = str(tenant_id)
+        tenant_resolution = resolve_whatsapp_outbound_tenant(
+            db,
+            tenant_id=tenant_id,
+            provider=provider,
+            external_account_id=external_account_id,
+        )
+        tenant = tenant_resolution.tenant
+        routing_strategy = tenant_resolution.strategy
+        routing_matched_value = tenant_resolution.matched_value
         print("WA DEBUG routing_strategy=", routing_strategy, "matched_value=", routing_matched_value, "tenant_id=", getattr(tenant, 'id', None))
         logger.info(
-            "WhatsApp webhook received sender=%s recipient=%s provider=%s external_account_id=%s routing_strategy=%s secret_present=%s",
+            "WhatsApp webhook received sender=%s recipient=%s provider=%s external_account_id=%s routing_strategy=%s secret_valid=%s",
             sender,
             recipient,
             provider,
             external_account_id or None,
             routing_strategy,
-            _secret_present(request),
+            secret_valid,
         )
         if tenant is None:
             logger.warning("WhatsApp outbound webhook tenant lookup failed tenant_id=%s provider=%s external_account_id=%s", tenant_id, provider, external_account_id or None)
-            return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=None, message="outbound ignored")
+            return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=None, message="outbound ignored", unresolved_reason=tenant_resolution.unresolved_reason)
 
         provider_message_id = str(payload.get("whatsapp_message_id") or payload.get("provider_message_id") or "").strip() or None
-        if provider_message_id:
-            duplicate = db.query(Communication).filter(Communication.tenant_id == tenant.id, Communication.provider_message_id == provider_message_id).first() is not None
-        else:
-            msg_text = _first_text(payload)
-            ts = _pick_timestamp(payload)
-            duplicate = db.query(Communication).filter(
-                Communication.tenant_id == tenant.id,
-                Communication.channel == "whatsapp",
-                Communication.message == msg_text,
-                Communication.created_at == ts,
-            ).first() is not None
-        if duplicate:
-            print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
-            return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=tenant.id, message="duplicate skipped")
-
-        db.add(
-            Communication(
-                tenant_id=tenant.id,
-                channel="whatsapp",
-                direction="outbound",
-                provider=provider,
-                external_account_id=external_account_id or None,
-                external_phone_id=external_phone_id,
-                external_chat_namespace=external_chat_namespace,
-                whatsapp_chat_id=recipient,
-                provider_message_id=provider_message_id,
-                subject=payload.get("subject"),
-                message=_first_text(payload),
-                created_at=_pick_timestamp(payload),
-            )
+        persistence_result = persist_whatsapp_outbound_communication(
+            db,
+            tenant_id=tenant.id,
+            provider=provider,
+            external_account_id=external_account_id or None,
+            external_phone_id=external_phone_id,
+            external_chat_namespace=external_chat_namespace,
+            whatsapp_chat_id=recipient,
+            provider_message_id=provider_message_id,
+            subject=payload.get("subject"),
+            message=_first_text(payload),
+            created_at=_pick_timestamp(payload),
         )
-        db.commit()
-        print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
-        return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=tenant.id)
+        print(
+            "WA DEBUG final_saved_tenant=",
+            getattr(tenant, 'id', None),
+            "provider_message_id=",
+            payload.get('whatsapp_message_id'),
+            "persistence_state=",
+            persistence_result.persistence_state,
+            "match_strategy=",
+            persistence_result.match_strategy,
+        )
+        message = "duplicate skipped" if persistence_result.persistence_state == "deduped" else None
+        return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=tenant.id, message=message)
 
-    print("WA DEBUG inbound candidates=", _normalize_phone_candidates(payload))
-    webhook_token = str(payload.get("webhook_token") or request.headers.get("X-Webhook-Token") or request.query_params.get("webhook_token") or "").strip()
-    target_tenants: list[Tenant] = []
-    if webhook_token:
-        endpoint = db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.webhook_token == webhook_token, TenantChannelEndpoint.is_active.is_(True)).first()
-        if endpoint:
-            tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
-            if tenant:
-                target_tenants = [tenant]
-                routing_strategy = "webhook_token"
-                routing_matched_value = webhook_token
-    if not target_tenants:
-        target_tenants = _match_tenants_by_phone(db, _normalize_phone_candidates(payload))
-        if target_tenants:
-            routing_strategy = "whatsapp_phone_match"
-            routing_matched_value = _normalize_phone_candidates(payload)[0] if _normalize_phone_candidates(payload) else None
-    if not target_tenants and account_endpoint:
-        tenant = db.query(Tenant).filter(Tenant.id == account_endpoint.tenant_id).first()
-        if tenant:
-            target_tenants = [tenant]
-            routing_strategy = "account_identity"
-            routing_matched_value = external_account_id
-    print("WA DEBUG inbound matched_tenants=", [matched_tenant.id for matched_tenant in target_tenants])
-    print("WA DEBUG routing_strategy=", routing_strategy, "matched_value=", routing_matched_value, "tenant_id=", target_tenants[0].id if target_tenants else None)
+    resolved = resolve_tenant_for_inbound_channel(db, payload, dict(request.headers), dict(request.query_params))
+    print(
+        "WA DEBUG inbound routing_strategy=",
+        resolved.strategy,
+        "matched_field=",
+        resolved.matched_field,
+        "matched_value=",
+        resolved.matched_value,
+        "resolved_tenant_id=",
+        resolved.tenant.id if resolved.tenant else None,
+        "unresolved_reason=",
+        resolved.unresolved_reason,
+    )
     logger.info(
-        "WhatsApp webhook received sender=%s recipient=%s provider=%s external_account_id=%s routing_strategy=%s secret_present=%s",
+        "WhatsApp inbound routing decision strategy=%s matched_field=%s matched_value=%s resolved_tenant_id=%s unresolved_reason=%s sender=%s recipient=%s provider=%s external_account_id=%s secret_valid=%s",
+        resolved.strategy,
+        resolved.matched_field,
+        resolved.matched_value,
+        resolved.tenant.id if resolved.tenant else None,
+        resolved.unresolved_reason,
         sender,
         recipient,
         provider,
         external_account_id or None,
-        routing_strategy,
-        _secret_present(request),
+        True,
     )
 
-    if not target_tenants:
-        logger.info("WhatsApp inbound message ignored sender=%s provider=%s external_account_id=%s candidates=%s", sender, provider, external_account_id or None, _normalize_phone_candidates(payload))
-        return WhatsAppWebhookResponse(ok=True, routing_strategy="ignored", tenant_id=None, message="inbound ignored")
+    if resolved.tenant is None:
+        return WhatsAppWebhookResponse(ok=True, routing_strategy="unresolved", tenant_id=None, message="inbound unresolved", unresolved_reason=resolved.unresolved_reason or resolved.strategy)
 
     provider_message_id = str(payload.get("whatsapp_message_id") or payload.get("provider_message_id") or "").strip() or None
     msg_text = _first_text(payload)
     ts = _pick_timestamp(payload)
-    saved_tenant_ids: list[int] = []
-    for target_tenant in target_tenants:
-        if provider_message_id:
-            duplicate = db.query(Communication).filter(
-                Communication.tenant_id == target_tenant.id,
-                Communication.provider_message_id == provider_message_id,
-            ).first() is not None
-        else:
-            duplicate = db.query(Communication).filter(
-                Communication.tenant_id == target_tenant.id,
-                Communication.channel == "whatsapp",
-                Communication.message == msg_text,
-                Communication.created_at == ts,
-            ).first() is not None
-        if duplicate:
-            continue
-        db.add(
-            Communication(
-                tenant_id=target_tenant.id,
-                channel="whatsapp",
-                direction="inbound",
-                provider=provider,
-                external_account_id=external_account_id or None,
-                external_phone_id=external_phone_id,
-                external_chat_namespace=external_chat_namespace,
-                whatsapp_chat_id=recipient,
-                provider_message_id=provider_message_id,
-                subject=payload.get("subject"),
-                message=msg_text,
-                created_at=ts,
-            )
+    tenant = resolved.tenant
+    duplicate = _find_existing_inbound_whatsapp_communication(
+        db,
+        tenant_id=tenant.id,
+        provider_message_id=provider_message_id,
+        whatsapp_chat_id=external_chat_namespace or recipient,
+        external_account_id=external_account_id or None,
+        message=msg_text,
+        created_at=ts,
+    )
+    if duplicate:
+        print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
+        return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id, message="duplicate skipped")
+
+    db.add(
+        Communication(
+            tenant_id=tenant.id,
+            channel="whatsapp",
+            direction="inbound",
+            provider=provider,
+            external_account_id=external_account_id or None,
+            external_phone_id=external_phone_id,
+            external_chat_namespace=external_chat_namespace,
+            whatsapp_chat_id=recipient,
+            provider_message_id=provider_message_id,
+            subject=payload.get("subject"),
+            message=msg_text,
+            created_at=ts,
         )
-        saved_tenant_ids.append(target_tenant.id)
-    if saved_tenant_ids:
-        db.commit()
-    print("WA DEBUG final_saved_tenants=", saved_tenant_ids, "provider_message_id=", payload.get('whatsapp_message_id'))
-    return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy or "whatsapp_phone_match", tenant_id=saved_tenant_ids[0] if saved_tenant_ids else target_tenants[0].id)
+    )
+    db.commit()
+    print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
+    return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)

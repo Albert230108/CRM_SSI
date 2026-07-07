@@ -5,6 +5,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./backend_test.db")
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("WHATSAPP_SERVICE_URL", "http://example.invalid")
 os.environ.setdefault("WHATSAPP_API_KEY", "test-key")
+os.environ.setdefault("CRM_WEBHOOK_SECRET", "test-webhook-secret")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,6 +49,21 @@ def db_session():
 
 @pytest.fixture()
 def client(db_session):
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_admin_user] = lambda: ADMIN_USER
+    with TestClient(app, headers={"X-Webhook-Secret": os.environ["CRM_WEBHOOK_SECRET"]}) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def client_without_webhook_secret(db_session):
     def override_get_db():
         try:
             yield db_session

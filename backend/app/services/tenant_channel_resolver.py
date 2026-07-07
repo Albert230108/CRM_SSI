@@ -16,6 +16,8 @@ class RoutingResult:
     tenant: Tenant | None
     strategy: str
     matched_value: str | None = None
+    matched_field: str | None = None
+    unresolved_reason: str | None = None
 
 
 def _first_non_empty(*values: Any) -> str | None:
@@ -38,6 +40,21 @@ def _normalized_phone_candidates(*values: Any) -> list[str]:
 
 def _is_whatsapp_provider(provider: str | None) -> bool:
     return bool(provider and provider.strip().lower().startswith("whatsapp"))
+
+
+def _lookup_whatsapp_endpoint_by_account_identity(db: Session, provider: str, external_account_id: str) -> TenantChannelEndpoint | None:
+    if not provider or not external_account_id:
+        return None
+    return (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.provider == provider,
+            TenantChannelEndpoint.external_account_id == external_account_id,
+            TenantChannelEndpoint.is_active.is_(True),
+        )
+        .first()
+    )
 
 
 def _match_phone_tenant(db: Session, candidates: list[str]) -> tuple[Tenant | None, str | None, dict[int, Tenant]]:
@@ -67,6 +84,7 @@ def _match_phone_tenant(db: Session, candidates: list[str]) -> tuple[Tenant | No
 def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], request_headers: dict[str, str], query_params: dict[str, str]) -> RoutingResult:
     provider = _first_non_empty(payload.get("provider"), query_params.get("provider"), request_headers.get("x-provider"), request_headers.get("X-Provider"))
     external_account_id = _first_non_empty(payload.get("external_account_id"), payload.get("whatsapp_client_id"), query_params.get("external_account_id"), request_headers.get("x-external-account-id"), request_headers.get("X-External-Account-Id"))
+    explicit_tenant_id = _first_non_empty(payload.get("tenant_id"), query_params.get("tenant_id"), request_headers.get("x-tenant-id"), request_headers.get("X-Tenant-Id"))
     webhook_token = _first_non_empty(payload.get("webhook_token"), request_headers.get("x-webhook-token"), request_headers.get("X-Webhook-Token"), query_params.get("webhook_token"))
     external_phone_id = _first_non_empty(payload.get("external_phone_id"), query_params.get("external_phone_id"))
     chat_namespace = _first_non_empty(payload.get("external_chat_namespace"), payload.get("whatsapp_chat_id"))
@@ -78,41 +96,47 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
         payload.get("whatsapp_chat_id"),
     )
 
+    if explicit_tenant_id:
+        try:
+            tenant_lookup_id = int(str(explicit_tenant_id).strip())
+        except (TypeError, ValueError):
+            tenant_lookup_id = None
+        if tenant_lookup_id is not None:
+            tenant = db.query(Tenant).filter(Tenant.id == tenant_lookup_id).first()
+            if tenant:
+                logger.info("Resolved inbound tenant by explicit_tenant_id tenant_id=%s", tenant.id)
+                return RoutingResult(tenant=tenant, strategy="explicit_tenant_id", matched_value=str(explicit_tenant_id), matched_field="tenant_id")
+
     if webhook_token:
         endpoint = db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.webhook_token == webhook_token, TenantChannelEndpoint.is_active.is_(True)).first()
         if endpoint:
             tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
             if tenant:
-                logger.info("Resolved inbound tenant by webhook_token")
-                return RoutingResult(tenant=tenant, strategy="webhook_token", matched_value=endpoint.webhook_token)
+                logger.info("Resolved inbound tenant by webhook_token tenant_id=%s", tenant.id)
+                return RoutingResult(tenant=tenant, strategy="webhook_token", matched_value=endpoint.webhook_token, matched_field="webhook_token")
 
     logger.info("Inbound WhatsApp normalized phone candidates: %s", inbound_phone_candidates)
+    if provider and external_account_id:
+        endpoint = _lookup_whatsapp_endpoint_by_account_identity(db, provider, external_account_id)
+        if endpoint:
+            tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
+            if tenant:
+                logger.info(
+                    "Resolved inbound tenant by account_identity tenant_id=%s provider=%s external_account_id=%s",
+                    tenant.id,
+                    provider,
+                    external_account_id,
+                )
+                return RoutingResult(tenant=tenant, strategy="account_identity", matched_value=external_account_id, matched_field="provider+external_account_id")
+
     if _is_whatsapp_provider(provider) and inbound_phone_candidates:
         tenant, matched_value, matched_tenants = _match_phone_tenant(db, inbound_phone_candidates)
         if tenant is not None:
             logger.info("Resolved inbound tenant by whatsapp_phone_match tenant_id=%s matched_value=%s", tenant.id, matched_value)
-            return RoutingResult(tenant=tenant, strategy="whatsapp_phone_match", matched_value=matched_value)
+            return RoutingResult(tenant=tenant, strategy="whatsapp_phone_match", matched_value=matched_value, matched_field="phone")
         if matched_tenants:
-            return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=matched_value)
-
-    if provider and external_account_id:
-        if _is_whatsapp_provider(provider):
-            logger.info("Skipping provider+external_account_id tenant resolution for shared WhatsApp provider=%s external_account_id=%s", provider, external_account_id)
-        else:
-            endpoint = (
-                db.query(TenantChannelEndpoint)
-                .filter(
-                    TenantChannelEndpoint.provider == provider,
-                    TenantChannelEndpoint.external_account_id == external_account_id,
-                    TenantChannelEndpoint.is_active.is_(True),
-                )
-                .first()
-            )
-            if endpoint:
-                tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
-                if tenant:
-                    logger.info("Resolved inbound tenant by provider+external_account_id fallback")
-                    return RoutingResult(tenant=tenant, strategy="provider_external_account_id", matched_value=external_account_id)
+            logger.warning("Ambiguous inbound WhatsApp phone match tenant_ids=%s", sorted(matched_tenants.keys()))
+            return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=matched_value, matched_field="phone", unresolved_reason="ambiguous_phone_match")
 
     legacy_sources = [
         payload.get("recipient"),
@@ -129,7 +153,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
             tenant = db.query(Tenant).filter(Tenant.email == value).first()
             if tenant:
                 logger.info("Resolved inbound tenant by legacy_email_inference")
-                return RoutingResult(tenant=tenant, strategy=f"legacy_email:{email_key}", matched_value=value)
+                return RoutingResult(tenant=tenant, strategy=f"legacy_email:{email_key}", matched_value=value, matched_field=email_key)
 
     candidates = _normalized_phone_candidates(*legacy_sources)
 
@@ -137,8 +161,9 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
         tenant, matched_value, matched_tenants = _match_phone_tenant(db, candidates)
         if tenant is not None:
             logger.info("Resolved inbound tenant by legacy_phone_inference tenant_id=%s matched_value=%s", tenant.id, matched_value)
-            return RoutingResult(tenant=tenant, strategy="legacy_phone_inference", matched_value=matched_value)
+            return RoutingResult(tenant=tenant, strategy="legacy_phone_inference", matched_value=matched_value, matched_field="phone")
         if matched_tenants:
-            return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=matched_value)
+            logger.warning("Ambiguous inbound WhatsApp phone match tenant_ids=%s", sorted(matched_tenants.keys()))
+            return RoutingResult(tenant=None, strategy="ambiguous_phone_match", matched_value=matched_value, matched_field="phone", unresolved_reason="ambiguous_phone_match")
 
-    return RoutingResult(tenant=None, strategy="unresolved")
+    return RoutingResult(tenant=None, strategy="unresolved", unresolved_reason="no_deterministic_match")

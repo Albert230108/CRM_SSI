@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
 
 const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'BLOCKQUOTE', 'DIV', 'DL', 'DT', 'DD', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'LI', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL'])
 const ALLOWED_TAGS = new Set(['A', 'B', 'BR', 'CODE', 'DIV', 'EM', 'I', 'LI', 'OL', 'P', 'PRE', 'SPAN', 'STRONG', 'SUB', 'SUP', 'U', 'UL', 'BLOCKQUOTE'])
@@ -162,6 +162,14 @@ type WhatsappEndpointOption = {
   is_active: boolean
 }
 
+const formatWhatsappEndpointLabel = (endpoint: WhatsappEndpointOption) => {
+  const parts = [endpoint.external_account_id || `Endpoint ${endpoint.id}`]
+  if (endpoint.external_phone_id) parts.push(endpoint.external_phone_id)
+  if (endpoint.provider) parts.push(endpoint.provider)
+  if (endpoint.routing_strategy) parts.push(endpoint.routing_strategy)
+  return parts.join(' - ')
+}
+
 type WhatsappTimelineMessage = {
   id: number
   tenant_id: number
@@ -198,6 +206,9 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
+  const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
+  const hasWhatsappEndpoints = whatsappEndpoints.length > 0
+  const whatsappSendDisabled = channel === 'whatsapp' && (!hasWhatsappEndpoints || !selectedWhatsappEndpointId)
 
   useEffect(() => {
     if (!tenantId) {
@@ -632,16 +643,23 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               id="whatsapp-endpoint-selector"
               value={selectedWhatsappEndpointId}
               onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
-              disabled={sending || !whatsappEndpoints.length}
+              disabled={sending || !hasWhatsappEndpoints}
               className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
             >
-              <option value="">Choose an account</option>
+              <option value="">{hasWhatsappEndpoints ? 'Choose an account' : 'No active WhatsApp accounts available'}</option>
               {whatsappEndpoints.map((endpoint) => (
                 <option key={endpoint.id} value={endpoint.id}>
-                  {endpoint.external_account_id || `Endpoint ${endpoint.id}`}{endpoint.external_phone_id ? ` - ${endpoint.external_phone_id}` : ''}
+                  {formatWhatsappEndpointLabel(endpoint)}
                 </option>
               ))}
             </select>
+            <p className={`text-xs ${hasWhatsappEndpoints ? 'text-gray-500' : 'text-amber-700'}`}>
+              {hasWhatsappEndpoints
+                ? selectedWhatsappEndpoint
+                  ? `Selected account: ${formatWhatsappEndpointLabel(selectedWhatsappEndpoint)}.`
+                  : `Choose one of ${whatsappEndpoints.length} active WhatsApp account${whatsappEndpoints.length === 1 ? '' : 's'}.`
+                : 'No active WhatsApp endpoint is mapped for this tenant. WhatsApp sending stays disabled until an existing tenant-channel mapping is active.'}
+            </p>
           </div>
         ) : null}
 
@@ -655,8 +673,14 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         />
 
         <div className="mt-3 flex items-center justify-between gap-3">
-          <p className="text-xs text-gray-500">{channel === 'whatsapp' ? 'WhatsApp send.' : 'Email reply.'}</p>
-          <button type="submit" disabled={sending || loading || !tenantId || !message.trim() || (channel === 'whatsapp' && !selectedWhatsappEndpointId)} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
+          <p className={`text-xs ${channel === 'whatsapp' && !hasWhatsappEndpoints ? 'text-amber-700' : 'text-gray-500'}`}>
+            {channel === 'whatsapp'
+              ? hasWhatsappEndpoints
+                ? 'WhatsApp send.'
+                : 'WhatsApp send is unavailable until this tenant has an active WhatsApp endpoint.'
+              : 'Email reply.'}
+          </p>
+          <button type="submit" disabled={sending || loading || !tenantId || !message.trim() || whatsappSendDisabled} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
             {sending ? 'Sending...' : 'Send'}
           </button>
         </div>
@@ -664,5 +688,6 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     </div>
   )
 }
+
 
 

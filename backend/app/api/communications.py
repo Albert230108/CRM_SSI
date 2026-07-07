@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,9 +14,11 @@ from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
-from app.services.whatsapp_client import send_whatsapp_message
+from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
+from app.services.whatsapp_client import WhatsAppBridgeError, send_whatsapp_message
 
 router = APIRouter(prefix="/communications", tags=["communications"])
+logger = logging.getLogger(__name__)
 
 
 class WhatsAppOutboundResolutionRead(BaseModel):
@@ -245,10 +248,41 @@ async def send_tenant_communication(
             "payload=",
             whatsapp_payload,
         )
-        whatsapp_result = await send_whatsapp_message(whatsapp_payload)
+        try:
+            whatsapp_result = await send_whatsapp_message(whatsapp_payload)
+        except WhatsAppBridgeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         print("WA DEBUG backend send response tenant_id=", tenant.id, "external_account_id=", selected_external_account_id, "message_id=", (whatsapp_result.get("whatsapp_message_id") if isinstance(whatsapp_result, dict) else None))
     else:
         whatsapp_result = None
+
+    if channel == "whatsapp":
+        communication_result = persist_whatsapp_outbound_communication(
+            db,
+            tenant_id=tenant.id,
+            provider=(selected_endpoint.provider if selected_endpoint is not None else None),
+            external_account_id=(selected_endpoint.external_account_id if selected_endpoint is not None else None),
+            external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
+            external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
+            whatsapp_chat_id=(whatsapp_result.get("whatsapp_chat_id") if isinstance(whatsapp_result, dict) else None),
+            provider_message_id=(
+                (whatsapp_result.get("whatsapp_message_id") if isinstance(whatsapp_result, dict) else None)
+                or (whatsapp_result.get("provider_message_id") if isinstance(whatsapp_result, dict) else None)
+            ),
+            subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
+            message=message,
+            created_at=datetime.now(timezone.utc),
+        )
+        communication = communication_result.communication
+        logger.info(
+            "WhatsApp outbound communication persisted source=backend_send persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s",
+            communication_result.persistence_state,
+            communication_result.match_strategy,
+            communication.tenant_id,
+            communication.id,
+            communication.provider_message_id,
+        )
+        return communication
 
     communication = Communication(
         tenant_id=tenant.id,
@@ -258,11 +292,8 @@ async def send_tenant_communication(
         external_account_id=(selected_endpoint.external_account_id if selected_endpoint is not None else None),
         external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
         external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
-        whatsapp_chat_id=(whatsapp_result.get("whatsapp_chat_id") if isinstance(whatsapp_result, dict) else None) if channel == "whatsapp" else None,
-        provider_message_id=(
-            (whatsapp_result.get("whatsapp_message_id") if isinstance(whatsapp_result, dict) else None)
-            or (whatsapp_result.get("provider_message_id") if isinstance(whatsapp_result, dict) else None)
-        ) if channel == "whatsapp" else None,
+        whatsapp_chat_id=None,
+        provider_message_id=None,
         subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
         message=message,
         created_at=datetime.now(timezone.utc),

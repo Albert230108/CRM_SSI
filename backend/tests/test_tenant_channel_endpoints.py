@@ -4,8 +4,8 @@ from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 
 
-def create_tenant(db_session, name="Tenant A", booking_id="B-1"):
-    tenant = Tenant(name=name, booking_id=booking_id)
+def create_tenant(db_session, name="Tenant A", booking_id="B-1", tenant_id=None):
+    tenant = Tenant(id=tenant_id, name=name, booking_id=booking_id) if tenant_id is not None else Tenant(name=name, booking_id=booking_id)
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
@@ -46,22 +46,40 @@ def test_tenant_resolution_by_webhook_token(db_session):
     assert result.strategy == "webhook_token"
 
 
-def test_whatsapp_provider_external_account_id_does_not_resolve_tenant(db_session):
-    tenant = create_tenant(db_session, name="Tenant C", booking_id="B-3")
+def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_session):
+    tenant = create_tenant(db_session, name="Tenant C", booking_id="B-3", tenant_id=88)
     endpoint = TenantChannelEndpoint(
         tenant_id=tenant.id,
         channel_type="whatsapp",
         provider="whatsapp-service",
-        external_account_id="client-3",
+        external_account_id="swifthk-whatsapp",
         is_active=True,
     )
     db_session.add(endpoint)
     db_session.commit()
 
-    result = resolve_tenant_for_inbound_channel(db_session, {"provider": "whatsapp-service", "external_account_id": "client-3"}, {}, {})
-    assert result.tenant is None
-    assert result.strategy == "unresolved"
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "swifthk-whatsapp",
+            "sender": "+31900000000",
+            "sender_normalized": "31900000000",
+            "whatsapp_message_id": "msg-known-account-88",
+            "message": "Hello from the mapped account",
+        },
+    )
 
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "account_identity"
+    assert payload["tenant_id"] == 88
+    assert payload["unresolved_reason"] is None
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-known-account-88").all()
+    assert len(saved) == 1
+    assert saved[0].tenant_id == 88
 
 def test_inactive_endpoint_ignored(db_session):
     tenant = create_tenant(db_session, name="Tenant D", booking_id="B-4")
@@ -81,7 +99,7 @@ def test_inactive_endpoint_ignored(db_session):
     assert result.strategy == "unresolved"
 
 
-def test_inbound_whatsapp_fans_out_to_multiple_tenants(client, db_session):
+def test_inbound_whatsapp_ambiguous_phone_match_remains_unresolved(client, db_session):
     tenant_one = create_tenant(db_session, name="Tenant E", booking_id="B-5")
     tenant_one.phone = "+31 6 12345678"
     tenant_two = create_tenant(db_session, name="Tenant F", booking_id="B-6")
@@ -101,11 +119,13 @@ def test_inbound_whatsapp_fans_out_to_multiple_tenants(client, db_session):
         },
     )
     assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "unresolved"
+    assert payload["unresolved_reason"] == "ambiguous_phone_match"
+    assert payload["tenant_id"] is None
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-123").all()
-    assert {item.tenant_id for item in saved} == {tenant_one.id, tenant_two.id}
-    assert len(saved) == 2
-
+    assert saved == []
 
 def test_fallback_still_works_for_unmigrated_tenants(db_session):
     tenant = create_tenant(db_session, name="Tenant G", booking_id="B-7")
@@ -117,13 +137,13 @@ def test_fallback_still_works_for_unmigrated_tenants(db_session):
     assert result.strategy == "legacy_phone_inference"
 
 
-def test_inbound_whatsapp_routes_by_account_identity_when_phone_match_missing(client, db_session):
+def test_inbound_whatsapp_unknown_account_identity_remains_unresolved(client, db_session):
     tenant = create_tenant(db_session, name="Tenant WhatsApp Account", booking_id="B-8")
     endpoint = TenantChannelEndpoint(
         tenant_id=tenant.id,
         channel_type="whatsapp",
         provider="whatsapp-service",
-        external_account_id="swifthk-whatsapp",
+        external_account_id="different-account",
         is_active=True,
     )
     db_session.add(endpoint)
@@ -134,7 +154,7 @@ def test_inbound_whatsapp_routes_by_account_identity_when_phone_match_missing(cl
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "unknown-whatsapp-account",
             "sender": "+31999999999",
             "sender_normalized": "31999999999",
             "whatsapp_message_id": "msg-account-identity",
@@ -144,18 +164,17 @@ def test_inbound_whatsapp_routes_by_account_identity_when_phone_match_missing(cl
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "account_identity"
-    assert payload["tenant_id"] == tenant.id
+    assert payload["routing_strategy"] == "unresolved"
+    assert payload["unresolved_reason"] == "no_deterministic_match"
+    assert payload["tenant_id"] is None
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-account-identity").all()
-    assert len(saved) == 1
-    assert saved[0].tenant_id == tenant.id
+    assert saved == []
 
-
-def test_inbound_whatsapp_prefers_unique_phone_match_over_account_identity(client, db_session):
+def test_inbound_whatsapp_account_identity_beats_phone_match(client, db_session):
     phone_tenant = create_tenant(db_session, name="Tenant WhatsApp Phone", booking_id="B-9")
     phone_tenant.phone = "+31 6 12345678"
-    account_tenant = create_tenant(db_session, name="Tenant WhatsApp Account Priority", booking_id="B-10")
+    account_tenant = create_tenant(db_session, name="Tenant WhatsApp Account Priority", booking_id="B-10", tenant_id=88)
     endpoint = TenantChannelEndpoint(
         tenant_id=account_tenant.id,
         channel_type="whatsapp",
@@ -175,19 +194,19 @@ def test_inbound_whatsapp_prefers_unique_phone_match_over_account_identity(clien
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_message_id": "msg-phone-priority",
-            "message": "Hello from phone match",
+            "message": "Hello from account identity",
         },
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "whatsapp_phone_match"
-    assert payload["tenant_id"] == phone_tenant.id
+    assert payload["routing_strategy"] == "account_identity"
+    assert payload["tenant_id"] == 88
+    assert payload["unresolved_reason"] is None
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-phone-priority").all()
     assert len(saved) == 1
-    assert saved[0].tenant_id == phone_tenant.id
-
+    assert saved[0].tenant_id == 88
 
 def test_inbound_whatsapp_remains_unrouted_without_phone_or_account_identity(client, db_session):
     response = client.post(
@@ -205,7 +224,8 @@ def test_inbound_whatsapp_remains_unrouted_without_phone_or_account_identity(cli
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "ignored"
+    assert payload["routing_strategy"] == "unresolved"
+    assert payload["unresolved_reason"] == "no_deterministic_match"
     assert payload["tenant_id"] is None
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-unrouted").all()
