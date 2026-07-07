@@ -16,6 +16,7 @@ function deriveOrigin(urlValue) {
 const crmWebhookUrl = String(process.env.CRM_WEBHOOK_URL || "").trim();
 const crmApiBaseUrl = String(process.env.CRM_API_BASE_URL || "").trim() || deriveOrigin(crmWebhookUrl);
 const crmOutboundResolutionUrl = String(process.env.CRM_OUTBOUND_RESOLUTION_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/api/communications/whatsapp/outbound-resolution` : "");
+const crmBackfillIdentitiesUrl = String(process.env.CRM_BACKFILL_IDENTITIES_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/webhooks/whatsapp/backfill-identities` : "");
 
 module.exports = {
   port: toInteger(process.env.PORT, 3001),
@@ -28,6 +29,7 @@ module.exports = {
   crmWebhookTimeoutMs: Math.max(1000, toInteger(process.env.CRM_WEBHOOK_TIMEOUT_MS, 5000)),
   crmApiBaseUrl,
   crmOutboundResolutionUrl,
-  whatsappHistoryBackfillEnabled: String(process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED || "").trim().toLowerCase() === "true",
+  crmBackfillIdentitiesUrl,
+  whatsappHistoryBackfillEnabled: String(process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED ?? "false").trim().toLowerCase() === "true",
   whatsappHistoryBackfillLimit: Math.max(1, toInteger(process.env.WHATSAPP_HISTORY_BACKFILL_LIMIT, 100)),
 };

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
@@ -27,6 +27,25 @@ class WhatsAppWebhookResponse(BaseModel):
     tenant_id: int | None = None
     message: str | None = None
     unresolved_reason: str | None = None
+
+
+class WhatsAppBackfillIdentityEntry(BaseModel):
+    tenant_id: int
+    tenant_name: str
+    booking_id: str
+    phone_numbers: list[str] = Field(default_factory=list)
+    chat_ids: list[str] = Field(default_factory=list)
+    external_phone_ids: list[str] = Field(default_factory=list)
+    external_chat_namespaces: list[str] = Field(default_factory=list)
+    external_account_ids: list[str] = Field(default_factory=list)
+
+
+class WhatsAppBackfillIdentitiesResponse(BaseModel):
+    ok: bool
+    total_tenants: int
+    total_active_endpoints: int
+    total_identity_records: int
+    entries: list[WhatsAppBackfillIdentityEntry]
 
 
 def _first_text(payload: dict[str, Any]) -> str:
@@ -83,6 +102,31 @@ def _provided_webhook_secret(request: Request, payload: dict[str, Any]) -> str |
     return None
 
 
+def _normalize_identity_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def _append_unique(target: list[str], *values: str | None) -> None:
+    seen = set(target)
+    for value in values:
+        normalized = _normalize_identity_value(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            target.append(normalized)
+
+
+def _append_phone_candidates(target: list[str], *values: str | None) -> None:
+    seen = set(target)
+    for value in values:
+        for candidate in phone_match_candidates(value if isinstance(value, str) else None):
+            if candidate not in seen:
+                seen.add(candidate)
+                target.append(candidate)
+
+
 def _validate_webhook_secret(request: Request, payload: dict[str, Any]) -> JSONResponse | None:
     expected_secret = _configured_webhook_secret()
     if not expected_secret:
@@ -99,6 +143,93 @@ def _validate_webhook_secret(request: Request, payload: dict[str, Any]) -> JSONR
         return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"ok": False, "error": "Invalid webhook secret"})
 
     return None
+
+
+def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfillIdentityEntry], int]:
+    entries_by_tenant_id: dict[int, WhatsAppBackfillIdentityEntry] = {}
+
+    for tenant in db.query(Tenant).all():
+        if tenant.id is None:
+            continue
+        entries_by_tenant_id[tenant.id] = WhatsAppBackfillIdentityEntry(
+            tenant_id=tenant.id,
+            tenant_name=tenant.name,
+            booking_id=tenant.booking_id,
+        )
+
+    for tenant in db.query(Tenant).filter((Tenant.phone.isnot(None)) | (Tenant.mobile.isnot(None))).all():
+        if tenant.id is None:
+            continue
+        entry = entries_by_tenant_id.setdefault(
+            tenant.id,
+            WhatsAppBackfillIdentityEntry(
+                tenant_id=tenant.id,
+                tenant_name=tenant.name,
+                booking_id=tenant.booking_id,
+            ),
+        )
+        _append_phone_candidates(entry.phone_numbers, tenant.phone, tenant.mobile)
+
+    active_endpoints = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.is_active.is_(True),
+        )
+        .all()
+    )
+    for endpoint in active_endpoints:
+        if endpoint.tenant_id is None:
+            continue
+        tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
+        if tenant is None:
+            continue
+        entry = entries_by_tenant_id.setdefault(
+            tenant.id,
+            WhatsAppBackfillIdentityEntry(
+                tenant_id=tenant.id,
+                tenant_name=tenant.name,
+                booking_id=tenant.booking_id,
+            ),
+        )
+        _append_unique(entry.external_account_ids, endpoint.external_account_id)
+        _append_phone_candidates(entry.external_phone_ids, endpoint.external_phone_id)
+        _append_unique(entry.external_chat_namespaces, endpoint.external_chat_namespace)
+        _append_unique(entry.chat_ids, endpoint.external_chat_namespace)
+
+    for tenant_id, whatsapp_chat_id in (
+        db.query(Communication.tenant_id, Communication.whatsapp_chat_id)
+        .filter(
+            Communication.channel == "whatsapp",
+            Communication.whatsapp_chat_id.isnot(None),
+            Communication.tenant_id.isnot(None),
+        )
+        .distinct()
+        .all()
+    ):
+        if tenant_id is None or whatsapp_chat_id is None:
+            continue
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if tenant is None:
+            continue
+        entry = entries_by_tenant_id.setdefault(
+            tenant.id,
+            WhatsAppBackfillIdentityEntry(
+                tenant_id=tenant.id,
+                tenant_name=tenant.name,
+                booking_id=tenant.booking_id,
+            ),
+        )
+        _append_unique(entry.chat_ids, whatsapp_chat_id)
+
+    entries = sorted(entries_by_tenant_id.values(), key=lambda item: item.tenant_id)
+    for entry in entries:
+        entry.phone_numbers.sort()
+        entry.chat_ids.sort()
+        entry.external_phone_ids.sort()
+        entry.external_chat_namespaces.sort()
+        entry.external_account_ids.sort()
+    return entries, len(active_endpoints)
 
 
 def _normalize_phone_candidates(payload: dict[str, Any]) -> list[str]:
@@ -321,3 +452,21 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     db.commit()
     print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)
+
+@router.get("/backfill-identities", response_model=WhatsAppBackfillIdentitiesResponse)
+def whatsapp_backfill_identities(request: Request, db: Session = Depends(get_db)) -> WhatsAppBackfillIdentitiesResponse | JSONResponse:
+    secret_error = _validate_webhook_secret(request, {})
+    if secret_error is not None:
+        return secret_error
+
+    entries, total_active_endpoints = _build_backfill_identity_entries(db)
+    return WhatsAppBackfillIdentitiesResponse(
+        ok=True,
+        total_tenants=len(entries),
+        total_active_endpoints=total_active_endpoints,
+        total_identity_records=sum(
+            len(entry.phone_numbers) + len(entry.chat_ids) + len(entry.external_phone_ids) + len(entry.external_chat_namespaces)
+            for entry in entries
+        ),
+        entries=entries,
+    )

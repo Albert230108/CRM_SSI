@@ -8,6 +8,7 @@ Type=simple
 WorkingDirectory=/home/ssi-edi-server/CRM-SSI/CRM_SSI/whatsapp-service
 EnvironmentFile=/home/ssi-edi-server/CRM-SSI/CRM_SSI/whatsapp-service/.env
 Environment=NODE_ENV=production
+Environment=WHATSAPP_HISTORY_BACKFILL_ENABLED=false
 ExecStart=/usr/bin/node src/server.js
 Restart=always
 RestartSec=5

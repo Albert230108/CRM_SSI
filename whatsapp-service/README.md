@@ -15,6 +15,7 @@ Headless Node.js microservice that sends WhatsApp messages for SwiftHK through `
    - `PORT` if you do not want the default `3001`
    - `WHATSAPP_CLIENT_ID` if you need a non-default client id; the service defaults to `edi-crm-whatsapp`
    - `CRM_WHATSAPP_WEBHOOK_URL`
+   - `CRM_BACKFILL_IDENTITIES_URL` if the CRM backfill identity endpoint is not on the same base URL as `CRM_API_BASE_URL`
    - `CRM_WEBHOOK_SECRET` if your CRM expects a shared secret header
 
 3. Make sure SwiftHK points at this service by setting the same key in:
@@ -91,12 +92,15 @@ Messages sent by the local account and status updates are ignored for inbound fo
 
 Historical backfill uses the same payload shape, supports both inbound and outbound messages, sorts messages chronologically before forwarding, and skips messages already seen in this process by `whatsapp_message_id`.
 
+Backfill is CRM-scoped by default. The service asks the CRM which chats are eligible, then only syncs those chats unless you explicitly force a full-account run.
+
 If WhatsApp Web only exposes a partial message window in this session, the service will still import whatever fetchMessages() returns and continue with incremental capture from that point forward. It does not promise a complete historic backfill unless the diagnostic route proves history retrieval works in this linked-device session.
 
 Backfill can be triggered in either of these ways:
 
-- Set `WHATSAPP_HISTORY_BACKFILL_ENABLED=true` to run automatically after the client becomes ready.
+- Leave `WHATSAPP_HISTORY_BACKFILL_ENABLED=false` so startup sync stays opt-in only.
 - Call `POST /admin/backfill` with `X-API-Key` to run it manually.
+- Add `all=true` to `POST /admin/backfill` if you need a full-account emergency sync.
 
 ## systemd
 

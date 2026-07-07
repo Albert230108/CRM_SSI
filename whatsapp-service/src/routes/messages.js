@@ -61,8 +61,9 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
     try {
       const limit = Number.parseInt(String(req.body?.limit || req.query?.limit || ""), 10);
       const onlyOutbound = String(req.body?.onlyOutbound ?? req.query?.onlyOutbound ?? "").toLowerCase() === "true";
-      console.info("[whatsapp] history backfill starting", { limit: Number.isFinite(limit) ? limit : null, onlyOutbound });
-      const result = await runHistoryBackfill(Number.isFinite(limit) ? { limit, onlyOutbound } : { onlyOutbound });
+      const all = String(req.body?.all ?? req.query?.all ?? "").toLowerCase() === "true";
+      console.info("[whatsapp] history backfill starting", { limit: Number.isFinite(limit) ? limit : null, onlyOutbound, all });
+      const result = await runHistoryBackfill(Number.isFinite(limit) ? { limit, onlyOutbound, all } : { onlyOutbound, all });
       console.info("[whatsapp] history backfill finished", result);
       return res.json({ ok: true, ...result });
     } catch (error) {
