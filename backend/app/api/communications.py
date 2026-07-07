@@ -13,6 +13,7 @@ from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
+from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
 from app.services.whatsapp_client import WhatsAppBridgeError, send_whatsapp_message
@@ -214,7 +215,7 @@ async def send_tenant_communication(
 
     selected_endpoint = None
     if channel == "whatsapp":
-        whatsapp_to = (tenant.phone or tenant.mobile or "").strip()
+        whatsapp_to = get_tenant_primary_phone_raw(db, tenant)
         if not whatsapp_to:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant phone is required for WhatsApp")
         if payload.whatsapp_endpoint_id is not None:

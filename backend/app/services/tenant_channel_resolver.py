@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.phone_normalization import phone_match_candidates
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.tenant_phone_aliases import build_tenant_phone_candidate_map
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +63,13 @@ def _lookup_whatsapp_endpoint_by_account_identity(db: Session, provider: str, ex
 def _match_phone_tenant(db: Session, candidates: list[str]) -> tuple[Tenant | None, str | None, dict[int, Tenant]]:
     matched_tenants: dict[int, Tenant] = {}
     matched_value: str | None = None
+    tenant_candidates_by_id = build_tenant_phone_candidate_map(db)
+    tenant_lookup = {tenant.id: tenant for tenant in db.query(Tenant).all() if tenant.id is not None}
     for candidate in candidates:
         tenant_matches: list[Tenant] = []
-        for tenant in db.query(Tenant).filter((Tenant.phone.isnot(None)) | (Tenant.mobile.isnot(None))).all():
-            tenant_candidates = phone_match_candidates(tenant.phone) + phone_match_candidates(tenant.mobile)
-            if candidate in tenant_candidates and tenant.id is not None:
+        for tenant_id, tenant in tenant_lookup.items():
+            tenant_candidates = tenant_candidates_by_id.get(tenant_id, [])
+            if candidate in tenant_candidates:
                 tenant_matches.append(tenant)
         if len(tenant_matches) > 1:
             logger.warning("Ambiguous inbound WhatsApp phone match candidate=%s tenant_ids=%s", candidate, [tenant.id for tenant in tenant_matches])

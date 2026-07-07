@@ -14,6 +14,7 @@ from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.beds24_client import get_bookings, get_booking_detail
+from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 
 router = APIRouter(prefix="/admin", tags=["admin-sync"])
@@ -60,6 +61,7 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     tenant.beds24_raw = booking
     room_id = fields.get("room_id")
     tenant.room_id = room_id if room_id is not None else tenant.room_id
+    sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
 
 
 async def _sync_beds24(db: Session, current_user: User) -> int:

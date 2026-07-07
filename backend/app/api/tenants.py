@@ -15,12 +15,14 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_db
 from app.models.finance import Finance as FinanceRecord
 from app.models.tenant import Tenant
+from app.models.tenant_phone_alias import TenantPhoneAlias
 from app.models.user import User
 from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.services.beds24_client import get_booking_detail, get_bookings
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints, ensure_whatsapp_endpoint_for_tenant
+from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 router = APIRouter(tags=["tenants"])
 logger = logging.getLogger(__name__)
@@ -370,6 +372,7 @@ def delete_tenant(
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     delete_tenant_channel_endpoints(db, tenant_id)
+    db.query(TenantPhoneAlias).filter(TenantPhoneAlias.tenant_id == tenant_id).delete(synchronize_session=False)
     db.flush()
     db.delete(tenant)
     try:
@@ -709,6 +712,7 @@ async def _import_tenant(
         tenant.currency = extracted.get("currency")
         tenant.beds24_raw = booking
 
+    sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
     ensure_whatsapp_endpoint_for_tenant(db, tenant)
 
     db.query(FinanceRecord).filter(FinanceRecord.tenant_id == tenant.id).delete(synchronize_session=False)

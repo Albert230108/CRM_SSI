@@ -18,6 +18,7 @@ from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.schemas.beds24_webhook_log import Beds24WebhookLogRead
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 router = APIRouter(prefix="/webhooks/beds24", tags=["beds24-webhooks"])
 
@@ -228,6 +229,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
             tenant.currency = fields.get("currency")
         if hasattr(tenant, "beds24_raw"):
             tenant.beds24_raw = booking
+        sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
         db.flush()
         log.tenant_id = tenant.id
         log.room_id = str(room_id) if room_id is not None else None

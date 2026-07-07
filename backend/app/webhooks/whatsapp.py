@@ -16,6 +16,7 @@ from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
+from app.services.tenant_phone_aliases import build_tenant_phone_candidate_map, get_tenant_phone_candidates
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp-webhooks"])
@@ -158,7 +159,7 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
             booking_id=tenant.booking_id,
         )
 
-    for tenant in db.query(Tenant).filter((Tenant.phone.isnot(None)) | (Tenant.mobile.isnot(None))).all():
+    for tenant in db.query(Tenant).all():
         if tenant.id is None:
             continue
         entry = entries_by_tenant_id.setdefault(
@@ -169,7 +170,7 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
                 booking_id=tenant.booking_id,
             ),
         )
-        _append_phone_candidates(entry.phone_numbers, tenant.phone, tenant.mobile)
+        _append_phone_candidates(entry.phone_numbers, *get_tenant_phone_candidates(db, tenant))
 
     active_endpoints = (
         db.query(TenantChannelEndpoint)
@@ -252,11 +253,13 @@ def _normalize_phone_candidates(payload: dict[str, Any]) -> list[str]:
 
 def _match_tenants_by_phone(db: Session, candidates: list[str]) -> list[Tenant]:
     matched: dict[int, Tenant] = {}
+    tenant_candidates_by_id = build_tenant_phone_candidate_map(db)
+    tenant_lookup = {tenant.id: tenant for tenant in db.query(Tenant).all() if tenant.id is not None}
     for candidate in candidates:
-        for tenant in db.query(Tenant).filter((Tenant.phone.isnot(None)) | (Tenant.mobile.isnot(None))).all():
-            tenant_candidates = phone_match_candidates(tenant.phone) + phone_match_candidates(tenant.mobile)
-            if candidate in tenant_candidates and tenant.id is not None:
-                matched[tenant.id] = tenant
+        for tenant_id, tenant in tenant_lookup.items():
+            tenant_candidates = tenant_candidates_by_id.get(tenant_id, [])
+            if candidate in tenant_candidates:
+                matched[tenant_id] = tenant
     return list(matched.values())
 
 
