@@ -42,12 +42,25 @@ class WhatsAppBackfillIdentityEntry(BaseModel):
     external_account_ids: list[str] = Field(default_factory=list)
 
 
+class WhatsAppBackfillTrustedIdentity(BaseModel):
+    tenant_id: int
+    tenant_name: str
+    booking_id: str
+    whatsapp_chat_id: str | None = None
+    whatsapp_identity_key: str | None = None
+    whatsapp_normalized_phone: str | None = None
+    external_account_id: str | None = None
+    whatsapp_endpoint_id: int | None = None
+    source: str | None = None
+
+
 class WhatsAppBackfillIdentitiesResponse(BaseModel):
     ok: bool
     total_tenants: int
     total_active_endpoints: int
     total_identity_records: int
     entries: list[WhatsAppBackfillIdentityEntry]
+    trusted_identities: list[WhatsAppBackfillTrustedIdentity] = Field(default_factory=list)
 
 
 def _first_text(payload: dict[str, Any]) -> str:
@@ -129,6 +142,49 @@ def _append_phone_candidates(target: list[str], *values: str | None) -> None:
                 target.append(candidate)
 
 
+def _normalize_filter_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _normalize_filter_int(value: Any) -> int | None:
+    value = _normalize_filter_text(value)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _append_phone_identity_rows(
+    trusted_identities: list[WhatsAppBackfillTrustedIdentity],
+    *,
+    tenant: Tenant,
+    source: str,
+    whatsapp_chat_id: str | None = None,
+    whatsapp_identity_key: str | None = None,
+    whatsapp_normalized_phone: str | None = None,
+    external_account_id: str | None = None,
+    whatsapp_endpoint_id: int | None = None,
+) -> None:
+    trusted_identities.append(
+        WhatsAppBackfillTrustedIdentity(
+            tenant_id=tenant.id,
+            tenant_name=tenant.name,
+            booking_id=tenant.booking_id,
+            whatsapp_chat_id=whatsapp_chat_id,
+            whatsapp_identity_key=whatsapp_identity_key,
+            whatsapp_normalized_phone=whatsapp_normalized_phone,
+            external_account_id=external_account_id,
+            whatsapp_endpoint_id=whatsapp_endpoint_id,
+            source=source,
+        )
+    )
+
+
 def _validate_webhook_secret(request: Request, payload: dict[str, Any]) -> JSONResponse | None:
     expected_secret = _configured_webhook_secret()
     if not expected_secret:
@@ -147,10 +203,32 @@ def _validate_webhook_secret(request: Request, payload: dict[str, Any]) -> JSONR
     return None
 
 
-def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfillIdentityEntry], int]:
+def _build_backfill_identity_entries(
+    db: Session,
+    *,
+    tenant_id: int | None = None,
+    external_account_id: str | None = None,
+    whatsapp_endpoint_id: int | None = None,
+) -> tuple[list[WhatsAppBackfillIdentityEntry], list[WhatsAppBackfillTrustedIdentity], int, dict[str, int]]:
+    debug_counts = {
+        "candidate_tenants": 0,
+        "filtered_tenants": 0,
+        "candidate_endpoints": 0,
+        "filtered_endpoints": 0,
+        "candidate_communications": 0,
+        "filtered_communications": 0,
+        "trusted_identities": 0,
+    }
+    trusted_identities: list[WhatsAppBackfillTrustedIdentity] = []
     entries_by_tenant_id: dict[int, WhatsAppBackfillIdentityEntry] = {}
 
-    for tenant in db.query(Tenant).all():
+    candidate_tenants = db.query(Tenant).all()
+    debug_counts["candidate_tenants"] = len(candidate_tenants)
+    if tenant_id is not None:
+        candidate_tenants = [tenant for tenant in candidate_tenants if tenant.id == tenant_id]
+    debug_counts["filtered_tenants"] = len(candidate_tenants)
+
+    for tenant in candidate_tenants:
         if tenant.id is None:
             continue
         entries_by_tenant_id[tenant.id] = WhatsAppBackfillIdentityEntry(
@@ -159,7 +237,7 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
             booking_id=tenant.booking_id,
         )
 
-    for tenant in db.query(Tenant).all():
+    for tenant in candidate_tenants:
         if tenant.id is None:
             continue
         entry = entries_by_tenant_id.setdefault(
@@ -170,16 +248,34 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
                 booking_id=tenant.booking_id,
             ),
         )
-        _append_phone_candidates(entry.phone_numbers, *get_tenant_phone_candidates(db, tenant))
+        tenant_phone_candidates = get_tenant_phone_candidates(db, tenant)
+        _append_phone_candidates(entry.phone_numbers, *tenant_phone_candidates)
+        for alias_phone in tenant_phone_candidates:
+            _append_phone_identity_rows(
+                trusted_identities,
+                tenant=tenant,
+                source="tenant_phone_alias",
+                whatsapp_identity_key=alias_phone,
+                whatsapp_normalized_phone=alias_phone,
+            )
 
-    active_endpoints = (
+    endpoint_query = (
         db.query(TenantChannelEndpoint)
         .filter(
             TenantChannelEndpoint.channel_type == "whatsapp",
             TenantChannelEndpoint.is_active.is_(True),
         )
-        .all()
     )
+    debug_counts["candidate_endpoints"] = endpoint_query.count()
+    if tenant_id is not None:
+        endpoint_query = endpoint_query.filter(TenantChannelEndpoint.tenant_id == tenant_id)
+    if external_account_id is not None:
+        endpoint_query = endpoint_query.filter(TenantChannelEndpoint.external_account_id == external_account_id)
+    if whatsapp_endpoint_id is not None:
+        endpoint_query = endpoint_query.filter(TenantChannelEndpoint.id == whatsapp_endpoint_id)
+    active_endpoints = endpoint_query.all()
+    debug_counts["filtered_endpoints"] = len(active_endpoints)
+
     for endpoint in active_endpoints:
         if endpoint.tenant_id is None:
             continue
@@ -198,24 +294,41 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
         _append_phone_candidates(entry.external_phone_ids, endpoint.external_phone_id)
         _append_unique(entry.external_chat_namespaces, endpoint.external_chat_namespace)
         _append_unique(entry.chat_ids, endpoint.external_chat_namespace)
+        _append_phone_identity_rows(
+            trusted_identities,
+            tenant=tenant,
+            source="tenant_channel_endpoint",
+            whatsapp_chat_id=endpoint.external_chat_namespace,
+            whatsapp_identity_key=endpoint.external_chat_namespace,
+            external_account_id=endpoint.external_account_id,
+            whatsapp_endpoint_id=endpoint.id,
+        )
 
-    for tenant_id, whatsapp_chat_id, whatsapp_identity_key, whatsapp_normalized_phone in (
+    communication_query = (
         db.query(
             Communication.tenant_id,
             Communication.whatsapp_chat_id,
             Communication.whatsapp_identity_key,
             Communication.whatsapp_normalized_phone,
+            Communication.external_account_id,
         )
         .filter(
             Communication.channel == "whatsapp",
             Communication.tenant_id.isnot(None),
         )
-        .distinct()
-        .all()
-    ):
-        if tenant_id is None:
+    )
+    debug_counts["candidate_communications"] = communication_query.count()
+    if tenant_id is not None:
+        communication_query = communication_query.filter(Communication.tenant_id == tenant_id)
+    if external_account_id is not None:
+        communication_query = communication_query.filter(Communication.external_account_id == external_account_id)
+    communication_rows = communication_query.distinct().all()
+    debug_counts["filtered_communications"] = len(communication_rows)
+
+    for tenant_id_value, whatsapp_chat_id, whatsapp_identity_key, whatsapp_normalized_phone, communication_external_account_id in communication_rows:
+        if tenant_id_value is None:
             continue
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id_value).first()
         if tenant is None:
             continue
         entry = entries_by_tenant_id.setdefault(
@@ -229,6 +342,15 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
         _append_unique(entry.chat_ids, whatsapp_chat_id, whatsapp_identity_key)
         if not any(str(value or "").strip().lower().endswith("@g.us") for value in (whatsapp_chat_id, whatsapp_identity_key)):
             _append_phone_candidates(entry.phone_numbers, whatsapp_normalized_phone, whatsapp_identity_key)
+        _append_phone_identity_rows(
+            trusted_identities,
+            tenant=tenant,
+            source="communication",
+            whatsapp_chat_id=whatsapp_chat_id,
+            whatsapp_identity_key=whatsapp_identity_key,
+            whatsapp_normalized_phone=whatsapp_normalized_phone,
+            external_account_id=communication_external_account_id,
+        )
 
     entries = sorted(entries_by_tenant_id.values(), key=lambda item: item.tenant_id)
     for entry in entries:
@@ -237,7 +359,8 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
         entry.external_phone_ids.sort()
         entry.external_chat_namespaces.sort()
         entry.external_account_ids.sort()
-    return entries, len(active_endpoints)
+    debug_counts["trusted_identities"] = len(trusted_identities)
+    return entries, trusted_identities, len(active_endpoints), debug_counts
 
 
 def _normalize_phone_candidates(payload: dict[str, Any]) -> list[str]:
@@ -475,12 +598,62 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)
 
 @router.get("/backfill-identities", response_model=WhatsAppBackfillIdentitiesResponse)
-def whatsapp_backfill_identities(request: Request, db: Session = Depends(get_db)) -> WhatsAppBackfillIdentitiesResponse | JSONResponse:
+def whatsapp_backfill_identities(
+    request: Request,
+    db: Session = Depends(get_db),
+    tenant_id: int | None = None,
+    external_account_id: str | None = None,
+    whatsapp_endpoint_id: int | None = None,
+) -> WhatsAppBackfillIdentitiesResponse | JSONResponse:
     secret_error = _validate_webhook_secret(request, {})
     if secret_error is not None:
         return secret_error
 
-    entries, total_active_endpoints = _build_backfill_identity_entries(db)
+    normalized_tenant_id = _normalize_filter_int(tenant_id)
+    normalized_external_account_id = _normalize_filter_text(external_account_id)
+    normalized_whatsapp_endpoint_id = _normalize_filter_int(whatsapp_endpoint_id)
+
+    logger.info(
+        "WhatsApp backfill identities request tenant_id=%s external_account_id=%s whatsapp_endpoint_id=%s",
+        normalized_tenant_id,
+        normalized_external_account_id or None,
+        normalized_whatsapp_endpoint_id,
+    )
+
+    entries, trusted_identities, total_active_endpoints, debug_counts = _build_backfill_identity_entries(
+        db,
+        tenant_id=normalized_tenant_id,
+        external_account_id=normalized_external_account_id,
+        whatsapp_endpoint_id=normalized_whatsapp_endpoint_id,
+    )
+    sample_entries = [
+        {
+            "tenant_id": entry.tenant_id,
+            "tenant_name": entry.tenant_name,
+            "booking_id": entry.booking_id,
+            "phone_numbers": entry.phone_numbers[:5],
+            "chat_ids": entry.chat_ids[:5],
+            "external_phone_ids": entry.external_phone_ids[:5],
+            "external_chat_namespaces": entry.external_chat_namespaces[:5],
+            "external_account_ids": entry.external_account_ids[:5],
+        }
+        for entry in entries[:5]
+    ]
+    sample_identities = [identity.model_dump() for identity in trusted_identities[:5]]
+    logger.info(
+        "WhatsApp backfill identities counts candidate_tenants=%s filtered_tenants=%s candidate_endpoints=%s filtered_endpoints=%s candidate_communications=%s filtered_communications=%s final_entries=%s final_trusted_identities=%s",
+        debug_counts["candidate_tenants"],
+        debug_counts["filtered_tenants"],
+        debug_counts["candidate_endpoints"],
+        debug_counts["filtered_endpoints"],
+        debug_counts["candidate_communications"],
+        debug_counts["filtered_communications"],
+        len(entries),
+        len(trusted_identities),
+    )
+    logger.info("WhatsApp backfill identities sample_entries=%s", sample_entries)
+    logger.info("WhatsApp backfill identities sample_trusted_identities=%s", sample_identities)
+
     return WhatsAppBackfillIdentitiesResponse(
         ok=True,
         total_tenants=len(entries),
@@ -488,6 +661,7 @@ def whatsapp_backfill_identities(request: Request, db: Session = Depends(get_db)
         total_identity_records=sum(
             len(entry.phone_numbers) + len(entry.chat_ids) + len(entry.external_phone_ids) + len(entry.external_chat_namespaces)
             for entry in entries
-        ),
+        ) + len(trusted_identities),
         entries=entries,
+        trusted_identities=trusted_identities,
     )

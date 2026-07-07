@@ -127,9 +127,12 @@ def test_whatsapp_backfill_identities_exports_crm_known_chat_keys(client, db_ses
     assert payload["ok"] is True
     assert payload["total_tenants"] == 1
     assert payload["total_active_endpoints"] == 1
-    assert payload["total_identity_records"] >= 3
+    assert payload["total_identity_records"] >= 4
     entry = payload["entries"][0]
     assert entry["tenant_id"] == tenant.id
     assert "31612345678" in entry["phone_numbers"]
     assert "3098765432" in entry["phone_numbers"]
     assert "31612345678@c.us" in entry["chat_ids"]
+    trusted_identity = payload["trusted_identities"][0]
+    assert trusted_identity["tenant_id"] == tenant.id
+    assert trusted_identity["external_account_id"] == "edi-crm-whatsapp"

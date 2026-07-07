@@ -32,6 +32,31 @@ test('sortBackfillMessages orders equal timestamps by message id', () => {
 });
 
 
+test('buildEligibleIdentityIndex consumes trusted identities', () => {
+  const { buildEligibleIdentityIndex } = require('../src/whatsappClient');
+  const index = buildEligibleIdentityIndex({
+    total_tenants: 1,
+    total_active_endpoints: 1,
+    total_identity_records: 1,
+    entries: [],
+    trusted_identities: [
+      {
+        tenant_id: 7,
+        tenant_name: 'Tenant Eligible',
+        booking_id: 'B-eligible',
+        whatsapp_chat_id: '31612345678@c.us',
+        whatsapp_identity_key: '31612345678',
+        whatsapp_normalized_phone: '31612345678',
+        external_account_id: 'edi-crm-whatsapp',
+      },
+    ],
+  });
+
+  assert.equal(index.chatIds.has('31612345678@c.us'), true);
+  assert.equal(index.chatIds.has('31612345678'), true);
+  assert.equal(index.phoneNumbers.has('31612345678'), true);
+});
+
 test('backfillAllChats processes only CRM-eligible chats by default', async () => {
   const originalFetch = global.fetch;
   const originalEnv = {

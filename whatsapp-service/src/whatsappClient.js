@@ -217,27 +217,46 @@ function buildEligibleIdentityIndex(payload) {
   const chatIds = new Set();
   const phoneNumbers = new Set();
   const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+  const trustedIdentities = Array.isArray(payload?.trusted_identities) ? payload.trusted_identities : [];
 
-  for (const entry of entries) {
-    const chatValues = [
-      ...(Array.isArray(entry?.chat_ids) ? entry.chat_ids : []),
-      ...(Array.isArray(entry?.external_chat_namespaces) ? entry.external_chat_namespaces : []),
-    ];
-    for (const value of chatValues) {
+  const addChatValues = (values) => {
+    for (const value of values) {
       for (const candidate of buildChatCandidateKeys(value)) {
         chatIds.add(candidate);
       }
     }
+  };
 
-    const phoneValues = [
-      ...(Array.isArray(entry?.phone_numbers) ? entry.phone_numbers : []),
-      ...(Array.isArray(entry?.external_phone_ids) ? entry.external_phone_ids : []),
-    ];
-    for (const value of phoneValues) {
+  const addPhoneValues = (values) => {
+    for (const value of values) {
       for (const candidate of buildPhoneCandidateKeys(value)) {
         phoneNumbers.add(candidate);
       }
     }
+  };
+
+  for (const entry of entries) {
+    addChatValues([
+      ...(Array.isArray(entry?.chat_ids) ? entry.chat_ids : []),
+      ...(Array.isArray(entry?.external_chat_namespaces) ? entry.external_chat_namespaces : []),
+    ]);
+    addPhoneValues([
+      ...(Array.isArray(entry?.phone_numbers) ? entry.phone_numbers : []),
+      ...(Array.isArray(entry?.external_phone_ids) ? entry.external_phone_ids : []),
+    ]);
+  }
+
+  for (const identity of trustedIdentities) {
+    addChatValues([
+      identity?.whatsapp_chat_id,
+      identity?.whatsapp_identity_key,
+      identity?.external_chat_namespace,
+    ]);
+    addPhoneValues([
+      identity?.whatsapp_normalized_phone,
+      identity?.external_phone_id,
+      identity?.phone_number,
+    ]);
   }
 
   return {
@@ -247,6 +266,7 @@ function buildEligibleIdentityIndex(payload) {
     totalActiveEndpoints: Number(payload?.total_active_endpoints || 0),
     totalIdentityRecords: Number(payload?.total_identity_records || 0),
     entries,
+    trustedIdentities,
   };
 }
 
