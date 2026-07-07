@@ -191,6 +191,45 @@ def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email
     return None
 
 
+
+def _thread_email_candidates(messages: list[dict[str, Any]], account_email: str) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    account_email = account_email.lower()
+    for message in messages:
+        payload = message.get("payload") or {}
+        headers = _headers_map(payload.get("headers") or [])
+        for field in ("from", "to", "cc", "bcc"):
+            raw_value = headers.get(field)
+            if not raw_value:
+                continue
+            for candidate in raw_value.split(','):
+                address = _email_address(candidate)
+                if address and address != account_email and address not in seen:
+                    seen.add(address)
+                    candidates.append(address)
+    return candidates
+
+
+def _find_existing_conversation_for_thread(db: Session, thread: dict[str, Any]) -> Conversation | None:
+    for message in thread.get("messages") or []:
+        provider_message_id = str(message.get("id") or "")
+        if not provider_message_id:
+            continue
+        existing_message = (
+            db.query(ConversationMessage)
+            .filter(ConversationMessage.provider == PROVIDER_GMAIL)
+            .filter(ConversationMessage.provider_message_id == provider_message_id)
+            .first()
+        )
+        if existing_message is None:
+            continue
+        conversation = db.query(Conversation).filter(Conversation.id == existing_message.conversation_id).first()
+        if conversation is not None and conversation.provider == PROVIDER_GMAIL:
+            return conversation
+    return None
+
+
 def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -> Conversation | None:
     messages = thread.get("messages") or []
     if not messages:
@@ -206,6 +245,8 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
         .first()
     )
     if conversation is None:
+        conversation = _find_existing_conversation_for_thread(db, thread)
+    if conversation is None:
         conversation = Conversation(
             provider=PROVIDER_GMAIL,
             provider_account_id=account.id,
@@ -213,6 +254,13 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
         )
         db.add(conversation)
         db.flush()
+    else:
+        if conversation.provider != PROVIDER_GMAIL:
+            conversation.provider = PROVIDER_GMAIL
+        if conversation.provider_account_id is None:
+            conversation.provider_account_id = account.id
+        if not conversation.provider_thread_id:
+            conversation.provider_thread_id = thread_id
 
     subject = conversation.subject
     latest_preview = conversation.preview_text
@@ -259,6 +307,12 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                 raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html},
             )
         )
+
+    if tenant is None and conversation.tenant_id is not None:
+        tenant = db.query(Tenant).filter(Tenant.id == conversation.tenant_id).first()
+    tenant_email_candidates = _thread_email_candidates(messages, account_email)
+    if tenant is not None and not tenant.email and len(tenant_email_candidates) == 1:
+        tenant.email = tenant_email_candidates[0]
 
     conversation.subject = subject
     conversation.tenant_id = tenant.id if tenant else conversation.tenant_id
