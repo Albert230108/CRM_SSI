@@ -27,6 +27,8 @@ class WhatsAppOutboundResolutionRead(BaseModel):
     communication_id: int | None = None
     provider_message_id: str | None = None
     whatsapp_chat_id: str | None = None
+    whatsapp_identity_key: str | None = None
+    whatsapp_normalized_phone: str | None = None
     external_account_id: str | None = None
     resolution_strategy: str | None = None
 
@@ -117,11 +119,15 @@ def get_tenant_grouped_thread(
 def resolve_whatsapp_outbound_communication(
     provider_message_id: str | None = None,
     whatsapp_chat_id: str | None = None,
+    whatsapp_identity_key: str | None = None,
+    whatsapp_normalized_phone: str | None = None,
     external_account_id: str | None = None,
     db: Session = Depends(get_db),
 ) -> WhatsAppOutboundResolutionRead:
     provider_message_id = provider_message_id.strip() if isinstance(provider_message_id, str) else None
     whatsapp_chat_id = whatsapp_chat_id.strip() if isinstance(whatsapp_chat_id, str) else None
+    whatsapp_identity_key = whatsapp_identity_key.strip() if isinstance(whatsapp_identity_key, str) else None
+    whatsapp_normalized_phone = whatsapp_normalized_phone.strip() if isinstance(whatsapp_normalized_phone, str) else None
     external_account_id = external_account_id.strip() if isinstance(external_account_id, str) else None
 
     if provider_message_id:
@@ -142,38 +148,51 @@ def resolve_whatsapp_outbound_communication(
                 communication_id=communication.id,
                 provider_message_id=communication.provider_message_id,
                 whatsapp_chat_id=communication.whatsapp_chat_id,
+                whatsapp_identity_key=communication.whatsapp_identity_key,
+                whatsapp_normalized_phone=communication.whatsapp_normalized_phone,
                 external_account_id=communication.external_account_id,
                 resolution_strategy="provider_message_id",
             )
 
-    if whatsapp_chat_id and external_account_id:
-        communication = (
-            db.query(Communication)
-            .filter(
-                Communication.channel == "whatsapp",
-                Communication.direction == "outbound",
-                Communication.whatsapp_chat_id == whatsapp_chat_id,
-                Communication.external_account_id == external_account_id,
+    if external_account_id:
+        for match_field, match_value in (
+            ("whatsapp_identity_key", whatsapp_identity_key),
+            ("whatsapp_normalized_phone", whatsapp_normalized_phone),
+            ("whatsapp_chat_id", whatsapp_chat_id),
+        ):
+            if not match_value:
+                continue
+            communication = (
+                db.query(Communication)
+                .filter(
+                    Communication.channel == "whatsapp",
+                    Communication.direction == "outbound",
+                    Communication.external_account_id == external_account_id,
+                    getattr(Communication, match_field) == match_value,
+                )
+                .order_by(Communication.created_at.desc(), Communication.id.desc())
+                .first()
             )
-            .order_by(Communication.created_at.desc(), Communication.id.desc())
-            .first()
-        )
-        if communication is not None:
-            return WhatsAppOutboundResolutionRead(
-                found=True,
-                tenant_id=communication.tenant_id,
-                communication_id=communication.id,
-                provider_message_id=communication.provider_message_id,
-                whatsapp_chat_id=communication.whatsapp_chat_id,
-                external_account_id=communication.external_account_id,
-                resolution_strategy="chat_id_external_account_id",
-            )
+            if communication is not None:
+                return WhatsAppOutboundResolutionRead(
+                    found=True,
+                    tenant_id=communication.tenant_id,
+                    communication_id=communication.id,
+                    provider_message_id=communication.provider_message_id,
+                    whatsapp_chat_id=communication.whatsapp_chat_id,
+                    whatsapp_identity_key=communication.whatsapp_identity_key,
+                    whatsapp_normalized_phone=communication.whatsapp_normalized_phone,
+                    external_account_id=communication.external_account_id,
+                    resolution_strategy=("chat_id_external_account_id" if match_field == "whatsapp_chat_id" else f"{match_field}_external_account_id"),
+                )
 
     return WhatsAppOutboundResolutionRead(
         found=False,
         resolution_strategy="unresolved",
         provider_message_id=provider_message_id,
         whatsapp_chat_id=whatsapp_chat_id,
+        whatsapp_identity_key=whatsapp_identity_key,
+        whatsapp_normalized_phone=whatsapp_normalized_phone,
         external_account_id=external_account_id,
     )
 
@@ -265,6 +284,8 @@ async def send_tenant_communication(
             external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
             external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
             whatsapp_chat_id=(whatsapp_result.get("whatsapp_chat_id") if isinstance(whatsapp_result, dict) else None),
+            whatsapp_identity_key=(whatsapp_result.get("whatsapp_identity_key") if isinstance(whatsapp_result, dict) else None),
+            whatsapp_normalized_phone=(whatsapp_result.get("whatsapp_normalized_phone") if isinstance(whatsapp_result, dict) else None),
             provider_message_id=(
                 (whatsapp_result.get("whatsapp_message_id") if isinstance(whatsapp_result, dict) else None)
                 or (whatsapp_result.get("provider_message_id") if isinstance(whatsapp_result, dict) else None)

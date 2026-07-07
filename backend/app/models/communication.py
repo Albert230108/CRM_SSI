@@ -18,6 +18,8 @@ class Communication(Base):
     external_phone_id = Column(String(255), nullable=True, index=True)
     external_chat_namespace = Column(String(255), nullable=True, index=True)
     whatsapp_chat_id = Column(String(255), nullable=True, index=True)
+    whatsapp_identity_key = Column(String(255), nullable=True, index=True)
+    whatsapp_normalized_phone = Column(String(64), nullable=True, index=True)
     provider_message_id = Column(String(255), nullable=True, index=True)
     subject = Column(String(255), nullable=True)
     message = Column(Text, nullable=False)

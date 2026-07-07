@@ -14,6 +14,7 @@ const {
   whatsappHistoryBackfillEnabled,
 } = require("./config");
 const { resolveOutboundTenantOwnership } = require("./outboundResolution");
+const { buildWhatsAppIdentityCandidates, getCanonicalWhatsAppIdentity, normalizeWhatsAppChatId, normalizeWhatsAppPhone } = require("./whatsappIdentity");
 
 let client = null;
 let ready = false;
@@ -24,6 +25,7 @@ let startupBackfillTriggered = false;
 let forwardedMessageIds = new Set();
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
+const pendingOutboundTenantByIdentityKey = new Map();
 let outboundCaptureCount = 0;
 
 function getChatId(chat) {
@@ -41,17 +43,22 @@ function getChatName(chat) {
   );
 }
 
-function getMemoryTenantId({ messageId, chatId }) {
+function getMemoryTenantId({ messageId, chatId, identityKey }) {
+  const normalizedChatId = normalizeWhatsAppChatId(chatId);
+  const normalizedIdentityKey = normalizeWhatsAppChatId(identityKey);
   if (messageId && pendingOutboundTenantByMessageId.has(messageId)) {
     return pendingOutboundTenantByMessageId.get(messageId) ?? null;
   }
-  if (chatId && pendingOutboundTenantByChatId.has(chatId)) {
-    return pendingOutboundTenantByChatId.get(chatId) ?? null;
+  if (normalizedIdentityKey && pendingOutboundTenantByIdentityKey.has(normalizedIdentityKey)) {
+    return pendingOutboundTenantByIdentityKey.get(normalizedIdentityKey) ?? null;
+  }
+  if (normalizedChatId && pendingOutboundTenantByChatId.has(normalizedChatId)) {
+    return pendingOutboundTenantByChatId.get(normalizedChatId) ?? null;
   }
   return null;
 }
 
-async function lookupDurableOutboundTenant({ messageId, chatId, externalAccountId }) {
+async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, normalizedPhone, externalAccountId }) {
   if (!crmOutboundResolutionUrl) {
     return { found: false, resolution_strategy: "unconfigured" };
   }
@@ -62,6 +69,12 @@ async function lookupDurableOutboundTenant({ messageId, chatId, externalAccountI
   }
   if (chatId) {
     query.set("whatsapp_chat_id", chatId);
+  }
+  if (identityKey) {
+    query.set("whatsapp_identity_key", identityKey);
+  }
+  if (normalizedPhone) {
+    query.set("whatsapp_normalized_phone", normalizedPhone);
   }
   if (externalAccountId) {
     query.set("external_account_id", externalAccountId);
@@ -337,25 +350,41 @@ function buildHistoryDedupeKey(message, chatId, direction) {
 function buildCrmPayload(message, direction, overrides = {}) {
   const text = extractText(message);
   const timestamp = message?.timestamp;
-  const chatId = overrides.whatsapp_chat_id || message?.chatId || message?.from || message?.to || null;
   const author = message?.author || null;
   const sender = overrides.sender || author || message?.from || null;
   const recipient = overrides.to || message?.to || message?.from || null;
+  const identity = getCanonicalWhatsAppIdentity({
+    direction,
+    whatsapp_raw_chat_id: overrides.whatsapp_chat_id || message?.chatId || message?.from || message?.to || null,
+    whatsapp_chat_id: overrides.whatsapp_chat_id || message?.chatId || message?.from || message?.to || null,
+    whatsapp_identity_key: overrides.whatsapp_identity_key || null,
+    whatsapp_normalized_phone: overrides.whatsapp_normalized_phone || null,
+    sender,
+    recipient,
+    sender_normalized: overrides.sender_normalized || normalizeWhatsAppPhone(sender),
+    recipient_normalized: overrides.recipient_normalized || normalizeWhatsAppPhone(recipient),
+    is_group: overrides.is_group ?? null,
+  }, { direction });
+  const chatId = identity.rawChatId || overrides.whatsapp_chat_id || message?.chatId || message?.from || message?.to || null;
 
   return {
     direction,
     from: sender,
     sender,
     sender_raw: sender,
-    sender_normalized: normalizeWhatsAppId(sender),
+    sender_normalized: normalizeWhatsAppPhone(sender),
     to: recipient,
     recipient,
+    recipient_normalized: normalizeWhatsAppPhone(recipient),
     message: text,
     body: text,
     text,
     timestamp: Number.isFinite(Number(timestamp)) ? Number(timestamp) : Math.floor(Date.now() / 1000),
     whatsapp_message_id: message?.id?._serialized || overrides.whatsapp_message_id || null,
     whatsapp_chat_id: chatId,
+    whatsapp_raw_chat_id: chatId,
+    whatsapp_identity_key: identity.canonicalChatId,
+    whatsapp_normalized_phone: identity.normalizedPhone,
     whatsapp_author: author,
     whatsapp_type: message?.type || null,
     whatsapp_client_id: whatsappClientId || null,
@@ -363,7 +392,7 @@ function buildCrmPayload(message, direction, overrides = {}) {
     provider: "whatsapp-service",
     external_account_id: whatsappClientId || null,
     whatsapp_endpoint_id: overrides.whatsapp_endpoint_id ?? null,
-    is_group: Boolean(chatId && String(chatId).endsWith("@g.us")),
+    is_group: identity.isGroup,
   };
 }
 
@@ -466,9 +495,21 @@ async function forwardOutboundCapturedMessage(message, chatId, recipient, contex
     tenantId || null,
   );
 
+  const identity = getCanonicalWhatsAppIdentity({
+    direction: "outbound",
+    whatsapp_chat_id: chatId || message?.chatId || message?.from || message?.to || null,
+    sender: message?.author || message?.from || null,
+    recipient: recipient || message?.to || chatId || null,
+    to: recipient || message?.to || chatId || null,
+    from: message?.from || null,
+  }, { direction: "outbound" });
+
   const sent = await forwardOutboundMessage(message, chatId, recipient, tenantId);
   if (chatId) {
-    pendingOutboundTenantByChatId.delete(chatId);
+    pendingOutboundTenantByChatId.delete(normalizeWhatsAppChatId(chatId));
+  }
+  if (identity.canonicalChatId) {
+    pendingOutboundTenantByIdentityKey.delete(identity.canonicalChatId);
   }
   if (sent) {
     outboundCaptureCount += 1;
@@ -780,11 +821,21 @@ function attachClientEvents(nextClient) {
     }
     const messageId = message?.id?._serialized || null;
     const chatId = message?.chatId || message?.to || message?.from || null;
+    const identity = getCanonicalWhatsAppIdentity({
+      direction: "outbound",
+      whatsapp_chat_id: chatId,
+      sender: message?.author || message?.from || null,
+      recipient: message?.to || null,
+      to: message?.to || null,
+      from: message?.from || null,
+    }, { direction: "outbound" });
     const externalAccountId = whatsappClientId || null;
     const logBase = {
       event: "whatsapp_outbound_resolution",
       message_id: messageId,
       chat_id: chatId,
+      whatsapp_identity_key: identity.canonicalChatId,
+      whatsapp_normalized_phone: identity.normalizedPhone,
       external_account_id: externalAccountId,
       tenant_id_received: null,
     };
@@ -795,6 +846,8 @@ function attachClientEvents(nextClient) {
       const resolved = await resolveOutboundTenantOwnership({
         messageId,
         chatId,
+        identityKey: identity.canonicalChatId,
+        normalizedPhone: identity.normalizedPhone,
         externalAccountId,
         lookupDurableTenant: lookupDurableOutboundTenant,
         getMemoryTenantId,
@@ -947,7 +1000,18 @@ async function sendTextMessage(payload) {
     throw new Error("Invalid recipient phone number");
   }
 
-  pendingOutboundTenantByChatId.set(chatId, tenantId || null);
+  const identity = getCanonicalWhatsAppIdentity({
+    direction: "outbound",
+    whatsapp_chat_id: chatId,
+    sender: null,
+    recipient: to,
+    to,
+  }, { direction: "outbound" });
+
+  pendingOutboundTenantByChatId.set(normalizeWhatsAppChatId(chatId), tenantId || null);
+  if (identity.canonicalChatId) {
+    pendingOutboundTenantByIdentityKey.set(identity.canonicalChatId, tenantId || null);
+  }
   const sentMessage = await client.sendMessage(chatId, message);
   if (sentMessage?.id?._serialized) {
     pendingOutboundTenantByMessageId.set(sentMessage.id._serialized, tenantId || null);
@@ -955,6 +1019,8 @@ async function sendTextMessage(payload) {
       event: "whatsapp_outbound_send",
       message_id: sentMessage.id._serialized,
       chat_id: chatId,
+      whatsapp_identity_key: identity.canonicalChatId,
+      whatsapp_normalized_phone: identity.normalizedPhone,
       external_account_id: externalAccountId,
       tenant_id_received: tenantId || null,
       whatsapp_endpoint_id: whatsappEndpointId,
@@ -967,6 +1033,8 @@ async function sendTextMessage(payload) {
   return {
     whatsapp_message_id: sentMessage?.id?._serialized || null,
     whatsapp_chat_id: chatId,
+    whatsapp_identity_key: identity.canonicalChatId,
+    whatsapp_normalized_phone: identity.normalizedPhone,
     tenant_id: tenantId || null,
     provider: "whatsapp-service",
     external_account_id: externalAccountId,

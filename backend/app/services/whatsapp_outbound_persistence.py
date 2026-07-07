@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.core.whatsapp_identity import get_canonical_whatsapp_identity
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,8 @@ def _find_outbound_communication(
     tenant_id: int,
     provider_message_id: str | None,
     whatsapp_chat_id: str | None,
+    whatsapp_identity_key: str | None,
+    whatsapp_normalized_phone: str | None,
     external_account_id: str | None,
 ) -> tuple[Communication | None, str | None]:
     if provider_message_id:
@@ -124,21 +127,28 @@ def _find_outbound_communication(
         if communication is not None:
             return communication, "provider_message_id"
 
-    if whatsapp_chat_id and external_account_id:
-        communication = (
-            db.query(Communication)
-            .filter(
-                Communication.tenant_id == tenant_id,
-                Communication.channel == "whatsapp",
-                Communication.direction == "outbound",
-                Communication.whatsapp_chat_id == whatsapp_chat_id,
-                Communication.external_account_id == external_account_id,
+    if external_account_id:
+        for match_field, match_value in (
+            ("whatsapp_identity_key", whatsapp_identity_key),
+            ("whatsapp_normalized_phone", whatsapp_normalized_phone),
+            ("whatsapp_chat_id", whatsapp_chat_id),
+        ):
+            if not match_value:
+                continue
+            communication = (
+                db.query(Communication)
+                .filter(
+                    Communication.tenant_id == tenant_id,
+                    Communication.channel == "whatsapp",
+                    Communication.direction == "outbound",
+                    Communication.external_account_id == external_account_id,
+                    getattr(Communication, match_field) == match_value,
+                )
+                .order_by(Communication.created_at.desc(), Communication.id.desc())
+                .first()
             )
-            .order_by(Communication.created_at.desc(), Communication.id.desc())
-            .first()
-        )
-        if communication is not None:
-            return communication, "chat_id_external_account_id"
+            if communication is not None:
+                return communication, f"{match_field}_external_account_id"
 
     return None, None
 
@@ -151,6 +161,8 @@ def _apply_outbound_metadata(
     external_phone_id: str | None,
     external_chat_namespace: str | None,
     whatsapp_chat_id: str | None,
+    whatsapp_identity_key: str | None,
+    whatsapp_normalized_phone: str | None,
     provider_message_id: str | None,
     subject: str | None,
     message: str,
@@ -165,6 +177,10 @@ def _apply_outbound_metadata(
         communication.external_chat_namespace = external_chat_namespace
     if whatsapp_chat_id is not None:
         communication.whatsapp_chat_id = whatsapp_chat_id
+    if whatsapp_identity_key is not None:
+        communication.whatsapp_identity_key = whatsapp_identity_key
+    if whatsapp_normalized_phone is not None:
+        communication.whatsapp_normalized_phone = whatsapp_normalized_phone
     if provider_message_id is not None:
         communication.provider_message_id = provider_message_id
     if subject is not None:
@@ -181,6 +197,8 @@ def persist_whatsapp_outbound_communication(
     external_phone_id: str | None,
     external_chat_namespace: str | None,
     whatsapp_chat_id: str | None,
+    whatsapp_identity_key: str | None,
+    whatsapp_normalized_phone: str | None,
     provider_message_id: str | None,
     subject: str | None,
     message: str,
@@ -191,17 +209,34 @@ def persist_whatsapp_outbound_communication(
     normalized_external_phone_id = _normalize_text(external_phone_id)
     normalized_external_chat_namespace = _normalize_text(external_chat_namespace)
     normalized_whatsapp_chat_id = _normalize_text(whatsapp_chat_id)
+    normalized_whatsapp_identity_key = _normalize_text(whatsapp_identity_key)
+    normalized_whatsapp_normalized_phone = _normalize_text(whatsapp_normalized_phone)
     normalized_provider_message_id = _normalize_text(provider_message_id)
     normalized_subject = _normalize_text(subject)
     normalized_message = message.strip() if isinstance(message, str) else str(message).strip()
     if not normalized_message:
         raise ValueError("message cannot be empty")
 
+    if not normalized_whatsapp_identity_key or not normalized_whatsapp_normalized_phone:
+        identity = get_canonical_whatsapp_identity(
+            None,
+            direction="outbound",
+            raw_chat_id=normalized_whatsapp_chat_id,
+            recipient=normalized_whatsapp_chat_id,
+            whatsapp_chat_id=normalized_whatsapp_chat_id,
+            whatsapp_identity_key=normalized_whatsapp_identity_key,
+            whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
+        )
+        normalized_whatsapp_identity_key = normalized_whatsapp_identity_key or identity.canonical_chat_id
+        normalized_whatsapp_normalized_phone = normalized_whatsapp_normalized_phone or identity.normalized_phone
+
     communication, match_strategy = _find_outbound_communication(
         db,
         tenant_id=tenant_id,
         provider_message_id=normalized_provider_message_id,
         whatsapp_chat_id=normalized_whatsapp_chat_id,
+        whatsapp_identity_key=normalized_whatsapp_identity_key,
+        whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
         external_account_id=normalized_external_account_id,
     )
 
@@ -216,6 +251,8 @@ def persist_whatsapp_outbound_communication(
             external_phone_id=normalized_external_phone_id,
             external_chat_namespace=normalized_external_chat_namespace,
             whatsapp_chat_id=normalized_whatsapp_chat_id,
+            whatsapp_identity_key=normalized_whatsapp_identity_key,
+            whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
             provider_message_id=normalized_provider_message_id,
             subject=normalized_subject,
             message=normalized_message,
@@ -231,6 +268,8 @@ def persist_whatsapp_outbound_communication(
             external_phone_id=normalized_external_phone_id,
             external_chat_namespace=normalized_external_chat_namespace,
             whatsapp_chat_id=normalized_whatsapp_chat_id,
+            whatsapp_identity_key=normalized_whatsapp_identity_key,
+            whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
             provider_message_id=normalized_provider_message_id,
             subject=normalized_subject,
             message=normalized_message,
@@ -245,6 +284,8 @@ def persist_whatsapp_outbound_communication(
             tenant_id=tenant_id,
             provider_message_id=normalized_provider_message_id,
             whatsapp_chat_id=normalized_whatsapp_chat_id,
+            whatsapp_identity_key=normalized_whatsapp_identity_key,
+            whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
             external_account_id=normalized_external_account_id,
         )
         if communication is None:
@@ -258,6 +299,8 @@ def persist_whatsapp_outbound_communication(
             external_phone_id=normalized_external_phone_id,
             external_chat_namespace=normalized_external_chat_namespace,
             whatsapp_chat_id=normalized_whatsapp_chat_id,
+            whatsapp_identity_key=normalized_whatsapp_identity_key,
+            whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
             provider_message_id=normalized_provider_message_id,
             subject=normalized_subject,
             message=normalized_message,
@@ -266,13 +309,15 @@ def persist_whatsapp_outbound_communication(
 
     db.refresh(communication)
     logger.info(
-        "WhatsApp outbound persistence persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s whatsapp_chat_id=%s external_account_id=%s",
+        "WhatsApp outbound persistence persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s whatsapp_chat_id=%s whatsapp_identity_key=%s whatsapp_normalized_phone=%s external_account_id=%s",
         persistence_state,
         match_strategy or "created",
         tenant_id,
         communication.id,
         communication.provider_message_id,
         communication.whatsapp_chat_id,
+        communication.whatsapp_identity_key,
+        communication.whatsapp_normalized_phone,
         communication.external_account_id,
     )
     return WhatsAppOutboundPersistenceResult(

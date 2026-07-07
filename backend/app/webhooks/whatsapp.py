@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
 from app.core.phone_normalization import phone_match_candidates
+from app.core.whatsapp_identity import get_canonical_whatsapp_identity
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
@@ -197,17 +198,21 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
         _append_unique(entry.external_chat_namespaces, endpoint.external_chat_namespace)
         _append_unique(entry.chat_ids, endpoint.external_chat_namespace)
 
-    for tenant_id, whatsapp_chat_id in (
-        db.query(Communication.tenant_id, Communication.whatsapp_chat_id)
+    for tenant_id, whatsapp_chat_id, whatsapp_identity_key, whatsapp_normalized_phone in (
+        db.query(
+            Communication.tenant_id,
+            Communication.whatsapp_chat_id,
+            Communication.whatsapp_identity_key,
+            Communication.whatsapp_normalized_phone,
+        )
         .filter(
             Communication.channel == "whatsapp",
-            Communication.whatsapp_chat_id.isnot(None),
             Communication.tenant_id.isnot(None),
         )
         .distinct()
         .all()
     ):
-        if tenant_id is None or whatsapp_chat_id is None:
+        if tenant_id is None:
             continue
         tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
         if tenant is None:
@@ -220,7 +225,9 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
                 booking_id=tenant.booking_id,
             ),
         )
-        _append_unique(entry.chat_ids, whatsapp_chat_id)
+        _append_unique(entry.chat_ids, whatsapp_chat_id, whatsapp_identity_key)
+        if not any(str(value or "").strip().lower().endswith("@g.us") for value in (whatsapp_chat_id, whatsapp_identity_key)):
+            _append_phone_candidates(entry.phone_numbers, whatsapp_normalized_phone, whatsapp_identity_key)
 
     entries = sorted(entries_by_tenant_id.values(), key=lambda item: item.tenant_id)
     for entry in entries:
@@ -235,7 +242,7 @@ def _build_backfill_identity_entries(db: Session) -> tuple[list[WhatsAppBackfill
 def _normalize_phone_candidates(payload: dict[str, Any]) -> list[str]:
     inbound_candidates: list[str] = []
     seen_candidates: set[str] = set()
-    for value in [payload.get("sender_normalized"), payload.get("sender"), payload.get("from"), payload.get("sender_raw"), payload.get("whatsapp_chat_id")]:
+    for value in [payload.get("sender_normalized"), payload.get("recipient_normalized"), payload.get("whatsapp_normalized_phone"), payload.get("sender"), payload.get("from"), payload.get("sender_raw"), payload.get("recipient"), payload.get("to"), payload.get("whatsapp_chat_id"), payload.get("whatsapp_identity_key")]:
         for candidate in phone_match_candidates(value if isinstance(value, str) else None):
             if candidate not in seen_candidates:
                 seen_candidates.add(candidate)
@@ -273,6 +280,8 @@ def _find_existing_inbound_whatsapp_communication(
     tenant_id: int,
     provider_message_id: str | None,
     whatsapp_chat_id: str | None,
+    whatsapp_identity_key: str | None,
+    whatsapp_normalized_phone: str | None,
     external_account_id: str | None,
     message: str,
     created_at: datetime,
@@ -294,10 +303,14 @@ def _find_existing_inbound_whatsapp_communication(
         Communication.channel == "whatsapp",
         Communication.direction == "inbound",
     )
-    if whatsapp_chat_id:
-        duplicate_query = duplicate_query.filter(Communication.whatsapp_chat_id == whatsapp_chat_id)
     if external_account_id:
         duplicate_query = duplicate_query.filter(Communication.external_account_id == external_account_id)
+    if whatsapp_identity_key:
+        duplicate_query = duplicate_query.filter(Communication.whatsapp_identity_key == whatsapp_identity_key)
+    elif whatsapp_normalized_phone:
+        duplicate_query = duplicate_query.filter(Communication.whatsapp_normalized_phone == whatsapp_normalized_phone)
+    elif whatsapp_chat_id:
+        duplicate_query = duplicate_query.filter(Communication.whatsapp_chat_id == whatsapp_chat_id)
     return duplicate_query.filter(Communication.message == message, Communication.created_at == created_at).first()
 
 
@@ -319,6 +332,7 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     external_phone_id = str(payload.get("external_phone_id") or "").strip() or None
     external_chat_namespace = str(payload.get("external_chat_namespace") or payload.get("whatsapp_chat_id") or "").strip() or None
     direction = str(payload.get("direction") or "inbound").strip().lower()
+    whatsapp_identity = get_canonical_whatsapp_identity(payload, direction=direction)
     tenant_id = payload.get("tenant_id")
     routing_strategy = None
     routing_matched_value = None
@@ -367,7 +381,9 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
             external_account_id=external_account_id or None,
             external_phone_id=external_phone_id,
             external_chat_namespace=external_chat_namespace,
-            whatsapp_chat_id=recipient,
+            whatsapp_chat_id=whatsapp_identity.raw_chat_id,
+            whatsapp_identity_key=whatsapp_identity.canonical_chat_id,
+            whatsapp_normalized_phone=whatsapp_identity.normalized_phone,
             provider_message_id=provider_message_id,
             subject=payload.get("subject"),
             message=_first_text(payload),
@@ -424,7 +440,9 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
         db,
         tenant_id=tenant.id,
         provider_message_id=provider_message_id,
-        whatsapp_chat_id=external_chat_namespace or recipient,
+        whatsapp_chat_id=whatsapp_identity.raw_chat_id,
+        whatsapp_identity_key=whatsapp_identity.canonical_chat_id,
+        whatsapp_normalized_phone=whatsapp_identity.normalized_phone,
         external_account_id=external_account_id or None,
         message=msg_text,
         created_at=ts,
@@ -442,7 +460,9 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
             external_account_id=external_account_id or None,
             external_phone_id=external_phone_id,
             external_chat_namespace=external_chat_namespace,
-            whatsapp_chat_id=recipient,
+            whatsapp_chat_id=whatsapp_identity.raw_chat_id,
+            whatsapp_identity_key=whatsapp_identity.canonical_chat_id,
+            whatsapp_normalized_phone=whatsapp_identity.normalized_phone,
             provider_message_id=provider_message_id,
             subject=payload.get("subject"),
             message=msg_text,

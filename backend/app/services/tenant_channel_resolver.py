@@ -31,6 +31,8 @@ def _normalized_phone_candidates(*values: Any) -> list[str]:
     candidates: list[str] = []
     seen: set[str] = set()
     for value in values:
+        if isinstance(value, str) and value.strip().lower().endswith("@g.us"):
+            continue
         for candidate in phone_match_candidates(value if isinstance(value, str) else None):
             if candidate not in seen:
                 seen.add(candidate)
@@ -94,6 +96,8 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
         payload.get("from"),
         payload.get("sender_raw"),
         payload.get("whatsapp_chat_id"),
+        payload.get("whatsapp_identity_key"),
+        payload.get("whatsapp_normalized_phone"),
     )
 
     if explicit_tenant_id:
