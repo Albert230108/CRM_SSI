@@ -80,7 +80,7 @@ def test_send_whatsapp_message_translates_timeout_to_503(monkeypatch):
                     "to": "+31600000000",
                     "message": "Hello",
                     "tenant_id": 1,
-                    "external_account_id": "swifthk-whatsapp",
+                    "external_account_id": "edi-crm-whatsapp",
                     "whatsapp_endpoint_id": 1,
                 }
             )
@@ -102,7 +102,7 @@ def test_send_whatsapp_message_translates_connection_error_to_503(monkeypatch):
                     "to": "+31600000000",
                     "message": "Hello",
                     "tenant_id": 1,
-                    "external_account_id": "swifthk-whatsapp",
+                    "external_account_id": "edi-crm-whatsapp",
                     "whatsapp_endpoint_id": 1,
                 }
             )
@@ -124,7 +124,7 @@ def test_send_whatsapp_message_translates_invalid_json_to_502(monkeypatch):
                     "to": "+31600000000",
                     "message": "Hello",
                     "tenant_id": 1,
-                    "external_account_id": "swifthk-whatsapp",
+                    "external_account_id": "edi-crm-whatsapp",
                     "whatsapp_endpoint_id": 1,
                 }
             )
@@ -146,7 +146,7 @@ def test_send_whatsapp_message_maps_upstream_5xx_to_503(monkeypatch):
                     "to": "+31600000000",
                     "message": "Hello",
                     "tenant_id": 1,
-                    "external_account_id": "swifthk-whatsapp",
+                    "external_account_id": "edi-crm-whatsapp",
                     "whatsapp_endpoint_id": 1,
                 }
             )

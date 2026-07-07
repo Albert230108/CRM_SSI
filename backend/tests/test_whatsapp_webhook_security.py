@@ -10,7 +10,7 @@ def create_tenant(db_session, name="Tenant Secure", booking_id="B-secure"):
     return tenant
 
 
-def create_whatsapp_endpoint(db_session, tenant_id, external_account_id="swifthk-whatsapp"):
+def create_whatsapp_endpoint(db_session, tenant_id, external_account_id="edi-crm-whatsapp"):
     endpoint = TenantChannelEndpoint(
         tenant_id=tenant_id,
         channel_type="whatsapp",
@@ -33,7 +33,7 @@ def test_whatsapp_webhook_accepts_valid_secret(client, db_session):
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_chat_id": "31612345678@c.us",
@@ -59,7 +59,7 @@ def test_whatsapp_webhook_rejects_missing_secret(client_without_webhook_secret, 
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_chat_id": "31612345678@c.us",
@@ -83,7 +83,7 @@ def test_whatsapp_webhook_rejects_wrong_secret(client_without_webhook_secret, db
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_chat_id": "31612345678@c.us",

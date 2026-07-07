@@ -341,6 +341,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         subject: subject.trim() || null,
         message,
         whatsapp_endpoint_id: channel === 'whatsapp' ? Number(selectedWhatsappEndpointId) : null,
+        external_account_id: channel === 'whatsapp' ? (selectedWhatsappEndpoint?.external_account_id ?? null) : null,
       }
       console.info('[crm] ThreadView outbound send request', {
         path: `/api/communications/tenants/${tenantId}/send`,

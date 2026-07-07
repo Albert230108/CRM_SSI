@@ -13,6 +13,7 @@ Headless Node.js microservice that sends WhatsApp messages for SwiftHK through `
 2. Copy `.env.example` to `.env` and set:
    - `API_KEY`
    - `PORT` if you do not want the default `3001`
+   - `WHATSAPP_CLIENT_ID` if you need a non-default client id; the service defaults to `edi-crm-whatsapp`
    - `CRM_WHATSAPP_WEBHOOK_URL`
    - `CRM_WEBHOOK_SECRET` if your CRM expects a shared secret header
 

@@ -1,5 +1,5 @@
-{
-  "name": "swifthk-whatsapp-service",
+﻿{
+  "name": "edi-crm-whatsapp-service",
   "version": "1.0.0",
   "private": true,
   "description": "Headless WhatsApp microservice for SwiftHK",

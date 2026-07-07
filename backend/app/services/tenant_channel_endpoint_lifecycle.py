@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 
@@ -13,7 +13,7 @@ WHATSAPP_PROVIDER = "whatsapp-service"
 
 def get_default_whatsapp_external_account_id() -> str:
     value = os.getenv("WHATSAPP_CLIENT_ID", "").strip()
-    return value or "swifthk-whatsapp"
+    return value or "edi-crm-whatsapp"
 
 
 def ensure_whatsapp_endpoint_for_tenant(

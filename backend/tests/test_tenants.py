@@ -84,7 +84,7 @@ def test_create_tenant_creates_whatsapp_endpoint_mapping(client, db_session):
     assert response.status_code == 201
     payload = response.json()
     assert payload["booking_id"] == "CREATE-A"
-    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == payload["id"], TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "swifthk-whatsapp").first()
+    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == payload["id"], TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "edi-crm-whatsapp").first()
     assert endpoint is not None
     assert endpoint.is_active is True
 
@@ -101,7 +101,7 @@ def test_import_tenant_creates_whatsapp_endpoint_mapping(client, db_session, mon
     assert response.status_code == 200
     tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-A").first()
     assert tenant is not None
-    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id, TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "swifthk-whatsapp").first()
+    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id, TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "edi-crm-whatsapp").first()
     assert endpoint is not None
     assert endpoint.is_active is True
 
@@ -121,7 +121,7 @@ def test_repeat_import_does_not_duplicate_whatsapp_endpoint_mapping(client, db_s
     assert second.status_code == 200
     tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-B").first()
     assert tenant is not None
-    endpoints = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id, TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "swifthk-whatsapp").all()
+    endpoints = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id, TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "edi-crm-whatsapp").all()
     assert len(endpoints) == 1
 
 def test_delete_imported_tenant_removes_whatsapp_endpoint_mapping(client, db_session, monkeypatch):

@@ -28,7 +28,7 @@ def create_whatsapp_endpoint(db_session, tenant_id, external_account_id, provide
 
 def test_whatsapp_send_payload_preserves_tenant_and_endpoint_identity(client, db_session, monkeypatch):
     tenant = create_tenant(db_session, booking_id="B-outbound-1")
-    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     captured = {}
 
@@ -59,7 +59,7 @@ def test_whatsapp_send_payload_preserves_tenant_and_endpoint_identity(client, db
     assert payload["channel"] == "whatsapp"
     assert payload["direction"] == "outbound"
     assert payload["provider"] == "whatsapp-service"
-    assert payload["external_account_id"] == "swifthk-whatsapp"
+    assert payload["external_account_id"] == "edi-crm-whatsapp"
     assert payload["whatsapp_chat_id"] == "15550000000@c.us"
     assert payload["provider_message_id"] == "msg-outbound-1"
     assert captured == {
@@ -67,18 +67,18 @@ def test_whatsapp_send_payload_preserves_tenant_and_endpoint_identity(client, db
         "message": "Hello from tenant thread",
         "tenant_id": tenant.id,
         "whatsapp_endpoint_id": endpoint.id,
-        "external_account_id": "swifthk-whatsapp",
+        "external_account_id": "edi-crm-whatsapp",
     }
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-outbound-1").one()
     assert saved.tenant_id == tenant.id
-    assert saved.external_account_id == "swifthk-whatsapp"
+    assert saved.external_account_id == "edi-crm-whatsapp"
     assert saved.provider == "whatsapp-service"
 
 
 def test_whatsapp_send_returns_explicit_bridge_mismatch_error(client, db_session, monkeypatch):
     tenant = create_tenant(db_session, booking_id="B-outbound-2")
-    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     async def fake_send_whatsapp_message(payload):
         raise WhatsAppBridgeError(
@@ -105,7 +105,7 @@ def test_whatsapp_send_returns_explicit_bridge_mismatch_error(client, db_session
 
 def test_whatsapp_outbound_webhook_duplicate_callback_is_idempotent(client, db_session, monkeypatch):
     tenant = create_tenant(db_session, booking_id="B-outbound-3")
-    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     async def fake_send_whatsapp_message(payload):
         return {
@@ -132,7 +132,7 @@ def test_whatsapp_outbound_webhook_duplicate_callback_is_idempotent(client, db_s
         "direction": "outbound",
         "provider": "whatsapp-service",
         "tenant_id": tenant.id,
-        "external_account_id": "swifthk-whatsapp",
+        "external_account_id": "edi-crm-whatsapp",
         "whatsapp_chat_id": "15550000000@c.us",
         "whatsapp_message_id": "msg-outbound-dup",
         "message": "Hello duplicate callback",
@@ -147,13 +147,13 @@ def test_whatsapp_outbound_webhook_duplicate_callback_is_idempotent(client, db_s
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-outbound-dup").all()
     assert len(saved) == 1
     assert saved[0].tenant_id == tenant.id
-    assert saved[0].external_account_id == "swifthk-whatsapp"
+    assert saved[0].external_account_id == "edi-crm-whatsapp"
 
 
 
 def test_whatsapp_outbound_webhook_before_backend_write_is_deduped_by_provider_message_id(client, db_session, monkeypatch):
     tenant = create_tenant(db_session, booking_id="B-outbound-4")
-    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     async def fake_send_whatsapp_message(payload):
         return {
@@ -170,7 +170,7 @@ def test_whatsapp_outbound_webhook_before_backend_write_is_deduped_by_provider_m
         "direction": "outbound",
         "provider": "whatsapp-service",
         "tenant_id": tenant.id,
-        "external_account_id": "swifthk-whatsapp",
+        "external_account_id": "edi-crm-whatsapp",
         "whatsapp_chat_id": "15550000001@c.us",
         "whatsapp_message_id": "msg-outbound-race",
         "message": "Hello race window",
@@ -199,7 +199,7 @@ def test_whatsapp_outbound_webhook_before_backend_write_is_deduped_by_provider_m
 
 def test_whatsapp_outbound_webhook_without_provider_message_id_uses_chat_account_fallback(client, db_session, monkeypatch):
     tenant = create_tenant(db_session, booking_id="B-outbound-5")
-    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     async def fake_send_whatsapp_message(payload):
         return {
@@ -228,7 +228,7 @@ def test_whatsapp_outbound_webhook_without_provider_message_id_uses_chat_account
             "direction": "outbound",
             "provider": "whatsapp-service",
             "tenant_id": tenant.id,
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "whatsapp_chat_id": "15550000002@c.us",
             "message": "Hello fallback window",
             "recipient": "15550000002@c.us",
@@ -236,7 +236,7 @@ def test_whatsapp_outbound_webhook_without_provider_message_id_uses_chat_account
     )
 
     assert webhook_response.status_code == 200
-    saved = db_session.query(Communication).filter(Communication.tenant_id == tenant.id, Communication.external_account_id == "swifthk-whatsapp", Communication.whatsapp_chat_id == "15550000002@c.us").all()
+    saved = db_session.query(Communication).filter(Communication.tenant_id == tenant.id, Communication.external_account_id == "edi-crm-whatsapp", Communication.whatsapp_chat_id == "15550000002@c.us").all()
     assert len(saved) == 1
     assert saved[0].provider_message_id == "msg-outbound-fallback"
 
@@ -244,14 +244,14 @@ def test_whatsapp_outbound_webhook_without_provider_message_id_uses_chat_account
 
 def test_live_inbound_whatsapp_message_appears_in_grouped_thread(client, db_session):
     tenant = create_tenant(db_session, booking_id="B-inbound-1")
-    create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     response = client.post(
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_chat_id": "31612345678@c.us",
@@ -281,14 +281,14 @@ def test_live_inbound_whatsapp_message_appears_in_grouped_thread(client, db_sess
 
 def test_backfilled_whatsapp_message_appears_in_grouped_thread(client, db_session):
     tenant = create_tenant(db_session, booking_id="B-inbound-2")
-    create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     response = client.post(
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_chat_id": "31612345678@c.us",
@@ -313,11 +313,11 @@ def test_backfilled_whatsapp_message_appears_in_grouped_thread(client, db_sessio
 
 def test_duplicate_backfill_without_provider_message_id_does_not_create_duplicate_rows(client, db_session):
     tenant = create_tenant(db_session, booking_id="B-inbound-3")
-    create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
     payload = {
         "direction": "inbound",
         "provider": "whatsapp-service",
-        "external_account_id": "swifthk-whatsapp",
+        "external_account_id": "edi-crm-whatsapp",
         "sender": "+31612345678",
         "sender_normalized": "31612345678",
         "whatsapp_chat_id": "31612345678@c.us",
@@ -349,11 +349,11 @@ def test_duplicate_backfill_without_provider_message_id_does_not_create_duplicat
 
 def test_duplicate_backfill_with_provider_message_id_does_not_create_duplicate_rows(client, db_session):
     tenant = create_tenant(db_session, booking_id="B-inbound-3b")
-    create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
     payload = {
         "direction": "inbound",
         "provider": "whatsapp-service",
-        "external_account_id": "swifthk-whatsapp",
+        "external_account_id": "edi-crm-whatsapp",
         "sender": "+31612345678",
         "sender_normalized": "31612345678",
         "whatsapp_chat_id": "31612345678@c.us",
@@ -380,14 +380,14 @@ def test_duplicate_backfill_with_provider_message_id_does_not_create_duplicate_r
 
 def test_out_of_order_whatsapp_arrival_renders_in_chronological_order(client, db_session):
     tenant = create_tenant(db_session, booking_id="B-inbound-4")
-    create_whatsapp_endpoint(db_session, tenant.id, "swifthk-whatsapp")
+    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
 
     newer = client.post(
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_chat_id": "31612345678@c.us",
@@ -401,7 +401,7 @@ def test_out_of_order_whatsapp_arrival_renders_in_chronological_order(client, db
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_chat_id": "31612345678@c.us",

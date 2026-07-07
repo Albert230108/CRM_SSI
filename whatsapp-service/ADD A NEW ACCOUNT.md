@@ -83,7 +83,7 @@ WHATSAPP_CLIENT_ID=crm-whatsapp-2
 Keep the first instance on:
 ```env
 PORT=3001
-WHATSAPP_CLIENT_ID=swifthk-whatsapp
+WHATSAPP_CLIENT_ID=edi-crm-whatsapp
 ```
 
 That gives each service its own listener and its own WhatsApp session identity. [stackoverflow](https://stackoverflow.com/questions/75067529/whatsapp-web-js-multiple-sessions)

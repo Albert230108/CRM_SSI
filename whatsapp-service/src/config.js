@@ -1,4 +1,4 @@
-require("dotenv").config();
+﻿require("dotenv").config();
 
 function toInteger(value, fallback) {
   const parsed = Number.parseInt(String(value || ""), 10);
@@ -20,7 +20,7 @@ const crmOutboundResolutionUrl = String(process.env.CRM_OUTBOUND_RESOLUTION_URL 
 module.exports = {
   port: toInteger(process.env.PORT, 3001),
   apiKey: String(process.env.API_KEY || "").trim(),
-  whatsappClientId: String(process.env.WHATSAPP_CLIENT_ID || "swifthk-whatsapp").trim(),
+  whatsappClientId: String(process.env.WHATSAPP_CLIENT_ID || "edi-crm-whatsapp").trim(),
   reconnectDelayMs: Math.max(1000, toInteger(process.env.RECONNECT_DELAY_MS, 5000)),
   crmWebhookUrl,
   crmWebhookSecret: String(process.env.CRM_WEBHOOK_SECRET || "").trim(),
@@ -31,4 +31,3 @@ module.exports = {
   whatsappHistoryBackfillEnabled: String(process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED || "").trim().toLowerCase() === "true",
   whatsappHistoryBackfillLimit: Math.max(1, toInteger(process.env.WHATSAPP_HISTORY_BACKFILL_LIMIT, 100)),
 };
-

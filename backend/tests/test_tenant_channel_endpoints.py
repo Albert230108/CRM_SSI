@@ -52,7 +52,7 @@ def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_
         tenant_id=tenant.id,
         channel_type="whatsapp",
         provider="whatsapp-service",
-        external_account_id="swifthk-whatsapp",
+        external_account_id="edi-crm-whatsapp",
         is_active=True,
     )
     db_session.add(endpoint)
@@ -63,7 +63,7 @@ def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31900000000",
             "sender_normalized": "31900000000",
             "whatsapp_message_id": "msg-known-account-88",
@@ -179,7 +179,7 @@ def test_inbound_whatsapp_account_identity_beats_phone_match(client, db_session)
         tenant_id=account_tenant.id,
         channel_type="whatsapp",
         provider="whatsapp-service",
-        external_account_id="swifthk-whatsapp",
+        external_account_id="edi-crm-whatsapp",
         is_active=True,
     )
     db_session.add(endpoint)
@@ -190,7 +190,7 @@ def test_inbound_whatsapp_account_identity_beats_phone_match(client, db_session)
         json={
             "direction": "inbound",
             "provider": "whatsapp-service",
-            "external_account_id": "swifthk-whatsapp",
+            "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
             "whatsapp_message_id": "msg-phone-priority",
@@ -257,7 +257,7 @@ def test_inbound_whatsapp_routes_after_import_creates_endpoint(client, db_sessio
     webhook = client.post('/webhooks/whatsapp', json={
         "direction": "inbound",
         "provider": "whatsapp-service",
-        "external_account_id": "swifthk-whatsapp",
+        "external_account_id": "edi-crm-whatsapp",
         "sender": "+31912345678",
         "sender_normalized": "31912345678",
         "whatsapp_message_id": "msg-import-created-mapping",
