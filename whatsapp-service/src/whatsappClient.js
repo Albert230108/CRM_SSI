@@ -219,6 +219,13 @@ function buildChatCandidateKeys(input) {
     }
     return candidates;
   }
+  const phone = normalizePhoneIdentity(base);
+  if (phone) {
+    add(phone);
+    if (suffix) {
+      add(`${phone}@c.us`);
+    }
+  }
   if (base && !raw.includes("@")) {
     add(base);
   }

@@ -62,8 +62,8 @@ test('backfillAllChats can be forced to sync every chat with all=true', async ()
                 tenant_id: 7,
                 tenant_name: 'Tenant Eligible',
                 booking_id: 'B-eligible',
-                phone_numbers: ['31612345678'],
-                chat_ids: ['31612345678@c.us'],
+                phone_numbers: ['155066153590862'],
+                chat_ids: ['155066153590862@lid'],
                 external_phone_ids: [],
                 external_chat_namespaces: [],
                 external_account_ids: ['edi-crm-whatsapp'],
@@ -193,11 +193,11 @@ test('backfillAllChats scopes history to CRM identities when all=false', async (
       clientOverride: {
         getChats: async () => [
           {
-            id: { _serialized: '31612345678@c.us', user: '31612345678' },
+            id: { _serialized: '155066153590862@lid', user: '155066153590862' },
             isGroup: false,
             syncHistory: async () => {},
             fetchMessages: async () => ([
-              { timestamp: 1710000000, body: 'Historical inbound', fromMe: false, from: '31612345678@c.us', to: '15550000000@c.us', id: { _serialized: 'msg-backfill-inbound' } },
+              { timestamp: 1710000000, body: 'Historical inbound', fromMe: false, from: '155066153590862@lid', to: '15550000000@c.us', id: { _serialized: 'msg-backfill-inbound' } },
             ]),
           },
           {
