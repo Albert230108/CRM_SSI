@@ -15,6 +15,7 @@ type SyncSummary = {
   bookings_updated: number
   emails_imported: number
   whatsapp_messages_imported: number
+  whatsapp_sync_queued?: boolean
   tenant_threads_updated: number
   partial_failures: { step: string; error: string }[]
 }
@@ -24,7 +25,7 @@ function formatSyncSummary(summary: SyncSummary | null) {
   return [
     `Bookings updated: ${summary.bookings_updated}`,
     `Emails imported: ${summary.emails_imported}`,
-    `WhatsApp messages imported: ${summary.whatsapp_messages_imported}`,
+    summary.whatsapp_sync_queued ? 'WhatsApp sync queued in background' : `WhatsApp messages imported: ${summary.whatsapp_messages_imported}`,
     `Tenant threads updated: ${summary.tenant_threads_updated}`,
   ].join(' � ')
 }
@@ -107,8 +108,11 @@ export default function Dashboard() {
       {syncError ? <p className="mb-3 text-sm text-rose-500">{syncError}</p> : null}
       {syncSummary ? (
         <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <p className="font-semibold">Sync complete</p>
+          <p className="font-semibold">{syncSummary.whatsapp_sync_queued ? "Sync started" : "Sync complete"}</p>
           <p className="mt-1">{formatSyncSummary(syncSummary)}</p>
+          {syncSummary.whatsapp_sync_queued ? (
+            <p className="mt-2 text-xs text-emerald-800/80">WhatsApp history sync continues in the background.</p>
+          ) : null}
           {syncSummary.partial_failures.length ? (
             <p className="mt-2 text-xs text-emerald-800/80">
               Partial failures: {syncSummary.partial_failures.map((item) => `${item.step}: ${item.error}`).join(' | ')}

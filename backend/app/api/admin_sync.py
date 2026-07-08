@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import asyncio
+import logging
+
 import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -18,6 +21,8 @@ from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 
 router = APIRouter(prefix="/admin", tags=["admin-sync"])
+logger = logging.getLogger(__name__)
+_whatsapp_sync_tasks: set[asyncio.Task[Any]] = set()
 
 
 def _to_int(value: Any) -> int:
@@ -105,7 +110,7 @@ async def _sync_whatsapp() -> int:
         return 0
 
     url = whatsapp_service_url.rstrip("/") + "/admin/backfill"
-    payload = {"limit": 200}
+    payload = {"limit": 200, "postSyncDelayMs": 0}
     print(f"[crm] whatsapp sync request method=POST url={url} timeout=600.0 payload={payload}")
     async with httpx.AsyncClient(timeout=600.0) as client:
         response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json=payload)
@@ -116,6 +121,22 @@ async def _sync_whatsapp() -> int:
     print(f"[crm] whatsapp sync imported={imported} url={url}")
     return imported
 
+
+
+
+def _queue_whatsapp_sync() -> None:
+    task = asyncio.create_task(_sync_whatsapp())
+    _whatsapp_sync_tasks.add(task)
+
+    def _log_completion(completed: asyncio.Task[Any]) -> None:
+        _whatsapp_sync_tasks.discard(completed)
+        try:
+            imported = completed.result()
+            logger.info("Queued WhatsApp sync finished imported=%s", imported)
+        except Exception:
+            logger.exception("Queued WhatsApp sync failed")
+
+    task.add_done_callback(_log_completion)
 
 async def _debug_whatsapp_history_sync() -> dict[str, Any]:
     import os
@@ -158,9 +179,12 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
         summary["partial_failures"].append({"step": "email", "error": str(exc)})
 
     try:
-        summary["whatsapp_messages_imported"] = await _sync_whatsapp()
+        _queue_whatsapp_sync()
+        summary["whatsapp_messages_imported"] = 0
+        summary["whatsapp_sync_queued"] = True
     except Exception as exc:
         summary["partial_failures"].append({"step": "whatsapp", "error": str(exc)})
+        summary["whatsapp_sync_queued"] = False
 
     try:
         summary["tenant_threads_updated"] = 0

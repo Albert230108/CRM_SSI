@@ -384,7 +384,10 @@ async function backfillChatHistory(chat, options = {}) {
     try {
       await chat.syncHistory();
       console.info(JSON.stringify({ event: "whatsapp_history_sync_success", ...logBase }));
-      await sleep(Number.parseInt(String(options.postSyncDelayMs || 1500), 10) || 1500);
+      const postSyncDelayMs = Number.parseInt(String(options.postSyncDelayMs ?? 1500), 10) || 0;
+      if (postSyncDelayMs > 0) {
+        await sleep(postSyncDelayMs);
+      }
     } catch (error) {
       console.error(JSON.stringify({
         event: "whatsapp_history_sync_failure",
@@ -476,7 +479,7 @@ async function backfillChatHistory(chat, options = {}) {
   return { imported, deduped, failed, inbound, outbound, fetched };
 }
 
-async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 1500, clientOverride = null, readyOverride = null, all = false } = {}) {
+async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 0, clientOverride = null, readyOverride = null, all = false } = {}) {
   const activeClient = clientOverride || client;
   const isClientReady = readyOverride ?? ready;
   if (!activeClient || !isClientReady) {
@@ -556,7 +559,7 @@ async function maybeRunStartupBackfill() {
 
   startupBackfillTriggered = true;
   try {
-    const result = await backfillAllChats({ limit: whatsappHistoryBackfillLimit, all: false, postSyncDelayMs: 1500 });
+    const result = await backfillAllChats({ limit: whatsappHistoryBackfillLimit, all: false, postSyncDelayMs: 0 });
     console.info(
       "Startup WhatsApp history backfill finished: chats=%s imported=%s deduped=%s failed=%s",
       result.chats,
@@ -819,7 +822,7 @@ async function sendTextMessage(payload) {
 }
 
 async function runHistoryBackfill(options = {}) {
-  return backfillAllChats({ ...options, postSyncDelayMs: options.postSyncDelayMs || 1500 });
+  return backfillAllChats({ ...options, postSyncDelayMs: options.postSyncDelayMs ?? 0 });
 }
 
 async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyncDelayMs = 1500 } = {}) {
