@@ -54,6 +54,39 @@ export default function Dashboard() {
     return () => mediaQuery.removeEventListener('change', updateCollapsedState)
   }, [])
 
+  useEffect(() => {
+    if (!syncSummary?.whatsapp_sync_queued) {
+      return
+    }
+
+    let cancelled = false
+
+    const refreshSyncStatus = async () => {
+      try {
+        const statusResponse = await fetch(`${API_BASE_URL}/api/admin/sync-status`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        const statusPayload = await statusResponse.json().catch(() => null)
+        if (!statusResponse.ok || cancelled) {
+          return
+        }
+        if (!statusPayload?.whatsapp_sync_running) {
+          setSyncSummary((current) => (current ? { ...current, whatsapp_sync_queued: false } : current))
+          setTenantReloadSignal((current) => current + 1)
+        }
+      } catch {
+        // Keep the banner in queued state until the next poll succeeds.
+      }
+    }
+
+    void refreshSyncStatus()
+    const intervalId = window.setInterval(refreshSyncStatus, 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [syncSummary?.whatsapp_sync_queued, token])
+
   const handleSyncAll = async () => {
     if (syncRunning) return
     try {

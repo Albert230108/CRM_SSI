@@ -138,6 +138,16 @@ def _queue_whatsapp_sync() -> None:
 
     task.add_done_callback(_log_completion)
 
+
+@router.get("/sync-status")
+async def sync_status(current_user: User = Depends(get_current_admin_user)) -> dict[str, Any]:
+    running_tasks = [task for task in _whatsapp_sync_tasks if not task.done()]
+    return {
+        "whatsapp_sync_running": bool(running_tasks),
+        "whatsapp_sync_task_count": len(running_tasks),
+    }
+
+
 async def _debug_whatsapp_history_sync() -> dict[str, Any]:
     import os
 
