@@ -94,6 +94,8 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
     webhook_token = _first_non_empty(payload.get("webhook_token"), request_headers.get("x-webhook-token"), request_headers.get("X-Webhook-Token"), query_params.get("webhook_token"))
     external_phone_id = _first_non_empty(payload.get("external_phone_id"), query_params.get("external_phone_id"))
     chat_namespace = _first_non_empty(payload.get("external_chat_namespace"), payload.get("whatsapp_chat_id"))
+    source = _first_non_empty(payload.get("source"))
+    is_history_payload = bool(source and source.strip().lower() in {"history", "backfill"})
     inbound_phone_candidates = _normalized_phone_candidates(
         payload.get("sender_normalized"),
         payload.get("sender"),
@@ -125,7 +127,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                 return RoutingResult(tenant=tenant, strategy="webhook_token", matched_value=endpoint.webhook_token, matched_field="webhook_token")
 
     logger.info("Inbound WhatsApp normalized phone candidates: %s", inbound_phone_candidates)
-    if provider and external_account_id:
+    if not is_history_payload and provider and external_account_id:
         endpoint = _lookup_whatsapp_endpoint_by_account_identity(db, provider, external_account_id)
         if endpoint:
             tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()

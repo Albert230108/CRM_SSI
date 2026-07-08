@@ -470,6 +470,8 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     tenant_id = payload.get("tenant_id")
     routing_strategy = None
     routing_matched_value = None
+    source = str(payload.get("source") or "").strip().lower()
+    is_history_payload = source in {"history", "backfill"}
     account_endpoint = _endpoint_from_account_identity(db, provider, external_account_id)
 
     print("WA DEBUG --- webhook hit ---")
@@ -484,12 +486,15 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     print("WA DEBUG account_identity endpoint_id=", getattr(account_endpoint, 'id', None), "tenant_id=", getattr(account_endpoint, 'tenant_id', None))
 
     if direction == "outbound":
-        tenant_resolution = resolve_whatsapp_outbound_tenant(
-            db,
-            tenant_id=tenant_id,
-            provider=provider,
-            external_account_id=external_account_id,
-        )
+        if is_history_payload:
+            tenant_resolution = resolve_tenant_for_inbound_channel(db, payload, dict(request.headers), dict(request.query_params))
+        else:
+            tenant_resolution = resolve_whatsapp_outbound_tenant(
+                db,
+                tenant_id=tenant_id,
+                provider=provider,
+                external_account_id=external_account_id,
+            )
         tenant = tenant_resolution.tenant
         routing_strategy = tenant_resolution.strategy
         routing_matched_value = tenant_resolution.matched_value

@@ -81,6 +81,46 @@ def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_
     assert len(saved) == 1
     assert saved[0].tenant_id == 88
 
+def test_inbound_whatsapp_history_source_skips_account_identity_and_uses_phone(client, db_session):
+    phone_tenant = create_tenant(db_session, name="Tenant History Phone", booking_id="B-3b")
+    phone_tenant.phone = "+31 6 12345678"
+    account_tenant = create_tenant(db_session, name="Tenant History Account", booking_id="B-3c", tenant_id=88)
+    endpoint = TenantChannelEndpoint(
+        tenant_id=account_tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "source": "history",
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "sender": "+31612345678",
+            "sender_normalized": "31612345678",
+            "whatsapp_chat_id": "31612345678@c.us",
+            "whatsapp_message_id": "msg-history-phone-match",
+            "message": "Historical inbound message",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "whatsapp_phone_match"
+    assert payload["tenant_id"] == phone_tenant.id
+    assert payload["unresolved_reason"] is None
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-history-phone-match").all()
+    assert len(saved) == 1
+    assert saved[0].tenant_id == phone_tenant.id
+    assert saved[0].message == "Historical inbound message"
+
 def test_inactive_endpoint_ignored(db_session):
     tenant = create_tenant(db_session, name="Tenant D", booking_id="B-4")
     endpoint = TenantChannelEndpoint(

@@ -309,6 +309,38 @@ def test_backfilled_whatsapp_message_appears_in_grouped_thread(client, db_sessio
     assert group["messages"][0]["provider_message_id"] == "msg-backfill-inbound-1"
     assert group["messages"][0]["message"] == "Historical inbound message"
 
+def test_backfilled_whatsapp_outbound_message_uses_phone_tenant(client, db_session):
+    phone_tenant = create_tenant(db_session, booking_id="B-inbound-2b")
+    phone_tenant.phone = "+31 6 12345678"
+    account_tenant = create_tenant(db_session, booking_id="B-inbound-2c")
+    create_whatsapp_endpoint(db_session, account_tenant.id, "edi-crm-whatsapp")
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "outbound",
+            "source": "history",
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "recipient": "+31612345678",
+            "to": "+31612345678",
+            "whatsapp_chat_id": "31612345678@c.us",
+            "whatsapp_message_id": "msg-backfill-outbound-1",
+            "timestamp": 1700000001,
+            "message": "Historical outbound message",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "legacy_phone_inference"
+    assert payload["tenant_id"] == phone_tenant.id
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-backfill-outbound-1").all()
+    assert len(saved) == 1
+    assert saved[0].tenant_id == phone_tenant.id
+    assert saved[0].message == "Historical outbound message"
+
 
 
 def test_duplicate_backfill_without_provider_message_id_does_not_create_duplicate_rows(client, db_session):

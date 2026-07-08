@@ -200,6 +200,7 @@ function buildCrmPayload(message, direction, overrides = {}) {
     external_account_id: whatsappClientId || null,
     whatsapp_endpoint_id: overrides.whatsapp_endpoint_id ?? null,
     is_group: identity.isGroup,
+    source: overrides.source ?? null,
   };
 }
 
@@ -271,6 +272,7 @@ async function forwardInboundMessage(message) {
   const payload = buildCrmPayload(message, "inbound", {
     sender: message?.author || message?.from || null,
     whatsapp_chat_id: message?.from || null,
+    source: "history",
   });
   return forwardCrmMessage(payload, "inbound");
 }
@@ -442,6 +444,7 @@ async function backfillChatHistory(chat, options = {}) {
       sender: message?.author || message?.from || null,
       whatsapp_chat_id: chat?.id?._serialized || chat?.id || message?.from || message?.to || null,
       whatsapp_message_id: whatsappMessageId,
+      source: "history",
     });
 
     try {

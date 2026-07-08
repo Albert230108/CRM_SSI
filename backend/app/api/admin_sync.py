@@ -106,8 +106,8 @@ async def _sync_whatsapp() -> int:
 
     url = whatsapp_service_url.rstrip("/") + "/admin/backfill"
     payload = {"limit": 200}
-    print(f"[crm] whatsapp sync request method=POST url={url} timeout=120.0 payload={payload}")
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    print(f"[crm] whatsapp sync request method=POST url={url} timeout=600.0 payload={payload}")
+    async with httpx.AsyncClient(timeout=600.0) as client:
         response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json=payload)
         print(f"[crm] whatsapp sync response status={response.status_code} url={url}")
         response.raise_for_status()
@@ -127,8 +127,8 @@ async def _debug_whatsapp_history_sync() -> dict[str, Any]:
 
     url = whatsapp_service_url.rstrip("/") + "/admin/debug/whatsapp-history-sync"
     payload = {"chatCount": 3, "limit": 50}
-    print(f"[crm] whatsapp debug request method=POST url={url} timeout=120.0 payload={payload}")
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    print(f"[crm] whatsapp debug request method=POST url={url} timeout=600.0 payload={payload}")
+    async with httpx.AsyncClient(timeout=600.0) as client:
         response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json=payload)
         print(f"[crm] whatsapp debug response status={response.status_code} url={url}")
         response.raise_for_status()
