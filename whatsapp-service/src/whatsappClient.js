@@ -7,8 +7,6 @@ const {
   crmWebhookTimeoutMs,
   crmWebhookUrl,
   crmOutboundResolutionUrl,
-  crmBackfillIdentitiesUrl,
-  crmWhatsAppResolveUrl,
   reconnectDelayMs,
   whatsappClientId,
   whatsappHistoryBackfillLimit,
@@ -105,372 +103,6 @@ async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, ext
     };
   }
 }
-
-function normalizeChatIdentity(input) {
-  const value = String(input || "").trim().toLowerCase();
-  return value || null;
-}
-
-function normalizePhoneIdentity(input) {
-  const value = String(input || "").trim();
-  if (!value) {
-    return null;
-  }
-  const lowered = value.toLowerCase();
-  if (lowered.endsWith("@c.us")) {
-    const digits = lowered.split("@", 1)[0].replace(/\D+/g, "");
-    if (digits.length < 7 || /^0+$/.test(digits)) {
-      return null;
-    }
-    return digits;
-  }
-  if (lowered.includes("@")) {
-    return null;
-  }
-  const digits = value.replace(/\D+/g, "");
-  if (digits.length < 7 || /^0+$/.test(digits)) {
-    return null;
-  }
-  return digits || null;
-}
-
-function addUniqueValue(target, seen, value) {
-  const normalized = value == null ? null : String(value).trim().toLowerCase();
-  if (normalized && !seen.has(normalized)) {
-    seen.add(normalized);
-    target.push(normalized);
-  }
-}
-
-function buildPhoneCandidateKeys(input) {
-  const raw = String(input || "").trim();
-  if (!raw) {
-    return [];
-  }
-
-  const candidates = [];
-  const seen = new Set();
-  const add = (value) => {
-    const normalized = normalizePhoneIdentity(value);
-    if (normalized && !seen.has(normalized)) {
-      seen.add(normalized);
-      candidates.push(normalized);
-    }
-  };
-
-  add(raw);
-  add(raw.replace(/^wa_id[:=]\s*/i, ""));
-
-  if (raw.toLowerCase().endsWith("@c.us")) {
-    add(raw.split("@", 1)[0]);
-  }
-  if (raw.startsWith("+")) {
-    add(raw.slice(1));
-  }
-  if (raw.startsWith("00")) {
-    add(raw.slice(2));
-  }
-  if (/[\s\-()./]/.test(raw)) {
-    add(raw.replace(/\D+/g, ""));
-  }
-
-  return candidates;
-}
-
-function buildChatCandidateKeys(input) {
-  const raw = String(input || "").trim().toLowerCase();
-  if (!raw) {
-    return [];
-  }
-
-  const candidates = [];
-  const seen = new Set();
-  const add = (value) => {
-    const normalized = normalizeChatIdentity(value);
-    if (normalized && !seen.has(normalized)) {
-      seen.add(normalized);
-      candidates.push(normalized);
-    }
-  };
-
-  add(raw);
-  const atIndex = raw.indexOf("@");
-  const base = atIndex >= 0 ? raw.slice(0, atIndex) : raw;
-  const suffix = atIndex >= 0 ? raw.slice(atIndex + 1) : "";
-  if (suffix === "g.us") {
-    return candidates;
-  }
-  if (suffix === "c.us") {
-    const phone = normalizePhoneIdentity(raw);
-    if (phone) {
-      add(phone);
-      add(`${phone}@c.us`);
-    }
-    return candidates;
-  }
-  if (base && !raw.includes("@")) {
-    add(base);
-  }
-  return candidates;
-}
-
-function buildContactCandidateKeys(contact) {
-  if (!contact || typeof contact !== 'object') {
-    return [];
-  }
-
-  const candidates = [];
-  const seen = new Set();
-  const add = (value) => {
-    for (const candidate of buildPhoneCandidateKeys(value)) {
-      if (!seen.has(candidate)) {
-        seen.add(candidate);
-        candidates.push(candidate);
-      }
-    }
-  };
-
-  add(contact?.number);
-  add(contact?.phoneNumber);
-  add(contact?.id?.user);
-  add(contact?.id?._serialized);
-  add(contact?.wa_id);
-
-  return candidates;
-}
-
-function buildEligibleIdentityIndex(payload) {
-  const chatIds = new Set();
-  const phoneNumbers = new Set();
-  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
-  const trustedIdentities = Array.isArray(payload?.trusted_identities) ? payload.trusted_identities : [];
-
-  const addChatValues = (values) => {
-    for (const value of values) {
-      for (const candidate of buildChatCandidateKeys(value)) {
-        chatIds.add(candidate);
-      }
-    }
-  };
-
-  const addPhoneValues = (values) => {
-    for (const value of values) {
-      for (const candidate of buildPhoneCandidateKeys(value)) {
-        phoneNumbers.add(candidate);
-      }
-    }
-  };
-
-  for (const entry of entries) {
-    addChatValues([
-      ...(Array.isArray(entry?.chat_ids) ? entry.chat_ids : []),
-      ...(Array.isArray(entry?.external_chat_namespaces) ? entry.external_chat_namespaces : []),
-    ]);
-    addPhoneValues([
-      ...(Array.isArray(entry?.phone_numbers) ? entry.phone_numbers : []),
-      ...(Array.isArray(entry?.external_phone_ids) ? entry.external_phone_ids : []),
-    ]);
-  }
-
-  for (const identity of trustedIdentities) {
-    addChatValues([
-      identity?.whatsapp_chat_id,
-      identity?.whatsapp_identity_key,
-      identity?.external_chat_namespace,
-    ]);
-    addPhoneValues([
-      identity?.whatsapp_normalized_phone,
-      identity?.external_phone_id,
-      identity?.phone_number,
-    ]);
-  }
-
-  return {
-    chatIds,
-    phoneNumbers,
-    totalTenants: Number(payload?.total_tenants || entries.length || 0),
-    totalActiveEndpoints: Number(payload?.total_active_endpoints || 0),
-    totalIdentityRecords: Number(payload?.total_identity_records || 0),
-    entries,
-    trustedIdentities,
-  };
-}
-
-async function fetchCrmEligibleChatIdentities() {
-  if (!crmBackfillIdentitiesUrl) {
-    throw new Error("CRM backfill identities URL is not configured");
-  }
-
-  const headers = {};
-  if (crmWebhookSecret) {
-    headers["X-Webhook-Secret"] = crmWebhookSecret;
-  }
-  if (crmWebhookRouteToken) {
-    headers["X-Webhook-Token"] = crmWebhookRouteToken;
-  }
-
-  const response = await fetch(crmBackfillIdentitiesUrl, {
-    method: "GET",
-    headers,
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = payload && typeof payload === "object"
-      ? String(payload.error || payload.detail || `HTTP ${response.status}`)
-      : `HTTP ${response.status}`;
-    throw new Error(`CRM backfill identities lookup failed: ${message}`);
-  }
-  if (!payload || typeof payload !== "object") {
-    throw new Error("CRM backfill identities lookup returned invalid JSON");
-  }
-  return buildEligibleIdentityIndex(payload);
-}
-
-async function probeCrmInboundResolution(payload) {
-  if (!crmWhatsAppResolveUrl) {
-    throw new Error("CRM WhatsApp resolve URL is not configured");
-  }
-
-  const headers = { "Content-Type": "application/json" };
-  if (crmWebhookSecret) {
-    headers["X-Webhook-Secret"] = crmWebhookSecret;
-  }
-  if (crmWebhookRouteToken) {
-    headers["X-Webhook-Token"] = crmWebhookRouteToken;
-  }
-
-  const response = await fetch(crmWhatsAppResolveUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-  const result = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = result && typeof result === "object"
-      ? String(result.error || result.detail || `HTTP ${response.status}`)
-      : `HTTP ${response.status}`;
-    throw new Error(`CRM WhatsApp resolve probe failed: ${message}`);
-  }
-  return result && typeof result === "object" ? result : null;
-}
-
-function getChatIdentityCandidates(chat) {
-  const candidates = [];
-  const seen = new Set();
-  const add = (values) => {
-    for (const value of values) {
-      if (!value) {
-        continue;
-      }
-      const normalized = String(value).trim().toLowerCase();
-      if (normalized && !seen.has(normalized)) {
-        seen.add(normalized);
-        candidates.push(normalized);
-      }
-    }
-  };
-
-  add(buildChatCandidateKeys(getChatId(chat)));
-  add(buildContactCandidateKeys(chat?.contact));
-
-  return candidates;
-}
-
-function isCrmEligibleChat(chat, eligibleIdentityIndex) {
-  if (!chat || !eligibleIdentityIndex) {
-    return false;
-  }
-  const candidates = getChatIdentityCandidates(chat);
-  return candidates.some((candidate) => eligibleIdentityIndex.chatIds.has(candidate) || eligibleIdentityIndex.phoneNumbers.has(candidate));
-}
-
-function describeChatSkipReason(chat, eligibleIdentityIndex) {
-  const chatId = getChatId(chat);
-  if (!chatId) {
-    return "missing_chat_id";
-  }
-  const candidates = getChatIdentityCandidates(chat);
-  if (!eligibleIdentityIndex || (!eligibleIdentityIndex.chatIds.size && !eligibleIdentityIndex.phoneNumbers.size)) {
-    return "crm_identity_lookup_empty";
-  }
-  if (candidates.some((candidate) => eligibleIdentityIndex.chatIds.has(candidate))) {
-    return null;
-  }
-  if (candidates.some((candidate) => eligibleIdentityIndex.phoneNumbers.has(candidate))) {
-    return null;
-  }
-  return "no_crm_identity_match";
-}
-
-function shouldProbeChatEligibility(chat) {
-  const chatId = String(getChatId(chat) || "").trim().toLowerCase();
-  return Boolean(chatId && chatId.endsWith("@lid"));
-}
-
-async function probeChatEligibility(chat, { postSyncDelayMs = 1500, limit = 5 } = {}) {
-  if (!chat) {
-    return { eligible: false, reason: "missing_chat" };
-  }
-
-  if (typeof chat.syncHistory === "function") {
-    try {
-      await chat.syncHistory();
-      await sleep(Number.parseInt(String(postSyncDelayMs || 1500), 10) || 1500);
-    } catch (error) {
-      console.warn(JSON.stringify({
-        event: "whatsapp_history_probe_sync_failure",
-        chat_id: getChatId(chat),
-        chat_name: getChatName(chat),
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    }
-  }
-
-  let messages = [];
-  try {
-    messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit }) : [];
-  } catch (error) {
-    return {
-      eligible: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  const orderedMessages = Array.isArray(messages) ? messages.slice().sort(sortBackfillMessages) : [];
-  for (const message of orderedMessages) {
-    const payload = buildCrmPayload(message, message?.fromMe ? "outbound" : "inbound", {
-      sender: message?.author || message?.from || null,
-      to: message?.to || message?.from || null,
-      whatsapp_chat_id: chat?.id?._serialized || chat?.id || message?.from || message?.to || null,
-      whatsapp_message_id: message?.id?._serialized || null,
-    });
-    delete payload.provider;
-    delete payload.external_account_id;
-    delete payload.whatsapp_client_id;
-    delete payload.whatsapp_endpoint_id;
-    delete payload.tenant_id;
-    try {
-      const resolution = await probeCrmInboundResolution(payload);
-      if (resolution && resolution.tenant_id) {
-        return {
-          eligible: true,
-          reason: "trusted_message_probe_match",
-          tenant_id: resolution.tenant_id,
-          matched_field: resolution.matched_field || null,
-          matched_value: resolution.matched_value || null,
-        };
-      }
-    } catch (error) {
-      return {
-        eligible: false,
-        reason: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  return { eligible: false, reason: "no_crm_identity_match" };
-}
-
 
 function normalizeWhatsAppId(input) {
   const value = String(input || "").trim();
@@ -841,7 +473,7 @@ async function backfillChatHistory(chat, options = {}) {
   return { imported, deduped, failed, inbound, outbound, fetched };
 }
 
-async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 1500, clientOverride = null, readyOverride = null, all = false, eligibleIdentityIndex = null, fetchEligibleIdentityIndex = fetchCrmEligibleChatIdentities } = {}) {
+async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 1500, clientOverride = null, readyOverride = null, all = false } = {}) {
   const activeClient = clientOverride || client;
   const isClientReady = readyOverride ?? ready;
   if (!activeClient || !isClientReady) {
@@ -853,72 +485,8 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
     ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
     : [];
 
-  let resolvedEligibleIdentityIndex = eligibleIdentityIndex;
-  let crmLookupFailed = null;
-  if (!resolvedEligibleIdentityIndex) {
-    try {
-      resolvedEligibleIdentityIndex = await fetchEligibleIdentityIndex();
-    } catch (error) {
-      crmLookupFailed = error instanceof Error ? error.message : String(error);
-      if (!all) {
-        throw error;
-      }
-      console.warn(JSON.stringify({
-        event: "whatsapp_history_crm_identity_lookup_failed",
-        error: crmLookupFailed,
-        fallback_scope: "all",
-      }));
-    }
-  }
-
-  const crmEligibleChats = [];
-  const skippedChats = [];
-  const skippedChatReasons = new Map();
-  const skippedChatSamples = [];
-
-  for (const chat of orderedChats) {
-    if (all) {
-      crmEligibleChats.push(chat);
-      continue;
-    }
-
-    if (isCrmEligibleChat(chat, resolvedEligibleIdentityIndex)) {
-      crmEligibleChats.push(chat);
-      continue;
-    }
-
-    let skipReason = describeChatSkipReason(chat, resolvedEligibleIdentityIndex);
-    if (shouldProbeChatEligibility(chat)) {
-      const probe = await probeChatEligibility(chat, { postSyncDelayMs, limit: Math.max(1, Math.min(5, Number.parseInt(String(limit || 5), 10) || 5)) });
-      if (probe.eligible) {
-        crmEligibleChats.push(chat);
-        console.info(JSON.stringify({
-          event: "whatsapp_history_chat_probe_match",
-          chat_id: getChatId(chat),
-          chat_name: getChatName(chat),
-          scope: "crm_scoped",
-          tenant_id: probe.tenant_id || null,
-          matched_field: probe.matched_field || null,
-          matched_value: probe.matched_value || null,
-        }));
-        continue;
-      }
-      skipReason = probe.reason || skipReason;
-    }
-
-    skipReason = skipReason || "no_crm_identity_match";
-    skippedChats.push(chat);
-    skippedChatReasons.set(skipReason, (skippedChatReasons.get(skipReason) || 0) + 1);
-    if (skippedChatSamples.length < 10) {
-      skippedChatSamples.push({
-        chat_id: getChatId(chat),
-        chat_name: getChatName(chat),
-        reason: skipReason,
-      });
-    }
-  }
-
-  const chatsToSync = crmEligibleChats;
+  const chatsToSync = orderedChats.filter(isRelevantChat);
+  const skippedChats = orderedChats.length - chatsToSync.length;
 
   let imported = 0;
   let deduped = 0;
@@ -950,24 +518,22 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
   console.info(JSON.stringify({
     event: "whatsapp_history_backfill_summary",
     chats_in_whatsapp_count: orderedChats.length,
-    crm_eligible_chats_count: crmEligibleChats.length,
+    crm_eligible_chats_count: chatsToSync.length,
     chats_synced_count: chatsToSync.length,
-    skipped_chats_count: skippedChats.length,
-    skipped_chat_reason_counts: Object.fromEntries(Array.from(skippedChatReasons.entries()).sort(([left], [right]) => left.localeCompare(right))),
-    skipped_chat_samples: skippedChatSamples,
+    skipped_chats_count: skippedChats,
     imported_count: imported,
     deduped_count: deduped,
     failed_count: failed,
     scope: all ? "all" : "crm_scoped",
-    crm_identity_lookup_failed: Boolean(crmLookupFailed),
+    crm_identity_lookup_failed: false,
   }));
 
   return {
     scope: all ? "all" : "crm_scoped",
     total_chats_in_whatsapp: orderedChats.length,
-    total_crm_eligible_chats: crmEligibleChats.length,
+    total_crm_eligible_chats: chatsToSync.length,
     total_synced_chats: chatsToSync.length,
-    skipped_chats: skippedChats.length,
+    skipped_chats: skippedChats,
     chats: chatsToSync.length,
     scanned: orderedChats.length,
     fetched,
@@ -976,7 +542,7 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
     imported,
     deduped,
     failed,
-    crm_identity_lookup_failed: Boolean(crmLookupFailed),
+    crm_identity_lookup_failed: false,
   };
 }
 
@@ -1372,13 +938,6 @@ module.exports = {
   shutdownClient,
   runHistoryBackfill,
   backfillAllChats,
-  fetchCrmEligibleChatIdentities,
-  buildEligibleIdentityIndex,
-  buildChatCandidateKeys,
-  buildPhoneCandidateKeys,
-  isCrmEligibleChat,
-  normalizeChatIdentity,
-  normalizePhoneIdentity,
   runHistoryDebugSample,
   buildHistoryDedupeKey,
   sortBackfillMessages,
