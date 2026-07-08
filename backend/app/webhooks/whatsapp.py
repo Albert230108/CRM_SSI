@@ -230,6 +230,7 @@ def _build_backfill_identity_entries(
     }
     trusted_identities: list[WhatsAppBackfillTrustedIdentity] = []
     entries_by_tenant_id: dict[int, WhatsAppBackfillIdentityEntry] = {}
+    identity_maps = get_tenant_phone_identity_maps(db)
 
     candidate_tenants = db.query(Tenant).all()
     debug_counts["candidate_tenants"] = len(candidate_tenants)
