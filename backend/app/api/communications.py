@@ -46,17 +46,21 @@ def _build_gmail_credentials(account: GmailAccount) -> Credentials | None:
     refresh_token = _decrypt_refresh_token(account.refresh_token_encrypted)
     if not refresh_token:
         return None
-    credentials = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
-        client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
-        client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
-        scopes=account.scopes_json or ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
-    )
-    if credentials.expired and credentials.refresh_token:
+    try:
+        credentials = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+            scopes=account.scopes_json or ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
+        )
+        # Refresh the token to get a valid access token
         credentials.refresh(GoogleAuthRequest())
-    return credentials
+        return credentials
+    except Exception as exc:
+        logger.exception("Failed to build Gmail credentials")
+        return None
 
 
 class WhatsAppOutboundResolutionRead(BaseModel):

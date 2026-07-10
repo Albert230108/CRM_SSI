@@ -318,6 +318,16 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [selectedWhatsappGroup])
 
+  useEffect(() => {
+    if (!selectedWhatsappGroup) return
+    const scrollContainer = document.querySelector('[data-whatsapp-messages]')
+    if (scrollContainer) {
+      setTimeout(() => {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight
+      }, 0)
+    }
+  }, [selectedWhatsappGroup, replyTarget?.type])
+
   const toggleConversation = (conversationId: number) => {
     setExpandedConversationIds((current) =>
       current.includes(conversationId) ? current.filter((id) => id !== conversationId) : [...current, conversationId],
@@ -449,6 +459,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         })
         if (!response.ok) {
           const payload = await response.json().catch(() => null)
+          console.error('[crm] Email send error:', { status: response.status, payload })
           throw new Error(payload?.detail || 'Failed to send email')
         }
       } else if (replyTarget.type === 'whatsapp') {
@@ -581,12 +592,12 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 })),
               ].sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
               return (
-                <article key={item.id} className="relative rounded-2xl border border-gray-200 bg-gray-50">
+                <article key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50">
                   <div
                     onClick={() => toggleConversation(item.id)}
                     className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left"
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
                         <span className="rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-700">Email Thread</span>
                         <span>{formatDisplayDate(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
@@ -597,20 +608,23 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                         {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
                       </p>
                     </div>
-                    <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
-                      {expanded ? 'Collapse' : `${item.messages.length} messages`}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
+                        {expanded ? 'Collapse' : `${item.messages.length} messages`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!expanded) toggleConversation(item.id)
+                          setReplyTarget({ type: 'email', threadId: item.id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
+                        }}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                      >
+                        Reply
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!expanded) toggleConversation(item.id)
-                      setReplyTarget({ type: 'email', threadId: item.id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
-                    }}
-                    className="absolute right-3 top-3 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                  >
-                    Reply
-                  </button>
 
                   {expanded ? (
                     <div className="border-t border-gray-200 bg-white px-4 py-3">
@@ -699,12 +713,12 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
             const firstMessage = item.messages[0]
             const lastMessage = item.messages[item.messages.length - 1]
             return (
-              <article key={item.group_id} className="relative rounded-2xl border border-emerald-200 bg-emerald-50">
+              <article key={item.group_id} className="rounded-2xl border border-emerald-200 bg-emerald-50">
                 <div
                   onClick={() => openWhatsappGroup(item)}
                   className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-emerald-100/70"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
                       <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">WhatsApp Group</span>
                       <span>{formatDisplayDate(item.start_timestamp || firstMessage?.created_at || lastMessage?.created_at || new Date().toISOString())}</span>
@@ -714,20 +728,23 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     </p>
                     <p className="mt-1 truncate text-sm text-gray-600">{item.messages[0] ? extractWhatsappPreviewText(item.messages[0]) : 'No preview available'}</p>
                   </div>
-                  <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
-                    {item.message_count} messages
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
+                      {item.message_count} messages
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedWhatsappGroup(item)
+                        setReplyTarget({ type: 'whatsapp', groupId: item.group_id })
+                      }}
+                      className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                    >
+                      Reply
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedWhatsappGroup(item)
-                    setReplyTarget({ type: 'whatsapp', groupId: item.group_id })
-                  }}
-                  className="absolute right-3 top-3 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
-                >
-                  Reply
-                </button>
               </article>
             )
           })}
@@ -768,7 +785,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </button>
             </div>
 
-            <div className="max-h-[72vh] overflow-y-auto px-6 py-5">
+            <div className="max-h-[72vh] overflow-y-auto px-6 py-5" data-whatsapp-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
