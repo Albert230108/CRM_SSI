@@ -158,10 +158,31 @@ def test_explicit_resync_endpoint_triggers_full_history_pull(user_client, db_ses
     with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(return_value={"ok": True})):
         created = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload).json()
 
-    with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(return_value={"ok": True, "fetched": 250})) as mocked_resync:
+    with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(return_value={"ok": True, "fetched": 250, "imported": 250, "deduped": 0, "failed": 0})) as mocked_resync:
         response = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links/{created['id']}/resync")
     assert response.status_code == 200
     mocked_resync.assert_awaited_once_with("edi-crm-whatsapp", "326472368@lid")
+    body = response.json()
+    assert body["resync"]["ok"] is True
+    assert body["resync"]["fetched"] == 250
+    assert body["resync"]["imported"] == 250
+    assert body["link"]["chat_id"] == "326472368@lid"
+
+
+def test_resync_reports_bridge_failure_without_erroring(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-resync-fail")
+    payload = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "777@lid"}
+    with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(return_value={"ok": True})):
+        created = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload).json()
+
+    from app.services.whatsapp_client import WhatsAppBridgeError
+
+    with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(side_effect=WhatsAppBridgeError(503, "WhatsApp client is not ready"))):
+        response = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links/{created['id']}/resync")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["resync"]["ok"] is False
+    assert "not ready" in body["resync"]["error"]
 
 
 def test_resync_rejects_unknown_link(user_client, db_session):

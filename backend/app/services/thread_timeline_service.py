@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 
 PROVIDER_GMAIL = "gmail"
 
@@ -129,14 +130,61 @@ def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation
     return result
 
 
+def _communication_matches_chat_identity(message: Communication, chat_id: str) -> bool:
+    return chat_id in {
+        (message.whatsapp_chat_id or "").strip().lower(),
+        (message.whatsapp_identity_key or "").strip().lower(),
+        (message.external_chat_namespace or "").strip().lower(),
+    }
+
+
 def _load_tenant_whatsapp(db: Session, tenant_id: int) -> list[Communication]:
-    return (
+    messages = (
         db.query(Communication)
         .filter(Communication.tenant_id == tenant_id)
         .filter(Communication.channel == "whatsapp")
         .order_by(Communication.created_at.asc(), Communication.id.asc())
         .all()
     )
+
+    # A manual (or otherwise registered) WhatsApp thread link is the authoritative identity for
+    # that account. Once a link exists, messages under the same tenant but a *different* chat
+    # identity for that account are stray matches from looser resolution strategies (phone
+    # inference, ambiguous historical routing) and should not be displayed as if they belong to
+    # this thread's conversation. Accounts without an active link are left untouched.
+    active_links = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.tenant_id == tenant_id,
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.is_active.is_(True),
+            TenantChannelEndpoint.external_chat_namespace.isnot(None),
+        )
+        .all()
+    )
+    if not active_links:
+        return messages
+
+    linked_chat_ids_by_account: dict[str, set[str]] = {}
+    for link in active_links:
+        account_key = (link.external_account_id or "").strip().lower()
+        chat_id = (link.external_chat_namespace or "").strip().lower()
+        if not account_key or not chat_id:
+            continue
+        linked_chat_ids_by_account.setdefault(account_key, set()).add(chat_id)
+
+    filtered: list[Communication] = []
+    for message in messages:
+        account_key = (message.external_account_id or "").strip().lower()
+        linked_chat_ids = linked_chat_ids_by_account.get(account_key)
+        if linked_chat_ids is None:
+            # No manual link governs this account; keep prior (inference-based) behavior.
+            filtered.append(message)
+            continue
+        if any(_communication_matches_chat_identity(message, chat_id) for chat_id in linked_chat_ids):
+            filtered.append(message)
+
+    return filtered
 
 
 def _build_thread_windows(conversations: Iterable[Conversation]) -> list[_EmailThreadWindow]:

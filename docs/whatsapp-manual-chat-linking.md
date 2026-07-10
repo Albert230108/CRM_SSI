@@ -16,9 +16,12 @@ routing, CRM backfill eligibility, and the thread UI all key off the exact `chat
 
 ## Full-history sync on link
 
-Linking a chat automatically queues a background full-history resync of that chat (and it's
+Linking a chat automatically queues a background full-history resync of that chat, and it's
 retriggerable any time from the thread's linked-chat panel via **Resync full history**, or by
-calling `POST /api/threads/{thread_id}/whatsapp-links/{link_id}/resync`).
+calling `POST /api/threads/{thread_id}/whatsapp-links/{link_id}/resync`. That endpoint runs
+synchronously (awaits the whatsapp-service backfill call) and returns `{fetched, imported,
+deduped, failed}` counts — the UI shows the real result once it finishes rather than a
+"queued" state with no completion signal.
 
 This matters because `whatsapp-service`'s regular history sweep caps each chat at
 `WHATSAPP_HISTORY_BACKFILL_LIMIT` (default 100) messages — fine for the broad "every chat in the
@@ -28,6 +31,18 @@ CRM-eligible chats (including manually linked ones) now always pull their *entir
 dropped. Only the indiscriminate `all=true` sweep (which touches every WhatsApp chat, not just
 CRM-relevant ones) still respects the cap, to avoid pulling unbounded history for irrelevant
 contacts.
+
+## Thread view only shows the linked chat's messages
+
+Before a manual link exists, a thread's WhatsApp messages are attributed by looser strategies
+(phone-number matching, legacy inference), which can occasionally attach a message from an
+unrelated real-world chat to the wrong thread. Once an active WhatsApp link exists for a
+thread+account, the thread view (`_load_tenant_whatsapp` in `thread_timeline_service.py`) now
+only displays messages whose `whatsapp_chat_id` / `whatsapp_identity_key` /
+`external_chat_namespace` matches that link's exact `chat_id` for that account — stray messages
+from other chat identities under the same tenant are hidden from the thread (their rows are not
+deleted, so unlinking restores the prior unfiltered view). Accounts without an active link keep
+the previous unfiltered behavior.
 
 ## Why CHAT_ID is the primary selector
 

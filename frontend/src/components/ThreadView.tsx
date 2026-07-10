@@ -222,7 +222,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [showLinkChatModal, setShowLinkChatModal] = useState(false)
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
   const [resyncingId, setResyncingId] = useState<number | null>(null)
-  const [resyncedIds, setResyncedIds] = useState<number[]>([])
+  const [resyncResults, setResyncResults] = useState<Record<number, string>>({})
   const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp')
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
@@ -387,15 +387,26 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     try {
       setResyncingId(link.id)
       setError('')
+      setResyncResults((current) => {
+        const next = { ...current }
+        delete next[link.id]
+        return next
+      })
       const response = await fetch(`${API_BASE_URL}/api/threads/${tenantId}/whatsapp-links/${link.id}/resync`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       })
+      const payload = await response.json().catch(() => null)
       if (!response.ok) {
-        const payload = await response.json().catch(() => null)
         throw new Error(payload?.detail || 'Failed to resync WhatsApp chat history')
       }
-      setResyncedIds((current) => (current.includes(link.id) ? current : [...current, link.id]))
+      const resync = payload?.resync as { ok: boolean; fetched: number; imported: number; error?: string | null } | undefined
+      if (!resync?.ok) {
+        throw new Error(resync?.error || 'Failed to resync WhatsApp chat history')
+      }
+      setResyncResults((current) => ({ ...current, [link.id]: `Done: ${resync.fetched} messages fetched, ${resync.imported} imported` }))
+      await reloadWhatsappLinks()
+      await loadGroupedThread()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to resync WhatsApp chat history')
     } finally {
@@ -490,7 +501,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                       {link.chat_display_name || 'No name'} - linked {formatDisplayDate(link.created_at)}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <div className="flex items-center gap-2">
                     <button
                       type="button"
                       disabled={resyncingId === link.id}
@@ -498,7 +510,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                       title="Pull the chat's entire history again (fixes chats that were only partially synced)"
                       className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50"
                     >
-                      {resyncingId === link.id ? 'Resyncing...' : resyncedIds.includes(link.id) ? 'Resync queued' : 'Resync full history'}
+                      {resyncingId === link.id ? 'Resyncing...' : 'Resync full history'}
                     </button>
                     <button
                       type="button"
@@ -515,6 +527,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     >
                       {unlinkingId === link.id ? 'Unlinking...' : 'Unlink'}
                     </button>
+                    </div>
+                    {resyncResults[link.id] ? <p className="text-xs text-emerald-700">{resyncResults[link.id]}</p> : null}
                   </div>
                 </div>
               ))}

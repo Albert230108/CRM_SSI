@@ -12,8 +12,10 @@ from app.models.user import User
 from app.schemas.whatsapp_thread_link import (
     ThreadWhatsAppLinkCreate,
     ThreadWhatsAppLinkRead,
+    ThreadWhatsAppLinkResyncRead,
     WhatsAppAccountRead,
     WhatsAppChatRead,
+    WhatsAppChatResyncResult,
 )
 from app.services.whatsapp_chat_directory import fetch_whatsapp_chats, list_whatsapp_accounts, resync_whatsapp_chat
 from app.services.whatsapp_client import WhatsAppBridgeError
@@ -265,16 +267,20 @@ def create_thread_whatsapp_link(
     return _to_link_read(new_link)
 
 
-@router.post("/threads/{thread_id}/whatsapp-links/{link_id}/resync", response_model=ThreadWhatsAppLinkRead)
-def resync_thread_whatsapp_link(
+@router.post("/threads/{thread_id}/whatsapp-links/{link_id}/resync", response_model=ThreadWhatsAppLinkResyncRead)
+async def resync_thread_whatsapp_link(
     thread_id: int,
     link_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> ThreadWhatsAppLinkRead:
+) -> ThreadWhatsAppLinkResyncRead:
     """Force a full-history resync of an already-linked chat, e.g. if it was linked before the
-    full-history fix shipped and only its most recent messages were imported."""
+    full-history fix shipped and only its most recent messages were imported.
+
+    Runs synchronously (awaits the whatsapp-service backfill call) so the response itself is the
+    completion signal the UI needs — a fire-and-forget background task left the "Resync" button
+    stuck showing "queued" forever with no way to know when it actually finished.
+    """
     _get_tenant_or_404(db, thread_id)
     link = (
         db.query(TenantChannelEndpoint)
@@ -289,7 +295,6 @@ def resync_thread_whatsapp_link(
     if link is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active WhatsApp link not found")
 
-    background_tasks.add_task(_run_resync, link.external_account_id, link.external_chat_namespace)
     logger.info(
         "whatsapp_thread_link_resync_requested thread_id=%s link_id=%s provider=%s external_account_id=%s chat_id=%s actor_user_id=%s",
         thread_id,
@@ -299,7 +304,32 @@ def resync_thread_whatsapp_link(
         link.external_chat_namespace,
         current_user.id,
     )
-    return _to_link_read(link)
+
+    try:
+        raw_result = await resync_whatsapp_chat(link.external_account_id, link.external_chat_namespace)
+        resync_result = WhatsAppChatResyncResult(
+            ok=bool(raw_result.get("ok", True)),
+            fetched=int(raw_result.get("fetched") or 0),
+            imported=int(raw_result.get("imported") or 0),
+            deduped=int(raw_result.get("deduped") or 0),
+            failed=int(raw_result.get("failed") or 0),
+        )
+        logger.info(
+            "whatsapp_thread_link_resync_completed thread_id=%s link_id=%s result=%s",
+            thread_id,
+            link_id,
+            raw_result,
+        )
+    except WhatsAppBridgeError as exc:
+        resync_result = WhatsAppChatResyncResult(ok=False, error=exc.args[0] if exc.args else "Resync failed")
+        logger.warning(
+            "whatsapp_thread_link_resync_failed thread_id=%s link_id=%s error=%s",
+            thread_id,
+            link_id,
+            exc,
+        )
+
+    return ThreadWhatsAppLinkResyncRead(link=_to_link_read(link), resync=resync_result)
 
 
 @router.delete("/threads/{thread_id}/whatsapp-links/{link_id}", response_model=ThreadWhatsAppLinkRead)

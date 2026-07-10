@@ -50,3 +50,17 @@ class ThreadWhatsAppLinkRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class WhatsAppChatResyncResult(BaseModel):
+    ok: bool
+    fetched: int = 0
+    imported: int = 0
+    deduped: int = 0
+    failed: int = 0
+    error: str | None = None
+
+
+class ThreadWhatsAppLinkResyncRead(BaseModel):
+    link: ThreadWhatsAppLinkRead
+    resync: WhatsAppChatResyncResult
