@@ -19,12 +19,17 @@ def test_duplicate_endpoint_prevention(client, db_session):
         "channel_type": "whatsapp",
         "provider": "whatsapp-service",
         "external_account_id": "client-1",
+        "external_chat_namespace": "client-1-chat@c.us",
         "webhook_token": "token-1",
     }
     r1 = client.post("/api/admin/tenant-channel-endpoints", json=payload)
     assert r1.status_code == 200
     r2 = client.post("/api/admin/tenant-channel-endpoints", json=payload)
     assert r2.status_code == 400
+
+    payload2 = {**payload, "external_chat_namespace": "client-1-chat-2@c.us"}
+    r3 = client.post("/api/admin/tenant-channel-endpoints", json=payload2)
+    assert r3.status_code == 200
 
 
 def test_tenant_resolution_by_webhook_token(db_session):
@@ -46,13 +51,14 @@ def test_tenant_resolution_by_webhook_token(db_session):
     assert result.strategy == "webhook_token"
 
 
-def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_session):
+def test_inbound_whatsapp_known_exact_chat_routes_to_tenant_88(client, db_session):
     tenant = create_tenant(db_session, name="Tenant C", booking_id="B-3", tenant_id=88)
     endpoint = TenantChannelEndpoint(
         tenant_id=tenant.id,
         channel_type="whatsapp",
         provider="whatsapp-service",
         external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="31900000000@c.us",
         is_active=True,
     )
     db_session.add(endpoint)
@@ -66,6 +72,7 @@ def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_
             "external_account_id": "edi-crm-whatsapp",
             "sender": "+31900000000",
             "sender_normalized": "31900000000",
+            "whatsapp_chat_id": "31900000000@c.us",
             "whatsapp_message_id": "msg-known-account-88",
             "message": "Hello from the mapped account",
         },
@@ -73,7 +80,7 @@ def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "account_identity"
+    assert payload["routing_strategy"] == "exact_chat_endpoint"
     assert payload["tenant_id"] == 88
     assert payload["unresolved_reason"] is None
 
@@ -81,7 +88,7 @@ def test_inbound_whatsapp_known_account_identity_routes_to_tenant_88(client, db_
     assert len(saved) == 1
     assert saved[0].tenant_id == 88
 
-def test_inbound_whatsapp_history_source_skips_account_identity_and_uses_phone(client, db_session):
+def test_inbound_whatsapp_history_source_routes_by_exact_chat_endpoint(client, db_session):
     phone_tenant = create_tenant(db_session, name="Tenant History Phone", booking_id="B-3b")
     phone_tenant.phone = "+31 6 12345678"
     account_tenant = create_tenant(db_session, name="Tenant History Account", booking_id="B-3c", tenant_id=88)
@@ -90,6 +97,7 @@ def test_inbound_whatsapp_history_source_skips_account_identity_and_uses_phone(c
         channel_type="whatsapp",
         provider="whatsapp-service",
         external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="31612345678@c.us",
         is_active=True,
     )
     db_session.add(endpoint)
@@ -112,13 +120,13 @@ def test_inbound_whatsapp_history_source_skips_account_identity_and_uses_phone(c
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "whatsapp_phone_match"
-    assert payload["tenant_id"] == phone_tenant.id
+    assert payload["routing_strategy"] == "exact_chat_endpoint"
+    assert payload["tenant_id"] == 88
     assert payload["unresolved_reason"] is None
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-history-phone-match").all()
     assert len(saved) == 1
-    assert saved[0].tenant_id == phone_tenant.id
+    assert saved[0].tenant_id == 88
     assert saved[0].message == "Historical inbound message"
 
 def test_inactive_endpoint_ignored(db_session):
@@ -211,7 +219,7 @@ def test_inbound_whatsapp_unknown_account_identity_remains_unresolved(client, db
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-account-identity").all()
     assert saved == []
 
-def test_inbound_whatsapp_account_identity_beats_phone_match(client, db_session):
+def test_inbound_whatsapp_exact_chat_endpoint_beats_phone_match(client, db_session):
     phone_tenant = create_tenant(db_session, name="Tenant WhatsApp Phone", booking_id="B-9")
     phone_tenant.phone = "+31 6 12345678"
     account_tenant = create_tenant(db_session, name="Tenant WhatsApp Account Priority", booking_id="B-10", tenant_id=88)
@@ -220,6 +228,7 @@ def test_inbound_whatsapp_account_identity_beats_phone_match(client, db_session)
         channel_type="whatsapp",
         provider="whatsapp-service",
         external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="31612345678@c.us",
         is_active=True,
     )
     db_session.add(endpoint)
@@ -233,6 +242,7 @@ def test_inbound_whatsapp_account_identity_beats_phone_match(client, db_session)
             "external_account_id": "edi-crm-whatsapp",
             "sender": "+31612345678",
             "sender_normalized": "31612345678",
+            "whatsapp_chat_id": "31612345678@c.us",
             "whatsapp_message_id": "msg-phone-priority",
             "message": "Hello from account identity",
         },
@@ -240,7 +250,7 @@ def test_inbound_whatsapp_account_identity_beats_phone_match(client, db_session)
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "account_identity"
+    assert payload["routing_strategy"] == "exact_chat_endpoint"
     assert payload["tenant_id"] == 88
     assert payload["unresolved_reason"] is None
 
@@ -280,7 +290,7 @@ async def fake_whatsapp_booking(booking_id):
         "invoiceItems": [],
     }
 
-def test_inbound_whatsapp_routes_after_import_creates_endpoint(client, db_session, monkeypatch):
+def test_inbound_whatsapp_routes_after_import_when_chat_is_linked(client, db_session, monkeypatch):
     monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_whatsapp_booking)
     response = client.post("/api/tenants/import", json={
         "booking_id": "IMPORT-WA-1",
@@ -294,21 +304,101 @@ def test_inbound_whatsapp_routes_after_import_creates_endpoint(client, db_sessio
     tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-WA-1").first()
     assert tenant is not None
 
+    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id).first()
+    assert endpoint is not None
+    endpoint.external_chat_namespace = "31912345678@c.us"
+    db_session.commit()
+
     webhook = client.post('/webhooks/whatsapp', json={
         "direction": "inbound",
         "provider": "whatsapp-service",
         "external_account_id": "edi-crm-whatsapp",
         "sender": "+31912345678",
         "sender_normalized": "31912345678",
+        "whatsapp_chat_id": "31912345678@c.us",
         "whatsapp_message_id": "msg-import-created-mapping",
         "message": "Hello after import",
     })
     assert webhook.status_code == 200
     payload = webhook.json()
-    assert payload["routing_strategy"] == "account_identity"
+    assert payload["routing_strategy"] == "exact_chat_endpoint"
     assert payload["tenant_id"] == tenant.id
     assert payload["unresolved_reason"] is None
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-import-created-mapping").all()
     assert len(saved) == 1
     assert saved[0].tenant_id == tenant.id
+
+
+
+def test_inbound_whatsapp_unresolved_when_chat_identity_missing(client, db_session):
+    tenant = create_tenant(db_session, name="Tenant Missing Chat", booking_id="B-missing-chat")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="15550000000@c.us",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "sender": "+31612345678",
+            "sender_normalized": "31612345678",
+            "whatsapp_message_id": "msg-missing-chat-id",
+            "message": "Missing chat identity",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "unresolved"
+    assert payload["unresolved_reason"] == "missing_chat_identity"
+    assert payload["tenant_id"] is None
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-missing-chat-id").all()
+    assert saved == []
+
+
+def test_inbound_whatsapp_unresolved_when_wrong_chat_for_service(client, db_session):
+    tenant = create_tenant(db_session, name="Tenant Wrong Chat", booking_id="B-wrong-chat")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="15551112222@c.us",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "whatsapp_chat_id": "15553334444@c.us",
+            "sender": "+31900000000",
+            "sender_normalized": "31900000000",
+            "whatsapp_message_id": "msg-wrong-chat-id",
+            "message": "Wrong chat identity",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "unresolved"
+    assert payload["unresolved_reason"] == "no_exact_chat_match"
+    assert payload["tenant_id"] is None
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-wrong-chat-id").all()
+    assert saved == []

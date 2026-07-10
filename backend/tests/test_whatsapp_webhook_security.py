@@ -20,6 +20,7 @@ def create_whatsapp_endpoint(db_session, tenant_id, external_account_id="edi-crm
         channel_type="whatsapp",
         provider="whatsapp-service",
         external_account_id=external_account_id,
+        external_chat_namespace="31612345678@c.us",
         is_active=True,
     )
     db_session.add(endpoint)
@@ -51,7 +52,7 @@ def test_whatsapp_webhook_accepts_valid_secret(client, db_session):
     body = response.json()
     assert body["ok"] is True
     assert body["tenant_id"] == tenant.id
-    assert body["routing_strategy"] == "account_identity"
+    assert body["routing_strategy"] == "exact_chat_endpoint"
 
 
 def test_whatsapp_webhook_rejects_missing_secret(client_without_webhook_secret, db_session):

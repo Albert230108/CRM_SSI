@@ -1,4 +1,5 @@
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -60,6 +61,42 @@ def _lookup_whatsapp_endpoint_by_account_identity(db: Session, provider: str, ex
     )
 
 
+def _lookup_whatsapp_endpoint_by_exact_chat_identity(
+    db: Session,
+    *,
+    provider: str,
+    external_account_id: str,
+    chat_identity: str,
+) -> TenantChannelEndpoint | None:
+    if not provider or not external_account_id or not chat_identity:
+        return None
+    return (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.provider == provider,
+            TenantChannelEndpoint.external_account_id == external_account_id,
+            TenantChannelEndpoint.external_chat_namespace == chat_identity,
+            TenantChannelEndpoint.is_active.is_(True),
+        )
+        .first()
+    )
+
+
+def _whatsapp_endpoints_for_account_identity(db: Session, provider: str, external_account_id: str) -> list[TenantChannelEndpoint]:
+    if not provider or not external_account_id:
+        return []
+    return (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.provider == provider,
+            TenantChannelEndpoint.external_account_id == external_account_id,
+            TenantChannelEndpoint.is_active.is_(True),
+        )
+        .all()
+    )
+
 def _match_phone_tenant(db: Session, candidates: list[str]) -> tuple[Tenant | None, str | None, dict[int, Tenant]]:
     matched_tenants: dict[int, Tenant] = {}
     matched_value: str | None = None
@@ -93,7 +130,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
     explicit_tenant_id = _first_non_empty(payload.get("tenant_id"), query_params.get("tenant_id"), request_headers.get("x-tenant-id"), request_headers.get("X-Tenant-Id"))
     webhook_token = _first_non_empty(payload.get("webhook_token"), request_headers.get("x-webhook-token"), request_headers.get("X-Webhook-Token"), query_params.get("webhook_token"))
     external_phone_id = _first_non_empty(payload.get("external_phone_id"), query_params.get("external_phone_id"))
-    chat_namespace = _first_non_empty(payload.get("external_chat_namespace"), payload.get("whatsapp_chat_id"))
+    chat_identity = _first_non_empty(payload.get("external_chat_namespace"), payload.get("whatsapp_chat_id"))
     source = _first_non_empty(payload.get("source"))
     is_history_payload = bool(source and source.strip().lower() in {"history", "backfill"})
     inbound_phone_candidates = _normalized_phone_candidates(
@@ -127,18 +164,98 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                 return RoutingResult(tenant=tenant, strategy="webhook_token", matched_value=endpoint.webhook_token, matched_field="webhook_token")
 
     logger.info("Inbound WhatsApp normalized phone candidates: %s", inbound_phone_candidates)
-    if not is_history_payload and provider and external_account_id:
-        endpoint = _lookup_whatsapp_endpoint_by_account_identity(db, provider, external_account_id)
-        if endpoint:
-            tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
-            if tenant:
-                logger.info(
-                    "Resolved inbound tenant by account_identity tenant_id=%s provider=%s external_account_id=%s",
-                    tenant.id,
+    if provider and external_account_id:
+        active_endpoints_for_account = _whatsapp_endpoints_for_account_identity(db, provider, external_account_id)
+        if chat_identity:
+            endpoint = _lookup_whatsapp_endpoint_by_exact_chat_identity(
+                db,
+                provider=provider,
+                external_account_id=external_account_id,
+                chat_identity=chat_identity,
+            )
+            if endpoint:
+                tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
+                if tenant:
+                    logger.info(
+                        "Resolved inbound tenant by exact_chat_endpoint tenant_id=%s provider=%s external_account_id=%s chat_identity=%s history=%s",
+                        tenant.id,
+                        provider,
+                        external_account_id,
+                        chat_identity,
+                        is_history_payload,
+                    )
+                    return RoutingResult(
+                        tenant=tenant,
+                        strategy="exact_chat_endpoint",
+                        matched_value=chat_identity,
+                        matched_field="provider+external_account_id+external_chat_namespace",
+                    )
+
+            if active_endpoints_for_account:
+                logger.warning(
+                    "Unresolved inbound WhatsApp: no exact chat endpoint match provider=%s external_account_id=%s chat_identity=%s history=%s",
                     provider,
                     external_account_id,
+                    chat_identity,
+                    is_history_payload,
                 )
-                return RoutingResult(tenant=tenant, strategy="account_identity", matched_value=external_account_id, matched_field="provider+external_account_id")
+                return RoutingResult(
+                    tenant=None,
+                    strategy="unresolved",
+                    matched_value=chat_identity,
+                    matched_field="provider+external_account_id+external_chat_namespace",
+                    unresolved_reason="no_exact_chat_match",
+                )
+        else:
+            if active_endpoints_for_account:
+                allow_account_fallback = os.getenv("CRM_WHATSAPP_ALLOW_ACCOUNT_LEVEL_ENDPOINT_FALLBACK", "").strip().lower() in {"1", "true", "yes"}
+                if allow_account_fallback:
+                    if len(active_endpoints_for_account) == 1:
+                        endpoint = active_endpoints_for_account[0]
+                        tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
+                        if tenant:
+                            logger.warning(
+                                "Resolved inbound tenant by account_identity_fallback tenant_id=%s provider=%s external_account_id=%s history=%s",
+                                tenant.id,
+                                provider,
+                                external_account_id,
+                                is_history_payload,
+                            )
+                            return RoutingResult(
+                                tenant=tenant,
+                                strategy="account_identity_fallback",
+                                matched_value=external_account_id,
+                                matched_field="provider+external_account_id",
+                            )
+
+                    logger.warning(
+                        "Unresolved inbound WhatsApp: ambiguous_account_identity provider=%s external_account_id=%s endpoints=%s history=%s",
+                        provider,
+                        external_account_id,
+                        len(active_endpoints_for_account),
+                        is_history_payload,
+                    )
+                    return RoutingResult(
+                        tenant=None,
+                        strategy="ambiguous_account_identity",
+                        matched_value=external_account_id,
+                        matched_field="provider+external_account_id",
+                        unresolved_reason="ambiguous_account_identity",
+                    )
+
+                logger.warning(
+                    "Unresolved inbound WhatsApp: missing_chat_identity provider=%s external_account_id=%s history=%s",
+                    provider,
+                    external_account_id,
+                    is_history_payload,
+                )
+                return RoutingResult(
+                    tenant=None,
+                    strategy="missing_chat_identity",
+                    matched_value=external_account_id,
+                    matched_field="provider+external_account_id",
+                    unresolved_reason="missing_chat_identity",
+                )
 
     if _is_whatsapp_provider(provider) and inbound_phone_candidates:
         tenant, matched_value, matched_tenants = _match_phone_tenant(db, inbound_phone_candidates)
@@ -152,7 +269,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
     legacy_sources = [
         payload.get("recipient"),
         payload.get("to"),
-        chat_namespace,
+        chat_identity,
         external_phone_id,
         payload.get("tenant_email"),
         payload.get("email"),

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 
@@ -29,6 +29,7 @@ def ensure_whatsapp_endpoint_for_tenant(
         db.query(TenantChannelEndpoint)
         .filter(
             TenantChannelEndpoint.channel_type == WHATSAPP_CHANNEL_TYPE,
+            TenantChannelEndpoint.tenant_id == tenant.id,
             TenantChannelEndpoint.provider == WHATSAPP_PROVIDER,
             TenantChannelEndpoint.external_account_id == resolved_external_account_id,
         )

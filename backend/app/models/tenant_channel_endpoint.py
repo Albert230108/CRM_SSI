@@ -5,7 +5,7 @@ from app.database import Base
 
 class TenantChannelEndpoint(Base):
     __tablename__ = "tenant_channel_endpoints"
-    __table_args__ = (UniqueConstraint("channel_type", "provider", "external_account_id", name="uq_tenant_channel_endpoints_route"),)
+    __table_args__ = (UniqueConstraint("channel_type", "provider", "external_account_id", "external_chat_namespace", name="uq_tenant_channel_endpoints_route"),)
 
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)

@@ -244,7 +244,9 @@ def test_whatsapp_outbound_webhook_without_provider_message_id_uses_chat_account
 
 def test_live_inbound_whatsapp_message_appears_in_grouped_thread(client, db_session):
     tenant = create_tenant(db_session, booking_id="B-inbound-1")
-    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    endpoint.external_chat_namespace = "31612345678@c.us"
+    db_session.commit()
 
     response = client.post(
         "/webhooks/whatsapp",
@@ -263,7 +265,7 @@ def test_live_inbound_whatsapp_message_appears_in_grouped_thread(client, db_sess
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "account_identity"
+    assert payload["routing_strategy"] == "exact_chat_endpoint"
     assert payload["tenant_id"] == tenant.id
 
     thread_response = client.get(f"/api/communications/tenants/{tenant.id}/grouped-thread")
@@ -281,7 +283,9 @@ def test_live_inbound_whatsapp_message_appears_in_grouped_thread(client, db_sess
 
 def test_backfilled_whatsapp_message_appears_in_grouped_thread(client, db_session):
     tenant = create_tenant(db_session, booking_id="B-inbound-2")
-    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    endpoint.external_chat_namespace = "31612345678@c.us"
+    db_session.commit()
 
     response = client.post(
         "/webhooks/whatsapp",
