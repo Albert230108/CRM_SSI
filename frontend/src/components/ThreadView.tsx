@@ -478,6 +478,9 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
       await loadGroupedThread()
       setReplyMessage('')
       setReplySubject('')
+      if (replyTarget.type === 'whatsapp') {
+        setSelectedWhatsappGroup(null)
+      }
       setReplyTarget(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message')
@@ -611,40 +614,6 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
                   {expanded ? (
                     <div className="border-t border-gray-200 bg-white px-4 py-3">
-                      {replyTarget?.type === 'email' && replyTarget.threadId === item.id ? (
-                        <form onSubmit={handleSendReply} className="mb-4 space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
-                          <input
-                            value={replySubject}
-                            onChange={(event) => setReplySubject(event.target.value)}
-                            placeholder={item.subject || 'Subject'}
-                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-                          />
-                          <textarea
-                            value={replyMessage}
-                            onChange={(event) => setReplyMessage(event.target.value)}
-                            rows={4}
-                            placeholder="Write your reply..."
-                            disabled={replySending}
-                            className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-                          />
-                          <div className="flex items-center justify-between gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setReplyTarget(null)}
-                              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              disabled={replySending || !replyMessage.trim()}
-                              className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {replySending ? 'Sending...' : 'Send'}
-                            </button>
-                          </div>
-                        </form>
-                      ) : null}
                       <div className="space-y-3">
                         {timelineEntries.map((entry) => {
                           if (entry.kind === 'email') {
@@ -888,6 +857,78 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         </div>
       ) : null}
 
+      {replyTarget?.type === 'email' ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm"
+          onClick={() => setReplyTarget(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="email-reply-modal-title"
+            className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-gray-200 px-6 py-5">
+              <h3 id="email-reply-modal-title" className="text-lg font-semibold text-gray-900">
+                Reply to Email
+              </h3>
+              <button
+                type="button"
+                onClick={() => setReplyTarget(null)}
+                className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={handleSendReply} className="space-y-4 px-6 py-5">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500 mb-2">
+                  Subject
+                </label>
+                <input
+                  value={replySubject}
+                  onChange={(event) => setReplySubject(event.target.value)}
+                  placeholder={replyTarget.subject || 'Subject'}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500 mb-2">
+                  Message
+                </label>
+                <textarea
+                  value={replyMessage}
+                  onChange={(event) => setReplyMessage(event.target.value)}
+                  rows={6}
+                  placeholder="Write your reply..."
+                  disabled={replySending}
+                  className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3 border-t border-gray-200 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setReplyTarget(null)}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={replySending || !replyMessage.trim()}
+                  className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {replySending ? 'Sending...' : 'Send Reply'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
 
       {tenantId ? (
         <LinkChatModal

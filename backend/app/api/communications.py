@@ -19,10 +19,44 @@ from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
 from app.services.whatsapp_client import WhatsAppBridgeError, send_whatsapp_message
+from cryptography.fernet import Fernet
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
+import os
 
 router = APIRouter(prefix="/communications", tags=["communications"])
 logger = logging.getLogger(__name__)
 PROVIDER_GMAIL = "gmail"
+
+
+def _decrypt_refresh_token(encrypted_refresh_token: str | None) -> str | None:
+    if not encrypted_refresh_token:
+        return None
+    try:
+        key = os.getenv("GMAIL_TOKEN_ENCRYPTION_KEY")
+        if not key:
+            return None
+        cipher = Fernet(key.encode("utf-8"))
+        return cipher.decrypt(encrypted_refresh_token.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return None
+
+
+def _build_gmail_credentials(account: GmailAccount) -> Credentials | None:
+    refresh_token = _decrypt_refresh_token(account.refresh_token_encrypted)
+    if not refresh_token:
+        return None
+    credentials = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
+        client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
+        client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+        scopes=account.scopes_json or ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
+    )
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(GoogleAuthRequest())
+    return credentials
 
 
 class WhatsAppOutboundResolutionRead(BaseModel):
@@ -327,13 +361,13 @@ async def send_tenant_communication(
         if not to_email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot determine recipient email for this thread")
 
-        credentials_info = account.credentials_json or {}
-        if not credentials_info:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing")
+        credentials = _build_gmail_credentials(account)
+        if not credentials:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing or could not be decrypted")
 
         try:
             gmail_result = send_gmail_reply(
-                credentials_info,
+                credentials,
                 thread_id=conversation.provider_thread_id,
                 to_email=to_email,
                 subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),

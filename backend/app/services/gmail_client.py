@@ -54,7 +54,7 @@ def _find_tenant(db: Session, headers: list[dict[str, Any]]) -> Tenant | None:
 
 
 def send_gmail_reply(
-    credentials_info: dict[str, Any],
+    credentials: Credentials,
     *,
     thread_id: str,
     to_email: str,
@@ -64,7 +64,7 @@ def send_gmail_reply(
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
 ) -> dict[str, Any]:
-    service = _build_service(credentials_info)
+    service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
     message = EmailMessage()
     message["To"] = to_email
