@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,8 +12,6 @@ from app.models.user import User
 from app.schemas.user import InviteCreate, InviteRead, PasswordResetRequestCreate, UserRead, UserUpdate
 from app.services.email_service import send_email
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/users", tags=["users"])
 INVITATION_HOURS = 72
 RESET_HOURS = 24
@@ -26,9 +23,7 @@ def _public_base_url() -> str:
 
 @router.get("/", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])
 def list_users(db: Session = Depends(get_db)) -> list[User]:
-    users = db.query(User).order_by(User.id).all()
-    logger.info(f"list_users: found {len(users)} users: {[{'id': u.id, 'email': u.email, 'admin': u.is_admin} for u in users]}")
-    return users
+    return db.query(User).order_by(User.id).all()
 
 
 @router.put("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_admin_user)])
