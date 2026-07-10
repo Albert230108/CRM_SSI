@@ -128,6 +128,14 @@ def _find_outbound_communication(
             return communication, "provider_message_id"
 
     if external_account_id:
+        # This fallback exists to "upgrade" a placeholder row created when the CRM sends a
+        # message live (before WhatsApp confirms delivery with a provider_message_id) once that
+        # ID arrives. It must NEVER match a row that already has its own distinct
+        # provider_message_id — otherwise every subsequent outbound message in the same chat
+        # whose ID lookup finds nothing (e.g. a genuinely new historical message during backfill)
+        # falls through to here and silently overwrites the most recent already-confirmed
+        # message's text while leaving its original created_at/direction untouched, corrupting
+        # unrelated history.
         for match_field, match_value in (
             ("whatsapp_identity_key", whatsapp_identity_key),
             ("whatsapp_chat_id", whatsapp_chat_id),
@@ -141,6 +149,7 @@ def _find_outbound_communication(
                     Communication.channel == "whatsapp",
                     Communication.direction == "outbound",
                     Communication.external_account_id == external_account_id,
+                    Communication.provider_message_id.is_(None),
                     getattr(Communication, match_field) == match_value,
                 )
                 .order_by(Communication.created_at.desc(), Communication.id.desc())
@@ -165,6 +174,7 @@ def _apply_outbound_metadata(
     provider_message_id: str | None,
     subject: str | None,
     message: str,
+    created_at: datetime | None = None,
 ) -> None:
     if provider is not None:
         communication.provider = provider
@@ -184,6 +194,12 @@ def _apply_outbound_metadata(
         communication.provider_message_id = provider_message_id
     if subject is not None:
         communication.subject = subject
+    if created_at is not None:
+        # Only ever passed when the match was an exact provider_message_id hit — that proves
+        # it's genuinely the same WhatsApp message, so re-syncing may correct a timestamp a
+        # prior (buggy) import got wrong. Never applied for the identity-key fallback match,
+        # since that path matches a *different* placeholder row by design.
+        communication.created_at = created_at
     communication.message = message
 
 
@@ -272,6 +288,7 @@ def persist_whatsapp_outbound_communication(
             provider_message_id=normalized_provider_message_id,
             subject=normalized_subject,
             message=normalized_message,
+            created_at=created_at if match_strategy == "provider_message_id" else None,
         )
 
     try:
@@ -303,6 +320,7 @@ def persist_whatsapp_outbound_communication(
             provider_message_id=normalized_provider_message_id,
             subject=normalized_subject,
             message=normalized_message,
+            created_at=created_at if match_strategy == "provider_message_id" else None,
         )
         db.commit()
 

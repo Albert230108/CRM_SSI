@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
@@ -240,6 +242,105 @@ def test_whatsapp_outbound_webhook_without_provider_message_id_uses_chat_account
     assert len(saved) == 1
     assert saved[0].provider_message_id == "msg-outbound-fallback"
 
+
+
+def test_distinct_historical_outbound_messages_in_same_chat_do_not_clobber_each_other(client, db_session):
+    # Regression test: two distinct real WhatsApp outbound messages in the same chat, synced
+    # via history backfill in the same account, must land as two separate rows with their own
+    # text and timestamp — not merged into one via the identity-key fallback matcher.
+    tenant = create_tenant(db_session, booking_id="B-outbound-no-clobber")
+    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+
+    older = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "outbound",
+            "source": "history",
+            "provider": "whatsapp-service",
+            "tenant_id": tenant.id,
+            "external_account_id": "edi-crm-whatsapp",
+            "whatsapp_chat_id": "31612345678@c.us",
+            "whatsapp_message_id": "msg-history-outbound-older",
+            "timestamp": 1700000000,  # 2023-11-14
+            "message": "Older outbound message",
+        },
+    )
+    newer = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "outbound",
+            "source": "history",
+            "provider": "whatsapp-service",
+            "tenant_id": tenant.id,
+            "external_account_id": "edi-crm-whatsapp",
+            "whatsapp_chat_id": "31612345678@c.us",
+            "whatsapp_message_id": "msg-history-outbound-newer",
+            "timestamp": 1783684740,  # 2026-07-10
+            "message": "why wont you sync?",
+        },
+    )
+
+    assert older.status_code == 200
+    assert newer.status_code == 200
+
+    saved = (
+        db_session.query(Communication)
+        .filter(Communication.tenant_id == tenant.id, Communication.channel == "whatsapp", Communication.direction == "outbound")
+        .order_by(Communication.created_at.asc())
+        .all()
+    )
+    assert len(saved) == 2, "each distinct message must get its own row, not overwrite the other"
+
+    by_id = {row.provider_message_id: row for row in saved}
+    assert by_id["msg-history-outbound-older"].message == "Older outbound message"
+    assert by_id["msg-history-outbound-newer"].message == "why wont you sync?"
+    # The newer message's own timestamp must not have leaked onto the older row (or vice versa).
+    assert by_id["msg-history-outbound-older"].created_at < by_id["msg-history-outbound-newer"].created_at
+
+
+def test_resync_self_heals_a_previously_corrupted_outbound_row(client, db_session):
+    # Simulates the aftermath of the old bug: a row whose provider_message_id already matches
+    # the true message (so it WILL be found by the exact-ID lookup) but whose created_at was
+    # left wrong by a prior buggy import. Re-syncing that exact message must correct created_at.
+    tenant = create_tenant(db_session, booking_id="B-outbound-selfheal")
+    create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+
+    corrupted = Communication(
+        tenant_id=tenant.id,
+        channel="whatsapp",
+        direction="outbound",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        whatsapp_chat_id="31612345678@c.us",
+        whatsapp_identity_key="31612345678@c.us",
+        provider_message_id="msg-history-outbound-newer",
+        message="why wont you sync?",
+        created_at=datetime(2026, 2, 7, tzinfo=timezone.utc),
+    )
+    db_session.add(corrupted)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "outbound",
+            "source": "history",
+            "provider": "whatsapp-service",
+            "tenant_id": tenant.id,
+            "external_account_id": "edi-crm-whatsapp",
+            "whatsapp_chat_id": "31612345678@c.us",
+            "whatsapp_message_id": "msg-history-outbound-newer",
+            "timestamp": 1783684740,  # 2026-07-10
+            "message": "why wont you sync?",
+        },
+    )
+    assert response.status_code == 200
+
+    saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-history-outbound-newer").all()
+    assert len(saved) == 1
+    db_session.refresh(saved[0])
+    assert saved[0].created_at.year == 2026
+    assert saved[0].created_at.month == 7
 
 
 def test_live_inbound_whatsapp_message_appears_in_grouped_thread(client, db_session):

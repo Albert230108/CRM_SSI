@@ -40,6 +40,30 @@ that loop never executes, so it silently returns only whatever's already cached 
 (sometimes just one message), which is *worse* than the old 100-message cap. A large finite
 number keeps the loop running until `loadEarlierMsgs` genuinely has nothing left to return.
 
+## Outbound history import no longer overwrites unrelated messages
+
+`persist_whatsapp_outbound_communication` matches an incoming outbound message to an existing
+`Communication` row two ways: (1) exact `provider_message_id` match, or (2) as a fallback, by
+chat identity (`whatsapp_identity_key`/`whatsapp_chat_id`) — the fallback exists to "upgrade" a
+placeholder row created when the CRM sends a message live, before WhatsApp confirms it with a
+real message ID.
+
+That fallback previously matched *any* existing outbound row for the chat, including rows that
+already had their own distinct `provider_message_id`. During full-history backfill, every fetched
+historical message whose own ID lookup found nothing correctly fell through to this fallback —
+and silently overwrote the most recent already-confirmed message's `message` text in place,
+leaving that row's original `created_at` untouched. Symptom: a message imports with the right
+text but an unrelated (often much older) timestamp, and the message it actually overwrote is
+gone.
+
+Fixed by scoping the fallback to rows where `provider_message_id IS NULL` — it can only ever
+match true unconfirmed placeholders now, never a different already-identified message. As a
+self-heal for rows already corrupted by the old bug, an exact `provider_message_id` match (which
+*proves* it's the same message) now also refreshes `created_at` — so re-running "Resync full
+history" both stops new corruption and repairs previously-corrupted rows' timestamps, and
+recreates any message that got overwritten (since the true `provider_message_id` for that
+overwritten message no longer collides with anything once found and can be created fresh).
+
 ## Thread view only shows the linked chat's messages
 
 Before a manual link exists, a thread's WhatsApp messages are attributed by looser strategies
