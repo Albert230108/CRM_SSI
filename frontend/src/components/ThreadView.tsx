@@ -108,11 +108,10 @@ const renderMessageBody = (message: Pick<TimelineMessage, 'body' | 'body_text' |
 }
 type EmailThreadItem = {
   type: 'email_thread'
-  id: number
+  thread_id: number
   provider_account_id: number | null
   provider_account_email: string | null
   provider_account_display_name: string | null
-  thread_id: number
   provider_thread_id: string
   subject: string | null
   preview_text: string | null
@@ -449,6 +448,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
           message: replyMessage,
           email_thread_id: replyTarget.threadId,
         }
+        console.info('[crm] Email reply request:', { tenantId, replyTarget, requestBody })
         const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
           method: 'POST',
           headers: {
@@ -459,7 +459,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         })
         if (!response.ok) {
           const payload = await response.json().catch(() => null)
-          console.error('[crm] Email send error:', { status: response.status, payload })
+          console.error('[crm] Email send error:', { status: response.status, payload, requestBody })
           throw new Error(payload?.detail || 'Failed to send email')
         }
       } else if (replyTarget.type === 'whatsapp') {
@@ -577,7 +577,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         <div className="space-y-4">
           {items.map((item) => {
             if (item.type === 'email_thread') {
-              const expanded = expandedConversationIds.includes(item.id)
+              const expanded = expandedConversationIds.includes(item.thread_id)
               const latestMessage = item.messages[item.messages.length - 1]
               const timelineEntries = [
                 ...item.messages.map((messageItem) => ({
@@ -592,9 +592,9 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 })),
               ].sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
               return (
-                <article key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50">
+                <article key={item.thread_id} className="rounded-2xl border border-gray-200 bg-gray-50">
                   <div
-                    onClick={() => toggleConversation(item.id)}
+                    onClick={() => toggleConversation(item.thread_id)}
                     className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left"
                   >
                     <div className="min-w-0 flex-1">
@@ -616,8 +616,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (!expanded) toggleConversation(item.id)
-                          setReplyTarget({ type: 'email', threadId: item.id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
+                          if (!expanded) toggleConversation(item.thread_id)
+                          setReplyTarget({ type: 'email', threadId: item.thread_id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
                         }}
                         className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
                       >
