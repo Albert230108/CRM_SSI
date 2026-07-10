@@ -1,0 +1,112 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { backfillAllChats } = require('../src/whatsappClient');
+
+function makeChat(id, messageCount, { withEligibleIdentity = true } = {}) {
+  const messages = Array.from({ length: messageCount }, (_, index) => ({
+    timestamp: 1710000000 + index,
+    body: `Message ${index + 1}`,
+    fromMe: false,
+    from: id,
+    to: '15550000000@c.us',
+    id: { _serialized: `${id}-msg-${index + 1}` },
+  }));
+
+  return {
+    id: { _serialized: id },
+    isGroup: false,
+    syncHistory: async () => {},
+    fetchMessages: async ({ limit }) => (Number.isFinite(limit) ? messages.slice(-limit) : messages),
+    __withEligibleIdentity: withEligibleIdentity,
+  };
+}
+
+async function withMockedForward(t, run) {
+  const originalEnv = {
+    CRM_API_BASE_URL: process.env.CRM_API_BASE_URL,
+    CRM_WEBHOOK_URL: process.env.CRM_WEBHOOK_URL,
+    CRM_WEBHOOK_SECRET: process.env.CRM_WEBHOOK_SECRET,
+  };
+  const originalFetch = global.fetch;
+  process.env.CRM_API_BASE_URL = 'http://crm.test';
+  process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
+  process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
+
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+    json: async () => ({ ok: true }),
+    text: async () => '',
+  });
+
+  try {
+    await run();
+  } finally {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test('backfillAllChats pulls full history (not capped) for CRM-eligible chats by default', async (t) => {
+  await withMockedForward(t, async () => {
+    // 150 messages in the chat; the old default cap (limit=100) would have silently dropped
+    // the oldest 50. A manually linked chat is CRM-eligible via its identity index below.
+    const chat = makeChat('326472368@lid', 150);
+
+    const result = await backfillAllChats({
+      all: false,
+      clientOverride: { getChats: async () => [chat] },
+      readyOverride: true,
+      limit: 100,
+      postSyncDelayMs: 0,
+      eligibleIdentityIndex: { chatIds: new Set(['326472368@lid']), phoneNumbers: new Set() },
+    });
+
+    assert.equal(result.scope, 'crm_scoped');
+    assert.equal(result.total_synced_chats, 1);
+    assert.equal(result.fetched, 150, 'expected every message in the chat to be fetched, not just the last 100');
+    assert.equal(result.imported, 150);
+  });
+});
+
+test('backfillAllChats keeps the capped limit for the broad all=true sweep', async (t) => {
+  await withMockedForward(t, async () => {
+    const chat = makeChat('31699999999@c.us', 150);
+
+    const result = await backfillAllChats({
+      all: true,
+      clientOverride: { getChats: async () => [chat] },
+      readyOverride: true,
+      limit: 100,
+      postSyncDelayMs: 0,
+    });
+
+    assert.equal(result.scope, 'all');
+    assert.equal(result.fetched, 100, 'the indiscriminate all=true sweep should still respect the cap');
+  });
+});
+
+test('backfillAllChats with chatId targets exactly one chat and forces full history', async (t) => {
+  await withMockedForward(t, async () => {
+    const target = makeChat('326472368@lid', 250);
+    const other = makeChat('31699999999@c.us', 250);
+
+    const result = await backfillAllChats({
+      all: false,
+      chatId: '326472368@lid',
+      clientOverride: { getChats: async () => [target, other] },
+      readyOverride: true,
+      limit: 100,
+      postSyncDelayMs: 0,
+    });
+
+    assert.equal(result.total_chats_in_whatsapp, 1, 'only the targeted chat should be considered');
+    assert.equal(result.fetched, 250);
+    assert.equal(result.imported, 250);
+  });
+});

@@ -596,7 +596,13 @@ function sleep(ms) {
 }
 
 async function backfillChatHistory(chat, options = {}) {
-  const limit = Math.max(1, Number.parseInt(String(options.limit || whatsappHistoryBackfillLimit || 100), 10) || whatsappHistoryBackfillLimit || 100);
+  // fullHistory pulls the entire chat history from the store (no page cap) instead of the
+  // last `limit` messages. Used for CRM-eligible chats (including manually linked ones), since
+  // capping at whatsappHistoryBackfillLimit (default 100) silently truncated older messages.
+  const fullHistory = Boolean(options.fullHistory);
+  const limit = fullHistory
+    ? Infinity
+    : Math.max(1, Number.parseInt(String(options.limit || whatsappHistoryBackfillLimit || 100), 10) || whatsappHistoryBackfillLimit || 100);
   if (!chat) {
     return { imported: 0, deduped: 0, failed: 0, inbound: 0, outbound: 0, fetched: 0 };
   }
@@ -712,7 +718,16 @@ async function backfillChatHistory(chat, options = {}) {
   return { imported, deduped, failed, inbound, outbound, fetched };
 }
 
-async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSyncDelayMs = 0, clientOverride = null, readyOverride = null, all = false, eligibleIdentityIndex = null, fetchEligibleIdentityIndex = fetchCrmEligibleChatIdentities } = {}) {
+async function backfillAllChats({
+  limit = whatsappHistoryBackfillLimit,
+  postSyncDelayMs = 0,
+  clientOverride = null,
+  readyOverride = null,
+  all = false,
+  chatId = null,
+  eligibleIdentityIndex = null,
+  fetchEligibleIdentityIndex = fetchCrmEligibleChatIdentities,
+} = {}) {
   const activeClient = clientOverride || client;
   const isClientReady = readyOverride ?? ready;
   if (!activeClient || !isClientReady) {
@@ -720,9 +735,14 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
   }
 
   const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
-  const orderedChats = Array.isArray(chats)
+  let orderedChats = Array.isArray(chats)
     ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
     : [];
+
+  const targetChatId = chatId ? String(chatId).trim() : null;
+  if (targetChatId) {
+    orderedChats = orderedChats.filter((chat) => String(getChatId(chat) || "") === targetChatId);
+  }
 
   let resolvedEligibleIdentityIndex = eligibleIdentityIndex;
   let crmLookupFailed = null;
@@ -743,20 +763,22 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
   }
 
   const crmEligibleChats = orderedChats.filter((chat) => isCrmEligibleChat(chat, resolvedEligibleIdentityIndex));
-  const chatsToSync = all ? orderedChats : crmEligibleChats;
+  const chatsToSync = targetChatId ? orderedChats : (all ? orderedChats : crmEligibleChats);
   const skippedChats = orderedChats.length - chatsToSync.length;
 
-  for (const chat of orderedChats) {
-    if (all || isCrmEligibleChat(chat, resolvedEligibleIdentityIndex)) {
-      continue;
+  if (!targetChatId) {
+    for (const chat of orderedChats) {
+      if (all || isCrmEligibleChat(chat, resolvedEligibleIdentityIndex)) {
+        continue;
+      }
+      console.info(JSON.stringify({
+        event: "whatsapp_history_chat_skipped",
+        chat_id: getChatId(chat),
+        chat_name: getChatName(chat),
+        reason: describeChatSkipReason(chat, resolvedEligibleIdentityIndex),
+        scope: "crm_scoped",
+      }));
     }
-    console.info(JSON.stringify({
-      event: "whatsapp_history_chat_skipped",
-      chat_id: getChatId(chat),
-      chat_name: getChatName(chat),
-      reason: describeChatSkipReason(chat, resolvedEligibleIdentityIndex),
-      scope: "crm_scoped",
-    }));
   }
 
   let imported = 0;
@@ -766,9 +788,15 @@ async function backfillAllChats({ limit = whatsappHistoryBackfillLimit, postSync
   let outbound = 0;
   let fetched = 0;
 
+  // CRM-eligible chats (including manually linked ones) are a small, deliberately-selected set,
+  // so it's safe and correct to pull their *entire* history rather than the last `limit`
+  // messages. Only the broad "all"-scope sweep (every chat in the account) keeps the cap, to
+  // avoid pulling massive irrelevant history for every random contact.
+  const fullHistory = Boolean(targetChatId) || !all;
+
   for (const chat of chatsToSync) {
     try {
-      const result = await backfillChatHistory(chat, { limit, postSyncDelayMs });
+      const result = await backfillChatHistory(chat, { limit, postSyncDelayMs, fullHistory });
       imported += result.imported;
       deduped += result.deduped;
       failed += result.failed;

@@ -125,3 +125,46 @@ async def fetch_whatsapp_chats(
 
     chats = payload.get("chats") if isinstance(payload, dict) else None
     return chats if isinstance(chats, list) else []
+
+
+async def resync_whatsapp_chat(external_account_id: str, chat_id: str) -> dict[str, Any]:
+    """Force a full-history resync of a single chat (used to backfill everything for a chat
+    that was just manually linked, rather than waiting for the next scheduled sweep).
+
+    Targeting a single chat_id makes backfillAllChats pull its *entire* history rather than the
+    capped default, so this also fixes chats that were previously synced with only their most
+    recent messages.
+    """
+    service_url = _resolve_service_url(external_account_id)
+    if not service_url:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge URL is not configured for this account")
+    if not WHATSAPP_API_KEY:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge API key is not configured")
+
+    url = urljoin(service_url.rstrip("/") + "/", "admin/backfill")
+    timeout = httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, headers={"X-API-Key": WHATSAPP_API_KEY}, json={"chatId": chat_id})
+    except httpx.TimeoutException as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge request timed out") from exc
+    except httpx.RequestError as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge is unavailable") from exc
+
+    if not response.is_success:
+        error_message = "Failed to resync WhatsApp chat history"
+        try:
+            body = response.json()
+            if isinstance(body, dict) and body.get("error"):
+                error_message = str(body["error"])
+        except ValueError:
+            pass
+        status_code = response.status_code if response.status_code in {400, 401, 403, 404} else (
+            status.HTTP_502_BAD_GATEWAY if response.status_code < 500 else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+        raise WhatsAppBridgeError(status_code, error_message)
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned invalid JSON") from exc

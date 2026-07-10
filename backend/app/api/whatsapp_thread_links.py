@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,7 @@ from app.schemas.whatsapp_thread_link import (
     WhatsAppAccountRead,
     WhatsAppChatRead,
 )
-from app.services.whatsapp_chat_directory import fetch_whatsapp_chats, list_whatsapp_accounts
+from app.services.whatsapp_chat_directory import fetch_whatsapp_chats, list_whatsapp_accounts, resync_whatsapp_chat
 from app.services.whatsapp_client import WhatsAppBridgeError
 
 router = APIRouter(tags=["whatsapp-thread-links"])
@@ -53,6 +53,14 @@ def _to_link_read(endpoint: TenantChannelEndpoint) -> ThreadWhatsAppLinkRead:
         created_at=endpoint.created_at,
         updated_at=endpoint.updated_at,
     )
+
+
+async def _run_resync(external_account_id: str, chat_id: str) -> None:
+    try:
+        result = await resync_whatsapp_chat(external_account_id, chat_id)
+        logger.info("whatsapp_thread_link_resync_completed external_account_id=%s chat_id=%s result=%s", external_account_id, chat_id, result)
+    except WhatsAppBridgeError as exc:
+        logger.warning("whatsapp_thread_link_resync_failed external_account_id=%s chat_id=%s error=%s", external_account_id, chat_id, exc)
 
 
 def _active_whatsapp_links_query(db: Session):
@@ -145,6 +153,7 @@ def get_thread_whatsapp_links(
 def create_thread_whatsapp_link(
     thread_id: int,
     payload: ThreadWhatsAppLinkCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ThreadWhatsAppLinkRead:
@@ -227,6 +236,11 @@ def create_thread_whatsapp_link(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This WhatsApp chat is already linked elsewhere") from exc
     db.refresh(new_link)
 
+    # Force a full-history resync for the newly linked chat instead of waiting for the next
+    # scheduled sweep, and so this pulls the chat's *entire* history rather than only whatever
+    # was captured by a previous capped sync.
+    background_tasks.add_task(_run_resync, external_account_id, chat_id)
+
     if existing_thread_link is not None:
         logger.info(
             "whatsapp_thread_link_replaced thread_id=%s provider=%s external_account_id=%s old_chat_id=%s new_chat_id=%s "
@@ -249,6 +263,43 @@ def create_thread_whatsapp_link(
         )
 
     return _to_link_read(new_link)
+
+
+@router.post("/threads/{thread_id}/whatsapp-links/{link_id}/resync", response_model=ThreadWhatsAppLinkRead)
+def resync_thread_whatsapp_link(
+    thread_id: int,
+    link_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ThreadWhatsAppLinkRead:
+    """Force a full-history resync of an already-linked chat, e.g. if it was linked before the
+    full-history fix shipped and only its most recent messages were imported."""
+    _get_tenant_or_404(db, thread_id)
+    link = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.id == link_id,
+            TenantChannelEndpoint.tenant_id == thread_id,
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.is_active.is_(True),
+        )
+        .first()
+    )
+    if link is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active WhatsApp link not found")
+
+    background_tasks.add_task(_run_resync, link.external_account_id, link.external_chat_namespace)
+    logger.info(
+        "whatsapp_thread_link_resync_requested thread_id=%s link_id=%s provider=%s external_account_id=%s chat_id=%s actor_user_id=%s",
+        thread_id,
+        link_id,
+        link.provider,
+        link.external_account_id,
+        link.external_chat_namespace,
+        current_user.id,
+    )
+    return _to_link_read(link)
 
 
 @router.delete("/threads/{thread_id}/whatsapp-links/{link_id}", response_model=ThreadWhatsAppLinkRead)

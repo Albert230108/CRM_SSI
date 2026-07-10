@@ -221,6 +221,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [whatsappLinks, setWhatsappLinks] = useState<ThreadWhatsappLink[]>([])
   const [showLinkChatModal, setShowLinkChatModal] = useState(false)
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
+  const [resyncingId, setResyncingId] = useState<number | null>(null)
+  const [resyncedIds, setResyncedIds] = useState<number[]>([])
   const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp')
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
@@ -380,6 +382,27 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     }
   }
 
+  const handleResyncWhatsappChat = async (link: ThreadWhatsappLink) => {
+    if (!tenantId || resyncingId) return
+    try {
+      setResyncingId(link.id)
+      setError('')
+      const response = await fetch(`${API_BASE_URL}/api/threads/${tenantId}/whatsapp-links/${link.id}/resync`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || 'Failed to resync WhatsApp chat history')
+      }
+      setResyncedIds((current) => (current.includes(link.id) ? current : [...current, link.id]))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resync WhatsApp chat history')
+    } finally {
+      setResyncingId(null)
+    }
+  }
+
   const handleSend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!tenantId || !message.trim() || sending) return
@@ -468,6 +491,15 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={resyncingId === link.id}
+                      onClick={() => handleResyncWhatsappChat(link)}
+                      title="Pull the chat's entire history again (fixes chats that were only partially synced)"
+                      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50"
+                    >
+                      {resyncingId === link.id ? 'Resyncing...' : resyncedIds.includes(link.id) ? 'Resync queued' : 'Resync full history'}
+                    </button>
                     <button
                       type="button"
                       onClick={() => setShowLinkChatModal(true)}

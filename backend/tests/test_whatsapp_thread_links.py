@@ -143,6 +143,33 @@ def test_permissions_require_authentication(client_without_webhook_secret, db_se
     assert response.status_code == 401
 
 
+def test_create_link_triggers_background_resync(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-resync")
+    payload = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "326472368@lid"}
+    with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(return_value={"ok": True, "fetched": 250})) as mocked_resync:
+        response = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload)
+    assert response.status_code == 200
+    mocked_resync.assert_awaited_once_with("edi-crm-whatsapp", "326472368@lid")
+
+
+def test_explicit_resync_endpoint_triggers_full_history_pull(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-resync-explicit")
+    payload = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "326472368@lid"}
+    with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(return_value={"ok": True})):
+        created = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload).json()
+
+    with patch("app.api.whatsapp_thread_links.resync_whatsapp_chat", new=AsyncMock(return_value={"ok": True, "fetched": 250})) as mocked_resync:
+        response = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links/{created['id']}/resync")
+    assert response.status_code == 200
+    mocked_resync.assert_awaited_once_with("edi-crm-whatsapp", "326472368@lid")
+
+
+def test_resync_rejects_unknown_link(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-resync-404")
+    response = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links/999999/resync")
+    assert response.status_code == 404
+
+
 def test_manual_link_feeds_crm_backfill_identities_payload(user_client, db_session):
     tenant = create_tenant(db_session, booking_id="B-backfill")
     payload = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "326472368@lid"}

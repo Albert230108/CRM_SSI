@@ -14,6 +14,21 @@ The linked chat then becomes the source of truth for that thread's WhatsApp iden
 routing, CRM backfill eligibility, and the thread UI all key off the exact `chat_id` you picked
 (for example `326472368@lid`).
 
+## Full-history sync on link
+
+Linking a chat automatically queues a background full-history resync of that chat (and it's
+retriggerable any time from the thread's linked-chat panel via **Resync full history**, or by
+calling `POST /api/threads/{thread_id}/whatsapp-links/{link_id}/resync`).
+
+This matters because `whatsapp-service`'s regular history sweep caps each chat at
+`WHATSAPP_HISTORY_BACKFILL_LIMIT` (default 100) messages — fine for the broad "every chat in the
+account" sweep, but it silently truncated older messages for chats with more history than that.
+CRM-eligible chats (including manually linked ones) now always pull their *entire* history —
+`chat.fetchMessages({ limit: Infinity })` — instead of being capped, so nothing older gets
+dropped. Only the indiscriminate `all=true` sweep (which touches every WhatsApp chat, not just
+CRM-relevant ones) still respects the cap, to avoid pulling unbounded history for irrelevant
+contacts.
+
 ## Why CHAT_ID is the primary selector
 
 Phone-number inference is unreliable for WhatsApp `@lid` chats (linked-device identities that
