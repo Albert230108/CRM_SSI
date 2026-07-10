@@ -57,6 +57,7 @@ class WhatsAppChatResyncResult(BaseModel):
     fetched: int = 0
     imported: int = 0
     deduped: int = 0
+    skipped_no_content: int = 0
     failed: int = 0
     error: str | None = None
 

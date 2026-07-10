@@ -400,11 +400,17 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
       if (!response.ok) {
         throw new Error(payload?.detail || 'Failed to resync WhatsApp chat history')
       }
-      const resync = payload?.resync as { ok: boolean; fetched: number; imported: number; error?: string | null } | undefined
+      const resync = payload?.resync as
+        | { ok: boolean; fetched: number; imported: number; deduped: number; skipped_no_content: number; error?: string | null }
+        | undefined
       if (!resync?.ok) {
         throw new Error(resync?.error || 'Failed to resync WhatsApp chat history')
       }
-      setResyncResults((current) => ({ ...current, [link.id]: `Done: ${resync.fetched} messages fetched, ${resync.imported} imported` }))
+      const skippedSuffix = resync.skipped_no_content > 0 ? `, ${resync.skipped_no_content} had no content (call logs/system events)` : ''
+      setResyncResults((current) => ({
+        ...current,
+        [link.id]: `Done: ${resync.fetched} fetched, ${resync.imported} imported, ${resync.deduped} already synced${skippedSuffix}`,
+      }))
       await reloadWhatsappLinks()
       await loadGroupedThread()
     } catch (err) {

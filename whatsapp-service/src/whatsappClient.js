@@ -349,6 +349,39 @@ function describeChatSkipReason(chat, eligibleIdentityIndex) {
   return "no_crm_identity_match";
 }
 
+// Message types that carry real conversational content but have no `body`/`caption` text of
+// their own (media, location, contacts, etc.) — these get a readable placeholder instead of
+// being silently dropped. Types NOT listed here (call logs, e2e/group notifications, revoked
+// "message deleted" placeholders, unknown system events) genuinely have nothing to show and are
+// skipped on purpose.
+const MEDIA_TYPE_LABELS = {
+  image: "[Image]",
+  video: "[Video]",
+  audio: "[Audio]",
+  ptt: "[Voice message]",
+  sticker: "[Sticker]",
+  document: "[Document]",
+  location: "[Location]",
+  vcard: "[Contact card]",
+  multi_vcard: "[Contact cards]",
+  order: "[Order]",
+  product: "[Product]",
+  poll_creation: "[Poll]",
+  list: "[List message]",
+  buttons_response: "[Button reply]",
+  template_button_reply: "[Button reply]",
+};
+
+function describeMediaPlaceholder(message) {
+  const type = message?.type;
+  const label = MEDIA_TYPE_LABELS[type];
+  if (!label) {
+    return null;
+  }
+  const filename = message?.filename || message?._data?.filename;
+  return filename ? `${label} ${filename}` : label;
+}
+
 function extractText(message) {
   for (const key of ["body", "caption", "text", "content"]) {
     const value = message?.[key];
@@ -356,7 +389,7 @@ function extractText(message) {
       return String(value);
     }
   }
-  return "";
+  return describeMediaPlaceholder(message) || "";
 }
 
 function normalizeHistoryValue(value) {
@@ -663,6 +696,7 @@ async function backfillChatHistory(chat, options = {}) {
 
   let imported = 0;
   let deduped = 0;
+  let skippedNoContent = 0;
   let failed = 0;
   let inbound = 0;
   let outbound = 0;
@@ -681,7 +715,15 @@ async function backfillChatHistory(chat, options = {}) {
 
     const text = extractText(message);
     if (!text) {
-      deduped += 1;
+      // Genuinely contentless events (call logs, group/e2e notifications, "message deleted"
+      // placeholders, unrecognized system events) — nothing to show, not a duplicate.
+      skippedNoContent += 1;
+      console.info(JSON.stringify({
+        event: "whatsapp_history_message_skipped_no_content",
+        ...logBase,
+        whatsapp_message_id: whatsappMessageId,
+        whatsapp_type: message?.type || null,
+      }));
       continue;
     }
     if (direction === "outbound") {
@@ -721,10 +763,11 @@ async function backfillChatHistory(chat, options = {}) {
     outbound_count: outbound,
     imported_count: imported,
     deduped_count: deduped,
+    skipped_no_content_count: skippedNoContent,
     failed_count: failed,
   }));
 
-  return { imported, deduped, failed, inbound, outbound, fetched };
+  return { imported, deduped, skippedNoContent, failed, inbound, outbound, fetched };
 }
 
 async function backfillAllChats({
@@ -792,6 +835,7 @@ async function backfillAllChats({
 
   let imported = 0;
   let deduped = 0;
+  let skippedNoContent = 0;
   let failed = 0;
   let inbound = 0;
   let outbound = 0;
@@ -808,6 +852,7 @@ async function backfillAllChats({
       const result = await backfillChatHistory(chat, { limit, postSyncDelayMs, fullHistory });
       imported += result.imported;
       deduped += result.deduped;
+      skippedNoContent += result.skippedNoContent || 0;
       failed += result.failed;
       inbound += result.inbound;
       outbound += result.outbound;
@@ -831,6 +876,7 @@ async function backfillAllChats({
     skipped_chats_count: skippedChats,
     imported_count: imported,
     deduped_count: deduped,
+    skipped_no_content_count: skippedNoContent,
     failed_count: failed,
     scope: all ? "all" : "crm_scoped",
     crm_identity_lookup_failed: Boolean(crmLookupFailed),
@@ -849,6 +895,7 @@ async function backfillAllChats({
     outbound,
     imported,
     deduped,
+    skippedNoContent,
     failed,
     crm_identity_lookup_failed: Boolean(crmLookupFailed),
   };

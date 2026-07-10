@@ -312,6 +312,7 @@ async def resync_thread_whatsapp_link(
             fetched=int(raw_result.get("fetched") or 0),
             imported=int(raw_result.get("imported") or 0),
             deduped=int(raw_result.get("deduped") or 0),
+            skipped_no_content=int(raw_result.get("skippedNoContent") or 0),
             failed=int(raw_result.get("failed") or 0),
         )
         logger.info(

@@ -110,3 +110,35 @@ test('backfillAllChats with chatId targets exactly one chat and forces full hist
     assert.equal(result.imported, 250);
   });
 });
+
+test('media messages (images, voice notes, etc.) are imported with a placeholder instead of being silently dropped', async (t) => {
+  await withMockedForward(t, async () => {
+    const chatId = '326472368@lid';
+    const messages = [
+      { timestamp: 1710000000, body: 'Text message', fromMe: false, from: chatId, id: { _serialized: 'm-1' } },
+      { timestamp: 1710000001, type: 'image', fromMe: false, from: chatId, id: { _serialized: 'm-2' } },
+      { timestamp: 1710000002, type: 'ptt', fromMe: true, to: chatId, id: { _serialized: 'm-3' } },
+      { timestamp: 1710000003, type: 'document', filename: 'invoice.pdf', fromMe: false, from: chatId, id: { _serialized: 'm-4' } },
+      // Genuinely contentless: call log, no body/caption/text and no recognized media type.
+      { timestamp: 1710000004, type: 'call_log', fromMe: false, from: chatId, id: { _serialized: 'm-5' } },
+    ];
+    const chat = {
+      id: { _serialized: chatId },
+      isGroup: false,
+      syncHistory: async () => {},
+      fetchMessages: async () => messages,
+    };
+
+    const result = await backfillAllChats({
+      all: false,
+      clientOverride: { getChats: async () => [chat] },
+      readyOverride: true,
+      postSyncDelayMs: 0,
+      eligibleIdentityIndex: { chatIds: new Set([chatId]), phoneNumbers: new Set() },
+    });
+
+    assert.equal(result.fetched, 5);
+    assert.equal(result.imported, 4, 'the 4 real-content messages (text + 3 media types) should import');
+    assert.equal(result.skippedNoContent, 1, 'only the call_log entry has genuinely nothing to show');
+  });
+});
