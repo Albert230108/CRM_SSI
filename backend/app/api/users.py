@@ -21,7 +21,7 @@ def _public_base_url() -> str:
     return get_public_frontend_base_url()
 
 
-@router.get("/", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])
+@router.get("", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])
 def list_users(db: Session = Depends(get_db)) -> list[User]:
     return db.query(User).order_by(User.id).all()
 
