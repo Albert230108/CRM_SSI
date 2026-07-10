@@ -104,7 +104,15 @@ export default function AdminSettings() {
         fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
         fetch(`${API_BASE_URL}/api/admin/invites`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
       ])
-      if (usersResponse.ok) setUsers(await usersResponse.json())
+      console.log('[AdminSettings] usersResponse:', usersResponse.status, usersResponse.ok)
+      if (usersResponse.ok) {
+        const data = await usersResponse.json()
+        console.log('[AdminSettings] users data:', data)
+        setUsers(data)
+      } else {
+        const error = await usersResponse.json().catch(() => ({}))
+        console.error('[AdminSettings] Failed to load users:', error)
+      }
       if (invitesResponse.ok) setInvites(await invitesResponse.json())
       await loadLogs()
     }
@@ -131,7 +139,15 @@ export default function AdminSettings() {
       fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
       fetch(`${API_BASE_URL}/api/admin/invites`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
     ])
-    if (usersResponse.ok) setUsers(await usersResponse.json())
+    console.log('[AdminSettings.refresh] usersResponse:', usersResponse.status, usersResponse.ok)
+    if (usersResponse.ok) {
+      const data = await usersResponse.json()
+      console.log('[AdminSettings.refresh] users data:', data)
+      setUsers(data)
+    } else {
+      const error = await usersResponse.json().catch(() => ({}))
+      console.error('[AdminSettings.refresh] Failed to load users:', error)
+    }
     if (invitesResponse.ok) setInvites(await invitesResponse.json())
     await loadLogs()
   }
