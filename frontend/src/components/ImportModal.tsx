@@ -19,6 +19,7 @@ type Booking = {
   imported: boolean
   room_name: string | null
   property_name: string | null
+  insertDate?: string | null
 }
 
 type ImportModalProps = {
@@ -56,6 +57,11 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkImporting, setBulkImporting] = useState(false)
+  const [filterResponsible, setFilterResponsible] = useState<string | null>(null)
+  const [filterStatus, setFilterStatus] = useState<string | null>(null)
+  const [filterRecentDays, setFilterRecentDays] = useState<number | null>(null)
+  const [filterCheckInStart, setFilterCheckInStart] = useState('')
+  const [filterCheckInEnd, setFilterCheckInEnd] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -220,14 +226,68 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
     onImported?.()
   }
 
+  const getUniqueResponsiblePersons = () => {
+    const persons = new Set<string>()
+    bookings.forEach((b) => {
+      if (b.responsible_comm) persons.add(b.responsible_comm)
+    })
+    return Array.from(persons).sort()
+  }
+
+  const getUniqueBookingStatuses = () => {
+    const statuses = new Set<string>()
+    bookings.forEach((b) => {
+      if (b.booking_status) statuses.add(b.booking_status)
+    })
+    return Array.from(statuses).sort()
+  }
+
+  const isRecentBooking = (booking: Booking, days: number): boolean => {
+    if (!booking.insertDate) return false
+    try {
+      const bookingDate = new Date(booking.insertDate)
+      const cutoffDate = new Date()
+      cutoffDate.setDate(cutoffDate.getDate() - days)
+      return bookingDate >= cutoffDate
+    } catch {
+      return false
+    }
+  }
+
+  const isDateInRange = (dateStr: string | null, startStr: string, endStr: string): boolean => {
+    if (!dateStr || (!startStr && !endStr)) return true
+    if (!startStr && !endStr) return true
+    try {
+      const date = new Date(dateStr).toISOString().split('T')[0]
+      if (startStr && date < startStr) return false
+      if (endStr && date > endStr) return false
+      return true
+    } catch {
+      return true
+    }
+  }
+
   const filteredBookings = bookings.filter((booking) => {
     const q = searchQuery.toLowerCase()
-    return (
+    const matchesSearch =
       booking.name?.toLowerCase().includes(q) ||
       booking.first_name?.toLowerCase().includes(q) ||
       booking.last_name?.toLowerCase().includes(q) ||
       booking.booking_id.toLowerCase().includes(q)
-    )
+
+    const matchesResponsible =
+      !filterResponsible ||
+      (filterResponsible === 'unassigned' && !booking.responsible_comm) ||
+      booking.responsible_comm === filterResponsible
+
+    const matchesStatus = !filterStatus || booking.booking_status === filterStatus
+
+    const matchesRecent = !filterRecentDays || isRecentBooking(booking, filterRecentDays)
+
+    const matchesCheckIn =
+      isDateInRange(booking.check_in, filterCheckInStart, filterCheckInEnd)
+
+    return matchesSearch && matchesResponsible && matchesStatus && matchesRecent && matchesCheckIn
   })
 
   const unimportedFiltered = filteredBookings.filter((b) => !b.imported)
@@ -271,6 +331,149 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm placeholder-gray-400 text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
               />
+
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Quick filters</div>
+
+                <div className="flex flex-wrap gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-500">Responsible:</span>
+                    <button
+                      type="button"
+                      onClick={() => setFilterResponsible(null)}
+                      className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
+                        filterResponsible === null
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilterResponsible('unassigned')}
+                      className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
+                        filterResponsible === 'unassigned'
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Unassigned
+                    </button>
+                    {getUniqueResponsiblePersons().map((person) => (
+                      <button
+                        key={person}
+                        type="button"
+                        onClick={() => setFilterResponsible(person)}
+                        className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
+                          filterResponsible === person
+                            ? 'bg-cyan-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        {person}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-500">Status:</span>
+                    <button
+                      type="button"
+                      onClick={() => setFilterStatus(null)}
+                      className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
+                        filterStatus === null
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      All
+                    </button>
+                    {getUniqueBookingStatuses().map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setFilterStatus(status)}
+                        className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
+                          filterStatus === status
+                            ? 'bg-cyan-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-500">Most recent:</span>
+                    <button
+                      type="button"
+                      onClick={() => setFilterRecentDays(null)}
+                      className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
+                        filterRecentDays === null
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Any time
+                    </button>
+                    {[1, 3, 7, 10].map((days) => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => setFilterRecentDays(days)}
+                        className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
+                          filterRecentDays === days
+                            ? 'bg-cyan-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        {days}d
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 items-end">
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-col">
+                      <label className="text-xs text-gray-500">Check-in from:</label>
+                      <input
+                        type="date"
+                        value={filterCheckInStart}
+                        onChange={(e) => setFilterCheckInStart(e.target.value)}
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                    <div className="flex flex-col">
+                      <label className="text-xs text-gray-500">to:</label>
+                      <input
+                        type="date"
+                        value={filterCheckInEnd}
+                        onChange={(e) => setFilterCheckInEnd(e.target.value)}
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                    {(filterCheckInStart || filterCheckInEnd) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFilterCheckInStart('')
+                          setFilterCheckInEnd('')
+                        }}
+                        className="rounded-lg bg-gray-200 px-2 py-1 text-xs text-gray-700 hover:bg-gray-300"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
               <div className="flex items-center justify-between gap-3">
                 <div className="flex gap-2">
                   <button
