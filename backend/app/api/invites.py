@@ -58,12 +58,13 @@ def complete_invite(token: str, payload: InvitationComplete, db: Session = Depen
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email does not match the invite")
 
     user = db.query(User).filter(User.email == resolved_email).first()
+    password_hash = get_password_hash(payload.password)
     if user is None:
         user = User(
             email=resolved_email,
             full_name=resolved_name,
             phone=(payload.phone or invite.phone),
-            password_hash=generate_secure_token(),
+            password_hash=password_hash,
             is_active=True,
             is_admin=invite.role == "admin",
         )
@@ -74,8 +75,10 @@ def complete_invite(token: str, payload: InvitationComplete, db: Session = Depen
         user.phone = (payload.phone or invite.phone or user.phone)
         user.is_active = True
         user.is_admin = user.is_admin or invite.role == "admin"
-    user.password_hash = get_password_hash(payload.password)
+        user.password_hash = password_hash
+
     invite.used_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
+    db.refresh(invite)
     return {"access_token": create_access_token({"sub": str(user.id)})}
