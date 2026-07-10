@@ -557,7 +557,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">
         {loading ? <p className="text-sm text-gray-500">Loading tenant thread...</p> : null}
-        {sending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
+        {replySending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
 
         <div className="space-y-4">
