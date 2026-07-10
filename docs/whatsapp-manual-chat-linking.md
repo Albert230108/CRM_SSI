@@ -26,11 +26,19 @@ deduped, failed}` counts — the UI shows the real result once it finishes rathe
 This matters because `whatsapp-service`'s regular history sweep caps each chat at
 `WHATSAPP_HISTORY_BACKFILL_LIMIT` (default 100) messages — fine for the broad "every chat in the
 account" sweep, but it silently truncated older messages for chats with more history than that.
-CRM-eligible chats (including manually linked ones) now always pull their *entire* history —
-`chat.fetchMessages({ limit: Infinity })` — instead of being capped, so nothing older gets
-dropped. Only the indiscriminate `all=true` sweep (which touches every WhatsApp chat, not just
-CRM-relevant ones) still respects the cap, to avoid pulling unbounded history for irrelevant
-contacts.
+CRM-eligible chats (including manually linked ones) now always pull their *entire* history
+instead of being capped, so nothing older gets dropped. Only the indiscriminate `all=true` sweep
+(which touches every WhatsApp chat, not just CRM-relevant ones) still respects the cap, to avoid
+pulling unbounded history for irrelevant contacts.
+
+**Implementation note:** "unlimited" is passed to `chat.fetchMessages` as a large *finite*
+number (`FULL_HISTORY_FETCH_LIMIT = 1_000_000`), not `Infinity`. `fetchMessages`'s options cross
+a Puppeteer `page.evaluate` boundary into the browser context, and `Infinity` does not survive
+that serialization (it arrives as `null`/`0` on the other side). whatsapp-web.js's internal
+pagination loop is `while (searchOptions.limit > 0) { loadEarlierMsgs... }` — a falsy limit means
+that loop never executes, so it silently returns only whatever's already cached in memory
+(sometimes just one message), which is *worse* than the old 100-message cap. A large finite
+number keeps the loop running until `loadEarlierMsgs` genuinely has nothing left to return.
 
 ## Thread view only shows the linked chat's messages
 

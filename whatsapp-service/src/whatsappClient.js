@@ -595,13 +595,22 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// whatsapp-web.js's Chat.fetchMessages runs `searchOptions` through a Puppeteer page.evaluate
+// call, which serializes arguments across the browser boundary. Infinity does not survive that
+// serialization (it arrives as null/0 on the page side), and its internal pagination loop is
+// `while (searchOptions.limit > 0) { loadEarlierMsgs... }` — a falsy limit means that loop never
+// runs at all, so it silently returns only whatever's already cached in memory (as few as a
+// single message). Use a large *finite* number instead: the loop still terminates naturally
+// once loadEarlierMsgs stops returning new messages (i.e. the chat's real history is exhausted).
+const FULL_HISTORY_FETCH_LIMIT = 1_000_000;
+
 async function backfillChatHistory(chat, options = {}) {
   // fullHistory pulls the entire chat history from the store (no page cap) instead of the
   // last `limit` messages. Used for CRM-eligible chats (including manually linked ones), since
   // capping at whatsappHistoryBackfillLimit (default 100) silently truncated older messages.
   const fullHistory = Boolean(options.fullHistory);
   const limit = fullHistory
-    ? Infinity
+    ? FULL_HISTORY_FETCH_LIMIT
     : Math.max(1, Number.parseInt(String(options.limit || whatsappHistoryBackfillLimit || 100), 10) || whatsappHistoryBackfillLimit || 100);
   if (!chat) {
     return { imported: 0, deduped: 0, failed: 0, inbound: 0, outbound: 0, fetched: 0 };
