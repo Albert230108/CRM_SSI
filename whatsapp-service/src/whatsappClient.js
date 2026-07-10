@@ -1010,6 +1010,65 @@ function isReady() {
   return ready;
 }
 
+function getChatLastMessageTimestamp(chat) {
+  const timestamp = chat?.lastMessage?.timestamp ?? chat?.timestamp ?? null;
+  if (!Number.isFinite(Number(timestamp))) {
+    return null;
+  }
+  return new Date(Number(timestamp) * 1000).toISOString();
+}
+
+function getChatLastMessagePreview(chat) {
+  const body = chat?.lastMessage?.body;
+  if (typeof body !== "string" || !body.trim()) {
+    return null;
+  }
+  const trimmed = body.trim();
+  return trimmed.length > 160 ? `${trimmed.slice(0, 160)}...` : trimmed;
+}
+
+async function listChats({ externalAccountId, search = "", limit = 200, offset = 0, clientOverride = null, readyOverride = null } = {}) {
+  const activeClient = clientOverride || client;
+  const isClientReady = readyOverride ?? ready;
+  if (!activeClient || !isClientReady) {
+    throw new Error("WhatsApp client is not ready");
+  }
+  if (externalAccountId && externalAccountId !== whatsappClientId) {
+    throw new Error(`WhatsApp account id mismatch: requested ${externalAccountId} but this service is configured for ${whatsappClientId}`);
+  }
+
+  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
+  const normalized = (Array.isArray(chats) ? chats : []).map((chat) => ({
+    chat_id: String(getChatId(chat) || ""),
+    chat_name: getChatName(chat) || null,
+    provider: "whatsapp-service",
+    external_account_id: whatsappClientId || null,
+    last_message_timestamp: getChatLastMessageTimestamp(chat),
+    last_message_preview: getChatLastMessagePreview(chat),
+    is_group: Boolean(chat?.isGroup),
+  }));
+
+  const normalizedSearch = String(search || "").trim().toLowerCase();
+  const filtered = normalizedSearch
+    ? normalized.filter(
+        (chat) => chat.chat_id.toLowerCase().includes(normalizedSearch) || String(chat.chat_name || "").toLowerCase().includes(normalizedSearch),
+      )
+    : normalized;
+
+  filtered.sort((a, b) => {
+    const aTime = a.last_message_timestamp ? new Date(a.last_message_timestamp).getTime() : 0;
+    const bTime = b.last_message_timestamp ? new Date(b.last_message_timestamp).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  const safeOffset = Number.isFinite(Number(offset)) && Number(offset) > 0 ? Number(offset) : 0;
+  const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : 200;
+  return {
+    chats: filtered.slice(safeOffset, safeOffset + safeLimit),
+    total_count: filtered.length,
+  };
+}
+
 async function sendTextMessage(payload) {
   if (!client || !ready) {
     throw new Error("WhatsApp client is not ready");
@@ -1212,6 +1271,7 @@ module.exports = {
   runHistoryDebugSample,
   buildHistoryDedupeKey,
   sortBackfillMessages,
+  listChats,
 };
 
 

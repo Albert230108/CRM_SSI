@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const express = require("express");
 
 const { apiKey, port } = require("./config");
-const { initializeClient, isReady, sendTextMessage, shutdownClient, runHistoryBackfill, runHistoryDebugSample } = require("./whatsappClient");
+const { initializeClient, isReady, sendTextMessage, shutdownClient, runHistoryBackfill, runHistoryDebugSample, listChats } = require("./whatsappClient");
 const { createMessageRouter } = require("./routes/messages");
 
 function requireApiKey(req, res, next) {
@@ -36,7 +36,7 @@ async function main() {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "256kb" }));
 
-  app.use(createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample }));
+  app.use(createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample, listChats }));
 
   app.use((err, req, res, next) => {
     console.error("Unhandled WhatsApp service error:", err);

@@ -1,7 +1,33 @@
 const express = require("express");
 
-function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample }) {
+function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample, listChats }) {
   const router = express.Router();
+
+  router.get("/chats", requireApiKey, async (req, res) => {
+    try {
+      const externalAccountId = typeof req.query?.external_account_id === "string" ? req.query.external_account_id.trim() : "";
+      const search = typeof req.query?.search === "string" ? req.query.search.trim() : "";
+      const limit = Number.parseInt(String(req.query?.limit || ""), 10);
+      const offset = Number.parseInt(String(req.query?.offset || ""), 10);
+      const result = await listChats({
+        externalAccountId,
+        search,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        offset: Number.isFinite(offset) ? offset : undefined,
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to fetch WhatsApp chat list";
+      let status = 500;
+      if (message.includes("not ready")) {
+        status = 503;
+      } else if (message.includes("account id mismatch")) {
+        status = 400;
+      }
+      console.error("Failed to handle /chats request:", error);
+      return res.status(status).json({ ok: false, error: message });
+    }
+  });
 
   router.post("/send", requireApiKey, async (req, res) => {
     try {
