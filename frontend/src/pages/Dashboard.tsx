@@ -185,8 +185,8 @@ export default function Dashboard() {
 
         <section
           className={[
-            'relative flex h-full shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300',
-            middleColumnCollapsed ? 'w-10' : 'w-[360px]',
+            'relative flex h-full overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300',
+            middleColumnCollapsed ? 'w-10 shrink-0' : 'flex-1 min-w-0',
           ].join(' ')}
         >
           <button
@@ -199,7 +199,7 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-[360px] overflow-hidden p-5 transition-all duration-300 flex flex-col gap-4',
+              'h-full min-w-0 overflow-hidden p-5 transition-all duration-300 flex flex-col gap-4',
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
