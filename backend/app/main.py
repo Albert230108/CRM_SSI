@@ -14,7 +14,7 @@ from app.api.users import router as users_router
 from app.api.whatsapp_thread_links import router as whatsapp_thread_links_router
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
-app = FastAPI(title="CRM API")
+app = FastAPI(title="CRM API", redirect_slashes=False)
 
 resolved_whatsapp_service_url = os.getenv("WHATSAPP_SERVICE_URL", "").strip() or "<unset>"
 print(f"[backend] WHATSAPP_SERVICE_URL={resolved_whatsapp_service_url}")
