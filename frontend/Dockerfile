@@ -2,6 +2,9 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+ARG VITE_API_BASE_URL
+ARG VITE_LOGO_URL
+
 COPY package.json ./
 RUN npm install
 
