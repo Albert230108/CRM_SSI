@@ -40,6 +40,7 @@ export default function Dashboard() {
   
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
+  const [middleColumnCollapsed, setMiddleColumnCollapsed] = useState(false)
   const [tenantReloadSignal, setTenantReloadSignal] = useState(0)
   const [syncRunning, setSyncRunning] = useState(false)
   const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null)
@@ -182,21 +183,41 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-4 h-full">
-          <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex h-full min-h-0 flex-1 overflow-auto">
-              <FinanceBox tenantId={selectedTenantId} />
-            </div>
-          </section>
+        <section
+          className={[
+            'relative flex h-full shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300',
+            middleColumnCollapsed ? 'w-10' : 'w-[360px]',
+          ].join(' ')}
+        >
+          <button
+            type="button"
+            onClick={() => setMiddleColumnCollapsed((current) => !current)}
+            aria-label={middleColumnCollapsed ? 'Expand middle panel' : 'Collapse middle panel'}
+            className="absolute right-0 top-4 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-l-xl border border-gray-200 border-r-0 bg-white text-sm font-semibold text-gray-600 shadow-sm transition hover:bg-gray-50"
+          >
+            {middleColumnCollapsed ? '◀' : '▶'}
+          </button>
+          <div
+            className={[
+              'h-full min-w-[360px] overflow-hidden p-5 transition-all duration-300 flex flex-col gap-4',
+              middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
+            ].join(' ')}
+          >
+            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex h-full min-h-0 flex-1 overflow-auto">
+                <FinanceBox tenantId={selectedTenantId} />
+              </div>
+            </section>
 
-          <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex h-full min-h-0 flex-1 overflow-auto">
-              <OneDriveBox tenantId={selectedTenantId} />
-            </div>
-          </section>
-        </div>
+            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex h-full min-h-0 flex-1 overflow-auto">
+                <OneDriveBox tenantId={selectedTenantId} />
+              </div>
+            </section>
+          </div>
+        </section>
 
-        <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-300">
           <div className="h-full w-full min-h-0 overflow-hidden">
             <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} />
           </div>
