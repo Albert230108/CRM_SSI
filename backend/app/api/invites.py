@@ -60,13 +60,15 @@ def complete_invite(token: str, payload: InvitationComplete, db: Session = Depen
     user = db.query(User).filter(User.email == resolved_email).first()
     password_hash = get_password_hash(payload.password)
     if user is None:
+        user_count = db.query(User).count()
+        is_first_user = user_count == 0
         user = User(
             email=resolved_email,
             full_name=resolved_name,
             phone=(payload.phone or invite.phone),
             password_hash=password_hash,
             is_active=True,
-            is_admin=invite.role == "admin",
+            is_admin=is_first_user or invite.role == "admin",
         )
         db.add(user)
         db.flush()
