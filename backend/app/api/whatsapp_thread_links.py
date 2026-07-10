@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
+from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
@@ -238,6 +239,35 @@ def create_thread_whatsapp_link(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This WhatsApp chat is already linked elsewhere") from exc
     db.refresh(new_link)
 
+    # Sync external_chat_namespace on existing messages for this account/chat to ensure consistency
+    # with the link. This allows messages that were synced with different identity formats to be
+    # properly matched by the timeline filtering logic.
+    # Find messages that could belong to this chat by checking whatsapp_identity_key or whatsapp_chat_id
+    matching_messages = db.query(Communication).filter(
+        Communication.tenant_id == thread_id,
+        Communication.channel == "whatsapp",
+        Communication.external_account_id == external_account_id,
+    ).all()
+
+    # Update messages that have a matching identity to set external_chat_namespace
+    messages_updated = 0
+    for msg in matching_messages:
+        # If the message's canonical identity matches this chat, update it
+        msg_identity = (msg.whatsapp_identity_key or msg.whatsapp_chat_id or "").strip().lower()
+        if msg_identity and msg_identity == chat_id.lower():
+            msg.external_chat_namespace = chat_id
+            messages_updated += 1
+
+    if messages_updated > 0:
+        db.commit()
+        logger.info(
+            "whatsapp_link_updated_existing_messages thread_id=%s external_account_id=%s chat_id=%s count=%s",
+            thread_id,
+            external_account_id,
+            chat_id,
+            messages_updated,
+        )
+
     # Force a full-history resync for the newly linked chat instead of waiting for the next
     # scheduled sweep, and so this pulls the chat's *entire* history rather than only whatever
     # was captured by a previous capped sync.
@@ -321,6 +351,36 @@ async def resync_thread_whatsapp_link(
             link_id,
             raw_result,
         )
+
+        # After resync, sync external_chat_namespace on existing messages for consistency
+        # with the link's namespace. This ensures messages imported during resync are properly
+        # matched by the timeline filtering logic even if they don't have external_chat_namespace set.
+        if resync_result.ok and link.external_account_id and link.external_chat_namespace:
+            matching_messages = db.query(Communication).filter(
+                Communication.tenant_id == thread_id,
+                Communication.channel == "whatsapp",
+                Communication.external_account_id == link.external_account_id,
+            ).all()
+
+            messages_updated = 0
+            chat_id_lower = link.external_chat_namespace.strip().lower()
+            for msg in matching_messages:
+                msg_identity = (msg.whatsapp_identity_key or msg.whatsapp_chat_id or "").strip().lower()
+                if msg_identity and msg_identity == chat_id_lower:
+                    if msg.external_chat_namespace != link.external_chat_namespace:
+                        msg.external_chat_namespace = link.external_chat_namespace
+                        messages_updated += 1
+
+            if messages_updated > 0:
+                db.commit()
+                logger.info(
+                    "whatsapp_resync_updated_existing_messages thread_id=%s link_id=%s external_account_id=%s chat_id=%s count=%s",
+                    thread_id,
+                    link_id,
+                    link.external_account_id,
+                    link.external_chat_namespace,
+                    messages_updated,
+                )
     except WhatsAppBridgeError as exc:
         resync_result = WhatsAppChatResyncResult(ok=False, error=exc.args[0] if exc.args else "Resync failed")
         logger.warning(
