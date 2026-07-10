@@ -1,16 +1,18 @@
 import base64
 import os
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from typing import Any
 
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build
 from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
 
 
 def _build_service(credentials_info: dict[str, Any]) -> Any:
@@ -49,6 +51,39 @@ def _find_tenant(db: Session, headers: list[dict[str, Any]]) -> Tenant | None:
     if not email:
         return None
     return db.query(Tenant).filter(Tenant.email == email).first()
+
+
+def send_gmail_reply(
+    credentials_info: dict[str, Any],
+    *,
+    thread_id: str,
+    to_email: str,
+    subject: str,
+    body_text: str,
+    from_email: str,
+    in_reply_to_message_id: str | None = None,
+    references: str | None = None,
+) -> dict[str, Any]:
+    service = _build_service(credentials_info)
+
+    message = EmailMessage()
+    message["To"] = to_email
+    message["From"] = from_email
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+    message["Subject"] = subject
+    if in_reply_to_message_id:
+        message["In-Reply-To"] = in_reply_to_message_id
+    if references:
+        message["References"] = references
+    message.set_content(body_text)
+
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+    result = service.users().messages().send(
+        userId="me",
+        body={"raw": raw_message, "threadId": thread_id},
+    ).execute()
+    return result
 
 
 def sync_relevant_threads(db: Session, credentials_info: dict[str, Any], query: str) -> int:

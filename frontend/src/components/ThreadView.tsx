@@ -207,6 +207,11 @@ type ThreadViewProps = {
   reloadSignal?: number
 }
 
+type ReplyTarget =
+  | { type: 'email'; threadId: number; providerThreadId: string; providerAccountId: number; subject: string | null }
+  | { type: 'whatsapp'; groupId: string }
+  | null
+
 export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
@@ -223,13 +228,12 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
   const [resyncingId, setResyncingId] = useState<number | null>(null)
   const [resyncResults, setResyncResults] = useState<Record<number, string>>({})
-  const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp')
-  const [subject, setSubject] = useState('')
-  const [message, setMessage] = useState('')
-  const [sending, setSending] = useState(false)
+  const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
+  const [replyMessage, setReplyMessage] = useState('')
+  const [replySubject, setReplySubject] = useState('')
+  const [replySending, setReplySending] = useState(false)
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
-  const whatsappSendDisabled = channel === 'whatsapp' && (!hasWhatsappEndpoints || !selectedWhatsappEndpointId)
 
   useEffect(() => {
     if (!tenantId) {
@@ -420,56 +424,65 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     }
   }
 
-  const handleSend = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSendReply = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!tenantId || !message.trim() || sending) return
+    if (!tenantId || !replyMessage.trim() || replySending || !replyTarget) return
 
     try {
-      setSending(true)
+      setReplySending(true)
       setError('')
-      if (channel === 'whatsapp' && !selectedWhatsappEndpointId) {
-        throw new Error('Choose a WhatsApp account before sending')
-      }
 
-      if (channel === 'whatsapp') {
-        await loadGroupedThread()
-      }
-
-      const requestBody = {
-        channel,
-        subject: subject.trim() || null,
-        message,
-        whatsapp_endpoint_id: channel === 'whatsapp' ? Number(selectedWhatsappEndpointId) : null,
-        external_account_id: channel === 'whatsapp' ? (selectedWhatsappEndpoint?.external_account_id ?? null) : null,
-      }
-      console.info('[crm] ThreadView outbound send request', {
-        path: `/api/communications/tenants/${tenantId}/send`,
-        tenant_id: tenantId,
-        body: requestBody,
-      })
-
-      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(requestBody),
-      })
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null)
-        throw new Error(payload?.detail || 'Failed to send message')
+      if (replyTarget.type === 'email') {
+        const requestBody = {
+          channel: 'email',
+          subject: replySubject.trim() || replyTarget.subject || '',
+          message: replyMessage,
+          email_thread_id: replyTarget.threadId,
+        }
+        const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(requestBody),
+        })
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null)
+          throw new Error(payload?.detail || 'Failed to send email')
+        }
+      } else if (replyTarget.type === 'whatsapp') {
+        if (!selectedWhatsappEndpointId) {
+          throw new Error('Choose a WhatsApp account before sending')
+        }
+        const requestBody = {
+          channel: 'whatsapp',
+          message: replyMessage,
+          whatsapp_endpoint_id: Number(selectedWhatsappEndpointId),
+          external_account_id: selectedWhatsappEndpoint?.external_account_id ?? null,
+        }
+        const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(requestBody),
+        })
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null)
+          throw new Error(payload?.detail || 'Failed to send WhatsApp message')
+        }
       }
 
       await loadGroupedThread()
-      setMessage('')
-      if (channel === 'email') {
-        setSubject('')
-      }
+      setReplyMessage('')
+      setReplySubject('')
+      setReplyTarget(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message')
     } finally {
-      setSending(false)
+      setReplySending(false)
     }
   }
 
@@ -565,11 +578,10 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 })),
               ].sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
               return (
-                <article key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50">
-                  <button
-                    type="button"
+                <article key={item.id} className="relative rounded-2xl border border-gray-200 bg-gray-50">
+                  <div
                     onClick={() => toggleConversation(item.id)}
-                    className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left"
+                    className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
@@ -585,10 +597,54 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
                       {expanded ? 'Collapse' : `${item.messages.length} messages`}
                     </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!expanded) toggleConversation(item.id)
+                      setReplyTarget({ type: 'email', threadId: item.id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
+                    }}
+                    className="absolute right-3 top-3 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    Reply
                   </button>
 
                   {expanded ? (
                     <div className="border-t border-gray-200 bg-white px-4 py-3">
+                      {replyTarget?.type === 'email' && replyTarget.threadId === item.id ? (
+                        <form onSubmit={handleSendReply} className="mb-4 space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                          <input
+                            value={replySubject}
+                            onChange={(event) => setReplySubject(event.target.value)}
+                            placeholder={item.subject || 'Subject'}
+                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                          />
+                          <textarea
+                            value={replyMessage}
+                            onChange={(event) => setReplyMessage(event.target.value)}
+                            rows={4}
+                            placeholder="Write your reply..."
+                            disabled={replySending}
+                            className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setReplyTarget(null)}
+                              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={replySending || !replyMessage.trim()}
+                              className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {replySending ? 'Sending...' : 'Send'}
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
                       <div className="space-y-3">
                         {timelineEntries.map((entry) => {
                           if (entry.kind === 'email') {
@@ -674,11 +730,10 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
             const firstMessage = item.messages[0]
             const lastMessage = item.messages[item.messages.length - 1]
             return (
-              <article key={item.group_id} className="rounded-2xl border border-emerald-200 bg-emerald-50">
-                <button
-                  type="button"
+              <article key={item.group_id} className="relative rounded-2xl border border-emerald-200 bg-emerald-50">
+                <div
                   onClick={() => openWhatsappGroup(item)}
-                  className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-emerald-100/70"
+                  className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-emerald-100/70"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
@@ -693,6 +748,16 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
                     {item.message_count} messages
                   </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedWhatsappGroup(item)
+                    setReplyTarget({ type: 'whatsapp', groupId: item.group_id })
+                  }}
+                  className="absolute right-3 top-3 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                >
+                  Reply
                 </button>
               </article>
             )
@@ -749,7 +814,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 </p>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-3 mb-4">
                 {selectedWhatsappGroup.messages.map((blockMessage) => {
                   const isOutbound = blockMessage.direction === 'outbound'
                   return (
@@ -770,81 +835,59 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   )
                 })}
               </div>
+
+              {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
+                <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-whatsapp-endpoint">
+                      WhatsApp account
+                    </label>
+                    <select
+                      id="modal-whatsapp-endpoint"
+                      value={selectedWhatsappEndpointId}
+                      onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
+                      disabled={replySending || !hasWhatsappEndpoints}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    >
+                      <option value="">{hasWhatsappEndpoints ? 'Choose an account' : 'No active WhatsApp accounts'}</option>
+                      {whatsappEndpoints.map((endpoint) => (
+                        <option key={endpoint.id} value={endpoint.id}>
+                          {formatWhatsappEndpointLabel(endpoint)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    value={replyMessage}
+                    onChange={(event) => setReplyMessage(event.target.value)}
+                    rows={3}
+                    placeholder="Write your reply..."
+                    disabled={replySending}
+                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setReplyTarget(null)}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={replySending || !replyMessage.trim() || !selectedWhatsappEndpointId}
+                      className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {replySending ? 'Sending...' : 'Send'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
             </div>
           </div>
         </div>
       ) : null}
 
-      <form onSubmit={handleSend} className="border-t border-gray-200 p-4">
-        <div className="flex w-full gap-2">
-          <button type="button" onClick={() => setChannel('whatsapp')} disabled={sending} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'whatsapp' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:cursor-not-allowed disabled:opacity-50`}>
-            WhatsApp
-          </button>
-          <button type="button" onClick={() => setChannel('email')} disabled={sending} className={`flex-1 rounded-full px-3 py-1.5 text-center text-sm font-semibold ${channel === 'email' ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:cursor-not-allowed disabled:opacity-50`}>
-            Email
-          </button>
-        </div>
-
-        {channel === 'email' ? (
-          <input
-            value={subject}
-            onChange={(event) => setSubject(event.target.value)}
-            placeholder="Subject"
-            className="mt-3 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-          />
-        ) : null}
-
-        {channel === 'whatsapp' ? (
-          <div className="mt-3 space-y-2">
-            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="whatsapp-endpoint-selector">
-              WhatsApp account
-            </label>
-            <select
-              id="whatsapp-endpoint-selector"
-              value={selectedWhatsappEndpointId}
-              onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
-              disabled={sending || !hasWhatsappEndpoints}
-              className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-            >
-              <option value="">{hasWhatsappEndpoints ? 'Choose an account' : 'No active WhatsApp accounts available'}</option>
-              {whatsappEndpoints.map((endpoint) => (
-                <option key={endpoint.id} value={endpoint.id}>
-                  {formatWhatsappEndpointLabel(endpoint)}
-                </option>
-              ))}
-            </select>
-            <p className={`text-xs ${hasWhatsappEndpoints ? 'text-gray-500' : 'text-amber-700'}`}>
-              {hasWhatsappEndpoints
-                ? selectedWhatsappEndpoint
-                  ? `Selected account: ${formatWhatsappEndpointLabel(selectedWhatsappEndpoint)}.`
-                  : `Choose one of ${whatsappEndpoints.length} active WhatsApp account${whatsappEndpoints.length === 1 ? '' : 's'}.`
-                : 'No active WhatsApp endpoint is mapped for this tenant. WhatsApp sending stays disabled until an existing tenant-channel mapping is active.'}
-            </p>
-          </div>
-        ) : null}
-
-        <textarea
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          rows={4}
-          placeholder={channel === 'whatsapp' ? 'Write a WhatsApp message...' : 'Write an email...'}
-          disabled={sending}
-          className="mt-3 w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-        />
-
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <p className={`text-xs ${channel === 'whatsapp' && !hasWhatsappEndpoints ? 'text-amber-700' : 'text-gray-500'}`}>
-            {channel === 'whatsapp'
-              ? hasWhatsappEndpoints
-                ? 'WhatsApp send.'
-                : 'WhatsApp send is unavailable until this tenant has an active WhatsApp endpoint.'
-              : 'Email reply.'}
-          </p>
-          <button type="submit" disabled={sending || loading || !tenantId || !message.trim() || whatsappSendDisabled} className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50">
-            {sending ? 'Sending...' : 'Send'}
-          </button>
-        </div>
-      </form>
 
       {tenantId ? (
         <LinkChatModal

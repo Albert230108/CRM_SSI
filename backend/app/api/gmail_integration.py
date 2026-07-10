@@ -25,7 +25,7 @@ from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
 PROVIDER_GMAIL = "gmail"
 FRONTEND_SETTINGS_PATH = "/settings"
 logger = logging.getLogger(__name__)

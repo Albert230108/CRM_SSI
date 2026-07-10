@@ -10,6 +10,7 @@ class CommunicationCreate(BaseModel):
     subject: str | None = None
     whatsapp_endpoint_id: int | None = None
     external_account_id: str | None = None
+    email_thread_id: int | None = None
 
 
 class CommunicationRead(BaseModel):

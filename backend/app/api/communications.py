@@ -8,11 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.communication import Communication
+from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
+from app.services.gmail_client import send_gmail_reply
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
@@ -20,6 +22,7 @@ from app.services.whatsapp_client import WhatsAppBridgeError, send_whatsapp_mess
 
 router = APIRouter(prefix="/communications", tags=["communications"])
 logger = logging.getLogger(__name__)
+PROVIDER_GMAIL = "gmail"
 
 
 class WhatsAppOutboundResolutionRead(BaseModel):
@@ -272,6 +275,111 @@ async def send_tenant_communication(
     else:
         whatsapp_result = None
 
+    if channel == "email":
+        if payload.email_thread_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email send requires an existing thread (email_thread_id)")
+
+        conversation = (
+            db.query(Conversation)
+            .filter(Conversation.id == payload.email_thread_id, Conversation.tenant_id == tenant.id)
+            .first()
+        )
+        if conversation is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email thread not found")
+
+        account = (
+            db.query(GmailAccount)
+            .filter(GmailAccount.id == conversation.provider_account_id)
+            .first()
+        )
+        if account is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account for this thread is not found")
+        if not account.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account is inactive")
+
+        # Extract In-Reply-To and References from the latest message in the thread
+        messages = (
+            db.query(ConversationMessage)
+            .filter(ConversationMessage.conversation_id == conversation.id)
+            .order_by(ConversationMessage.sent_at.desc())
+            .first()
+        )
+        in_reply_to_message_id = None
+        references = None
+        if messages and messages.raw_payload and isinstance(messages.raw_payload, dict):
+            headers = (messages.raw_payload.get("gmail", {}).get("payload") or {}).get("headers") or []
+            for header in headers:
+                if str(header.get("name", "")).lower() == "message-id":
+                    in_reply_to_message_id = str(header.get("value", "")).strip()
+                elif str(header.get("name", "")).lower() == "references":
+                    references = str(header.get("value", "")).strip()
+
+        # Determine recipient email (from the latest message)
+        to_email = None
+        if messages:
+            # If the latest message was inbound (from tenant), reply to their email
+            if messages.direction == "inbound" and messages.sender_email:
+                to_email = messages.sender_email
+            # If outbound (from us), reply to recipient
+            elif messages.direction == "outbound" and messages.recipient_email:
+                to_email = messages.recipient_email
+
+        if not to_email:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot determine recipient email for this thread")
+
+        credentials_info = account.credentials_json or {}
+        if not credentials_info:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing")
+
+        try:
+            gmail_result = send_gmail_reply(
+                credentials_info,
+                thread_id=conversation.provider_thread_id,
+                to_email=to_email,
+                subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
+                body_text=message,
+                from_email=account.email_address,
+                in_reply_to_message_id=in_reply_to_message_id,
+                references=references,
+            )
+        except Exception as exc:
+            logger.exception("Failed to send Gmail reply")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send email: {str(exc)}") from exc
+
+        # Persist the sent message immediately so it shows up in the timeline
+        provider_message_id = gmail_result.get("id")
+        db.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                provider=PROVIDER_GMAIL,
+                provider_message_id=provider_message_id or "",
+                direction="outbound",
+                sender_email=account.email_address,
+                recipient_email=to_email,
+                subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
+                body=message,
+                sent_at=datetime.now(timezone.utc),
+                raw_payload={"gmail": gmail_result},
+            )
+        )
+        db.commit()
+
+        # Also add to Communication table for compatibility
+        communication = Communication(
+            tenant_id=tenant.id,
+            channel=channel,
+            direction="outbound",
+            provider=PROVIDER_GMAIL,
+            external_account_id=account.email_address,
+            subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
+            message=message,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(communication)
+        db.commit()
+        db.refresh(communication)
+        return communication
+
     if channel == "whatsapp":
         communication_result = persist_whatsapp_outbound_communication(
             db,
@@ -301,22 +409,3 @@ async def send_tenant_communication(
             communication.provider_message_id,
         )
         return communication
-
-    communication = Communication(
-        tenant_id=tenant.id,
-        channel=channel,
-        direction="outbound",
-        provider=(selected_endpoint.provider if selected_endpoint is not None else None),
-        external_account_id=(selected_endpoint.external_account_id if selected_endpoint is not None else None),
-        external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
-        external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
-        whatsapp_chat_id=None,
-        provider_message_id=None,
-        subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
-        message=message,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(communication)
-    db.commit()
-    db.refresh(communication)
-    return communication
