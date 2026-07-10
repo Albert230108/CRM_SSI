@@ -76,6 +76,9 @@ class TenantRead(BaseModel):
     responsible_comm: str | None = None
     created_at: datetime
     updated_at: datetime
+    last_message_date: datetime | None = None
+    last_message_channel: str | None = None
+    last_message_direction: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

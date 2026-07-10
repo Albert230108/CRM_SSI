@@ -19,6 +19,7 @@ from app.models.tenant_phone_alias import TenantPhoneAlias
 from app.models.user import User
 from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
+from app.models.communication import Communication
 from app.services.beds24_client import get_booking_detail, get_bookings
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints, ensure_whatsapp_endpoint_for_tenant
@@ -336,8 +337,60 @@ def _build_one_drive_folder_path(tenant: Tenant) -> str:
 
 
 @router.get("/tenants", response_model=list[TenantRead])
-def list_tenants(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list[Tenant]:
-    return db.query(Tenant).order_by(Tenant.id).all()
+def list_tenants(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    search: str | None = None,
+    status: str | None = None,
+    sort_by_message: bool = False,
+    sort_desc: bool = True,
+) -> list[TenantRead]:
+    from sqlalchemy import desc, func, or_
+
+    query = db.query(Tenant)
+
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                Tenant.name.ilike(search_term),
+                Tenant.booking_id.ilike(search_term),
+                Tenant.email.ilike(search_term),
+                Tenant.phone.ilike(search_term),
+                Tenant.mobile.ilike(search_term),
+            )
+        )
+
+    if status:
+        query = query.filter(Tenant.booking_status == status)
+
+    if sort_by_message:
+        query = query.outerjoin(
+            Communication,
+            Communication.tenant_id == Tenant.id
+        ).group_by(Tenant.id).order_by(
+            desc(func.max(Communication.created_at)) if sort_desc else func.max(Communication.created_at)
+        )
+    else:
+        query = query.order_by(desc(Tenant.id) if sort_desc else Tenant.id)
+
+    tenants = query.all()
+
+    result = []
+    for tenant in tenants:
+        last_comm = db.query(Communication).filter(
+            Communication.tenant_id == tenant.id
+        ).order_by(desc(Communication.created_at)).first()
+
+        tenant_dict = TenantRead.from_orm(tenant).model_dump()
+        if last_comm:
+            tenant_dict["last_message_date"] = last_comm.created_at
+            tenant_dict["last_message_channel"] = last_comm.channel
+            tenant_dict["last_message_direction"] = last_comm.direction
+
+        result.append(TenantRead(**tenant_dict))
+
+    return result
 
 
 @router.post("/tenants", response_model=TenantRead, status_code=status.HTTP_201_CREATED)
