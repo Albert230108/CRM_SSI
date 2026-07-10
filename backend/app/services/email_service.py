@@ -1,6 +1,9 @@
+import logging
 import os
 import smtplib
 from email.message import EmailMessage
+
+logger = logging.getLogger(__name__)
 
 
 def send_email(to_email: str, subject: str, body: str) -> None:
@@ -11,6 +14,7 @@ def send_email(to_email: str, subject: str, body: str) -> None:
     sender = os.getenv("SMTP_FROM_EMAIL", username or "no-reply@localhost")
 
     if not host:
+        logger.warning(f"Email not sent to {to_email} (subject: {subject}) — SMTP_HOST not configured. Set SMTP_HOST and related env vars to enable email delivery.")
         return
 
     message = EmailMessage()
