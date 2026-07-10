@@ -29,7 +29,42 @@ def test_duplicate_endpoint_prevention(client, db_session):
 
     payload2 = {**payload, "external_chat_namespace": "client-1-chat-2@c.us"}
     r3 = client.post("/api/admin/tenant-channel-endpoints", json=payload2)
-    assert r3.status_code == 200
+    assert r3.status_code == 400
+
+
+def test_max_two_active_whatsapp_services_per_tenant(client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-max-2")
+
+    payload_one = {
+        "tenant_id": tenant.id,
+        "channel_type": "whatsapp",
+        "provider": "whatsapp-service",
+        "external_account_id": "client-1",
+        "external_chat_namespace": "client-1-chat@c.us",
+    }
+    payload_two = {
+        "tenant_id": tenant.id,
+        "channel_type": "whatsapp",
+        "provider": "whatsapp-service",
+        "external_account_id": "client-2",
+        "external_chat_namespace": "client-2-chat@c.us",
+    }
+    payload_three = {
+        "tenant_id": tenant.id,
+        "channel_type": "whatsapp",
+        "provider": "whatsapp-service",
+        "external_account_id": "client-3",
+        "external_chat_namespace": "client-3-chat@c.us",
+    }
+
+    first = client.post("/api/admin/tenant-channel-endpoints", json=payload_one)
+    second = client.post("/api/admin/tenant-channel-endpoints", json=payload_two)
+    third = client.post("/api/admin/tenant-channel-endpoints", json=payload_three)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 400
+    assert third.json()["detail"] == "A tenant can only link up to 2 active WhatsApp services"
 
 
 def test_tenant_resolution_by_webhook_token(db_session):
@@ -168,7 +203,7 @@ def test_inbound_whatsapp_ambiguous_phone_match_remains_unresolved(client, db_se
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "unresolved"
+    assert payload["routing_strategy"] == "ambiguous_phone_match"
     assert payload["unresolved_reason"] == "ambiguous_phone_match"
     assert payload["tenant_id"] is None
 
@@ -359,7 +394,7 @@ def test_inbound_whatsapp_unresolved_when_chat_identity_missing(client, db_sessi
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["routing_strategy"] == "unresolved"
+    assert payload["routing_strategy"] == "missing_chat_identity"
     assert payload["unresolved_reason"] == "missing_chat_identity"
     assert payload["tenant_id"] is None
 
@@ -402,3 +437,66 @@ def test_inbound_whatsapp_unresolved_when_wrong_chat_for_service(client, db_sess
 
     saved = db_session.query(Communication).filter(Communication.provider_message_id == "msg-wrong-chat-id").all()
     assert saved == []
+
+
+def test_inbound_whatsapp_account_fallback_only_for_legacy_unlinked_endpoint(client, db_session, monkeypatch):
+    monkeypatch.setenv("CRM_WHATSAPP_ALLOW_ACCOUNT_LEVEL_ENDPOINT_FALLBACK", "true")
+    tenant = create_tenant(db_session, name="Tenant Account Fallback", booking_id="B-account-fallback")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace=None,
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "whatsapp_message_id": "msg-account-fallback",
+            "message": "Legacy fallback route",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "account_identity_fallback"
+    assert payload["tenant_id"] == tenant.id
+
+
+def test_inbound_whatsapp_fallback_enabled_still_requires_chat_for_migrated_endpoint(client, db_session, monkeypatch):
+    monkeypatch.setenv("CRM_WHATSAPP_ALLOW_ACCOUNT_LEVEL_ENDPOINT_FALLBACK", "true")
+    tenant = create_tenant(db_session, name="Tenant Migrated Endpoint", booking_id="B-account-fallback-2")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="15550000000@c.us",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "whatsapp_message_id": "msg-account-fallback-blocked",
+            "message": "Missing chat with migrated endpoint",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["routing_strategy"] == "missing_chat_identity"
+    assert payload["unresolved_reason"] == "missing_chat_identity"
+    assert payload["tenant_id"] is None

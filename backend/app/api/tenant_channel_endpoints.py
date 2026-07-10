@@ -66,6 +66,63 @@ def _normalize_text(value: str | None) -> str | None:
     return value or None
 
 
+def _is_whatsapp_endpoint(channel_type: str | None, provider: str | None) -> bool:
+    normalized_channel = (channel_type or "").strip().lower()
+    normalized_provider = (provider or "").strip().lower()
+    return normalized_channel == "whatsapp" and normalized_provider.startswith("whatsapp")
+
+
+def _validate_whatsapp_endpoint_constraints(
+    db: Session,
+    *,
+    tenant_id: int,
+    channel_type: str | None,
+    provider: str | None,
+    external_account_id: str | None,
+    is_active: bool,
+    exclude_endpoint_id: int | None = None,
+) -> None:
+    if not _is_whatsapp_endpoint(channel_type, provider) or not external_account_id:
+        return
+
+    duplicate_query = db.query(TenantChannelEndpoint).filter(
+        TenantChannelEndpoint.tenant_id == tenant_id,
+        TenantChannelEndpoint.channel_type == channel_type,
+        TenantChannelEndpoint.provider == provider,
+        TenantChannelEndpoint.external_account_id == external_account_id,
+    )
+    if exclude_endpoint_id is not None:
+        duplicate_query = duplicate_query.filter(TenantChannelEndpoint.id != exclude_endpoint_id)
+    if duplicate_query.first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A tenant can only have one endpoint per WhatsApp service account",
+        )
+
+    if not is_active:
+        return
+
+    active_endpoints_query = db.query(TenantChannelEndpoint).filter(
+        TenantChannelEndpoint.tenant_id == tenant_id,
+        TenantChannelEndpoint.channel_type == "whatsapp",
+        TenantChannelEndpoint.is_active.is_(True),
+    )
+    if exclude_endpoint_id is not None:
+        active_endpoints_query = active_endpoints_query.filter(TenantChannelEndpoint.id != exclude_endpoint_id)
+
+    service_keys = {
+        ((item.provider or "").strip().lower(), (item.external_account_id or "").strip())
+        for item in active_endpoints_query.all()
+        if (item.provider or "").strip() and (item.external_account_id or "").strip()
+    }
+    service_keys.add(((provider or "").strip().lower(), external_account_id))
+    if len(service_keys) > 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A tenant can only link up to 2 active WhatsApp services",
+        )
+
+
 @router.get("", response_model=list[TenantChannelEndpointRead], dependencies=[Depends(get_current_admin_user)])
 def list_endpoints(db: Session = Depends(get_db)) -> list[TenantChannelEndpointRead]:
     endpoints = db.query(TenantChannelEndpoint).order_by(TenantChannelEndpoint.created_at.desc(), TenantChannelEndpoint.id.desc()).all()
@@ -84,6 +141,15 @@ def create_endpoint(payload: TenantChannelEndpointCreate, db: Session = Depends(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="provider is required")
     if not external_account_id and not payload.webhook_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="external_account_id is required unless webhook_token-only mode is used")
+
+    _validate_whatsapp_endpoint_constraints(
+        db,
+        tenant_id=payload.tenant_id,
+        channel_type=channel_type,
+        provider=provider,
+        external_account_id=external_account_id,
+        is_active=payload.is_active,
+    )
 
     endpoint = TenantChannelEndpoint(
         tenant_id=payload.tenant_id,
@@ -112,21 +178,27 @@ def update_endpoint(endpoint_id: int, payload: TenantChannelEndpointUpdate, db: 
     if endpoint is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found")
 
+    identity_fields_modified = False
+
     if payload.tenant_id is not None:
         _validate_tenant(db, payload.tenant_id)
         endpoint.tenant_id = payload.tenant_id
+        identity_fields_modified = True
     if payload.channel_type is not None:
         value = _normalize_text(payload.channel_type)
         if not value:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="channel_type is required")
         endpoint.channel_type = value
+        identity_fields_modified = True
     if payload.provider is not None:
         value = _normalize_text(payload.provider)
         if not value:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="provider is required")
         endpoint.provider = value
+        identity_fields_modified = True
     if payload.external_account_id is not None:
         endpoint.external_account_id = _normalize_text(payload.external_account_id)
+        identity_fields_modified = True
     if payload.external_phone_id is not None:
         endpoint.external_phone_id = _normalize_text(payload.external_phone_id)
     if payload.external_chat_namespace is not None:
@@ -140,6 +212,17 @@ def update_endpoint(endpoint_id: int, payload: TenantChannelEndpointUpdate, db: 
 
     if not endpoint.external_account_id and not endpoint.webhook_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="external_account_id is required unless webhook_token-only mode is used")
+
+    if identity_fields_modified or payload.is_active is not None:
+        _validate_whatsapp_endpoint_constraints(
+            db,
+            tenant_id=endpoint.tenant_id,
+            channel_type=endpoint.channel_type,
+            provider=endpoint.provider,
+            external_account_id=endpoint.external_account_id,
+            is_active=endpoint.is_active,
+            exclude_endpoint_id=endpoint.id,
+        )
 
     try:
         db.commit()

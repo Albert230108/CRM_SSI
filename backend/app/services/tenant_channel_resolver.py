@@ -212,21 +212,36 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                 if allow_account_fallback:
                     if len(active_endpoints_for_account) == 1:
                         endpoint = active_endpoints_for_account[0]
-                        tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
-                        if tenant:
-                            logger.warning(
-                                "Resolved inbound tenant by account_identity_fallback tenant_id=%s provider=%s external_account_id=%s history=%s",
-                                tenant.id,
-                                provider,
-                                external_account_id,
-                                is_history_payload,
-                            )
-                            return RoutingResult(
-                                tenant=tenant,
-                                strategy="account_identity_fallback",
-                                matched_value=external_account_id,
-                                matched_field="provider+external_account_id",
-                            )
+                        if not _first_non_empty(endpoint.external_chat_namespace):
+                            tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
+                            if tenant:
+                                logger.warning(
+                                    "Resolved inbound tenant by account_identity_fallback tenant_id=%s provider=%s external_account_id=%s history=%s",
+                                    tenant.id,
+                                    provider,
+                                    external_account_id,
+                                    is_history_payload,
+                                )
+                                return RoutingResult(
+                                    tenant=tenant,
+                                    strategy="account_identity_fallback",
+                                    matched_value=external_account_id,
+                                    matched_field="provider+external_account_id",
+                                )
+
+                        logger.warning(
+                            "Unresolved inbound WhatsApp: missing_chat_identity provider=%s external_account_id=%s history=%s",
+                            provider,
+                            external_account_id,
+                            is_history_payload,
+                        )
+                        return RoutingResult(
+                            tenant=None,
+                            strategy="missing_chat_identity",
+                            matched_value=external_account_id,
+                            matched_field="provider+external_account_id",
+                            unresolved_reason="missing_chat_identity",
+                        )
 
                     logger.warning(
                         "Unresolved inbound WhatsApp: ambiguous_account_identity provider=%s external_account_id=%s endpoints=%s history=%s",

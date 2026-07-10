@@ -12,12 +12,13 @@ def create_tenant(db_session, name="Tenant WhatsApp", booking_id="B-wa", phone=N
     return tenant
 
 
-def create_whatsapp_endpoint(db_session, tenant_id, external_account_id, provider="whatsapp-service"):
+def create_whatsapp_endpoint(db_session, tenant_id, external_account_id, provider="whatsapp-service", external_chat_namespace=None):
     endpoint = TenantChannelEndpoint(
         tenant_id=tenant_id,
         channel_type="whatsapp",
         provider=provider,
         external_account_id=external_account_id,
+        external_chat_namespace=external_chat_namespace,
         is_active=True,
     )
     db_session.add(endpoint)
@@ -73,6 +74,7 @@ def test_unrelated_lid_values_do_not_merge(client, db_session):
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
+            "tenant_id": tenant.id,
             "provider": "whatsapp-service",
             "external_account_id": "edi-crm-whatsapp",
             "whatsapp_chat_id": "155066153590862@lid",
@@ -84,6 +86,7 @@ def test_unrelated_lid_values_do_not_merge(client, db_session):
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
+            "tenant_id": tenant.id,
             "provider": "whatsapp-service",
             "external_account_id": "edi-crm-whatsapp",
             "whatsapp_chat_id": "155066153590863@lid",
@@ -110,6 +113,7 @@ def test_cus_and_lid_merge_when_trusted_phone_context_exists(client, db_session)
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
+            "tenant_id": tenant.id,
             "provider": "whatsapp-service",
             "external_account_id": "edi-crm-whatsapp",
             "sender": "+31 6 123 456 78",
@@ -123,6 +127,7 @@ def test_cus_and_lid_merge_when_trusted_phone_context_exists(client, db_session)
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
+            "tenant_id": tenant.id,
             "provider": "whatsapp-service",
             "external_account_id": "edi-crm-whatsapp",
             "sender": "+31 6 123 456 78",
@@ -151,6 +156,7 @@ def test_group_chat_identity_stays_raw(client, db_session):
         "/webhooks/whatsapp",
         json={
             "direction": "inbound",
+            "tenant_id": tenant.id,
             "provider": "whatsapp-service",
             "external_account_id": "edi-crm-whatsapp",
             "sender": "+31 6 123 456 78",
@@ -203,8 +209,8 @@ def test_outbound_whatsapp_duplicate_suppression_uses_provider_message_id(client
 def test_tenant_scoping_remains_intact(client, db_session):
     tenant_one = create_tenant(db_session, name="Tenant One", booking_id="B-wa-5")
     tenant_two = create_tenant(db_session, name="Tenant Two", booking_id="B-wa-6")
-    create_whatsapp_endpoint(db_session, tenant_one.id, "edi-crm-whatsapp-a")
-    create_whatsapp_endpoint(db_session, tenant_two.id, "edi-crm-whatsapp-b")
+    create_whatsapp_endpoint(db_session, tenant_one.id, "edi-crm-whatsapp-a", external_chat_namespace="31612345678@c.us")
+    create_whatsapp_endpoint(db_session, tenant_two.id, "edi-crm-whatsapp-b", external_chat_namespace="31612345678@c.us")
 
     first = client.post(
         "/webhooks/whatsapp",

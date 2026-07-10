@@ -570,7 +570,13 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     )
 
     if resolved.tenant is None:
-        return WhatsAppWebhookResponse(ok=True, routing_strategy="unresolved", tenant_id=None, message="inbound unresolved", unresolved_reason=resolved.unresolved_reason or resolved.strategy)
+        return WhatsAppWebhookResponse(
+            ok=True,
+            routing_strategy=resolved.strategy,
+            tenant_id=None,
+            message="inbound unresolved",
+            unresolved_reason=resolved.unresolved_reason or resolved.strategy,
+        )
 
     provider_message_id = str(payload.get("whatsapp_message_id") or payload.get("provider_message_id") or "").strip() or None
     msg_text = _first_text(payload)
