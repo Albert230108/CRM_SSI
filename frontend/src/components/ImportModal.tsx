@@ -17,6 +17,8 @@ type Booking = {
   booking_status: string | null
   responsible_comm: string | null
   imported: boolean
+  room_name: string | null
+  property_name: string | null
 }
 
 type ImportModalProps = {
@@ -51,6 +53,9 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
   const [importingId, setImportingId] = useState<string | null>(null)
   const [confirmBooking, setConfirmBooking] = useState<Booking | null>(null)
   const [editFields, setEditFields] = useState<Partial<Booking>>({})
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkImporting, setBulkImporting] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -85,24 +90,24 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
     return () => controller.abort()
   }, [open, token])
 
-  const handleImport = async (bookingId: string) => {
+  const handleImport = async (bookingId: string, overrides: Partial<Booking> = {}) => {
     const booking = bookings.find((item) => item.booking_id === bookingId)
     if (!booking) return
     try {
       setImportingId(bookingId)
       const body = {
         booking_id: bookingId,
-        name: [editFields.first_name, editFields.last_name].filter(Boolean).join(' ').trim() || booking.name || bookingId,
-        first_name: (editFields.first_name as string) || booking.first_name || '',
-        last_name: (editFields.last_name as string) || booking.last_name || '',
-        email: (editFields.email as string) || booking.email || '',
-        phone: (editFields.phone as string) || booking.phone || '',
-        mobile: (editFields.mobile as string) || booking.mobile || '',
+        name: [overrides.first_name, overrides.last_name].filter(Boolean).join(' ').trim() || booking.name || bookingId,
+        first_name: (overrides.first_name as string) || booking.first_name || '',
+        last_name: (overrides.last_name as string) || booking.last_name || '',
+        email: (overrides.email as string) || booking.email || '',
+        phone: (overrides.phone as string) || booking.phone || '',
+        mobile: (overrides.mobile as string) || booking.mobile || '',
         check_in: booking.check_in || '',
         check_out: booking.check_out || '',
         notes: booking.notes || '',
-        booking_status: (editFields.booking_status as string) || booking.booking_status || '',
-        responsible_comm: (editFields.responsible_comm as string) || booking.responsible_comm || '',
+        booking_status: (overrides.booking_status as string) || booking.booking_status || '',
+        responsible_comm: (overrides.responsible_comm as string) || booking.responsible_comm || '',
       }
       const response = await fetch(`${API_BASE_URL}/api/tenants/import`, {
         method: 'POST',
@@ -137,6 +142,107 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
     }
   }
 
+  const handleBulkImport = async () => {
+    const toImport = Array.from(selectedIds)
+    if (toImport.length === 0) return
+
+    setBulkImporting(true)
+    const errors: string[] = []
+    let successCount = 0
+
+    for (const bookingId of toImport) {
+      try {
+        setImportingId(bookingId)
+        const booking = bookings.find((item) => item.booking_id === bookingId)
+        if (!booking) continue
+
+        const body = {
+          booking_id: bookingId,
+          name: booking.name || bookingId,
+          first_name: booking.first_name || '',
+          last_name: booking.last_name || '',
+          email: booking.email || '',
+          phone: booking.phone || '',
+          mobile: booking.mobile || '',
+          check_in: booking.check_in || '',
+          check_out: booking.check_out || '',
+          notes: booking.notes || '',
+          booking_status: booking.booking_status || '',
+          responsible_comm: booking.responsible_comm || '',
+        }
+
+        const response = await fetch(`${API_BASE_URL}/api/tenants/import`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(body),
+        })
+
+        if (!response.ok) {
+          const payload = await readJsonSafely(response)
+          errors.push(`${booking.name || bookingId}: ${getErrorMessage(payload, 'Import failed')}`)
+          continue
+        }
+
+        setBookings((current) =>
+          current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item))
+        )
+        successCount++
+      } catch (err) {
+        errors.push(
+          `${bookingId}: ${err instanceof Error ? err.message : 'Import failed'}`
+        )
+      }
+    }
+
+    try {
+      const syncResponse = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-all`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!syncResponse.ok) {
+        const payload = await readJsonSafely(syncResponse)
+        errors.push(`Gmail sync: ${getErrorMessage(payload, 'Gmail sync failed')}`)
+      }
+    } catch (err) {
+      errors.push(`Gmail sync: ${err instanceof Error ? err.message : 'Failed'}`)
+    }
+
+    setImportingId(null)
+    setBulkImporting(false)
+    setSelectedIds(new Set())
+
+    if (errors.length > 0) {
+      setError(`Imported ${successCount}/${toImport.length}. Errors: ${errors.join(' | ')}`)
+    }
+    onImported?.()
+  }
+
+  const filteredBookings = bookings.filter((booking) => {
+    const q = searchQuery.toLowerCase()
+    return (
+      booking.name?.toLowerCase().includes(q) ||
+      booking.first_name?.toLowerCase().includes(q) ||
+      booking.last_name?.toLowerCase().includes(q) ||
+      booking.booking_id.toLowerCase().includes(q)
+    )
+  })
+
+  const unimportedFiltered = filteredBookings.filter((b) => !b.imported)
+  const allSelected = unimportedFiltered.length > 0 && unimportedFiltered.every((b) => selectedIds.has(b.booking_id))
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set())
+    } else {
+      const newIds = new Set(selectedIds)
+      unimportedFiltered.forEach((b) => newIds.add(b.booking_id))
+      setSelectedIds(newIds)
+    }
+  }
+
   if (!open) return null
 
   return (
@@ -155,19 +261,84 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         {loading ? <p className="mt-6 text-sm text-gray-500">Loading bookings...</p> : null}
         {error ? <p className="mt-6 text-sm text-rose-400">{error}</p> : null}
 
+        {!loading && bookings.length > 0 && (
+          <>
+            <div className="mt-6 space-y-3">
+              <input
+                type="text"
+                placeholder="Search by name or booking number..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm placeholder-gray-400 text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    disabled={unimportedFiltered.length === 0}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                  >
+                    {allSelected ? 'Deselect all' : 'Select all'}
+                  </button>
+                  {selectedIds.size > 0 && (
+                    <span className="text-xs text-gray-500">{selectedIds.size} selected</span>
+                  )}
+                </div>
+                {selectedIds.size > 0 && (
+                  <button
+                    type="button"
+                    disabled={bulkImporting}
+                    onClick={handleBulkImport}
+                    className="rounded-lg bg-cyan-600 px-3 py-1 text-xs font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {bulkImporting ? 'Importing...' : `Import selected (${selectedIds.size})`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
         <div className="mt-6 max-h-[60vh] space-y-3 overflow-y-auto pr-1">
-          {bookings.map((booking) => (
+          {filteredBookings.map((booking) => (
             <div key={booking.booking_id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-base font-semibold text-gray-900">
-                    {booking.name ?? <span className="italic text-gray-400">No name (ID: {booking.booking_id})</span>}
-                  </p>
-                  <p className="mt-1 text-sm text-gray-500">Booking ID {booking.booking_id}</p>
-                  <p className="mt-1 text-sm text-gray-500">{booking.booking_status || 'Unknown status'}</p>
-                  {booking.responsible_comm && (
-                    <p className="mt-1 text-sm text-cyan-600">Responsible: {booking.responsible_comm}</p>
-                  )}
+                <div className="flex items-start gap-3 flex-1">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(booking.booking_id)}
+                    onChange={(e) => {
+                      setSelectedIds((prev) => {
+                        const newSet = new Set(prev)
+                        if (e.target.checked) {
+                          newSet.add(booking.booking_id)
+                        } else {
+                          newSet.delete(booking.booking_id)
+                        }
+                        return newSet
+                      })
+                    }}
+                    disabled={booking.imported}
+                    className="mt-1 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <div className="flex-1">
+                    <p className="text-base font-semibold text-gray-900">
+                      {booking.name ?? <span className="italic text-gray-400">No name</span>}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-500">
+                      {booking.check_in && booking.check_out
+                        ? `${booking.check_in} → ${booking.check_out}`
+                        : booking.check_in || booking.check_out || 'No dates'}
+                      {' · '}
+                      {booking.property_name || booking.room_name || '—'}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">ID: {booking.booking_id}</p>
+                    <p className="mt-1 text-sm text-gray-500">{booking.booking_status || 'Unknown status'}</p>
+                    {booking.responsible_comm && (
+                      <p className="mt-1 text-sm text-cyan-600">Responsible: {booking.responsible_comm}</p>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -189,6 +360,11 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         mobile: booking.mobile ?? '',
                         booking_status: booking.booking_status ?? '',
                         responsible_comm: booking.responsible_comm ?? '',
+                      })
+                      setSelectedIds((prev) => {
+                        const newSet = new Set(prev)
+                        newSet.delete(booking.booking_id)
+                        return newSet
                       })
                     }}
                     className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
@@ -248,7 +424,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                 <button
                   type="button"
                   disabled={importingId === confirmBooking.booking_id}
-                  onClick={() => handleImport(confirmBooking.booking_id)}
+                  onClick={() => handleImport(confirmBooking.booking_id, editFields)}
                   className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
                 >
                   {importingId === confirmBooking.booking_id ? 'Importing...' : 'Confirm import'}
