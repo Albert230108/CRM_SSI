@@ -24,9 +24,6 @@ def _public_base_url() -> str:
 @router.get("/", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])
 def list_users(db: Session = Depends(get_db)) -> list[User]:
     users = db.query(User).order_by(User.id).all()
-    print(f"[DEBUG] list_users called, found {len(users)} users")
-    for user in users:
-        print(f"[DEBUG]   - {user.id}: {user.email} (admin={user.is_admin}, active={user.is_active})")
     return users
 
 
