@@ -10,14 +10,7 @@ from app.api.gmail_integration import router as gmail_integration_router
 from app.api.invites import router as invites_router
 from app.api.tenants import router as tenants_router
 from app.api.tenant_channel_endpoints import router as tenant_channel_endpoints_router
-
-try:
-    from app.api.users import router as users_router
-    print("[backend] ✓ users_router imported successfully")
-except Exception as e:
-    print(f"[backend] ✗ Failed to import users_router: {e}")
-    raise
-
+from app.api.users import router as users_router
 from app.api.whatsapp_thread_links import router as whatsapp_thread_links_router
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
