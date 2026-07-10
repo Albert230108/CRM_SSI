@@ -217,7 +217,6 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [expandedConversationIds, setExpandedConversationIds] = useState<number[]>([])
   const [expandedWhatsappBlockIds, setExpandedWhatsappBlockIds] = useState<string[]>([])
   const [selectedWhatsappGroup, setSelectedWhatsappGroup] = useState<WhatsappGroupItem | null>(null)
   const [whatsappEndpoints, setWhatsappEndpoints] = useState<WhatsappEndpointOption[]>([])
@@ -231,6 +230,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [replyMessage, setReplyMessage] = useState('')
   const [replySubject, setReplySubject] = useState('')
   const [replySending, setReplySending] = useState(false)
+  const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
 
@@ -291,7 +291,6 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
           const linksData: ThreadWhatsappLink[] = await linksResponse.json()
           setWhatsappLinks(Array.isArray(linksData) ? linksData : [])
         }
-        setExpandedConversationIds([])
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load thread')
@@ -305,33 +304,30 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   }, [tenantId, token, reloadSignal])
 
   useEffect(() => {
-    if (!selectedWhatsappGroup) return
+    if (!selectedWhatsappGroup && !selectedEmailThread) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setSelectedWhatsappGroup(null)
+        setSelectedEmailThread(null)
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedWhatsappGroup])
+  }, [selectedWhatsappGroup, selectedEmailThread])
 
   useEffect(() => {
-    if (!selectedWhatsappGroup) return
-    const scrollContainer = document.querySelector('[data-whatsapp-messages]')
+    if (!selectedWhatsappGroup && !selectedEmailThread) return
+    const scrollContainer = selectedEmailThread
+      ? document.querySelector('[data-email-messages]')
+      : document.querySelector('[data-whatsapp-messages]')
     if (scrollContainer) {
       setTimeout(() => {
         scrollContainer.scrollTop = scrollContainer.scrollHeight
       }, 0)
     }
-  }, [selectedWhatsappGroup, replyTarget?.type])
-
-  const toggleConversation = (conversationId: number) => {
-    setExpandedConversationIds((current) =>
-      current.includes(conversationId) ? current.filter((id) => id !== conversationId) : [...current, conversationId],
-    )
-  }
+  }, [selectedWhatsappGroup, selectedEmailThread, replyTarget?.type])
 
   const toggleWhatsappBlock = (blockId: string) => {
     setExpandedWhatsappBlockIds((current) =>
@@ -341,6 +337,10 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
   const openWhatsappGroup = (group: WhatsappGroupItem) => {
     setSelectedWhatsappGroup(group)
+  }
+
+  const openEmailThread = (thread: EmailThreadItem) => {
+    setSelectedEmailThread(thread)
   }
 
   const loadGroupedThread = async () => {
@@ -577,25 +577,12 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         <div className="space-y-4">
           {items.map((item) => {
             if (item.type === 'email_thread') {
-              const expanded = expandedConversationIds.includes(item.thread_id)
               const latestMessage = item.messages[item.messages.length - 1]
-              const timelineEntries = [
-                ...item.messages.map((messageItem) => ({
-                  kind: 'email' as const,
-                  timestamp: messageItem.sent_at,
-                  messageItem,
-                })),
-                ...item.whatsapp_blocks.map((block) => ({
-                  kind: 'whatsapp_block' as const,
-                  timestamp: block.start_at || block.end_at || new Date().toISOString(),
-                  block,
-                })),
-              ].sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime())
               return (
                 <article key={item.thread_id} className="rounded-2xl border border-gray-200 bg-gray-50">
                   <div
-                    onClick={() => toggleConversation(item.thread_id)}
-                    className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left"
+                    onClick={() => openEmailThread(item)}
+                    className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-gray-100/50"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
@@ -610,13 +597,13 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">
                       <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
-                        {expanded ? 'Collapse' : `${item.messages.length} messages`}
+                        {item.messages.length} messages
                       </span>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (!expanded) toggleConversation(item.thread_id)
+                          openEmailThread(item)
                           setReplyTarget({ type: 'email', threadId: item.thread_id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
                         }}
                         className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
@@ -625,87 +612,6 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                       </button>
                     </div>
                   </div>
-
-                  {expanded ? (
-                    <div className="border-t border-gray-200 bg-white px-4 py-3">
-                      <div className="space-y-3">
-                        {timelineEntries.map((entry) => {
-                          if (entry.kind === 'email') {
-                            const messageItem = entry.messageItem
-                            const isOutbound = messageItem.direction === 'outbound'
-                            return (
-                              <article key={`email-${messageItem.id}`} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
-                                <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                                  <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                                    {isOutbound ? 'Outbound' : 'Inbound'}
-                                  </span>
-                                  <span>{formatDisplayDate(messageItem.sent_at)}</span>
-                                  <span className="normal-case tracking-normal">
-                                    {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
-                                  </span>
-                                </div>
-                                {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
-                                {renderMessageBody(messageItem) ? (<div className="prose prose-sm max-w-none mt-2 overflow-x-auto text-sm leading-6 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600" dangerouslySetInnerHTML={renderMessageBody(messageItem)} />) : (<p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body_text || messageItem.body}</p>)}
-                              </article>
-                            )
-                          }
-
-                          const block = entry.block
-                          const blockExpanded = expandedWhatsappBlockIds.includes(block.block_id)
-                          const firstBlockMessage = block.messages[0]
-                          const lastBlockMessage = block.messages[block.messages.length - 1]
-                          return (
-                            <article key={`whatsapp-${block.block_id}`} className="rounded-2xl border border-emerald-200 bg-emerald-50">
-                              <button
-                                type="button"
-                                onClick={() => toggleWhatsappBlock(block.block_id)}
-                                className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left"
-                              >
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
-                                    <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">WhatsApp</span>
-                                    <span>{formatDisplayDate(block.start_at || firstBlockMessage?.sent_at || lastBlockMessage?.sent_at || new Date().toISOString())}</span>
-                                  </div>
-                                  <p className="mt-2 truncate text-sm font-semibold text-gray-900">
-                                    {block.message_count === 1 ? '1 message' : `${block.message_count} messages`}
-                                  </p>
-                                  <p className="mt-1 truncate text-sm text-gray-600">
-                                    {blockExpanded ? 'Tap to collapse WhatsApp bubbles' : 'Tap to expand WhatsApp bubbles'}
-                                  </p>
-                                </div>
-                                <span className="mt-1 rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
-                                  {blockExpanded ? 'Collapse' : 'Expand'}
-                                </span>
-                              </button>
-
-                              {blockExpanded ? (
-                                <div className="border-t border-emerald-200 bg-white px-4 py-3">
-                                  <div className="space-y-3">
-                                    {block.messages.map((blockMessage) => {
-                                      const isOutbound = blockMessage.direction === 'outbound'
-                                      return (
-                                        <article key={blockMessage.id} className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}>
-                                          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                                            <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                                              {isOutbound ? 'Outbound' : 'Inbound'}
-                                            </span>
-                                            <span>{formatDisplayDate(blockMessage.sent_at)}</span>
-                                            <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
-                                          </div>
-                                          {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
-                                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.body}</p>
-                                        </article>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-                              ) : null}
-                            </article>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
                 </article>
               )
             }
@@ -752,6 +658,123 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         </div>
       </div>
 
+
+      {selectedEmailThread ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm"
+          onClick={() => setSelectedEmailThread(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="email-thread-modal-title"
+            className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.35em] text-cyan-700">Email Thread</p>
+                <h3 id="email-thread-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
+                  {selectedEmailThread.subject || 'Untitled conversation'}
+                </h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {formatDisplayDate(selectedEmailThread.anchor_timestamp || selectedEmailThread.messages[0]?.sent_at || selectedEmailThread.messages[selectedEmailThread.messages.length - 1]?.sent_at || new Date().toISOString())}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedEmailThread(null)}
+                className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-[72vh] overflow-y-auto px-6 py-5" data-email-messages>
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Messages</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-900">
+                    {selectedEmailThread.messages.length === 1 ? '1 message' : `${selectedEmailThread.messages.length} messages`}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email ? `Mailbox: ${selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email}` : 'Mailbox: unknown'}
+                </p>
+              </div>
+
+              <div className="space-y-3 mb-4">
+                {selectedEmailThread.messages.map((messageItem) => {
+                  const isOutbound = messageItem.direction === 'outbound'
+                  return (
+                    <article
+                      key={`email-${messageItem.id}`}
+                      className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                        <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {isOutbound ? 'Outbound' : 'Inbound'}
+                        </span>
+                        <span>{formatDisplayDate(messageItem.sent_at)}</span>
+                      </div>
+                      {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
+                      {renderMessageBody(messageItem) ? (
+                        <div
+                          className="prose prose-sm max-w-none mt-2 overflow-x-auto text-sm leading-6 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
+                          dangerouslySetInnerHTML={renderMessageBody(messageItem)}
+                        />
+                      ) : (
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body_text || messageItem.body}</p>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+
+              {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
+                <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-email-subject">
+                      Subject
+                    </label>
+                    <input
+                      id="modal-email-subject"
+                      value={replySubject}
+                      onChange={(event) => setReplySubject(event.target.value)}
+                      placeholder={replyTarget.subject || 'Subject'}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                    />
+                  </div>
+                  <textarea
+                    value={replyMessage}
+                    onChange={(event) => setReplyMessage(event.target.value)}
+                    rows={4}
+                    placeholder="Write your reply..."
+                    disabled={replySending}
+                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setReplyTarget(null)}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={replySending || !replyMessage.trim()}
+                      className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {replySending ? 'Sending...' : 'Send'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {selectedWhatsappGroup ? (
         <div
