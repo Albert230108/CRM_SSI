@@ -2,3 +2,6 @@
 .env
 /Agent Info/
 *.pyc
+
+node_modules/
+frontend/dist/
