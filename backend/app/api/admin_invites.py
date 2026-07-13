@@ -89,27 +89,16 @@ def create_invite(payload: AdminInviteCreate, db: Session = Depends(get_db), cur
 @router.post("/clear", response_model=AdminInviteClearResult, dependencies=[Depends(get_current_admin_user)])
 def clear_pending_invites(db: Session = Depends(get_db)) -> AdminInviteClearResult:
     now = datetime.now(timezone.utc)
-    pending_invites = db.query(AdminInvite).filter(AdminInvite.revoked_at.is_(None)).all()
-
-    revoked_count = 0
-    skipped_accepted_count = 0
-    skipped_expired_count = 0
-    for invite in pending_invites:
-        if invite.used_at is not None:
-            skipped_accepted_count += 1
-            continue
-        if _as_aware_utc(invite.expires_at) <= now:
-            skipped_expired_count += 1
-            continue
-        invite.revoked_at = now
-        revoked_count += 1
-
-    db.commit()
-    return AdminInviteClearResult(
-        revoked_count=revoked_count,
-        skipped_accepted_count=skipped_accepted_count,
-        skipped_expired_count=skipped_expired_count,
+    # Invites are one-time use, so revoking an already-used or already-expired invite is
+    # harmless (it cannot be redeemed either way). "Clear all" revokes every invite that
+    # hasn't already been revoked, rather than leaving used/expired ones lingering.
+    revoked_count = (
+        db.query(AdminInvite)
+        .filter(AdminInvite.revoked_at.is_(None))
+        .update({AdminInvite.revoked_at: now}, synchronize_session=False)
     )
+    db.commit()
+    return AdminInviteClearResult(revoked_count=revoked_count)
 
 
 @router.post("/{invite_id}/revoke", response_model=AdminInviteRead, dependencies=[Depends(get_current_admin_user)])

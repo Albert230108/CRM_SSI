@@ -1,11 +1,27 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import FinanceBox from '../components/FinanceBox'
 import ImportModal from '../components/ImportModal'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
 import ThreadView from '../components/ThreadView'
+import {
+  clampMiddleColumnWidth,
+  clampTenantSidebarWidth,
+  DIVIDER_WIDTH,
+  getUserPreferenceKey,
+  loadDashboardLayoutPreference,
+  MIDDLE_COLUMN_MIN_WIDTH,
+  RIGHT_PANEL_MIN_WIDTH,
+  saveDashboardLayoutPreference,
+  TENANT_SIDEBAR_DEFAULT_WIDTH,
+  TENANT_SIDEBAR_MAX_WIDTH,
+  TENANT_SIDEBAR_MIN_WIDTH,
+} from '../lib/dashboardLayoutPreferences'
 import { useAuthStore } from '../store/authStore'
+
+const DESKTOP_BREAKPOINT = '(min-width: 768px)'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -32,12 +48,13 @@ function formatSyncSummary(summary: SyncSummary | null) {
 
 export default function Dashboard() {
   const token = useAuthStore((state) => state.token)
+  const user = useAuthStore((state) => state.user)
   const { tenantId } = useParams()
   const selectedTenantId = useMemo(() => {
     const parsed = Number(tenantId)
     return Number.isFinite(parsed) ? parsed : undefined
   }, [tenantId])
-  
+
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
   const [middleColumnCollapsed, setMiddleColumnCollapsed] = useState(false)
@@ -45,6 +62,16 @@ export default function Dashboard() {
   const [syncRunning, setSyncRunning] = useState(false)
   const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null)
   const [syncError, setSyncError] = useState('')
+
+  const columnsContainerRef = useRef<HTMLDivElement | null>(null)
+  const [containerWidth, setContainerWidth] = useState(1200)
+  const [isDesktop, setIsDesktop] = useState(true)
+  const [tenantSidebarWidth, setTenantSidebarWidth] = useState(TENANT_SIDEBAR_DEFAULT_WIDTH)
+  // null = no explicit preference yet -> default 50/50 split between middle and right panels.
+  const [middleColumnWidth, setMiddleColumnWidth] = useState<number | null>(null)
+  const dragBaseWidthRef = useRef(0)
+
+  const userPreferenceKey = getUserPreferenceKey(user)
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)')
@@ -54,6 +81,88 @@ export default function Dashboard() {
     mediaQuery.addEventListener('change', updateCollapsedState)
     return () => mediaQuery.removeEventListener('change', updateCollapsedState)
   }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(DESKTOP_BREAKPOINT)
+    const updateDesktopState = () => setIsDesktop(mediaQuery.matches)
+
+    updateDesktopState()
+    mediaQuery.addEventListener('change', updateDesktopState)
+    return () => mediaQuery.removeEventListener('change', updateDesktopState)
+  }, [])
+
+  useEffect(() => {
+    const element = columnsContainerRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (width) setContainerWidth(width)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  // Load this user's saved column layout whenever the authenticated user changes.
+  useEffect(() => {
+    if (!userPreferenceKey) {
+      setTenantSidebarWidth(TENANT_SIDEBAR_DEFAULT_WIDTH)
+      setMiddleColumnWidth(null)
+      return
+    }
+    const saved = loadDashboardLayoutPreference(userPreferenceKey)
+    if (!saved) {
+      setTenantSidebarWidth(TENANT_SIDEBAR_DEFAULT_WIDTH)
+      setMiddleColumnWidth(null)
+      return
+    }
+    setTenantSidebarWidth(clampTenantSidebarWidth(saved.tenantSidebarExpandedWidth, containerWidth))
+    setMiddleColumnWidth(
+      saved.middleColumnWidth === null
+        ? null
+        : clampMiddleColumnWidth(saved.middleColumnWidth, containerWidth, saved.tenantSidebarExpandedWidth),
+    )
+    // Re-run only when the user identity changes; containerWidth is read at load time only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userPreferenceKey])
+
+  const persistLayout = (nextTenantWidth: number, nextMiddleWidth: number | null) => {
+    if (!userPreferenceKey) return
+    saveDashboardLayoutPreference(userPreferenceKey, {
+      version: 1,
+      tenantSidebarExpandedWidth: nextTenantWidth,
+      middleColumnWidth: nextMiddleWidth,
+    })
+  }
+
+  const effectiveMiddleWidth =
+    middleColumnWidth ?? Math.max(MIDDLE_COLUMN_MIN_WIDTH, (containerWidth - DIVIDER_WIDTH * 2 - tenantSidebarWidth) / 2)
+
+  const handleTenantDividerStart = () => {
+    dragBaseWidthRef.current = tenantSidebarWidth
+  }
+  const handleTenantDividerAdjust = (deltaPx: number) => {
+    setTenantSidebarWidth(clampTenantSidebarWidth(dragBaseWidthRef.current + deltaPx, containerWidth))
+  }
+  const handleTenantDividerEnd = () => {
+    setTenantSidebarWidth((current) => {
+      persistLayout(current, middleColumnWidth)
+      return current
+    })
+  }
+
+  const handleMiddleDividerStart = () => {
+    dragBaseWidthRef.current = effectiveMiddleWidth
+  }
+  const handleMiddleDividerAdjust = (deltaPx: number) => {
+    setMiddleColumnWidth(clampMiddleColumnWidth(dragBaseWidthRef.current + deltaPx, containerWidth, tenantSidebarWidth))
+  }
+  const handleMiddleDividerEnd = () => {
+    setMiddleColumnWidth((current) => {
+      persistLayout(tenantSidebarWidth, current)
+      return current
+    })
+  }
 
   useEffect(() => {
     if (!syncSummary?.whatsapp_sync_queued) {
@@ -155,12 +264,13 @@ export default function Dashboard() {
         </div>
       ) : null}
 
-      <div className="flex flex-row gap-4 flex-1 min-h-0 overflow-hidden">
+      <div ref={columnsContainerRef} className="flex flex-row flex-1 min-h-0 overflow-hidden">
         <section
           className={[
-            'relative flex h-full shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300',
-            tenantsCollapsed ? 'w-10' : 'w-[260px]',
+            'relative flex h-full shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm',
+            tenantsCollapsed ? 'w-10 transition-all duration-300' : '',
           ].join(' ')}
+          style={tenantsCollapsed ? undefined : { width: tenantSidebarWidth }}
         >
           <button
             type="button"
@@ -172,22 +282,34 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-[260px] overflow-hidden p-5 transition-all duration-300',
+              'h-full min-w-0 overflow-hidden p-5 transition-all duration-300',
               tenantsCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <TenantList 
-              selectedTenantId={selectedTenantId} 
+            <TenantList
+              selectedTenantId={selectedTenantId}
               reloadSignal={tenantReloadSignal}
             />
           </div>
         </section>
 
+        <ColumnResizeHandle
+          label="Resize tenant sidebar"
+          disabled={!isDesktop || tenantsCollapsed}
+          valueNow={tenantSidebarWidth}
+          valueMin={TENANT_SIDEBAR_MIN_WIDTH}
+          valueMax={TENANT_SIDEBAR_MAX_WIDTH}
+          onAdjustStart={handleTenantDividerStart}
+          onAdjust={handleTenantDividerAdjust}
+          onAdjustEnd={handleTenantDividerEnd}
+        />
+
         <section
           className={[
-            'relative flex h-full overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300',
-            middleColumnCollapsed ? 'w-10 shrink-0' : 'flex-1 min-w-0',
+            'relative flex h-full overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm',
+            middleColumnCollapsed ? 'w-10 shrink-0 transition-all duration-300' : 'min-w-0',
           ].join(' ')}
+          style={middleColumnCollapsed ? undefined : { width: effectiveMiddleWidth, flexShrink: 0 }}
         >
           <button
             type="button"
@@ -217,7 +339,24 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <section className="flex min-w-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-300">
+        <ColumnResizeHandle
+          label="Resize thread panel"
+          disabled={!isDesktop || middleColumnCollapsed}
+          valueNow={effectiveMiddleWidth}
+          valueMin={MIDDLE_COLUMN_MIN_WIDTH}
+          valueMax={Math.max(
+            MIDDLE_COLUMN_MIN_WIDTH,
+            containerWidth - DIVIDER_WIDTH * 2 - tenantSidebarWidth - RIGHT_PANEL_MIN_WIDTH,
+          )}
+          onAdjustStart={handleMiddleDividerStart}
+          onAdjust={handleMiddleDividerAdjust}
+          onAdjustEnd={handleMiddleDividerEnd}
+        />
+
+        <section
+          className="flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-300"
+          style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
+        >
           <div className="h-full w-full min-h-0 overflow-hidden">
             <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} />
           </div>

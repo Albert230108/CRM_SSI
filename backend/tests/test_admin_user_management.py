@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 from app.core.security import get_password_hash, hash_token, verify_password
 from app.models.admin_invite import AdminInvite
+from app.models.invitation import Invitation
+from app.models.password_reset import PasswordResetToken
 from app.models.user import User
 
 ADMIN_ID = 1
@@ -63,7 +65,7 @@ def test_non_admin_cannot_create_or_delete_users(non_admin_client):
 # --- Bulk clear invites ---
 
 
-def test_bulk_clear_revokes_only_pending_invites(client, db_session):
+def test_bulk_clear_revokes_every_unrevoked_invite(client, db_session):
     pending = _make_invite(db_session, email="pending@example.com")
     accepted = _make_invite(db_session, used=True, email="accepted@example.com")
     expired = _make_invite(db_session, expired=True, email="expired@example.com")
@@ -72,17 +74,15 @@ def test_bulk_clear_revokes_only_pending_invites(client, db_session):
     response = client.post("/api/admin/invites/clear")
     assert response.status_code == 200
     data = response.json()
-    assert data["revoked_count"] == 1
-    assert data["skipped_accepted_count"] == 1
-    assert data["skipped_expired_count"] == 1
+    assert data["revoked_count"] == 3
 
     db_session.refresh(pending)
     db_session.refresh(accepted)
     db_session.refresh(expired)
     db_session.refresh(already_revoked)
     assert pending.revoked_at is not None
-    assert accepted.revoked_at is None
-    assert expired.revoked_at is None
+    assert accepted.revoked_at is not None
+    assert expired.revoked_at is not None
     assert already_revoked.revoked_at is not None
 
 
@@ -153,31 +153,63 @@ def test_create_user_rejects_mismatched_passwords(client, db_session):
 
 def test_admin_can_delete_user(client, db_session):
     target = _make_user(db_session, email="todelete@example.com")
-    response = client.delete(f"/api/users/{target.id}")
+    target_id = target.id
+    response = client.delete(f"/api/users/{target_id}")
     assert response.status_code == 200
     data = response.json()
-    assert data["deactivated"] is True
+    assert data["deleted"] is True
 
-    db_session.refresh(target)
-    assert target.is_active is False
+    assert db_session.query(User).filter(User.id == target_id).first() is None
 
 
-def test_deactivated_user_cannot_authenticate(client, db_session):
+def test_deleted_user_disappears_from_list(client, db_session):
     target = _make_user(db_session, email="lockedout@example.com")
     client.delete(f"/api/users/{target.id}")
 
-    login_response = client.post(
-        "/api/auth/login",
-        json={"email": "lockedout@example.com", "password": "Sup3rSecret!"},
-    )
-    assert login_response.status_code == 401
-
-
-def test_delete_is_idempotent(client, db_session):
-    target = _make_user(db_session, email="alreadyout@example.com", is_active=False)
-    response = client.delete(f"/api/users/{target.id}")
+    response = client.get("/api/users")
     assert response.status_code == 200
-    assert response.json()["already_inactive"] is True
+    assert all(user["email"] != "lockedout@example.com" for user in response.json())
+
+
+def test_delete_is_idempotent_for_already_inactive_user(client, db_session):
+    target = _make_user(db_session, email="alreadyout@example.com", is_active=False)
+    target_id = target.id
+    response = client.delete(f"/api/users/{target_id}")
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+
+    assert db_session.query(User).filter(User.id == target_id).first() is None
+
+
+def test_delete_user_cascades_their_invite_and_reset_records(client, db_session):
+    target = _make_user(db_session, email="prolificadmin@example.com")
+    target_id = target.id
+
+    invitation = Invitation(
+        email="someone@example.com",
+        token_hash=hash_token("invite-token-cascade"),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        created_by_id=target_id,
+    )
+    reset_token = PasswordResetToken(
+        user_id=target_id,
+        token_hash=hash_token("reset-token-cascade"),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        created_by_id=target_id,
+    )
+    admin_invite = _make_invite(db_session, email="fromtarget@example.com")
+    admin_invite.invited_by_user_id = target_id
+    db_session.add_all([invitation, reset_token])
+    db_session.commit()
+
+    response = client.delete(f"/api/users/{target_id}")
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+
+    assert db_session.query(User).filter(User.id == target_id).first() is None
+    assert db_session.query(Invitation).filter(Invitation.created_by_id == target_id).first() is None
+    assert db_session.query(PasswordResetToken).filter(PasswordResetToken.user_id == target_id).first() is None
+    assert db_session.query(AdminInvite).filter(AdminInvite.invited_by_user_id == target_id).first() is None
 
 
 def test_cannot_delete_last_active_admin(client, db_session):

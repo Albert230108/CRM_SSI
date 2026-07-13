@@ -121,11 +121,8 @@ class AdminUserCreate(BaseModel):
 
 class UserDeleteResult(BaseModel):
     id: int
-    deactivated: bool
-    already_inactive: bool
+    deleted: bool
 
 
 class AdminInviteClearResult(BaseModel):
     revoked_count: int
-    skipped_accepted_count: int
-    skipped_expired_count: int

@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_admin_user, get_db
 from app.core.security import generate_secure_token, get_password_hash, hash_token
 from app.core.public_urls import get_public_frontend_base_url
+from app.models.admin_invite import AdminInvite
 from app.models.invitation import Invitation
 from app.models.password_reset import PasswordResetToken
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
 from app.schemas.user import (
     AdminUserCreate,
@@ -164,14 +166,28 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User 
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own account")
 
-    if not user.is_active:
-        return UserDeleteResult(id=user.id, deactivated=False, already_inactive=True)
-
-    if user.is_admin:
+    if user.is_active and user.is_admin:
         active_admins = db.query(User).filter(User.is_admin.is_(True), User.is_active.is_(True), User.id != user.id).count()
         if active_admins == 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one active admin must remain")
 
-    user.is_active = False
+    # These records only capture the deleted user's own invite/reset activity, so they are
+    # removed along with the account rather than left dangling on a non-nullable FK.
+    db.query(Invitation).filter(Invitation.created_by_id == user.id).delete(synchronize_session=False)
+    db.query(PasswordResetToken).filter(
+        (PasswordResetToken.user_id == user.id) | (PasswordResetToken.created_by_id == user.id)
+    ).delete(synchronize_session=False)
+    db.query(AdminInvite).filter(AdminInvite.invited_by_user_id == user.id).delete(synchronize_session=False)
+
+    # Tenant channel endpoint audit fields are nullable, so preserve the endpoint history
+    # and just clear the reference to the deleted user.
+    db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.linked_by_user_id == user.id).update(
+        {TenantChannelEndpoint.linked_by_user_id: None}, synchronize_session=False
+    )
+    db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.unlinked_by_user_id == user.id).update(
+        {TenantChannelEndpoint.unlinked_by_user_id: None}, synchronize_session=False
+    )
+
+    db.delete(user)
     db.commit()
-    return UserDeleteResult(id=user.id, deactivated=True, already_inactive=False)
+    return UserDeleteResult(id=user_id, deleted=True)
