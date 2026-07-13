@@ -141,11 +141,14 @@ def _parse_internal_date(value: str | int | None) -> datetime:
 def _extract_text(payload: dict[str, Any]) -> str:
     body = payload.get("body") or {}
     data = body.get("data")
-    if data:
+    if data and str(payload.get("mimeType") or "").lower() != "text/html":
         return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="ignore")
     for part in payload.get("parts") or []:
         if part.get("mimeType") == "text/plain" and (part.get("body") or {}).get("data"):
             return base64.urlsafe_b64decode(part["body"]["data"].encode("utf-8")).decode("utf-8", errors="ignore")
+        nested = _extract_text(part)
+        if nested:
+            return nested
     return ""
 
 

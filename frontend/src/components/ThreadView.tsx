@@ -18,6 +18,7 @@ type TimelineMessage = {
   recipient_email: string | null
   subject: string | null
   body: string
+  body_display: string | null
   body_text: string | null
   body_html: string | null
   external_account_id?: string | null
@@ -89,8 +90,8 @@ const sanitizeHtml = (html: string) => {
   return doc.body.innerHTML
 }
 
-const extractPreviewText = (message: Pick<TimelineMessage, 'body' | 'body_text' | 'body_html'>) => {
-  const source = message.body_text || message.body_html || message.body || ''
+const extractPreviewText = (message: Pick<TimelineMessage, 'body' | 'body_display' | 'body_text' | 'body_html'>) => {
+  const source = message.body_text || message.body_html || message.body_display || message.body || ''
   if (!source) return ''
   if (message.body_html || /<[^>]+>/.test(source)) {
     return htmlToPlainText(source).replace(/\s+/g, ' ').trim()
@@ -652,7 +653,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                             dangerouslySetInnerHTML={renderMessageBody(messageItem)}
                           />
                         ) : (
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body_text || messageItem.body}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body_text || messageItem.body_display || messageItem.body}</p>
                         )}
                       </article>
                     )
