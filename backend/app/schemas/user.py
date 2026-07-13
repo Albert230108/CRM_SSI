@@ -66,21 +66,6 @@ class AdminInviteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class InviteCreate(BaseModel):
-    email: str
-    full_name: str | None = None
-    is_admin: bool = False
-
-
-class InviteRead(BaseModel):
-    token: str
-    invite_url: str
-
-
-class PasswordResetRequestCreate(BaseModel):
-    user_id: int
-
-
 class InvitationComplete(BaseModel):
     first_name: str | None = None
     last_name: str | None = None

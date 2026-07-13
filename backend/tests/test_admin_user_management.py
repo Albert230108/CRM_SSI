@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 
 from app.core.security import get_password_hash, hash_token, verify_password
 from app.models.admin_invite import AdminInvite
-from app.models.invitation import Invitation
 from app.models.password_reset import PasswordResetToken
 from app.models.user import User
 
@@ -185,12 +184,6 @@ def test_delete_user_cascades_their_invite_and_reset_records(client, db_session)
     target = _make_user(db_session, email="prolificadmin@example.com")
     target_id = target.id
 
-    invitation = Invitation(
-        email="someone@example.com",
-        token_hash=hash_token("invite-token-cascade"),
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-        created_by_id=target_id,
-    )
     reset_token = PasswordResetToken(
         user_id=target_id,
         token_hash=hash_token("reset-token-cascade"),
@@ -199,7 +192,7 @@ def test_delete_user_cascades_their_invite_and_reset_records(client, db_session)
     )
     admin_invite = _make_invite(db_session, email="fromtarget@example.com")
     admin_invite.invited_by_user_id = target_id
-    db_session.add_all([invitation, reset_token])
+    db_session.add(reset_token)
     db_session.commit()
 
     response = client.delete(f"/api/users/{target_id}")
@@ -207,7 +200,6 @@ def test_delete_user_cascades_their_invite_and_reset_records(client, db_session)
     assert response.json()["deleted"] is True
 
     assert db_session.query(User).filter(User.id == target_id).first() is None
-    assert db_session.query(Invitation).filter(Invitation.created_by_id == target_id).first() is None
     assert db_session.query(PasswordResetToken).filter(PasswordResetToken.user_id == target_id).first() is None
     assert db_session.query(AdminInvite).filter(AdminInvite.invited_by_user_id == target_id).first() is None
 
