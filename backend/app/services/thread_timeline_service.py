@@ -181,6 +181,11 @@ def _load_tenant_whatsapp(db: Session, tenant_id: int) -> list[Communication]:
             # No manual link governs this account; keep prior (inference-based) behavior.
             filtered.append(message)
             continue
+        if not linked_chat_ids:
+            # Endpoint exists but has no external_chat_namespace (bare/unlinked state).
+            # Treat as unlinked and keep the message.
+            filtered.append(message)
+            continue
         if any(_communication_matches_chat_identity(message, chat_id) for chat_id in linked_chat_ids):
             filtered.append(message)
 

@@ -101,3 +101,34 @@ def test_unlinked_manual_link_no_longer_filters(db_session):
 
     assert "Linked chat message" in texts
     assert "Other chat message" in texts
+
+
+def test_bare_endpoint_without_chat_namespace_does_not_filter(db_session):
+    """Bare endpoints (active but no external_chat_namespace) should not suppress messages.
+
+    Scenario: After unlink -> reimport, if a bare endpoint exists with account but no chat namespace,
+    the timeline filter should treat it as unlinked and show all messages for that account.
+    """
+    tenant = create_tenant(db_session, booking_id="B-bare-endpoint")
+    add_whatsapp_message(db_session, tenant.id, chat_id="326472368@lid", text="First message")
+    add_whatsapp_message(db_session, tenant.id, chat_id="999999999@lid", text="Second message")
+
+    # Bare endpoint: active, has account_id, but no external_chat_namespace
+    bare_endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace=None,
+        source="system",
+        is_active=True,
+    )
+    db_session.add(bare_endpoint)
+    db_session.commit()
+
+    timeline = build_tenant_thread_timeline(db_session, tenant.id)
+    texts = _all_whatsapp_texts(timeline)
+
+    # Both messages should be visible; bare endpoint should not filter
+    assert "First message" in texts
+    assert "Second message" in texts
