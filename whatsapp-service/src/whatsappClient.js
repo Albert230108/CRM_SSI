@@ -470,13 +470,18 @@ function buildCrmPayload(message, direction, overrides = {}) {
   };
 }
 
-async function forwardCrmMessage(payload, contextLabel) {
+async function forwardCrmMessage(payload, contextLabel, options = {}) {
   if (!crmWebhookUrl) {
     console.warn(`CRM WhatsApp webhook URL is not configured; ${contextLabel} messages will not be forwarded.`);
     return false;
   }
 
-  if (payload.whatsapp_message_id && forwardedMessageIds.has(payload.whatsapp_message_id)) {
+  // The in-memory forwardedMessageIds cache only tracks "did this process already send this
+  // message id", not "does the CRM still have it" - it can't see a relink or a CRM-side data
+  // reset that happened without restarting this service. History/backfill forwarding relies on
+  // the CRM's own provider_message_id dedup instead (see _find_existing_inbound_whatsapp_communication),
+  // so it opts out of this cache to make "resync full history" actually able to redeliver.
+  if (!options.skipForwardedCache && payload.whatsapp_message_id && forwardedMessageIds.has(payload.whatsapp_message_id)) {
     console.info(
       "Skipping duplicate %s WhatsApp message for CRM forwarding: message_id=%s",
       contextLabel,
@@ -741,8 +746,14 @@ async function backfillChatHistory(chat, options = {}) {
     });
 
     try {
-      await forwardCrmMessage(payload, `history-${direction}`);
-      imported += 1;
+      const forwarded = await forwardCrmMessage(payload, `history-${direction}`, { skipForwardedCache: true });
+      if (forwarded) {
+        imported += 1;
+      } else {
+        // forwardCrmMessage returned false without making a request (webhook URL not
+        // configured) - it must not be counted as a fresh delivery to the CRM.
+        deduped += 1;
+      }
     } catch (error) {
       failed += 1;
       console.error(JSON.stringify({
