@@ -40,22 +40,24 @@ export default function App() {
         path="/*"
         element={
           <ProtectedRoute>
-            <div className="min-h-screen bg-gray-50">
+            <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
               <Navbar />
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/dashboard/tenant/:tenantId" element={<Dashboard />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route
-                  path="/admin/settings"
-                  element={
-                    <ProtectedRoute adminOnly>
-                      <AdminSettings />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/dashboard/tenant/:tenantId" element={<Dashboard />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route
+                    path="/admin/settings"
+                    element={
+                      <ProtectedRoute adminOnly>
+                        <AdminSettings />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </div>
             </div>
           </ProtectedRoute>
         }

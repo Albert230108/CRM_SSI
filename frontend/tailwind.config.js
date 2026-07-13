@@ -2,7 +2,17 @@
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
-    extend: {},
+    extend: {
+      keyframes: {
+        'toast-countdown': {
+          from: { width: '100%' },
+          to: { width: '0%' },
+        },
+      },
+      animation: {
+        'toast-countdown': 'toast-countdown 5s linear forwards',
+      },
+    },
   },
   plugins: [],
 }

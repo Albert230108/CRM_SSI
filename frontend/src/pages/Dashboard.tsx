@@ -62,6 +62,8 @@ export default function Dashboard() {
   const [syncRunning, setSyncRunning] = useState(false)
   const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null)
   const [syncError, setSyncError] = useState('')
+  const [syncToken, setSyncToken] = useState(0)
+  const [toastVisible, setToastVisible] = useState(false)
 
   const columnsContainerRef = useRef<HTMLDivElement | null>(null)
   const [containerWidth, setContainerWidth] = useState(1200)
@@ -197,6 +199,16 @@ export default function Dashboard() {
     }
   }, [syncSummary?.whatsapp_sync_queued, token])
 
+  // Show the sync toast for exactly 5s per completed attempt. Keyed on syncToken
+  // (not syncSummary) so the later background queued-status poll, which quietly
+  // mutates syncSummary, doesn't re-trigger or extend the toast.
+  useEffect(() => {
+    if (syncToken === 0) return
+    setToastVisible(true)
+    const timeoutId = window.setTimeout(() => setToastVisible(false), 5000)
+    return () => window.clearTimeout(timeoutId)
+  }, [syncToken])
+
   const handleSyncAll = async () => {
     if (syncRunning) return
     try {
@@ -219,11 +231,12 @@ export default function Dashboard() {
       setSyncError(error instanceof Error ? error.message : 'Sync failed')
     } finally {
       setSyncRunning(false)
+      setSyncToken((current) => current + 1)
     }
   }
 
   return (
-    <main className="flex h-screen w-full flex-col overflow-hidden px-6 py-6">
+    <main className="flex h-full w-full flex-col overflow-hidden px-6 py-6">
       <div className="mb-5 flex w-full items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-gray-900">Dashboard</h1>
@@ -248,19 +261,38 @@ export default function Dashboard() {
       </div>
 
       {syncRunning ? <p className="mb-3 text-sm text-cyan-700">Running unified sync job...</p> : null}
-      {syncError ? <p className="mb-3 text-sm text-rose-500">{syncError}</p> : null}
-      {syncSummary ? (
-        <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          <p className="font-semibold">{syncSummary.whatsapp_sync_queued ? "Sync started" : "Sync complete"}</p>
-          <p className="mt-1">{formatSyncSummary(syncSummary)}</p>
-          {syncSummary.whatsapp_sync_queued ? (
-            <p className="mt-2 text-xs text-emerald-800/80">WhatsApp history sync continues in the background.</p>
-          ) : null}
-          {syncSummary.partial_failures.length ? (
-            <p className="mt-2 text-xs text-emerald-800/80">
-              Partial failures: {syncSummary.partial_failures.map((item) => `${item.step}: ${item.error}`).join(' | ')}
-            </p>
-          ) : null}
+
+      {toastVisible && (syncSummary || syncError) ? (
+        <div
+          className={[
+            'fixed right-4 top-4 z-50 w-80 overflow-hidden rounded-2xl border shadow-lg',
+            syncError ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900',
+          ].join(' ')}
+        >
+          <div className="px-4 py-3 text-sm">
+            {syncError ? (
+              <p className="font-semibold">{syncError}</p>
+            ) : syncSummary ? (
+              <>
+                <p className="font-semibold">{syncSummary.whatsapp_sync_queued ? 'Sync started' : 'Sync complete'}</p>
+                <p className="mt-1">{formatSyncSummary(syncSummary)}</p>
+                {syncSummary.whatsapp_sync_queued ? (
+                  <p className="mt-2 text-xs text-emerald-800/80">WhatsApp history sync continues in the background.</p>
+                ) : null}
+                {syncSummary.partial_failures.length ? (
+                  <p className="mt-2 text-xs text-emerald-800/80">
+                    Partial failures: {syncSummary.partial_failures.map((item) => `${item.step}: ${item.error}`).join(' | ')}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+          <div className={['h-1 w-full', syncError ? 'bg-rose-200' : 'bg-emerald-200'].join(' ')}>
+            <div
+              key={syncToken}
+              className={['h-full animate-toast-countdown', syncError ? 'bg-rose-500' : 'bg-emerald-500'].join(' ')}
+            />
+          </div>
         </div>
       ) : null}
 
