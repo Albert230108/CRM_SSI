@@ -130,12 +130,37 @@ def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation
     return result
 
 
+def _normalize_identity_for_comparison(value: str | None) -> str | None:
+    """Normalize WhatsApp identity by stripping provider format suffixes.
+
+    Treats @lid and @c.us representations of the same core ID as equivalent.
+    Examples: '326472368@lid' and '326472368@c.us' both normalize to '326472368'.
+    """
+    if not value:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    # Strip common WhatsApp provider suffixes to get core identity
+    for suffix in ("@c.us", "@g.us", "@lid"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)] or None
+    return normalized
+
+
 def _communication_matches_chat_identity(message: Communication, chat_id: str) -> bool:
-    return chat_id in {
-        (message.whatsapp_chat_id or "").strip().lower(),
-        (message.whatsapp_identity_key or "").strip().lower(),
-        (message.external_chat_namespace or "").strip().lower(),
-    }
+    # Normalize the linked chat_id for comparison
+    normalized_linked = _normalize_identity_for_comparison(chat_id)
+    if not normalized_linked:
+        return False
+
+    # Check all three identity fields, normalizing each for comparison
+    for field_value in [message.whatsapp_chat_id, message.whatsapp_identity_key, message.external_chat_namespace]:
+        normalized_field = _normalize_identity_for_comparison(field_value)
+        if normalized_field and normalized_field == normalized_linked:
+            return True
+
+    return False
 
 
 def _load_tenant_whatsapp(db: Session, tenant_id: int) -> list[Communication]:
@@ -271,7 +296,11 @@ def _build_whatsapp_blocks_for_thread(
     whatsapp_messages: list[Communication],
 ) -> list[TimelineWhatsappBlockRead]:
     messages = sorted(thread.messages or [], key=_thread_message_sort_key)
-    if len(messages) < 2 or not whatsapp_messages:
+    if not whatsapp_messages:
+        return []
+    if len(messages) < 2:
+        # Not enough email messages to create inter-message blocks.
+        # Messages between emails are placed in standalone groups instead.
         return []
 
     blocks: list[TimelineWhatsappBlockRead] = []

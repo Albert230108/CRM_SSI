@@ -132,3 +132,90 @@ def test_bare_endpoint_without_chat_namespace_does_not_filter(db_session):
     # Both messages should be visible; bare endpoint should not filter
     assert "First message" in texts
     assert "Second message" in texts
+
+
+def test_equivalent_identities_match_across_lid_and_cus_formats(db_session):
+    """Test that @lid and @c.us forms of the same chat ID are treated as equivalent.
+
+    Scenario: Manual link created with @lid format, but history messages come with @c.us format.
+    Both should match as the same chat.
+    """
+    tenant = create_tenant(db_session, booking_id="B-identity-equiv")
+
+    # Add messages in different identity formats but same core ID
+    add_whatsapp_message(db_session, tenant.id, chat_id="326472368@lid", text="First lid format")
+    add_whatsapp_message(db_session, tenant.id, chat_id="326472368@c.us", text="Same id cus format")
+    # Add a message from a genuinely different chat
+    add_whatsapp_message(db_session, tenant.id, chat_id="999999999@lid", text="Different chat")
+
+    # Link using @lid format
+    db_session.add(
+        TenantChannelEndpoint(
+            tenant_id=tenant.id,
+            channel_type="whatsapp",
+            provider="whatsapp-service",
+            external_account_id="edi-crm-whatsapp",
+            external_chat_namespace="326472368@lid",
+            source="manual",
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    timeline = build_tenant_thread_timeline(db_session, tenant.id)
+    texts = _all_whatsapp_texts(timeline)
+
+    # Both messages from 326472368 (in either format) should be visible
+    assert "First lid format" in texts
+    assert "Same id cus format" in texts
+    # Message from different chat should not appear
+    assert "Different chat" not in texts
+
+
+def test_large_history_with_multiple_formats_all_visible(db_session):
+    """Test that a large history sync with mixed identity formats shows all messages.
+
+    Scenario: 194 messages synced, mix of @lid/@c.us formats for same chat ID.
+    """
+    tenant = create_tenant(db_session, booking_id="B-large-history")
+
+    # Add 194 messages, alternating between identity formats
+    base_id = "326472368"
+    for i in range(194):
+        # Alternate between @lid and @c.us to simulate history backfill variation
+        chat_format = f"{base_id}@lid" if i % 2 == 0 else f"{base_id}@c.us"
+        message = Communication(
+            tenant_id=tenant.id,
+            channel="whatsapp",
+            direction="inbound",
+            provider="whatsapp-service",
+            external_account_id="edi-crm-whatsapp",
+            whatsapp_chat_id=chat_format,
+            whatsapp_identity_key=chat_format,
+            message=f"Message {i}",
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(message)
+    db_session.commit()
+
+    # Link using one format
+    db_session.add(
+        TenantChannelEndpoint(
+            tenant_id=tenant.id,
+            channel_type="whatsapp",
+            provider="whatsapp-service",
+            external_account_id="edi-crm-whatsapp",
+            external_chat_namespace=f"{base_id}@lid",
+            source="manual",
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    timeline = build_tenant_thread_timeline(db_session, tenant.id)
+    texts = _all_whatsapp_texts(timeline)
+
+    # All 194 messages should be visible
+    assert len(texts) == 194
+    for i in range(194):
+        assert f"Message {i}" in texts

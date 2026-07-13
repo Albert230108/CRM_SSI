@@ -419,6 +419,8 @@ async def send_tenant_communication(
         return communication
 
     if channel == "whatsapp":
+        # Immediately persist the outbound message to ensure UI visibility
+        # Use the selected endpoint's chat namespace if available for better identity matching
         communication_result = persist_whatsapp_outbound_communication(
             db,
             tenant_id=tenant.id,
@@ -439,11 +441,12 @@ async def send_tenant_communication(
         )
         communication = communication_result.communication
         logger.info(
-            "WhatsApp outbound communication persisted source=backend_send persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s",
+            "WhatsApp outbound communication persisted source=backend_send persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s external_chat_namespace=%s",
             communication_result.persistence_state,
             communication_result.match_strategy,
             communication.tenant_id,
             communication.id,
             communication.provider_message_id,
+            communication.external_chat_namespace,
         )
         return communication
