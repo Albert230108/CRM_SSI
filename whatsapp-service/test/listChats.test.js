@@ -46,6 +46,51 @@ test('listChats search matches by chat_id substring', async () => {
   assert.equal(result.chats[0].chat_id, '326472368@lid');
 });
 
+test('listChats does not fall back to the raw @lid id as the chat name', async () => {
+  const clientOverride = {
+    getChats: async () => [
+      fakeChat({ id: '326472368@lid', name: undefined, timestamp: 1710000100, body: 'Hi' }),
+      fakeChat({ id: '351912345678@c.us', name: undefined, timestamp: 1710000000, body: 'Hey' }),
+    ],
+  };
+
+  const result = await listChats({ externalAccountId: whatsappClientId, clientOverride, readyOverride: true });
+
+  const lidChat = result.chats.find((chat) => chat.chat_id === '326472368@lid');
+  assert.equal(lidChat.chat_name, null, 'unnamed @lid chats should not leak the raw id as a display name');
+
+  const phoneChat = result.chats.find((chat) => chat.chat_id === '351912345678@c.us');
+  assert.equal(phoneChat.chat_name, '+351912345678', 'unnamed @c.us chats should display the phone number instead');
+});
+
+test('listChats search matches phone numbers regardless of spacing', async () => {
+  const clientOverride = {
+    getChats: async () => [
+      fakeChat({ id: '351912345678@c.us', name: '351 912 345 678', timestamp: 1710000100, body: 'Hi' }),
+      fakeChat({ id: '111222333@c.us', name: 'Someone Else', timestamp: 1710000000, body: 'Hey' }),
+    ],
+  };
+
+  const result = await listChats({ externalAccountId: whatsappClientId, search: '351912345678', clientOverride, readyOverride: true });
+
+  assert.equal(result.chats.length, 1);
+  assert.equal(result.chats[0].chat_id, '351912345678@c.us');
+});
+
+test('listChats search matches text from the last message preview', async () => {
+  const clientOverride = {
+    getChats: async () => [
+      fakeChat({ id: '326472368@lid', name: 'Alberto', timestamp: 1710000100, body: 'See you at the checkout desk' }),
+      fakeChat({ id: '111222333@c.us', name: 'Someone Else', timestamp: 1710000000, body: 'Hey' }),
+    ],
+  };
+
+  const result = await listChats({ externalAccountId: whatsappClientId, search: 'checkout desk', clientOverride, readyOverride: true });
+
+  assert.equal(result.chats.length, 1);
+  assert.equal(result.chats[0].chat_id, '326472368@lid');
+});
+
 test('listChats rejects a mismatched external_account_id', async () => {
   const clientOverride = { getChats: async () => [] };
   await assert.rejects(

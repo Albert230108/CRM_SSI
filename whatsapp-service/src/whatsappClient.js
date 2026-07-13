@@ -33,14 +33,14 @@ function getChatId(chat) {
 }
 
 function getChatName(chat) {
-  return (
-    chat?.name ||
-    chat?.formattedTitle ||
-    chat?.contact?.pushname ||
-    chat?.contact?.name ||
-    chat?.id?._serialized ||
-    null
-  );
+  const explicitName = chat?.name || chat?.formattedTitle || chat?.contact?.pushname || chat?.contact?.name || null;
+  if (explicitName) {
+    return explicitName;
+  }
+  // Raw chat ids (e.g. "37284873@lid") are opaque WhatsApp-internal identifiers, not
+  // phone numbers — only fall back to a displayable value when it's an actual number.
+  const phone = normalizeWhatsAppPhone(getChatId(chat));
+  return phone ? `+${phone}` : null;
 }
 
 function getMemoryTenantId({ messageId, chatId, identityKey }) {
@@ -1144,10 +1144,30 @@ async function listChats({ externalAccountId, search = "", limit = 200, offset =
   }));
 
   const normalizedSearch = String(search || "").trim().toLowerCase();
+  const searchDigits = normalizedSearch.replace(/\D+/g, "");
   const filtered = normalizedSearch
-    ? normalized.filter(
-        (chat) => chat.chat_id.toLowerCase().includes(normalizedSearch) || String(chat.chat_name || "").toLowerCase().includes(normalizedSearch),
-      )
+    ? normalized.filter((chat) => {
+        const chatIdLower = chat.chat_id.toLowerCase();
+        const chatNameLower = String(chat.chat_name || "").toLowerCase();
+        const previewLower = String(chat.last_message_preview || "").toLowerCase();
+        if (
+          chatIdLower.includes(normalizedSearch) ||
+          chatNameLower.includes(normalizedSearch) ||
+          previewLower.includes(normalizedSearch)
+        ) {
+          return true;
+        }
+        // Compare digits-only so phone numbers match regardless of spaces/dashes/parens
+        // in either the query or the stored chat id/name (e.g. "351 912 345 678" vs "351912345678").
+        if (searchDigits.length >= 3) {
+          const chatIdDigits = chatIdLower.replace(/\D+/g, "");
+          const chatNameDigits = chatNameLower.replace(/\D+/g, "");
+          if (chatIdDigits.includes(searchDigits) || chatNameDigits.includes(searchDigits)) {
+            return true;
+          }
+        }
+        return false;
+      })
     : normalized;
 
   filtered.sort((a, b) => {

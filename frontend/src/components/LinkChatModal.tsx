@@ -468,7 +468,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                 type="text"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by CHAT_ID or name"
+                placeholder="Search by phone number, name, or message text"
                 className="mb-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
 
@@ -498,7 +498,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                           <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">Linked here</span>
                         ) : null}
                       </div>
-                      <span className="text-sm text-gray-700">{chat.chat_name || 'No name'}</span>
+                      <span className="text-sm text-gray-700">{chat.chat_name || 'Unknown contact'}</span>
                       {chat.last_message_preview ? <span className="truncate text-xs text-gray-500">{chat.last_message_preview}</span> : null}
                     </button>
                   )
@@ -511,7 +511,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                   {tenantSubtitle ? <p className="mt-1 text-xs text-gray-500">{tenantSubtitle}</p> : null}
                   <p className="mt-1 text-xs text-gray-500">Account: {selectedAccount?.label}</p>
                   <p className="mt-1 font-mono text-sm font-semibold text-gray-900">{selectedChat.chat_id}</p>
-                  <p className="text-sm text-gray-700">{selectedChat.chat_name || 'No name'}</p>
+                  <p className="text-sm text-gray-700">{selectedChat.chat_name || 'Unknown contact'}</p>
                   {conflictsWithAnotherThread ? (
                     <p className="mt-2 text-sm font-semibold text-rose-600">
                       This chat is already linked to thread #{selectedChat.linked_thread_id}. Unlink it there first.
