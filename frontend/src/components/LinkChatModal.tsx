@@ -337,7 +337,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                 ? 'Manage this tenant\'s linked WhatsApp chats.'
                 : view === 'account'
                   ? 'Choose a WhatsApp service or account.'
-                  : `Search the ${selectedAccount?.label} chat list by CHAT_ID or name.`}
+                  : `Search the ${selectedAccount?.label} chat list by phone number, name, or message text.`}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-900">
@@ -359,8 +359,8 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                   <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-700">
                     {link.provider} · {link.external_account_id}
                   </p>
-                  <p className="mt-1 truncate font-mono text-sm font-semibold text-gray-900">{link.chat_id}</p>
-                  <p className="text-xs text-gray-600">{formatChatDisplayName(link.chat_display_name)}</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-gray-900">{formatChatDisplayName(link.chat_display_name)}</p>
+                  <p className="truncate font-mono text-[11px] text-gray-400">{link.chat_id}</p>
                   <p className="mt-1 text-xs text-gray-500">
                     Linked {formatDisplayDate(link.created_at)}
                     {link.linked_by_user_id ? ` by user #${link.linked_by_user_id}` : ''}
@@ -500,7 +500,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate font-mono text-sm font-semibold text-gray-900">{chat.chat_id}</span>
+                        <span className="truncate text-sm font-semibold text-gray-900">{formatChatDisplayName(chat.chat_name)}</span>
                         {isConflict ? (
                           <span className="shrink-0 rounded-full bg-rose-100 px-2 py-1 text-[11px] font-semibold text-rose-700">
                             Linked to thread #{chat.linked_thread_id}
@@ -509,7 +509,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                           <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">Linked here</span>
                         ) : null}
                       </div>
-                      <span className="text-sm text-gray-700">{formatChatDisplayName(chat.chat_name)}</span>
+                      <span className="truncate font-mono text-[11px] text-gray-400">{chat.chat_id}</span>
                       {chat.last_message_preview ? <span className="truncate text-xs text-gray-500">{chat.last_message_preview}</span> : null}
                     </button>
                   )
@@ -521,8 +521,8 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                   <p className="text-xs uppercase tracking-[0.24em] text-emerald-700">Confirm link</p>
                   {tenantSubtitle ? <p className="mt-1 text-xs text-gray-500">{tenantSubtitle}</p> : null}
                   <p className="mt-1 text-xs text-gray-500">Account: {selectedAccount?.label}</p>
-                  <p className="mt-1 font-mono text-sm font-semibold text-gray-900">{selectedChat.chat_id}</p>
-                  <p className="text-sm text-gray-700">{formatChatDisplayName(selectedChat.chat_name)}</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-900">{formatChatDisplayName(selectedChat.chat_name)}</p>
+                  <p className="font-mono text-[11px] text-gray-400">{selectedChat.chat_id}</p>
                   {conflictsWithAnotherThread ? (
                     <p className="mt-2 text-sm font-semibold text-rose-600">
                       This chat is already linked to thread #{selectedChat.linked_thread_id}. Unlink it there first.
