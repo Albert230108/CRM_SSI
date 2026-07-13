@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
-import { formatDisplayDate } from '../lib/date'
+import { formatDisplayDate, formatDisplayDateTime } from '../lib/date'
 import LinkChatModal from './LinkChatModal'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
@@ -587,7 +587,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
                         <span className="rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-700">Email Thread</span>
-                        <span>{formatDisplayDate(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
+                        <span>{formatDisplayDateTime(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
                       </div>
                       <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
                       <p className="mt-1 truncate text-sm text-gray-600">{item.messages[0] ? extractPreviewText(item.messages[0]) : 'No preview available'}</p>
@@ -627,12 +627,12 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
                       <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">WhatsApp Group</span>
-                      <span>{formatDisplayDate(item.start_timestamp || firstMessage?.created_at || lastMessage?.created_at || new Date().toISOString())}</span>
+                      <span>{formatDisplayDateTime(item.end_timestamp || lastMessage?.created_at || firstMessage?.created_at || new Date().toISOString())}</span>
                     </div>
                     <p className="mt-2 truncate text-sm font-semibold text-gray-900">
                       {item.messages.length === 1 ? 'WhatsApp message' : `WhatsApp messages (${item.message_count})`}
                     </p>
-                    <p className="mt-1 truncate text-sm text-gray-600">{item.messages[0] ? extractWhatsappPreviewText(item.messages[0]) : 'No preview available'}</p>
+                    <p className="mt-1 truncate text-sm text-gray-600">{lastMessage ? extractWhatsappPreviewText(lastMessage) : 'No preview available'}</p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
                     <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
@@ -678,7 +678,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   {selectedEmailThread.subject || 'Untitled conversation'}
                 </h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  {formatDisplayDate(selectedEmailThread.anchor_timestamp || selectedEmailThread.messages[0]?.sent_at || selectedEmailThread.messages[selectedEmailThread.messages.length - 1]?.sent_at || new Date().toISOString())}
+                  {formatDisplayDateTime(selectedEmailThread.anchor_timestamp || selectedEmailThread.messages[0]?.sent_at || selectedEmailThread.messages[selectedEmailThread.messages.length - 1]?.sent_at || new Date().toISOString())}
                 </p>
               </div>
               <button
@@ -715,7 +715,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                         <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
                           {isOutbound ? 'Outbound' : 'Inbound'}
                         </span>
-                        <span>{formatDisplayDate(messageItem.sent_at)}</span>
+                        <span>{formatDisplayDateTime(messageItem.sent_at)}</span>
                       </div>
                       {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
                       {renderMessageBody(messageItem) ? (
@@ -795,8 +795,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   {tenant?.name || 'WhatsApp conversation'}
                 </h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  {formatDisplayDate(selectedWhatsappGroup.start_timestamp || selectedWhatsappGroup.messages[0]?.created_at || selectedWhatsappGroup.messages[selectedWhatsappGroup.messages.length - 1]?.created_at || new Date().toISOString())}
-                  {selectedWhatsappGroup.end_timestamp ? ` ? ${formatDisplayDate(selectedWhatsappGroup.end_timestamp)}` : ''}
+                  {formatDisplayDateTime(selectedWhatsappGroup.start_timestamp || selectedWhatsappGroup.messages[0]?.created_at || selectedWhatsappGroup.messages[selectedWhatsappGroup.messages.length - 1]?.created_at || new Date().toISOString())}
+                  {selectedWhatsappGroup.end_timestamp ? ` ? ${formatDisplayDateTime(selectedWhatsappGroup.end_timestamp)}` : ''}
                 </p>
               </div>
               <button
@@ -818,7 +818,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 </div>
                 <p className="text-xs text-gray-500">
                   {selectedWhatsappGroup.start_timestamp && selectedWhatsappGroup.end_timestamp
-                    ? `${formatDisplayDate(selectedWhatsappGroup.start_timestamp)} - ${formatDisplayDate(selectedWhatsappGroup.end_timestamp)}`
+                    ? `${formatDisplayDateTime(selectedWhatsappGroup.start_timestamp)} - ${formatDisplayDateTime(selectedWhatsappGroup.end_timestamp)}`
                     : 'Latest timestamp shown above'}
                 </p>
               </div>
@@ -835,7 +835,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                         <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
                           {isOutbound ? 'Outbound' : 'Inbound'}
                         </span>
-                        <span>{formatDisplayDate(blockMessage.created_at)}</span>
+                        <span>{formatDisplayDateTime(blockMessage.created_at)}</span>
                         <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
                       </div>
                       {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
