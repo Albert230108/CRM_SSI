@@ -31,6 +31,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
+  const [selectedResponsible, setSelectedResponsible] = useState<string | null>(null)
   const [sortByMessage, setSortByMessage] = useState(true)
   const [sortDesc, setSortDesc] = useState(true)
 
@@ -44,6 +45,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
         const params = new URLSearchParams()
         if (searchQuery) params.append('search', searchQuery)
         if (selectedStatus) params.append('status', selectedStatus)
+        if (selectedResponsible) params.append('responsible', selectedResponsible)
         params.append('sort_by_message', sortByMessage.toString())
         params.append('sort_desc', sortDesc.toString())
 
@@ -66,7 +68,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
 
     loadTenants()
     return () => controller.abort()
-  }, [token, reloadSignal, searchQuery, selectedStatus, sortByMessage, sortDesc])
+  }, [token, reloadSignal, searchQuery, selectedStatus, selectedResponsible, sortByMessage, sortDesc])
 
   const uniqueStatuses = useMemo(() => {
     const statuses = new Set<string>()
@@ -74,6 +76,14 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
       if (t.booking_status) statuses.add(t.booking_status)
     })
     return Array.from(statuses).sort()
+  }, [tenants])
+
+  const uniqueResponsibles = useMemo(() => {
+    const responsibles = new Set<string>()
+    tenants.forEach((t) => {
+      if (t.responsible_comm) responsibles.add(t.responsible_comm)
+    })
+    return Array.from(responsibles).sort()
   }, [tenants])
 
   const handleDelete = async (tenantId: number) => {
@@ -169,6 +179,20 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
             {sortDesc ? '↓' : '↑'}
           </button>
         </div>
+
+        <select
+          value={selectedResponsible || ''}
+          onChange={(e) => setSelectedResponsible(e.target.value || null)}
+          className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+        >
+          <option value="">All Responsible</option>
+          <option value="unassigned">Unassigned</option>
+          {uniqueResponsibles.map((responsible) => (
+            <option key={responsible} value={responsible}>
+              {responsible}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading ? <p className="text-xs text-gray-500">Loading tenants...</p> : null}

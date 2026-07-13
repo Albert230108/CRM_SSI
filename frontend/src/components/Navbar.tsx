@@ -17,7 +17,7 @@ export default function Navbar() {
           <h1 className="text-base font-semibold text-gray-900 transition hover:text-gray-700">CRM SSI</h1>
         </Link>
         <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-500">{user?.email ?? 'Signed in'}</span>
+          <span className="text-sm text-gray-500">{user?.full_name || user?.email || 'Signed in'}</span>
           {user?.is_admin ? (
             <Link
               to="/admin/settings"

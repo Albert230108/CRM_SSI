@@ -344,6 +344,7 @@ def list_tenants(
     current_user: User = Depends(get_current_user),
     search: str | None = None,
     status: str | None = None,
+    responsible: str | None = None,
     sort_by_message: bool = False,
     sort_desc: bool = True,
 ) -> list[TenantRead]:
@@ -365,6 +366,12 @@ def list_tenants(
 
     if status:
         query = query.filter(Tenant.booking_status == status)
+
+    if responsible:
+        if responsible == "unassigned":
+            query = query.filter(Tenant.responsible_comm.is_(None))
+        else:
+            query = query.filter(Tenant.responsible_comm == responsible)
 
     query = query.order_by(desc(Tenant.id) if sort_desc else Tenant.id)
     tenants = query.all()

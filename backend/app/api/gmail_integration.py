@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -19,10 +20,12 @@ from cryptography.fernet import Fernet
 
 from app.core.dependencies import get_current_user, get_db
 from app.core.security import ALGORITHM, SECRET_KEY, generate_secure_token
+from app.database import SessionLocal
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
+from app.services.background_jobs import get_job, start_job
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
@@ -511,17 +514,40 @@ def disconnect_account(account_id: int, db: Session = Depends(get_db), current_u
     db.commit()
 
 
+def _sync_all_accounts_blocking(user_id: int) -> dict[str, int]:
+    """Runs the full account sync against its own DB session, off the event loop.
+
+    Gmail thread listing/fetching can take a long time across many accounts, so this
+    is meant to be invoked via start_job()/asyncio.to_thread rather than awaited inline.
+    """
+    db = SessionLocal()
+    try:
+        current_user = db.query(User).filter(User.id == user_id).first()
+        accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
+        synced_accounts = 0
+        synced_threads = 0
+        for account in accounts:
+            result = sync_account(account.id, db=db, current_user=current_user)
+            if result.get("synced_threads", 0) >= 0:
+                synced_accounts += 1
+                synced_threads += int(result.get("synced_threads", 0))
+        return {"synced_accounts": synced_accounts, "synced_threads": synced_threads}
+    finally:
+        db.close()
+
+
 @router.post("/accounts/sync-all")
-def sync_all_accounts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, int]:
-    accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
-    synced_accounts = 0
-    synced_threads = 0
-    for account in accounts:
-        result = sync_account(account.id, db=db, current_user=current_user)
-        if result.get("synced_threads", 0) >= 0:
-            synced_accounts += 1
-            synced_threads += int(result.get("synced_threads", 0))
-    return {"synced_accounts": synced_accounts, "synced_threads": synced_threads}
+def sync_all_accounts(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    job_id = start_job("gmail_sync_all", asyncio.to_thread(_sync_all_accounts_blocking, current_user.id))
+    return {"queued": True, "job_id": job_id}
+
+
+@router.get("/accounts/sync-status/{job_id}")
+def sync_all_accounts_status(job_id: str, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
+    return job
 
 @router.post("/accounts/{account_id}/sync")
 def sync_account(account_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, int | str]:

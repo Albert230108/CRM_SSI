@@ -37,3 +37,22 @@ export function formatDisplayDateTime(value?: string | number | Date | null): st
 
   return `${formatDisplayDate(date)}, ${formatDisplayTime(date)}`
 }
+
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+
+/** Renders "Xd ago" / "Xh ago" / "Xmin ago" using the single largest applicable unit; omits a unit entirely rather than showing it as zero. Falls back to the absolute date/time for future timestamps. */
+export function formatRelativeDateTime(value?: string | number | Date | null, now: Date = new Date()): string {
+  const date = toValidDate(value)
+  if (!date) return '-'
+
+  const diffMs = now.getTime() - date.getTime()
+  if (diffMs < 0) return formatDisplayDateTime(date)
+  if (diffMs < MINUTE_MS) return 'Just now'
+  if (diffMs < HOUR_MS) return `${Math.floor(diffMs / MINUTE_MS)}min ago`
+  if (diffMs < DAY_MS) return `${Math.floor(diffMs / HOUR_MS)}h ago`
+
+  const days = Math.floor(diffMs / DAY_MS)
+  return `${days} day${days === 1 ? '' : 's'} ago`
+}

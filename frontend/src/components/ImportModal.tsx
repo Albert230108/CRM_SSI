@@ -46,6 +46,23 @@ async function readJsonSafely(response: Response) {
   }
 }
 
+function pollGmailSyncJob(jobId: string, token: string | null, onDone: () => void) {
+  const intervalId = window.setInterval(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-status/${jobId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      const data = await readJsonSafely(response)
+      if (!response.ok || data?.status === 'done' || data?.status === 'error') {
+        window.clearInterval(intervalId)
+        if (data?.status === 'done') onDone()
+      }
+    } catch {
+      window.clearInterval(intervalId)
+    }
+  }, 3000)
+}
+
 export default function ImportModal({ open, onClose, onImported }: ImportModalProps) {
   const token = useAuthStore((state) => state.token)
   const [bookings, setBookings] = useState<Booking[]>([])
@@ -136,6 +153,10 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         const payload = await readJsonSafely(syncResponse)
         throw new Error(getErrorMessage(payload, 'Gmail sync failed after import'))
       }
+      const syncPayload = await readJsonSafely(syncResponse)
+      if (syncPayload?.job_id) {
+        pollGmailSyncJob(syncPayload.job_id, token, () => onImported?.())
+      }
 
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
       setConfirmBooking(null)
@@ -211,6 +232,11 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
       if (!syncResponse.ok) {
         const payload = await readJsonSafely(syncResponse)
         errors.push(`Gmail sync: ${getErrorMessage(payload, 'Gmail sync failed')}`)
+      } else {
+        const syncPayload = await readJsonSafely(syncResponse)
+        if (syncPayload?.job_id) {
+          pollGmailSyncJob(syncPayload.job_id, token, () => onImported?.())
+        }
       }
     } catch (err) {
       errors.push(`Gmail sync: ${err instanceof Error ? err.message : 'Failed'}`)

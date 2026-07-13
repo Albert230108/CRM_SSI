@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
+import { useRelativeTimestampsPreference } from '../lib/displayPreferences'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -18,6 +19,7 @@ export default function Settings() {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
+  const [relativeTimestamps, setRelativeTimestamps] = useRelativeTimestampsPreference()
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [stagedHandle, setStagedHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [permissionState, setPermissionState] = useState<'granted' | 'prompt' | 'denied' | null>(null)
@@ -153,15 +155,38 @@ export default function Settings() {
     }
   }
 
+  const pollGmailSyncJob = (jobId: string) => {
+    const intervalId = window.setInterval(async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-status/${jobId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        const data = await response.json().catch(() => null)
+        if (!response.ok || data?.status === 'done' || data?.status === 'error') {
+          window.clearInterval(intervalId)
+          if (data?.status === 'done') {
+            await loadGmailAccounts()
+            const result = data.result ?? {}
+            setGmailMessage(`Synced ${result.synced_accounts ?? 0} accounts and ${result.synced_threads ?? 0} threads`)
+          } else if (data?.status === 'error') {
+            setGmailMessage(data?.error ? `Gmail sync failed: ${data.error}` : 'Gmail sync failed')
+          }
+        }
+      } catch {
+        window.clearInterval(intervalId)
+      }
+    }, 3000)
+  }
+
   const syncAllGmailAccounts = async () => {
     const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-all`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     const data = await response.json().catch(() => null)
-    if (response.ok) {
-      await loadGmailAccounts()
-      setGmailMessage(`Synced ${data?.synced_accounts ?? 0} accounts and ${data?.synced_threads ?? 0} threads`)
+    if (response.ok && data?.job_id) {
+      setGmailMessage('Syncing Gmail accounts in the background...')
+      pollGmailSyncJob(data.job_id)
     }
   }
 
@@ -197,6 +222,21 @@ export default function Settings() {
       <p className="text-sm text-gray-500">{userEmail ?? 'Signed in'}</p>
 
       <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">Display</h2>
+        <p className="mt-2 text-sm text-gray-500">Choose how timestamps are shown in the thread view.</p>
+
+        <label className="mt-4 flex items-center gap-3 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={relativeTimestamps}
+            onChange={(event) => setRelativeTimestamps(event.target.checked)}
+            className="h-4 w-4 rounded border-gray-300"
+          />
+          Use relative timestamps (e.g. "30min ago", "4h ago", "2 days ago") instead of exact date and time
+        </label>
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-gray-900">Shared Gmail setup</h2>
         <p className="mt-2 text-sm text-gray-500">
           Connect Gmail accounts once for the organization. All users use the same synced mailbox list.
