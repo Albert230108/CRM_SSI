@@ -35,16 +35,16 @@ function buildFetchMock(options: { links?: unknown[] } = {}) {
     const url = typeof input === 'string' ? input : input.toString()
     const method = init?.method ?? 'GET'
 
+    if (url.includes('/whatsapp/accounts/') && url.includes('/chats')) {
+      const search = new URL(url, 'http://localhost').searchParams.get('search') || ''
+      const filtered = search ? CHATS.filter((chat) => chat.chat_id.includes(search) || chat.chat_name.includes(search)) : CHATS
+      return jsonResponse(filtered)
+    }
     if (url.includes('/api/whatsapp/accounts') && method === 'GET') {
       return jsonResponse([ACCOUNT])
     }
     if (url.match(/\/whatsapp-links$/) && method === 'GET') {
       return jsonResponse(links)
-    }
-    if (url.includes('/whatsapp/accounts/') && url.includes('/chats')) {
-      const search = new URL(url, 'http://localhost').searchParams.get('search') || ''
-      const filtered = search ? CHATS.filter((chat) => chat.chat_id.includes(search) || chat.chat_name.includes(search)) : CHATS
-      return jsonResponse(filtered)
     }
     if (url.match(/\/whatsapp-links$/) && method === 'POST') {
       return jsonResponse({ ...EXISTING_LINK, id: 99 })

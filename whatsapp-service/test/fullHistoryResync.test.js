@@ -1,8 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { backfillAllChats } = require('../src/whatsappClient');
-
 function makeChat(id, messageCount, { withEligibleIdentity = true } = {}) {
   const messages = Array.from({ length: messageCount }, (_, index) => ({
     timestamp: 1710000000 + index,
@@ -29,6 +27,9 @@ async function withMockedForward(t, run) {
     CRM_WEBHOOK_SECRET: process.env.CRM_WEBHOOK_SECRET,
   };
   const originalFetch = global.fetch;
+  const modulePath = require.resolve('../src/whatsappClient');
+  const configPath = require.resolve('../src/config');
+
   process.env.CRM_API_BASE_URL = 'http://crm.test';
   process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
   process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
@@ -41,19 +42,28 @@ async function withMockedForward(t, run) {
     text: async () => '',
   });
 
+  // config.js reads process.env once at require time, so whatsappClient must be
+  // reloaded after the env vars above are set (see historyBackfill.test.js for the
+  // same pattern) or forwardCrmMessage will always see an unconfigured webhook URL.
+  delete require.cache[modulePath];
+  delete require.cache[configPath];
+  const { backfillAllChats } = require('../src/whatsappClient');
+
   try {
-    await run();
+    await run(backfillAllChats);
   } finally {
     global.fetch = originalFetch;
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    delete require.cache[modulePath];
+    delete require.cache[configPath];
   }
 }
 
 test('backfillAllChats pulls full history (not capped) for CRM-eligible chats by default', async (t) => {
-  await withMockedForward(t, async () => {
+  await withMockedForward(t, async (backfillAllChats) => {
     // 150 messages in the chat; the old default cap (limit=100) would have silently dropped
     // the oldest 50. A manually linked chat is CRM-eligible via its identity index below.
     const chat = makeChat('326472368@lid', 150);
@@ -75,7 +85,7 @@ test('backfillAllChats pulls full history (not capped) for CRM-eligible chats by
 });
 
 test('backfillAllChats keeps the capped limit for the broad all=true sweep', async (t) => {
-  await withMockedForward(t, async () => {
+  await withMockedForward(t, async (backfillAllChats) => {
     const chat = makeChat('31699999999@c.us', 150);
 
     const result = await backfillAllChats({
@@ -92,7 +102,7 @@ test('backfillAllChats keeps the capped limit for the broad all=true sweep', asy
 });
 
 test('backfillAllChats with chatId targets exactly one chat and forces full history', async (t) => {
-  await withMockedForward(t, async () => {
+  await withMockedForward(t, async (backfillAllChats) => {
     const target = makeChat('326472368@lid', 250);
     const other = makeChat('31699999999@c.us', 250);
 
@@ -112,7 +122,7 @@ test('backfillAllChats with chatId targets exactly one chat and forces full hist
 });
 
 test('media messages (images, voice notes, etc.) are imported with a placeholder instead of being silently dropped', async (t) => {
-  await withMockedForward(t, async () => {
+  await withMockedForward(t, async (backfillAllChats) => {
     const chatId = '326472368@lid';
     const messages = [
       { timestamp: 1710000000, body: 'Text message', fromMe: false, from: chatId, id: { _serialized: 'm-1' } },
