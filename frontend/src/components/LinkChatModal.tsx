@@ -154,6 +154,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
       try {
         setChatsLoading(true)
         setError('')
+        setChats([])
         const params = new URLSearchParams({ provider: selectedAccount.provider })
         if (search.trim()) params.set('search', search.trim())
         const response = await fetch(
