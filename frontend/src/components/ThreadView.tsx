@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
-import { formatDisplayDate, formatDisplayDateTime } from '../lib/date'
+import { formatDisplayDateTime } from '../lib/date'
 import LinkChatModal from './LinkChatModal'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
@@ -148,6 +148,7 @@ type TenantSummary = {
   name: string
   email: string | null
   phone: string | null
+  booking_id?: string | null
 }
 
 type WhatsappEndpointOption = {
@@ -223,9 +224,6 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [selectedWhatsappEndpointId, setSelectedWhatsappEndpointId] = useState<string>('')
   const [whatsappLinks, setWhatsappLinks] = useState<ThreadWhatsappLink[]>([])
   const [showLinkChatModal, setShowLinkChatModal] = useState(false)
-  const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
-  const [resyncingId, setResyncingId] = useState<number | null>(null)
-  const [resyncResults, setResyncResults] = useState<Record<number, string>>({})
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
   const [replyMessage, setReplyMessage] = useState('')
   const [replySubject, setReplySubject] = useState('')
@@ -374,63 +372,9 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     setWhatsappLinks(Array.isArray(data) ? data : [])
   }
 
-  const handleUnlinkWhatsappChat = async (link: ThreadWhatsappLink) => {
-    if (!tenantId || unlinkingId) return
-    try {
-      setUnlinkingId(link.id)
-      setError('')
-      const response = await fetch(`${API_BASE_URL}/api/threads/${tenantId}/whatsapp-links/${link.id}`, {
-        method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      })
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null)
-        throw new Error(payload?.detail || 'Failed to unlink WhatsApp chat')
-      }
-      await reloadWhatsappLinks()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to unlink WhatsApp chat')
-    } finally {
-      setUnlinkingId(null)
-    }
-  }
-
-  const handleResyncWhatsappChat = async (link: ThreadWhatsappLink) => {
-    if (!tenantId || resyncingId) return
-    try {
-      setResyncingId(link.id)
-      setError('')
-      setResyncResults((current) => {
-        const next = { ...current }
-        delete next[link.id]
-        return next
-      })
-      const response = await fetch(`${API_BASE_URL}/api/threads/${tenantId}/whatsapp-links/${link.id}/resync`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(payload?.detail || 'Failed to resync WhatsApp chat history')
-      }
-      const resync = payload?.resync as
-        | { ok: boolean; fetched: number; imported: number; deduped: number; skipped_no_content: number; error?: string | null }
-        | undefined
-      if (!resync?.ok) {
-        throw new Error(resync?.error || 'Failed to resync WhatsApp chat history')
-      }
-      const skippedSuffix = resync.skipped_no_content > 0 ? `, ${resync.skipped_no_content} had no content (call logs/system events)` : ''
-      setResyncResults((current) => ({
-        ...current,
-        [link.id]: `Done: ${resync.fetched} fetched, ${resync.imported} imported, ${resync.deduped} already synced${skippedSuffix}`,
-      }))
-      await reloadWhatsappLinks()
-      await loadGroupedThread()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resync WhatsApp chat history')
-    } finally {
-      setResyncingId(null)
-    }
+  const handleWhatsappLinksChanged = async () => {
+    await reloadWhatsappLinks()
+    await loadGroupedThread()
   }
 
   const handleSendReply = async (event: FormEvent<HTMLFormElement>) => {
@@ -516,57 +460,10 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               onClick={() => setShowLinkChatModal(true)}
               className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
             >
-              Link chat
+              {whatsappLinks.some((link) => link.is_active) ? 'Manage chats' : 'Link chat'}
             </button>
           ) : null}
         </div>
-
-        {whatsappLinks.filter((link) => link.is_active).length > 0 ? (
-          <div className="mt-3 space-y-2">
-            {whatsappLinks
-              .filter((link) => link.is_active)
-              .map((link) => (
-                <div key={link.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
-                  <div className="min-w-0">
-                    <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-700">Linked WhatsApp chat - {link.external_account_id}</p>
-                    <p className="truncate font-mono text-sm font-semibold text-gray-900">{link.chat_id}</p>
-                    <p className="text-xs text-gray-600">
-                      {link.chat_display_name || 'No name'} - linked {formatDisplayDate(link.created_at)}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={resyncingId === link.id}
-                      onClick={() => handleResyncWhatsappChat(link)}
-                      title="Pull the chat's entire history again (fixes chats that were only partially synced)"
-                      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50"
-                    >
-                      {resyncingId === link.id ? 'Resyncing...' : 'Resync full history'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowLinkChatModal(true)}
-                      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900"
-                    >
-                      Replace
-                    </button>
-                    <button
-                      type="button"
-                      disabled={unlinkingId === link.id}
-                      onClick={() => handleUnlinkWhatsappChat(link)}
-                      className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                    >
-                      {unlinkingId === link.id ? 'Unlinking...' : 'Unlink'}
-                    </button>
-                    </div>
-                    {resyncResults[link.id] ? <p className="text-xs text-emerald-700">{resyncResults[link.id]}</p> : null}
-                  </div>
-                </div>
-              ))}
-          </div>
-        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">
@@ -974,8 +871,10 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         <LinkChatModal
           open={showLinkChatModal}
           threadId={tenantId}
+          tenantName={tenant?.name}
+          bookingId={tenant?.booking_id ?? undefined}
           onClose={() => setShowLinkChatModal(false)}
-          onLinked={reloadWhatsappLinks}
+          onChanged={handleWhatsappLinksChanged}
         />
       ) : null}
     </div>
