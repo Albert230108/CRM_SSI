@@ -8,7 +8,7 @@ from app.core.security import generate_secure_token, hash_token
 from app.core.public_urls import get_public_frontend_base_url
 from app.models.admin_invite import AdminInvite
 from app.models.user import User
-from app.schemas.user import AdminInviteCreate, AdminInviteRead
+from app.schemas.user import AdminInviteClearResult, AdminInviteCreate, AdminInviteRead
 from app.services.email_service import send_email
 
 router = APIRouter(prefix="/admin/invites", tags=["admin-invites"])
@@ -19,13 +19,17 @@ def _public_base_url() -> str:
     return get_public_frontend_base_url()
 
 
+def _as_aware_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def _invite_status(invite: AdminInvite) -> str:
     now = datetime.now(timezone.utc)
     if invite.revoked_at is not None:
         return "revoked"
     if invite.used_at is not None:
         return "completed"
-    if invite.expires_at <= now:
+    if _as_aware_utc(invite.expires_at) <= now:
         return "expired"
     return "pending"
 
@@ -80,6 +84,32 @@ def create_invite(payload: AdminInviteCreate, db: Session = Depends(get_db), cur
     if payload.email:
         send_email(payload.email, "Your CRM SSI invite", f"You have been invited to CRM SSI. Complete setup here: {invite_url}")
     return _to_read(invite, raw_token)
+
+
+@router.post("/clear", response_model=AdminInviteClearResult, dependencies=[Depends(get_current_admin_user)])
+def clear_pending_invites(db: Session = Depends(get_db)) -> AdminInviteClearResult:
+    now = datetime.now(timezone.utc)
+    pending_invites = db.query(AdminInvite).filter(AdminInvite.revoked_at.is_(None)).all()
+
+    revoked_count = 0
+    skipped_accepted_count = 0
+    skipped_expired_count = 0
+    for invite in pending_invites:
+        if invite.used_at is not None:
+            skipped_accepted_count += 1
+            continue
+        if _as_aware_utc(invite.expires_at) <= now:
+            skipped_expired_count += 1
+            continue
+        invite.revoked_at = now
+        revoked_count += 1
+
+    db.commit()
+    return AdminInviteClearResult(
+        revoked_count=revoked_count,
+        skipped_accepted_count=skipped_accepted_count,
+        skipped_expired_count=skipped_expired_count,
+    )
 
 
 @router.post("/{invite_id}/revoke", response_model=AdminInviteRead, dependencies=[Depends(get_current_admin_user)])

@@ -1,6 +1,9 @@
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class UserBase(BaseModel):
@@ -90,3 +93,39 @@ class InvitationComplete(BaseModel):
 class PasswordResetComplete(BaseModel):
     password: str
     password_confirmation: str
+
+
+class AdminUserCreate(BaseModel):
+    email: str
+    full_name: str | None = None
+    phone: str | None = None
+    is_admin: bool = False
+    password: str
+    password_confirmation: str
+
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not EMAIL_PATTERN.match(normalized):
+            raise ValueError('Invalid email address')
+        return normalized
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return value
+
+
+class UserDeleteResult(BaseModel):
+    id: int
+    deactivated: bool
+    already_inactive: bool
+
+
+class AdminInviteClearResult(BaseModel):
+    revoked_count: int
+    skipped_accepted_count: int
+    skipped_expired_count: int

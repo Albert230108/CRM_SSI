@@ -69,6 +69,15 @@ function statusClass(status: string) {
   }
 }
 
+const emptyNewUser = {
+  email: '',
+  full_name: '',
+  phone: '',
+  is_admin: false as boolean,
+  password: '',
+  password_confirmation: '',
+}
+
 export default function AdminSettings() {
   const token = useAuthStore((state) => state.token)
   const [users, setUsers] = useState<UserRow[]>([])
@@ -84,6 +93,19 @@ export default function AdminSettings() {
   const [logStart, setLogStart] = useState('')
   const [logEnd, setLogEnd] = useState('')
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null)
+
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false)
+  const [newUser, setNewUser] = useState(emptyNewUser)
+  const [creatingUser, setCreatingUser] = useState(false)
+  const [createUserError, setCreateUserError] = useState('')
+
+  const [deleteTarget, setDeleteTarget] = useState<UserRow | null>(null)
+  const [deletingUser, setDeletingUser] = useState(false)
+  const [deleteUserError, setDeleteUserError] = useState('')
+
+  const [showClearInvitesModal, setShowClearInvitesModal] = useState(false)
+  const [clearingInvites, setClearingInvites] = useState(false)
+  const [clearInvitesError, setClearInvitesError] = useState('')
 
   const loadLogs = async () => {
     const params = new URLSearchParams()
@@ -207,6 +229,85 @@ export default function AdminSettings() {
     await loadLogs()
   }
 
+  const createUser = async (event: FormEvent) => {
+    event.preventDefault()
+    setCreateUserError('')
+    if (newUser.password !== newUser.password_confirmation) {
+      setCreateUserError('Passwords do not match')
+      return
+    }
+    setCreatingUser(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          email: newUser.email,
+          full_name: newUser.full_name || null,
+          phone: newUser.phone || null,
+          is_admin: newUser.is_admin,
+          password: newUser.password,
+          password_confirmation: newUser.password_confirmation,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setCreateUserError(typeof data.detail === 'string' ? data.detail : 'Failed to create user')
+        setNewUser((current) => ({ ...current, password: '', password_confirmation: '' }))
+        return
+      }
+      setShowCreateUserModal(false)
+      setNewUser(emptyNewUser)
+      setMessage(`User ${data.email} created`)
+      await refresh()
+    } finally {
+      setCreatingUser(false)
+    }
+  }
+
+  const confirmDeleteUser = async () => {
+    if (!deleteTarget) return
+    setDeleteUserError('')
+    setDeletingUser(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/users/${deleteTarget.id}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setDeleteUserError(typeof data.detail === 'string' ? data.detail : 'Failed to delete user')
+        return
+      }
+      setDeleteTarget(null)
+      setMessage(`User ${deleteTarget.email} deleted`)
+      await refresh()
+    } finally {
+      setDeletingUser(false)
+    }
+  }
+
+  const confirmClearInvites = async () => {
+    setClearInvitesError('')
+    setClearingInvites(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/invites/clear`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setClearInvitesError(typeof data.detail === 'string' ? data.detail : 'Failed to clear invites')
+        return
+      }
+      setShowClearInvitesModal(false)
+      setMessage(`Cleared ${data.revoked_count} pending invite link(s)`)
+      await refresh()
+    } finally {
+      setClearingInvites(false)
+    }
+  }
+
   return (
     <main className="mx-auto max-w-6xl px-6 py-6">
       <h1 className="text-2xl font-semibold text-gray-900">Admin Settings</h1>
@@ -228,7 +329,19 @@ export default function AdminSettings() {
       </section>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
-        <h2 className="text-lg font-semibold text-gray-900">Invite management</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Invite management</h2>
+          <button
+            type="button"
+            className="rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50"
+            onClick={() => {
+              setClearInvitesError('')
+              setShowClearInvitesModal(true)
+            }}
+          >
+            Clear all pending invite links
+          </button>
+        </div>
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
@@ -338,7 +451,20 @@ export default function AdminSettings() {
       </section>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
-        <h2 className="text-lg font-semibold text-gray-900">Users</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Users</h2>
+          <button
+            type="button"
+            className="rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-cyan-700"
+            onClick={() => {
+              setCreateUserError('')
+              setNewUser(emptyNewUser)
+              setShowCreateUserModal(true)
+            }}
+          >
+            Create user
+          </button>
+        </div>
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
@@ -347,24 +473,176 @@ export default function AdminSettings() {
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="border-t border-gray-100">
-                  <td className="py-3">{user.full_name ?? '-'}</td>
-                  <td>{user.email}</td>
-                  <td>{user.phone ?? '-'}</td>
-                  <td>{user.is_active ? 'Active' : 'Inactive'}</td>
-                  <td>{user.is_admin ? 'Admin' : 'User'}</td>
-                  <td>{new Date(user.created_at).toLocaleString()}</td>
-                  <td className="space-x-2 py-3">
-                    <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => toggleActive(user.id)} type="button">Toggle active</button>
-                    <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => sendReset(user.id)} type="button">Send password reset</button>
-                  </td>
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-4 text-center text-gray-400">No users yet</td>
                 </tr>
-              ))}
+              ) : (
+                users.map((user) => (
+                  <tr key={user.id} className="border-t border-gray-100">
+                    <td className="py-3">{user.full_name ?? '-'}</td>
+                    <td>{user.email}</td>
+                    <td>{user.phone ?? '-'}</td>
+                    <td>{user.is_active ? 'Active' : 'Inactive'}</td>
+                    <td>{user.is_admin ? 'Admin' : 'User'}</td>
+                    <td>{new Date(user.created_at).toLocaleString()}</td>
+                    <td className="space-x-2 py-3">
+                      <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => toggleActive(user.id)} type="button">Toggle active</button>
+                      <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => sendReset(user.id)} type="button">Send password reset</button>
+                      <button
+                        className="rounded-lg border border-rose-300 px-3 py-1 text-rose-700 hover:bg-rose-50"
+                        onClick={() => {
+                          setDeleteUserError('')
+                          setDeleteTarget(user)
+                        }}
+                        type="button"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </section>
+
+      {showCreateUserModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <h2 className="text-xl font-semibold text-gray-900">Create user</h2>
+              <button type="button" onClick={() => setShowCreateUserModal(false)} className="text-sm text-gray-500 hover:text-gray-900">Close</button>
+            </div>
+            <form className="mt-4 space-y-3" onSubmit={createUser}>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Full name</label>
+                <input
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2"
+                  value={newUser.full_name}
+                  onChange={(e) => setNewUser((current) => ({ ...current, full_name: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Email address</label>
+                <input
+                  type="email"
+                  required
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2"
+                  value={newUser.email}
+                  onChange={(e) => setNewUser((current) => ({ ...current, email: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Phone</label>
+                <input
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2"
+                  value={newUser.phone}
+                  onChange={(e) => setNewUser((current) => ({ ...current, phone: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Role</label>
+                <select
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2"
+                  value={newUser.is_admin ? 'admin' : 'non-admin'}
+                  onChange={(e) => setNewUser((current) => ({ ...current, is_admin: e.target.value === 'admin' }))}
+                >
+                  <option value="non-admin">Non-admin</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Password</label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser((current) => ({ ...current, password: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">Confirm password</label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2"
+                  value={newUser.password_confirmation}
+                  onChange={(e) => setNewUser((current) => ({ ...current, password_confirmation: e.target.value }))}
+                />
+              </div>
+              {createUserError ? <p className="text-sm text-rose-600">{createUserError}</p> : null}
+              <div className="mt-4 flex justify-end gap-3">
+                <button type="button" onClick={() => setShowCreateUserModal(false)} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingUser}
+                  className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                >
+                  {creatingUser ? 'Creating...' : 'Create user'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-gray-900">Delete {deleteTarget.full_name || deleteTarget.email}?</h2>
+            <p className="mt-3 text-sm text-gray-600">
+              This permanently removes this user's ability to sign in. This action cannot be undone.
+            </p>
+            {deleteUserError ? <p className="mt-3 text-sm text-rose-600">{deleteUserError}</p> : null}
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setDeleteTarget(null)} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingUser}
+                onClick={confirmDeleteUser}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:bg-gray-300"
+              >
+                {deletingUser ? 'Deleting...' : 'Delete user'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showClearInvitesModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-gray-900">Clear all pending invite links?</h2>
+            <p className="mt-3 text-sm text-gray-600">
+              This will invalidate all pending invite links. People who already received an invite link will no
+              longer be able to use it. Existing users are not affected.
+            </p>
+            {clearInvitesError ? <p className="mt-3 text-sm text-rose-600">{clearInvitesError}</p> : null}
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setShowClearInvitesModal(false)} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={clearingInvites}
+                onClick={confirmClearInvites}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:bg-gray-300"
+              >
+                {clearingInvites ? 'Clearing...' : 'Clear pending invite links'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }

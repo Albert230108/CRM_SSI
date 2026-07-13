@@ -9,7 +9,15 @@ from app.core.public_urls import get_public_frontend_base_url
 from app.models.invitation import Invitation
 from app.models.password_reset import PasswordResetToken
 from app.models.user import User
-from app.schemas.user import InviteCreate, InviteRead, PasswordResetRequestCreate, UserRead, UserUpdate
+from app.schemas.user import (
+    AdminUserCreate,
+    InviteCreate,
+    InviteRead,
+    PasswordResetRequestCreate,
+    UserDeleteResult,
+    UserRead,
+    UserUpdate,
+)
 from app.services.email_service import send_email
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -24,6 +32,29 @@ def _public_base_url() -> str:
 @router.get("", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])
 def list_users(db: Session = Depends(get_db)) -> list[User]:
     return db.query(User).order_by(User.id).all()
+
+
+@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(get_current_admin_user)])
+def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)) -> User:
+    if payload.password != payload.password_confirmation:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
+
+    existing = db.query(User).filter(User.email == payload.email).first()
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    user = User(
+        email=payload.email,
+        full_name=payload.full_name,
+        phone=payload.phone,
+        password_hash=get_password_hash(payload.password),
+        is_active=True,
+        is_admin=payload.is_admin,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @router.put("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_admin_user)])
@@ -123,3 +154,24 @@ def toggle_user_active(user_id: int, db: Session = Depends(get_db), current_user
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.delete("/{user_id}", response_model=UserDeleteResult, dependencies=[Depends(get_current_admin_user)])
+def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)) -> UserDeleteResult:
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own account")
+
+    if not user.is_active:
+        return UserDeleteResult(id=user.id, deactivated=False, already_inactive=True)
+
+    if user.is_admin:
+        active_admins = db.query(User).filter(User.is_admin.is_(True), User.is_active.is_(True), User.id != user.id).count()
+        if active_admins == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one active admin must remain")
+
+    user.is_active = False
+    db.commit()
+    return UserDeleteResult(id=user.id, deactivated=True, already_inactive=False)
