@@ -67,6 +67,17 @@ async function readJsonSafely(response: Response) {
   }
 }
 
+// Names saved before the @lid display-name fix may still hold the raw WhatsApp id
+// (e.g. "37284873@lid") instead of a real name — don't surface that opaque id as a name.
+const RAW_WHATSAPP_ID_PATTERN = /^\d+@(lid|c\.us|g\.us|s\.whatsapp\.net)$/i
+
+function formatChatDisplayName(name: string | null | undefined) {
+  if (!name || RAW_WHATSAPP_ID_PATTERN.test(name.trim())) {
+    return 'Unknown contact'
+  }
+  return name
+}
+
 export default function LinkChatModal({ open, threadId, tenantName, bookingId, onClose, onChanged }: LinkChatModalProps) {
   const token = useAuthStore((state) => state.token)
   const [view, setView] = useState<View>('account')
@@ -349,7 +360,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                     {link.provider} · {link.external_account_id}
                   </p>
                   <p className="mt-1 truncate font-mono text-sm font-semibold text-gray-900">{link.chat_id}</p>
-                  <p className="text-xs text-gray-600">{link.chat_display_name || 'No name'}</p>
+                  <p className="text-xs text-gray-600">{formatChatDisplayName(link.chat_display_name)}</p>
                   <p className="mt-1 text-xs text-gray-500">
                     Linked {formatDisplayDate(link.created_at)}
                     {link.linked_by_user_id ? ` by user #${link.linked_by_user_id}` : ''}
@@ -498,7 +509,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                           <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">Linked here</span>
                         ) : null}
                       </div>
-                      <span className="text-sm text-gray-700">{chat.chat_name || 'Unknown contact'}</span>
+                      <span className="text-sm text-gray-700">{formatChatDisplayName(chat.chat_name)}</span>
                       {chat.last_message_preview ? <span className="truncate text-xs text-gray-500">{chat.last_message_preview}</span> : null}
                     </button>
                   )
@@ -511,7 +522,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                   {tenantSubtitle ? <p className="mt-1 text-xs text-gray-500">{tenantSubtitle}</p> : null}
                   <p className="mt-1 text-xs text-gray-500">Account: {selectedAccount?.label}</p>
                   <p className="mt-1 font-mono text-sm font-semibold text-gray-900">{selectedChat.chat_id}</p>
-                  <p className="text-sm text-gray-700">{selectedChat.chat_name || 'Unknown contact'}</p>
+                  <p className="text-sm text-gray-700">{formatChatDisplayName(selectedChat.chat_name)}</p>
                   {conflictsWithAnotherThread ? (
                     <p className="mt-2 text-sm font-semibold text-rose-600">
                       This chat is already linked to thread #{selectedChat.linked_thread_id}. Unlink it there first.
