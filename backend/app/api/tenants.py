@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 import logging
 import traceback
@@ -20,6 +21,7 @@ from app.models.user import User
 from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.models.communication import Communication
+from app.models.gmail_integration import Conversation, ConversationMessage
 from app.services.beds24_client import get_booking_detail, get_bookings
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
@@ -345,7 +347,7 @@ def list_tenants(
     sort_by_message: bool = False,
     sort_desc: bool = True,
 ) -> list[TenantRead]:
-    from sqlalchemy import desc, func, or_
+    from sqlalchemy import desc, or_
 
     query = db.query(Tenant)
 
@@ -364,16 +366,7 @@ def list_tenants(
     if status:
         query = query.filter(Tenant.booking_status == status)
 
-    if sort_by_message:
-        query = query.outerjoin(
-            Communication,
-            Communication.tenant_id == Tenant.id
-        ).group_by(Tenant.id).order_by(
-            desc(func.max(Communication.created_at)) if sort_desc else func.max(Communication.created_at)
-        )
-    else:
-        query = query.order_by(desc(Tenant.id) if sort_desc else Tenant.id)
-
+    query = query.order_by(desc(Tenant.id) if sort_desc else Tenant.id)
     tenants = query.all()
 
     result = []
@@ -382,13 +375,35 @@ def list_tenants(
             Communication.tenant_id == tenant.id
         ).order_by(desc(Communication.created_at)).first()
 
-        tenant_dict = TenantRead.from_orm(tenant).model_dump()
+        # Email conversations live in a separate table (Conversation/ConversationMessage)
+        # from WhatsApp Communication rows, so the most recent activity must be picked
+        # across both sources rather than only Communication.
+        last_email = (
+            db.query(ConversationMessage)
+            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+            .filter(Conversation.tenant_id == tenant.id)
+            .order_by(desc(ConversationMessage.sent_at))
+            .first()
+        )
+
+        candidates: list[tuple[datetime, str, str]] = []
         if last_comm:
-            tenant_dict["last_message_date"] = last_comm.created_at
-            tenant_dict["last_message_channel"] = last_comm.channel
-            tenant_dict["last_message_direction"] = last_comm.direction
+            candidates.append((last_comm.created_at, last_comm.channel, last_comm.direction))
+        if last_email:
+            candidates.append((last_email.sent_at, "email", last_email.direction))
+
+        tenant_dict = TenantRead.from_orm(tenant).model_dump()
+        if candidates:
+            last_date, last_channel, last_direction = max(candidates, key=lambda c: c[0])
+            tenant_dict["last_message_date"] = last_date
+            tenant_dict["last_message_channel"] = last_channel
+            tenant_dict["last_message_direction"] = last_direction
 
         result.append(TenantRead(**tenant_dict))
+
+    if sort_by_message:
+        epoch = datetime.min.replace(tzinfo=timezone.utc)
+        result.sort(key=lambda t: t.last_message_date or epoch, reverse=sort_desc)
 
     return result
 

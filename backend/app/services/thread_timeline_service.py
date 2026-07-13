@@ -88,6 +88,7 @@ class MixedTimelineRead(BaseModel):
 class _EmailThreadWindow:
     thread: Conversation
     anchor_timestamp: datetime
+    start_timestamp: datetime
 
 
 def _ensure_utc(value: datetime | None) -> datetime:
@@ -224,7 +225,8 @@ def _build_thread_windows(conversations: Iterable[Conversation]) -> list[_EmailT
         if not messages:
             continue
         anchor_timestamp = _ensure_utc(messages[-1].sent_at)
-        windows.append(_EmailThreadWindow(thread=thread, anchor_timestamp=anchor_timestamp))
+        start_timestamp = _ensure_utc(messages[0].sent_at)
+        windows.append(_EmailThreadWindow(thread=thread, anchor_timestamp=anchor_timestamp, start_timestamp=start_timestamp))
     windows.sort(key=lambda item: (item.anchor_timestamp, item.thread.id))
     return windows
 
@@ -345,13 +347,15 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
 
     whatsapp_blocks_by_thread_id: dict[int, list[TimelineWhatsappBlockRead]] = {}
     if whatsapp_messages:
-        for index, window in enumerate(thread_windows):
-            next_anchor = thread_windows[index + 1].anchor_timestamp if index + 1 < len(thread_windows) else None
+        for window in thread_windows:
+            # Candidates for inline blocks are WhatsApp messages that fall within this thread's
+            # own email date range (its first message through its last). Messages outside that
+            # range are handled separately by _build_whatsapp_groups (left as-is; duplication
+            # between a thread's inline blocks and a standalone group is expected).
             block_messages = [
                 message
                 for message in whatsapp_messages
-                if _ensure_utc(message.created_at) > window.anchor_timestamp
-                and (next_anchor is None or _ensure_utc(message.created_at) <= next_anchor)
+                if window.start_timestamp < _ensure_utc(message.created_at) <= window.anchor_timestamp
             ]
             whatsapp_blocks_by_thread_id[window.thread.id] = _build_whatsapp_blocks_for_thread(window.thread, block_messages)
 
