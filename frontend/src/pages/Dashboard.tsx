@@ -199,13 +199,13 @@ export default function Dashboard() {
     }
   }, [syncSummary?.whatsapp_sync_queued, token])
 
-  // Show the sync toast for exactly 5s per completed attempt. Keyed on syncToken
+  // Show the sync toast for exactly 8s per completed attempt. Keyed on syncToken
   // (not syncSummary) so the later background queued-status poll, which quietly
   // mutates syncSummary, doesn't re-trigger or extend the toast.
   useEffect(() => {
     if (syncToken === 0) return
     setToastVisible(true)
-    const timeoutId = window.setTimeout(() => setToastVisible(false), 5000)
+    const timeoutId = window.setTimeout(() => setToastVisible(false), 8000)
     return () => window.clearTimeout(timeoutId)
   }, [syncToken])
 
@@ -259,8 +259,6 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
-
-      {syncRunning ? <p className="mb-3 text-sm text-cyan-700">Running unified sync job...</p> : null}
 
       {toastVisible && (syncSummary || syncError) ? (
         <div

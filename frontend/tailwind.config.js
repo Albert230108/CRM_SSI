@@ -10,7 +10,7 @@ export default {
         },
       },
       animation: {
-        'toast-countdown': 'toast-countdown 5s linear forwards',
+        'toast-countdown': 'toast-countdown 8s linear forwards',
       },
     },
   },
