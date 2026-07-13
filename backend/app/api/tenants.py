@@ -22,7 +22,7 @@ from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.models.communication import Communication
 from app.services.beds24_client import get_booking_detail, get_bookings
 from app.services.beds24_service import fetch_booking_with_invoice
-from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints, ensure_whatsapp_endpoint_for_tenant
+from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 router = APIRouter(tags=["tenants"])
@@ -401,7 +401,6 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     tenant = Tenant(**payload.model_dump())
     db.add(tenant)
     db.flush()
-    ensure_whatsapp_endpoint_for_tenant(db, tenant)
     db.commit()
     db.refresh(tenant)
     return tenant
@@ -766,7 +765,6 @@ async def _import_tenant(
         tenant.beds24_raw = booking
 
     sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
-    ensure_whatsapp_endpoint_for_tenant(db, tenant)
 
     db.query(FinanceRecord).filter(FinanceRecord.tenant_id == tenant.id).delete(synchronize_session=False)
 
