@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.gmail_integration import sync_account
 from app.api.tenants import _extract_guest_fields
-from app.core.dependencies import get_current_admin_user, get_db
+from app.core.dependencies import get_current_admin_user, get_current_user, get_db
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -213,7 +213,7 @@ def _queue_whatsapp_sync() -> None:
 
 
 @router.get("/sync-status")
-async def sync_status(current_user: User = Depends(get_current_admin_user)) -> dict[str, Any]:
+async def sync_status(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
     running_tasks = [task for task in _whatsapp_sync_tasks if not task.done()]
     return {
         "whatsapp_sync_running": bool(running_tasks),
@@ -240,7 +240,7 @@ async def _debug_whatsapp_history_sync() -> dict[str, Any]:
 
 
 @router.post("/sync-all")
-async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)) -> dict[str, Any]:
+async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "started_at": datetime.now(timezone.utc),
         "completed_at": None,
