@@ -61,6 +61,25 @@ def _lookup_whatsapp_endpoint_by_account_identity(db: Session, provider: str, ex
     )
 
 
+def _normalize_chat_identity_for_comparison(value: str | None) -> str | None:
+    """Normalize WhatsApp chat identity by stripping provider suffixes for comparison.
+
+    Treats @lid, @c.us, @g.us as equivalent bases. For example:
+    - '326472368@lid' → '326472368'
+    - '326472368@c.us' → '326472368'
+    - '123456-456789@g.us' → '123456-456789'
+    """
+    if not value:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    for suffix in ("@c.us", "@g.us", "@lid"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)] or None
+    return normalized
+
+
 def _lookup_whatsapp_endpoint_by_exact_chat_identity(
     db: Session,
     *,
@@ -81,6 +100,46 @@ def _lookup_whatsapp_endpoint_by_exact_chat_identity(
         )
         .first()
     )
+
+
+def _lookup_whatsapp_endpoint_by_normalized_chat_identity(
+    db: Session,
+    *,
+    provider: str,
+    external_account_id: str,
+    chat_identity: str,
+) -> TenantChannelEndpoint | None:
+    """Lookup endpoint by normalizing both payload and endpoint chat identities.
+
+    Used when the webhook payload doesn't include external_chat_namespace directly
+    but provides whatsapp_chat_id. Normalizes both to compare core IDs, handling
+    @lid vs @c.us format variations.
+    """
+    if not provider or not external_account_id or not chat_identity:
+        return None
+    normalized_payload_chat = _normalize_chat_identity_for_comparison(chat_identity)
+    if not normalized_payload_chat:
+        return None
+
+    # Find active endpoints for this account
+    endpoints = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.provider == provider,
+            TenantChannelEndpoint.external_account_id == external_account_id,
+            TenantChannelEndpoint.is_active.is_(True),
+            TenantChannelEndpoint.external_chat_namespace.isnot(None),
+        )
+        .all()
+    )
+
+    for endpoint in endpoints:
+        normalized_endpoint_chat = _normalize_chat_identity_for_comparison(endpoint.external_chat_namespace)
+        if normalized_endpoint_chat == normalized_payload_chat:
+            return endpoint
+
+    return None
 
 
 def _whatsapp_endpoints_for_account_identity(db: Session, provider: str, external_account_id: str) -> list[TenantChannelEndpoint]:
@@ -189,6 +248,33 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                         strategy="exact_chat_endpoint",
                         matched_value=chat_identity,
                         matched_field="provider+external_account_id+external_chat_namespace",
+                    )
+
+            # Fallback: Try normalized chat identity matching (handles @lid vs @c.us variants).
+            # Used when webhook payload doesn't include external_chat_namespace but does
+            # include whatsapp_chat_id (e.g., history backfill payloads from WhatsApp service).
+            normalized_endpoint = _lookup_whatsapp_endpoint_by_normalized_chat_identity(
+                db,
+                provider=provider,
+                external_account_id=external_account_id,
+                chat_identity=chat_identity,
+            )
+            if normalized_endpoint:
+                tenant = db.query(Tenant).filter(Tenant.id == normalized_endpoint.tenant_id).first()
+                if tenant:
+                    logger.info(
+                        "Resolved inbound tenant by normalized_chat_endpoint tenant_id=%s provider=%s external_account_id=%s chat_identity=%s history=%s",
+                        tenant.id,
+                        provider,
+                        external_account_id,
+                        chat_identity,
+                        is_history_payload,
+                    )
+                    return RoutingResult(
+                        tenant=tenant,
+                        strategy="normalized_chat_endpoint",
+                        matched_value=chat_identity,
+                        matched_field="provider+external_account_id+normalized_chat_id",
                     )
 
             if active_endpoints_for_account:

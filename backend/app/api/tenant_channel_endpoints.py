@@ -254,3 +254,73 @@ def delete_endpoint(endpoint_id: int, db: Session = Depends(get_db)) -> None:
     db.delete(endpoint)
     db.commit()
 
+
+@router.post("/{endpoint_id}/resync-history", response_model=dict[str, Any], dependencies=[Depends(get_current_admin_user)])
+async def resync_endpoint_history(
+    endpoint_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+) -> dict[str, Any]:
+    """Trigger full history resync for a WhatsApp endpoint.
+
+    For WhatsApp endpoints with external_chat_namespace (manually linked chats),
+    requests the WhatsApp service to backfill all history for that specific chat.
+    """
+    import os
+    import httpx
+
+    endpoint = db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.id == endpoint_id).first()
+    if endpoint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found")
+
+    if endpoint.channel_type != "whatsapp":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Resync is only supported for WhatsApp endpoints")
+
+    if not endpoint.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Endpoint must be active to resync")
+
+    if not endpoint.external_chat_namespace:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="WhatsApp endpoint must have external_chat_namespace (manual link) to resync")
+
+    whatsapp_service_url = os.getenv("WHATSAPP_SERVICE_URL", "").strip()
+    whatsapp_api_key = os.getenv("WHATSAPP_API_KEY", "").strip()
+    if not whatsapp_service_url or not whatsapp_api_key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="WhatsApp service is not configured")
+
+    try:
+        url = whatsapp_service_url.rstrip("/") + "/admin/backfill"
+        payload = {
+            "limit": 100000,
+            "chatId": endpoint.external_chat_namespace,
+            "postSyncDelayMs": 0,
+        }
+        logger.info(
+            "Triggering WhatsApp history resync for endpoint endpoint_id=%s tenant_id=%s chat_id=%s",
+            endpoint.id,
+            endpoint.tenant_id,
+            endpoint.external_chat_namespace,
+        )
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+        logger.info(
+            "WhatsApp history resync completed endpoint_id=%s result=%s",
+            endpoint.id,
+            {k: result.get(k) for k in ("fetched", "imported", "deduped", "failed", "inbound", "outbound")},
+        )
+        return {
+            "ok": True,
+            "endpoint_id": endpoint.id,
+            "tenant_id": endpoint.tenant_id,
+            "chat_id": endpoint.external_chat_namespace,
+            **result,
+        }
+    except httpx.RequestError as exc:
+        logger.error("WhatsApp service request failed endpoint_id=%s: %s", endpoint.id, str(exc))
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"WhatsApp service error: {str(exc)}") from exc
+    except Exception as exc:
+        logger.error("WhatsApp history resync failed endpoint_id=%s: %s", endpoint.id, str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Resync failed: {str(exc)}") from exc
+

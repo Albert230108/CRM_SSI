@@ -101,25 +101,98 @@ async def _sync_emails(db: Session, current_user: User) -> int:
     return imported
 
 
-async def _sync_whatsapp() -> int:
+async def _sync_whatsapp_linked_endpoints(db: Session) -> dict[str, Any]:
+    """Sync WhatsApp history for all manually linked endpoints.
+
+    For each tenant with active manual WhatsApp links:
+    - Trigger full history resync via the WhatsApp service
+    - Aggregate results per endpoint
+    """
     import os
+
+    from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 
     whatsapp_service_url = os.getenv("WHATSAPP_SERVICE_URL", "").strip()
     whatsapp_api_key = os.getenv("WHATSAPP_API_KEY", "").strip()
     if not whatsapp_service_url or not whatsapp_api_key:
-        return 0
+        return {
+            "synced_endpoints": 0,
+            "total_imported": 0,
+            "results": [],
+            "errors": [],
+        }
 
-    url = whatsapp_service_url.rstrip("/") + "/admin/backfill"
-    payload = {"limit": 200, "postSyncDelayMs": 0}
-    print(f"[crm] whatsapp sync request method=POST url={url} timeout=600.0 payload={payload}")
-    async with httpx.AsyncClient(timeout=600.0) as client:
-        response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json=payload)
-        print(f"[crm] whatsapp sync response status={response.status_code} url={url}")
-        response.raise_for_status()
-        payload = response.json()
-    imported = _to_int(payload.get("imported") or payload.get("forwarded"))
-    print(f"[crm] whatsapp sync imported={imported} url={url}")
-    return imported
+    # Find all active WhatsApp endpoints with manual links (external_chat_namespace set)
+    active_links = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.is_active.is_(True),
+            TenantChannelEndpoint.external_chat_namespace.isnot(None),
+        )
+        .all()
+    )
+
+    results = []
+    errors = []
+    total_imported = 0
+
+    for endpoint in active_links:
+        try:
+            url = whatsapp_service_url.rstrip("/") + "/admin/backfill"
+            payload = {
+                "limit": 100000,
+                "chatId": endpoint.external_chat_namespace,
+                "postSyncDelayMs": 0,
+            }
+            print(
+                f"[crm] whatsapp endpoint sync request endpoint_id={endpoint.id} chat_id={endpoint.external_chat_namespace} method=POST url={url}"
+            )
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json=payload)
+                print(f"[crm] whatsapp endpoint sync response status={response.status_code} endpoint_id={endpoint.id}")
+                response.raise_for_status()
+                sync_result = response.json()
+
+            imported = _to_int(sync_result.get("imported") or sync_result.get("forwarded"))
+            total_imported += imported
+            results.append({
+                "endpoint_id": endpoint.id,
+                "tenant_id": endpoint.tenant_id,
+                "chat_id": endpoint.external_chat_namespace,
+                "imported": imported,
+                "fetched": _to_int(sync_result.get("fetched")),
+                "deduped": _to_int(sync_result.get("deduped")),
+                "failed": _to_int(sync_result.get("failed")),
+                "inbound": _to_int(sync_result.get("inbound")),
+                "outbound": _to_int(sync_result.get("outbound")),
+            })
+            print(
+                f"[crm] whatsapp endpoint sync completed endpoint_id={endpoint.id} imported={imported}"
+            )
+        except Exception as exc:
+            logger.exception("WhatsApp endpoint sync failed endpoint_id=%s: %s", endpoint.id, str(exc))
+            errors.append({
+                "endpoint_id": endpoint.id,
+                "tenant_id": endpoint.tenant_id,
+                "error": str(exc),
+            })
+
+    return {
+        "synced_endpoints": len(results),
+        "total_imported": total_imported,
+        "results": results,
+        "errors": errors,
+    }
+
+
+async def _sync_whatsapp() -> int:
+    """Legacy: Full account-level sync (kept for compatibility).
+
+    New behavior: Delegates to per-endpoint sync for manually linked chats.
+    """
+    # This is now handled by _sync_whatsapp_linked_endpoints in main sync
+    return 0
 
 
 
@@ -174,6 +247,8 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
         "bookings_updated": 0,
         "emails_imported": 0,
         "whatsapp_messages_imported": 0,
+        "whatsapp_endpoints_synced": 0,
+        "whatsapp_endpoint_sync_details": [],
         "tenant_threads_updated": 0,
         "partial_failures": [],
     }
@@ -189,12 +264,17 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
         summary["partial_failures"].append({"step": "email", "error": str(exc)})
 
     try:
-        _queue_whatsapp_sync()
-        summary["whatsapp_messages_imported"] = 0
-        summary["whatsapp_sync_queued"] = True
+        whatsapp_result = await _sync_whatsapp_linked_endpoints(db)
+        summary["whatsapp_messages_imported"] = whatsapp_result.get("total_imported", 0)
+        summary["whatsapp_endpoints_synced"] = whatsapp_result.get("synced_endpoints", 0)
+        summary["whatsapp_endpoint_sync_details"] = whatsapp_result.get("results", [])
+        if whatsapp_result.get("errors"):
+            summary["partial_failures"].append({
+                "step": "whatsapp_endpoints",
+                "errors": whatsapp_result.get("errors", []),
+            })
     except Exception as exc:
         summary["partial_failures"].append({"step": "whatsapp", "error": str(exc)})
-        summary["whatsapp_sync_queued"] = False
 
     try:
         summary["tenant_threads_updated"] = 0
