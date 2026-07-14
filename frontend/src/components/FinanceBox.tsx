@@ -251,7 +251,19 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
       {!tenantId ? null : (
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-            <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Summary</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Summary</p>
+              {tenant?.booking_id ? (
+                <a
+                  href={`https://beds24.com/control2.php?ajax=bookedit&id=${encodeURIComponent(tenant.booking_id)}&tab=1`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-medium text-cyan-700 hover:underline"
+                >
+                  Open in Beds24
+                </a>
+              ) : null}
+            </div>
             <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Booking ID</p>
