@@ -324,10 +324,10 @@ export default function Settings() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700" htmlFor="local-folder-root-path">
-                Root folder path (for "Open in File Explorer")
+                Root folder path (for "Copy Explorer path")
               </label>
               <p className="mt-1 text-sm text-gray-500">
-                Browsers can't read the absolute disk path of the folder you selected above, so enter it here manually (e.g. C:\Users\you\Tenants) to enable jumping straight to a tenant's folder in File Explorer.
+                Browsers can't read the absolute disk path of the folder you selected above, and can't open File Explorer directly for security reasons. Enter the path here manually (e.g. C:\Users\you\Tenants) so the tenant tile's button can copy the full folder path - paste it into Explorer's address bar (Win+E, then Ctrl+V, Enter) to jump straight there.
               </p>
               <input
                 id="local-folder-root-path"

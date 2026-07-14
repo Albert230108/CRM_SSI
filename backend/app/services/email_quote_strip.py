@@ -23,6 +23,17 @@ _QUOTE_HEADER_PATTERNS = [
     re.compile(r"^[ \t]*From:.{0,300}\n[ \t]*Sent:.{0,300}\n[ \t]*To:", re.IGNORECASE | re.MULTILINE),
     # Generic "-------- Forwarded message --------"
     re.compile(r"^[ \t]*-{2,}\s*Forwarded message\s*-{2,}[ \t]*$", re.IGNORECASE | re.MULTILINE),
+    # Language-agnostic fallback: mail clients other than Gmail localize the "wrote:" verb
+    # (Proton: "escreveu:" pt, "schreef:" nl, "schrieb:" de, "a écrit :" fr, "escribió:" es, ...).
+    # Rather than enumerate every translation, match the structural shape shared by all of
+    # them: a line naming the sender (with their <email@address>) ending in a colon,
+    # directly followed by the quoted message's `>` lines. The attribution text itself is
+    # capped to a single optional line-wrap (not DOTALL/unbounded) so this can't skip past
+    # unrelated earlier paragraphs to latch onto some later, unrelated email address.
+    re.compile(
+        r"^[ \t]*\S[^\n]{0,200}?(?:\n[ \t]*[^\n]{0,200}?)?<[^<>\s@]+@[^<>\s]+>[^\n<>]{0,60}:[ \t]*\n[ \t]*\n?[ \t]*>",
+        re.MULTILINE,
+    ),
 ]
 
 _QUOTED_LINE = re.compile(r"^[ \t]*>")

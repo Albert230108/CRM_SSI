@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, computed_field
 from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.email_quote_strip import strip_quoted_reply
 
 PROVIDER_GMAIL = "gmail"
 
@@ -24,8 +25,16 @@ class TimelineMessageRead(BaseModel):
     recipient_email: str | None = None
     subject: str | None = None
     body: str
+    body_text: str | None = None
+    body_html: str | None = None
     sent_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def body_display(self) -> str:
+        """Body_text (or body) with quoted thread history stripped, for UI display."""
+        return strip_quoted_reply(self.body_text or self.body)
 
 
 class TimelineWhatsappMessageRead(BaseModel):

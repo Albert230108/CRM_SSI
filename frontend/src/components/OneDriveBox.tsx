@@ -29,6 +29,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
   const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
   const [localFolderRootPath] = useLocalFolderRootPath()
+  const [copiedPath, setCopiedPath] = useState(false)
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [yearHandle, setYearHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -187,11 +188,17 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
     }
   }, [rootHandle, tenantBookingId])
 
-  const handleOpenInExplorer = () => {
+  const handleCopyExplorerPath = async () => {
     if (!localFolderRootPath || !yearHandle || !tenantHandle) return
     const trimmedRoot = localFolderRootPath.replace(/[\\/]+$/, '')
     const fullPath = `${trimmedRoot}\\${yearHandle.name}\\${tenantHandle.name}`
-    window.open(`file:///${fullPath.replace(/\\/g, '/')}`, '_blank', 'noopener,noreferrer')
+    try {
+      await navigator.clipboard.writeText(fullPath)
+      setCopiedPath(true)
+      window.setTimeout(() => setCopiedPath(false), 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to copy folder path')
+    }
   }
 
   const handleOpenFile = async (fileHandle: FileSystemFileHandle) => {
@@ -217,12 +224,12 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
         {tenantHandle ? (
           <button
             type="button"
-            onClick={handleOpenInExplorer}
+            onClick={handleCopyExplorerPath}
             disabled={!localFolderRootPath}
-            title={!localFolderRootPath ? 'Set a root folder path in Settings to enable this' : 'Open this tenant\'s folder in File Explorer'}
+            title={!localFolderRootPath ? 'Set a root folder path in Settings to enable this' : 'Copy this tenant\'s folder path to open in File Explorer'}
             className="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700 transition hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Open in File Explorer
+            {copiedPath ? 'Path copied!' : 'Copy Explorer path'}
           </button>
         ) : null}
       </div>
