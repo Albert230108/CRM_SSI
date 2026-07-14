@@ -57,8 +57,22 @@ const htmlToPlainText = (html: string) => {
   return decodeHtmlEntities(chunks.join(' ').replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').replace(/[ \t]{2,}/g, ' ').trim())
 }
 
+const QUOTE_CONTAINER_CLASS_PATTERN = /(?:^|\s)(gmail_quote|gmail_quote_container|yahoo_quoted|protonmail_quote|moz-cite-prefix|gmail_attr)(?:\s|$)/i
+
+const removeQuotedReplyElements = (root: HTMLElement) => {
+  Array.from(root.querySelectorAll('*')).forEach((node) => {
+    if (!node.isConnected) return
+    const el = node as HTMLElement
+    const isQuoteContainer =
+      QUOTE_CONTAINER_CLASS_PATTERN.test(el.className || '') ||
+      (el.tagName === 'BLOCKQUOTE' && (el.getAttribute('type') || '').toLowerCase() === 'cite')
+    if (isQuoteContainer) el.remove()
+  })
+}
+
 const sanitizeHtml = (html: string) => {
   const doc = new DOMParser().parseFromString(html, 'text/html')
+  removeQuotedReplyElements(doc.body)
   const walk = (node: Node) => {
     if (node.nodeType === Node.TEXT_NODE) return
     if (!(node instanceof HTMLElement)) return
@@ -91,9 +105,14 @@ const sanitizeHtml = (html: string) => {
 }
 
 const extractPreviewText = (message: Pick<TimelineMessage, 'body' | 'body_display' | 'body_text' | 'body_html'>) => {
-  const source = message.body_text || message.body_html || message.body_display || message.body || ''
+  if (message.body_html) {
+    const doc = new DOMParser().parseFromString(message.body_html, 'text/html')
+    removeQuotedReplyElements(doc.body)
+    return htmlToPlainText(doc.body.innerHTML).replace(/\s+/g, ' ').trim()
+  }
+  const source = message.body_text || message.body_display || message.body || ''
   if (!source) return ''
-  if (message.body_html || /<[^>]+>/.test(source)) {
+  if (/<[^>]+>/.test(source)) {
     return htmlToPlainText(source).replace(/\s+/g, ' ').trim()
   }
   return source.replace(/\s+/g, ' ').trim()

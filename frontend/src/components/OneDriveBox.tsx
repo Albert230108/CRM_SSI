@@ -202,7 +202,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Files</h2>
           <p className="mt-1 text-sm text-gray-500">
-            {!tenantId ? 'No tenant selected' : unsupported ? 'Local folder access is not supported in this browser.' : !rootHandle ? 'No folder configured - go to Settings to connect a local folder.' : tenantBookingId ? `Booking ${tenantBookingId}` : 'Loading tenant...'}
+            {!tenantId ? 'No tenant selected' : unsupported ? 'Local folder access is not supported in this browser.' : !rootHandle ? 'No folder configured - go to Settings to connect a local folder.' : tenantBookingId ? 'Local booking files' : 'Loading tenant...'}
           </p>
         </div>
       </div>

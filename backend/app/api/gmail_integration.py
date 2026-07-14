@@ -18,7 +18,7 @@ from jose import jwt
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet
 
-from app.core.dependencies import get_current_user, get_db
+from app.core.dependencies import get_current_admin_user, get_current_user, get_db
 from app.core.security import ALGORITHM, SECRET_KEY, generate_secure_token
 from app.database import SessionLocal
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
@@ -580,6 +580,54 @@ def sync_account(account_id: int, db: Session = Depends(get_db), current_user: U
     account.last_synced_at = datetime.now(timezone.utc)
     db.commit()
     return {"synced_threads": saved, "account_id": account.id}
+
+
+def _backfill_message_bodies(db: Session) -> dict[str, int]:
+    """Re-extract body/body_html for already-synced messages from their stored raw Gmail payload.
+
+    Fixes rows persisted before the MIME-recursion fix in `_extract_text`/`_extract_html`
+    (e.g. a nested multipart/alternative part, common in outbound mail with a signature,
+    used to yield an empty body while the subject still came through). No Gmail API calls
+    are made; this only re-derives fields from the `raw_payload.gmail` JSON already stored.
+    """
+    scanned = 0
+    updated = 0
+    messages = db.query(ConversationMessage).filter(ConversationMessage.provider == PROVIDER_GMAIL).all()
+    for message in messages:
+        raw_payload = message.raw_payload
+        if not isinstance(raw_payload, dict):
+            continue
+        gmail_message = raw_payload.get("gmail")
+        if not isinstance(gmail_message, dict) or "payload" not in gmail_message:
+            # Manually-sent replies only store the Gmail send-API response (id/threadId),
+            # not the full message resource, so there is nothing to re-extract from.
+            continue
+        payload = gmail_message.get("payload") or {}
+        scanned += 1
+
+        body_text = _extract_text(payload)
+        body_html = _extract_html(payload)
+        changed = False
+
+        if body_text and body_text != message.body:
+            message.body = body_text
+            changed = True
+
+        if body_text != raw_payload.get("body_text") or body_html != raw_payload.get("body_html"):
+            message.raw_payload = {**raw_payload, "body_text": body_text, "body_html": body_html}
+            changed = True
+
+        if changed:
+            updated += 1
+
+    if updated:
+        db.commit()
+    return {"scanned": scanned, "updated": updated}
+
+
+@router.post("/accounts/backfill-bodies")
+def backfill_message_bodies(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)) -> dict[str, int]:
+    return _backfill_message_bodies(db)
 
 
 @router.get("/tenants/{tenant_id}/conversations", response_model=list[ConversationRead])

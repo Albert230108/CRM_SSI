@@ -107,6 +107,9 @@ export default function AdminSettings() {
   const [clearingInvites, setClearingInvites] = useState(false)
   const [clearInvitesError, setClearInvitesError] = useState('')
 
+  const [backfillingBodies, setBackfillingBodies] = useState(false)
+  const [backfillMessage, setBackfillMessage] = useState('')
+
   const loadLogs = async () => {
     const params = new URLSearchParams()
     params.set('limit', '50')
@@ -287,6 +290,27 @@ export default function AdminSettings() {
     }
   }
 
+  const backfillEmailBodies = async () => {
+    setBackfillMessage('')
+    setBackfillingBodies(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/backfill-bodies`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setBackfillMessage(typeof data.detail === 'string' ? data.detail : 'Failed to backfill email bodies')
+        return
+      }
+      setBackfillMessage(`Scanned ${data.scanned} synced email(s), updated ${data.updated}.`)
+    } catch {
+      setBackfillMessage('Failed to backfill email bodies')
+    } finally {
+      setBackfillingBodies(false)
+    }
+  }
+
   const confirmClearInvites = async () => {
     setClearInvitesError('')
     setClearingInvites(true)
@@ -312,6 +336,24 @@ export default function AdminSettings() {
     <main className="mx-auto max-w-6xl px-6 py-6">
       <h1 className="text-2xl font-semibold text-gray-900">Admin Settings</h1>
       <p className="mt-1 text-sm text-gray-500">User management, invite onboarding, password resets, and Beds24 webhook logs.</p>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">Email sync maintenance</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Re-extract the body and formatted HTML for already-synced Gmail messages from their stored raw payload
+          (no Gmail API calls). Use this after a fix to email body extraction to repair messages that were synced
+          with a blank or unformatted body.
+        </p>
+        <button
+          type="button"
+          disabled={backfillingBodies}
+          onClick={backfillEmailBodies}
+          className="mt-4 rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+        >
+          {backfillingBodies ? 'Backfilling...' : 'Backfill email bodies'}
+        </button>
+        {backfillMessage ? <p className="mt-3 text-sm text-gray-600">{backfillMessage}</p> : null}
+      </section>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-gray-900">Generate invite link</h2>

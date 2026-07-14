@@ -61,6 +61,8 @@ type FinanceResponse = {
     property_name?: string | null
     propertyName?: string | null
     property?: string | null
+    booking_status?: string | null
+    referer?: string | null
     beds24_raw?: Record<string, unknown> | null
   }
   charges: FinanceItem[]
@@ -191,6 +193,13 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     return { roomName, propertyName }
   }
 
+  const getSubStatus = (tenantData: TenantSummary | null): string | null => {
+    const raw = tenantData?.beds24_raw
+    const rawObject = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+    if (!rawObject) return null
+    return readFirstString(rawObject.subStatus, rawObject.sub_status, rawObject.statusSub)
+  }
+
   const getDisplayGuestName = (tenantData: TenantSummary | null): string => {
     if (!tenantData) return 'Unknown guest'
     const firstName = tenantData.first_name?.trim() || ''
@@ -208,6 +217,10 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   const summaryName = getDisplayGuestName(tenant)
   const summaryCheckIn = formatDisplayDate(tenant?.check_in)
   const summaryCheckOut = formatDisplayDate(tenant?.check_out)
+  const summaryBookingId = tenant?.booking_id || 'Unknown'
+  const summaryStatus = tenant?.booking_status || 'Unknown'
+  const summarySubStatus = getSubStatus(tenant) || 'N/A'
+  const summaryReferer = tenant?.referer || 'Unknown'
 
   const totals = useMemo(() => {
     const totalPayments = payments.reduce((sum, item) => {
@@ -240,6 +253,10 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
             <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Summary</p>
             <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Booking ID</p>
+                <p className="mt-1 text-sm font-medium text-gray-900">{summaryBookingId}</p>
+              </div>
+              <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Full name</p>
                 <p className="mt-1 text-sm font-medium text-gray-900">{summaryName}</p>
               </div>
@@ -258,6 +275,18 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Check out</p>
                 <p className="mt-1 text-sm font-medium text-gray-900">{summaryCheckOut}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Status</p>
+                <p className="mt-1 text-sm font-medium text-gray-900">{summaryStatus}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Sub-status</p>
+                <p className="mt-1 text-sm font-medium text-gray-900">{summarySubStatus}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Original referer</p>
+                <p className="mt-1 text-sm font-medium text-gray-900">{summaryReferer}</p>
               </div>
             </div>
           </div>

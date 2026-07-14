@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.services.email_quote_strip import strip_quoted_reply
 
@@ -38,6 +39,7 @@ class ConversationMessageRead(BaseModel):
     subject: str | None = None
     body: str
     sent_at: datetime
+    raw_payload: dict[str, Any] | None = Field(default=None, exclude=True)
     model_config = ConfigDict(from_attributes=True)
 
     @computed_field  # type: ignore[misc]
@@ -45,6 +47,15 @@ class ConversationMessageRead(BaseModel):
     def body_display(self) -> str:
         """Body with quoted thread history stripped, for UI display."""
         return strip_quoted_reply(self.body)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def body_html(self) -> str | None:
+        """HTML rendition of the body, if Gmail provided one, for formatted display."""
+        if not isinstance(self.raw_payload, dict):
+            return None
+        html = self.raw_payload.get("body_html")
+        return html or None
 
 
 class ConversationRead(BaseModel):
