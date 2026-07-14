@@ -12,6 +12,49 @@ const DEFAULT_PREFERENCES: DisplayPreferences = {
   relativeTimestamps: false,
 }
 
+const LOCAL_FOLDER_ROOT_PATH_PREFIX = 'crm_ssi.local-folder-root-path.'
+
+function localFolderRootPathKeyFor(userKey: string): string {
+  return `${LOCAL_FOLDER_ROOT_PATH_PREFIX}${userKey}`
+}
+
+export function loadLocalFolderRootPath(userKey: string): string {
+  try {
+    return window.localStorage.getItem(localFolderRootPathKeyFor(userKey)) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function saveLocalFolderRootPath(userKey: string, path: string): void {
+  try {
+    window.localStorage.setItem(localFolderRootPathKeyFor(userKey), path)
+  } catch {
+    // Storage may be unavailable (private browsing, quota exceeded, etc). Keep using the in-memory value.
+  }
+}
+
+/** Per-user absolute filesystem path matching the connected local folder, used to open tenant folders in the native file explorer. */
+export function useLocalFolderRootPath(): [string, (value: string) => void] {
+  const user = useAuthStore((state) => state.user)
+  const userKey = getUserPreferenceKey(user)
+  const [rootPath, setRootPath] = useState('')
+
+  useEffect(() => {
+    setRootPath(userKey ? loadLocalFolderRootPath(userKey) : '')
+  }, [userKey])
+
+  const update = useCallback(
+    (value: string) => {
+      setRootPath(value)
+      if (userKey) saveLocalFolderRootPath(userKey, value)
+    },
+    [userKey],
+  )
+
+  return [rootPath, update]
+}
+
 function storageKeyFor(userKey: string): string {
   return `${STORAGE_PREFIX}${userKey}`
 }

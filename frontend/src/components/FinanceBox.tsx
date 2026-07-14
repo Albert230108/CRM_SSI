@@ -200,6 +200,13 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     return readFirstString(rawObject.subStatus, rawObject.sub_status, rawObject.statusSub)
   }
 
+  const getReferer2 = (tenantData: TenantSummary | null): string | null => {
+    const raw = tenantData?.beds24_raw
+    const rawObject = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+    if (!rawObject) return null
+    return readFirstString(rawObject.referer2, rawObject.referer_2)
+  }
+
   const getDisplayGuestName = (tenantData: TenantSummary | null): string => {
     if (!tenantData) return 'Unknown guest'
     const firstName = tenantData.first_name?.trim() || ''
@@ -221,6 +228,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   const summaryStatus = tenant?.booking_status || 'Unknown'
   const summarySubStatus = getSubStatus(tenant) || 'N/A'
   const summaryReferer = tenant?.referer || 'Unknown'
+  const summaryReferer2 = getReferer2(tenant) || 'Unknown'
 
   const totals = useMemo(() => {
     const totalPayments = payments.reduce((sum, item) => {
@@ -287,6 +295,10 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Original referer</p>
                 <p className="mt-1 text-sm font-medium text-gray-900">{summaryReferer}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Referer</p>
+                <p className="mt-1 text-sm font-medium text-gray-900">{summaryReferer2}</p>
               </div>
             </div>
           </div>

@@ -11,7 +11,10 @@ import re
 
 _QUOTE_HEADER_PATTERNS = [
     # Gmail / Apple Mail / most clients: "On Mon, Jan 1, 2024 at 1:23 PM John Doe <john@x.com> wrote:"
-    re.compile(r"^[ \t]*On .{0,200} wrote:[ \t]*$", re.IGNORECASE | re.MULTILINE),
+    # Gmail's plain-text formatter word-wraps this at ~76 columns, so "wrote:" often
+    # lands on its own line (DOTALL lets ".{0,300}" cross that line break; the {0,300}
+    # bound keeps it from ever eating past the next real quote header).
+    re.compile(r"^[ \t]*On .{0,300}?\bwrote:[ \t]*$", re.IGNORECASE | re.MULTILINE | re.DOTALL),
     # Outlook: "-----Original Message-----"
     re.compile(r"^[ \t]*-{2,}\s*Original Message\s*-{2,}[ \t]*$", re.IGNORECASE | re.MULTILINE),
     # Outlook separator line before headers

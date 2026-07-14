@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
-import { useRelativeTimestampsPreference } from '../lib/displayPreferences'
+import { useLocalFolderRootPath, useRelativeTimestampsPreference } from '../lib/displayPreferences'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -20,6 +20,7 @@ export default function Settings() {
   const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
   const [relativeTimestamps, setRelativeTimestamps] = useRelativeTimestampsPreference()
+  const [localFolderRootPath, setLocalFolderRootPath] = useLocalFolderRootPath()
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [stagedHandle, setStagedHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [permissionState, setPermissionState] = useState<'granted' | 'prompt' | 'denied' | null>(null)
@@ -319,6 +320,23 @@ export default function Settings() {
                 </>
               ) : null}
               {savedHandle ? <button type="button" onClick={handleClear} disabled={saving} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">Disconnect</button> : null}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700" htmlFor="local-folder-root-path">
+                Root folder path (for "Open in File Explorer")
+              </label>
+              <p className="mt-1 text-sm text-gray-500">
+                Browsers can't read the absolute disk path of the folder you selected above, so enter it here manually (e.g. C:\Users\you\Tenants) to enable jumping straight to a tenant's folder in File Explorer.
+              </p>
+              <input
+                id="local-folder-root-path"
+                type="text"
+                value={localFolderRootPath}
+                onChange={(event) => setLocalFolderRootPath(event.target.value)}
+                placeholder="C:\Users\you\Tenants"
+                className="mt-2 w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+              />
             </div>
           </div>
         )}

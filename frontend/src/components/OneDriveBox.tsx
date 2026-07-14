@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { getDirectoryHandleForUser } from '../lib/fileHandleStore'
+import { useLocalFolderRootPath } from '../lib/displayPreferences'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -27,6 +28,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
+  const [localFolderRootPath] = useLocalFolderRootPath()
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [yearHandle, setYearHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -185,6 +187,13 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
     }
   }, [rootHandle, tenantBookingId])
 
+  const handleOpenInExplorer = () => {
+    if (!localFolderRootPath || !yearHandle || !tenantHandle) return
+    const trimmedRoot = localFolderRootPath.replace(/[\\/]+$/, '')
+    const fullPath = `${trimmedRoot}\\${yearHandle.name}\\${tenantHandle.name}`
+    window.open(`file:///${fullPath.replace(/\\/g, '/')}`, '_blank', 'noopener,noreferrer')
+  }
+
   const handleOpenFile = async (fileHandle: FileSystemFileHandle) => {
     try {
       const file = await fileHandle.getFile()
@@ -205,14 +214,33 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
             {!tenantId ? 'No tenant selected' : unsupported ? 'Local folder access is not supported in this browser.' : !rootHandle ? 'No folder configured - go to Settings to connect a local folder.' : tenantBookingId ? 'Local booking files' : 'Loading tenant...'}
           </p>
         </div>
+        {tenantHandle ? (
+          <button
+            type="button"
+            onClick={handleOpenInExplorer}
+            disabled={!localFolderRootPath}
+            title={!localFolderRootPath ? 'Set a root folder path in Settings to enable this' : 'Open this tenant\'s folder in File Explorer'}
+            className="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700 transition hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Open in File Explorer
+          </button>
+        ) : null}
       </div>
 
       {loading ? <p className="text-sm text-gray-500">Loading...</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
       {tenantDisplayName ? <p className="text-sm text-gray-500">{tenantDisplayName}</p> : null}
-      {rootHandle ? <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Root: {rootHandle.name}</p> : null}
-      {yearHandle ? <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Year: {yearHandle.name}</p> : null}
-      {tenantHandle ? <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Matched folder: {tenantHandle.name}</p> : null}
+      {rootHandle ? (
+        <p className="text-xs uppercase tracking-[0.2em] text-gray-500">
+          {[
+            `Root: ${rootHandle.name}`,
+            yearHandle ? `Year: ${yearHandle.name}` : null,
+            tenantHandle ? `Folder: ${tenantHandle.name}` : null,
+          ]
+            .filter(Boolean)
+            .join(' | ')}
+        </p>
+      ) : null}
 
       {tenantId ? (
         <ul className="space-y-2">
