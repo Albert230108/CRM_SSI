@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
-import { useLocalFolderRootPath, useRelativeTimestampsPreference } from '../lib/displayPreferences'
+import { useLocalFolderRootPath, useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -19,7 +19,7 @@ export default function Settings() {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
-  const [relativeTimestamps, setRelativeTimestamps] = useRelativeTimestampsPreference()
+  const [relativeTimestampsFirst, setRelativeTimestampsFirst] = useRelativeTimestampsFirstPreference()
   const [localFolderRootPath, setLocalFolderRootPath] = useLocalFolderRootPath()
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [stagedHandle, setStagedHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -224,16 +224,16 @@ export default function Settings() {
 
       <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-gray-900">Display</h2>
-        <p className="mt-2 text-sm text-gray-500">Choose how timestamps are shown in the thread view.</p>
+        <p className="mt-2 text-sm text-gray-500">Choose the order timestamps are shown in the thread view.</p>
 
         <label className="mt-4 flex items-center gap-3 text-sm text-gray-700">
           <input
             type="checkbox"
-            checked={relativeTimestamps}
-            onChange={(event) => setRelativeTimestamps(event.target.checked)}
+            checked={relativeTimestampsFirst}
+            onChange={(event) => setRelativeTimestampsFirst(event.target.checked)}
             className="h-4 w-4 rounded border-gray-300"
           />
-          Use relative timestamps (e.g. "30min ago", "4h ago", "2 days ago") instead of exact date and time
+          Show relative time first (e.g. "4h ago (Mon 06 June 2026, 14:32)") instead of date and time first
         </label>
       </section>
 

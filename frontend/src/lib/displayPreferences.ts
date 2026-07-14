@@ -5,11 +5,12 @@ import { useAuthStore } from '../store/authStore'
 const STORAGE_PREFIX = 'crm_ssi.display-preferences.'
 
 export type DisplayPreferences = {
-  relativeTimestamps: boolean
+  /** When true, timestamps show as "Relative date (date time)" instead of the default "date time (relative date)". */
+  relativeTimestampsFirst: boolean
 }
 
 const DEFAULT_PREFERENCES: DisplayPreferences = {
-  relativeTimestamps: false,
+  relativeTimestampsFirst: false,
 }
 
 const LOCAL_FOLDER_ROOT_PATH_PREFIX = 'crm_ssi.local-folder-root-path.'
@@ -65,7 +66,8 @@ export function loadDisplayPreferences(userKey: string): DisplayPreferences {
     if (!raw) return DEFAULT_PREFERENCES
     const parsed = JSON.parse(raw)
     return {
-      relativeTimestamps: typeof parsed?.relativeTimestamps === 'boolean' ? parsed.relativeTimestamps : DEFAULT_PREFERENCES.relativeTimestamps,
+      relativeTimestampsFirst:
+        typeof parsed?.relativeTimestampsFirst === 'boolean' ? parsed.relativeTimestampsFirst : DEFAULT_PREFERENCES.relativeTimestampsFirst,
     }
   } catch {
     return DEFAULT_PREFERENCES
@@ -80,23 +82,23 @@ export function saveDisplayPreferences(userKey: string, preferences: DisplayPref
   }
 }
 
-/** Per-user "show relative timestamps" toggle, backed by localStorage. Falls back to absolute-time display when no user is signed in. */
-export function useRelativeTimestampsPreference(): [boolean, (value: boolean) => void] {
+/** Per-user timestamp order toggle ("date time (relative)" by default, or "relative (date time)" when enabled), backed by localStorage. Falls back to the default order when no user is signed in. */
+export function useRelativeTimestampsFirstPreference(): [boolean, (value: boolean) => void] {
   const user = useAuthStore((state) => state.user)
   const userKey = getUserPreferenceKey(user)
-  const [relativeTimestamps, setRelativeTimestamps] = useState(false)
+  const [relativeTimestampsFirst, setRelativeTimestampsFirst] = useState(false)
 
   useEffect(() => {
-    setRelativeTimestamps(userKey ? loadDisplayPreferences(userKey).relativeTimestamps : false)
+    setRelativeTimestampsFirst(userKey ? loadDisplayPreferences(userKey).relativeTimestampsFirst : false)
   }, [userKey])
 
   const update = useCallback(
     (value: boolean) => {
-      setRelativeTimestamps(value)
-      if (userKey) saveDisplayPreferences(userKey, { relativeTimestamps: value })
+      setRelativeTimestampsFirst(value)
+      if (userKey) saveDisplayPreferences(userKey, { relativeTimestampsFirst: value })
     },
     [userKey],
   )
 
-  return [relativeTimestamps, update]
+  return [relativeTimestampsFirst, update]
 }

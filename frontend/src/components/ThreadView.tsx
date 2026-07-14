@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
-import { formatDisplayDateTime, formatRelativeDateTime } from '../lib/date'
-import { useRelativeTimestampsPreference } from '../lib/displayPreferences'
+import { formatCombinedDateTime } from '../lib/date'
+import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
 import LinkChatModal from './LinkChatModal'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
@@ -252,8 +252,8 @@ type ReplyTarget =
 
 export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
-  const [relativeTimestamps] = useRelativeTimestampsPreference()
-  const formatTimestamp = relativeTimestamps ? formatRelativeDateTime : formatDisplayDateTime
+  const [relativeTimestampsFirst] = useRelativeTimestampsFirstPreference()
+  const formatTimestamp = useCallback((value?: string | number | Date | null) => formatCombinedDateTime(value, relativeTimestampsFirst), [relativeTimestampsFirst])
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(false)

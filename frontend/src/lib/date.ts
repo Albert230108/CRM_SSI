@@ -56,3 +56,14 @@ export function formatRelativeDateTime(value?: string | number | Date | null, no
   const days = Math.floor(diffMs / DAY_MS)
   return `${days} day${days === 1 ? '' : 's'} ago`
 }
+
+/** Combines the absolute date/time with the relative "time ago" in one string, e.g. "Mon 06 June 2026, 14:32 (2h ago)". Set `relativeFirst` to flip the order. */
+export function formatCombinedDateTime(value?: string | number | Date | null, relativeFirst = false, now: Date = new Date()): string {
+  const date = toValidDate(value)
+  if (!date) return '-'
+
+  const absolute = formatDisplayDateTime(date)
+  const relative = formatRelativeDateTime(date, now)
+
+  return relativeFirst ? `${relative} (${absolute})` : `${absolute} (${relative})`
+}
