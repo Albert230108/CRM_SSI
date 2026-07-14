@@ -213,7 +213,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Files</h2>
@@ -250,10 +250,10 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
       ) : null}
 
       {tenantId ? (
-        <ul className="space-y-2">
+        <ul className="space-y-1.5">
           {items.length === 0 && !loading && !error ? <li className="text-sm text-gray-500">No files in tenant folder.</li> : null}
           {items.map((item) => (
-            <li key={item.name} className="rounded-2xl border border-gray-200 bg-white p-4 transition hover:border-gray-300 hover:bg-gray-50">
+            <li key={item.name} className="rounded-2xl border border-gray-200 bg-white p-3 transition hover:border-gray-300 hover:bg-gray-50">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-medium text-gray-900">{item.name}</p>

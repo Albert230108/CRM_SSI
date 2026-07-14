@@ -236,8 +236,8 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="flex h-full w-full flex-col overflow-hidden px-6 py-6">
-      <div className="mb-5 flex w-full items-center justify-between gap-4">
+    <main className="flex h-full w-full flex-col overflow-hidden px-4 py-4">
+      <div className="mb-3 flex w-full items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-gray-900">Dashboard</h1>
         </div>
@@ -312,7 +312,7 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-5 transition-all duration-300',
+              'h-full min-w-0 overflow-hidden p-3 transition-all duration-300',
               tenantsCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
@@ -351,17 +351,17 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-5 transition-all duration-300 flex flex-col gap-4',
+              'h-full min-w-0 overflow-hidden p-3 transition-all duration-300 flex flex-col gap-3',
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
               <div className="flex h-full min-h-0 flex-1 overflow-auto">
                 <FinanceBox tenantId={selectedTenantId} />
               </div>
             </section>
 
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
               <div className="flex h-full min-h-0 flex-1 overflow-auto">
                 <OneDriveBox tenantId={selectedTenantId} />
               </div>
@@ -384,7 +384,7 @@ export default function Dashboard() {
         />
 
         <section
-          className="flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-300"
+          className="flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition-all duration-300"
           style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
         >
           <div className="h-full w-full min-h-0 overflow-hidden">

@@ -30,7 +30,7 @@ export default function ColumnResizeHandle({
   const dragStartXRef = useRef(0)
 
   if (disabled) {
-    return <div aria-hidden="true" style={{ width: 16, flexShrink: 0 }} />
+    return <div aria-hidden="true" style={{ width: 10, flexShrink: 0 }} />
   }
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -85,7 +85,7 @@ export default function ColumnResizeHandle({
       onPointerCancel={endDrag}
       onKeyDown={handleKeyDown}
       className="group relative flex shrink-0 items-stretch justify-center outline-none"
-      style={{ width: 16, cursor: 'col-resize', touchAction: 'none' }}
+      style={{ width: 10, cursor: 'col-resize', touchAction: 'none' }}
     >
       <div className="h-full w-px bg-gray-200 transition-colors group-hover:bg-cyan-400 group-focus-visible:bg-cyan-500 group-active:bg-cyan-500" />
     </div>

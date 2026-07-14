@@ -240,7 +240,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
   }, [charges, payments])
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Tenant Info</h2>
       </div>
@@ -249,8 +249,8 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
       {!tenantId ? null : (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
             <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Summary</p>
               {tenant?.booking_id ? (
@@ -264,46 +264,46 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
                 </a>
               ) : null}
             </div>
-            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-2 md:grid-cols-2">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Booking ID</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryBookingId}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryBookingId}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Full name</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryName}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryName}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Property</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryProperty}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryProperty}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Room</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryRoom}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryRoom}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Check in</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryCheckIn}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryCheckIn}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Check out</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryCheckOut}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryCheckOut}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Status</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryStatus}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryStatus}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Sub-status</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summarySubStatus}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summarySubStatus}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Original referer</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryReferer}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryReferer}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Referer</p>
-                <p className="mt-1 text-sm font-medium text-gray-900">{summaryRefererEditable}</p>
+                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryRefererEditable}</p>
               </div>
             </div>
           </div>
@@ -316,13 +316,13 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
             <p className="text-sm font-semibold text-cyan-700">Balance {totals.total.toFixed(2)}</p>
           </div>
 
-          <div className="mt-4 overflow-hidden rounded-xl border border-gray-200">
+          <div className="mt-3 overflow-hidden rounded-xl border border-gray-200">
             <table className="w-full border-collapse text-left text-sm">
               <thead className="bg-gray-50 text-xs uppercase tracking-[0.2em] text-gray-500">
                 <tr>
-                  <th className="px-3 py-3">Date</th>
-                  <th className="px-3 py-3">Description</th>
-                  <th className="px-3 py-3">Amount</th>
+                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -340,11 +340,11 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
                     </tr>
                     {charges.map((item) => (
                       <tr key={item.id} className="border-t border-gray-200">
-                        <td className="px-3 py-3 text-gray-500">
+                        <td className="px-3 py-2 text-gray-500">
                           {formatDisplayDate(item.created_at)}
                         </td>
-                        <td className="px-3 py-3 text-gray-900">{item.description || 'Charge'}</td>
-                        <td className="px-3 py-3 font-medium text-rose-600">
+                        <td className="px-3 py-2 text-gray-900">{item.description || 'Charge'}</td>
+                        <td className="px-3 py-2 font-medium text-rose-600">
                           {item.currency} {Number(item.amount).toFixed(2)}
                         </td>
                       </tr>
@@ -360,11 +360,11 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
                     </tr>
                     {payments.map((item) => (
                       <tr key={item.id} className="border-t border-gray-200">
-                        <td className="px-3 py-3 text-gray-500">
+                        <td className="px-3 py-2 text-gray-500">
                           {formatDisplayDate(item.created_at)}
                         </td>
-                        <td className="px-3 py-3 text-gray-900">{item.description || 'Payment'}</td>
-                        <td className="px-3 py-3 font-medium text-emerald-600">
+                        <td className="px-3 py-2 text-gray-900">{item.description || 'Payment'}</td>
+                        <td className="px-3 py-2 font-medium text-emerald-600">
                           {item.currency} {Number(item.amount).toFixed(2)}
                         </td>
                       </tr>

@@ -492,7 +492,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
   return (
     <div className="flex h-full min-h-0 min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
-      <div className="border-b border-gray-200 px-5 py-4">
+      <div className="border-b border-gray-200 px-4 py-3">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
@@ -512,7 +512,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">
         {loading ? <p className="text-sm text-gray-500">Loading tenant thread...</p> : null}
         {replySending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
@@ -525,7 +525,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 <article key={item.thread_id} className="rounded-2xl border border-gray-200 bg-gray-50">
                   <div
                     onClick={() => openEmailThread(item)}
-                    className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-gray-100/50"
+                    className="flex w-full cursor-pointer items-start justify-between gap-4 px-3 py-2.5 text-left transition hover:bg-gray-100/50"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
@@ -565,7 +565,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               <article key={item.group_id} className="rounded-2xl border border-emerald-200 bg-emerald-50">
                 <div
                   onClick={() => openWhatsappGroup(item)}
-                  className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-emerald-100/70"
+                  className="flex w-full cursor-pointer items-start justify-between gap-4 px-3 py-2.5 text-left transition hover:bg-emerald-100/70"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
@@ -617,7 +617,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
             className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-cyan-700">Email Thread</p>
                 <h3 id="email-thread-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -636,7 +636,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </button>
             </div>
 
-            <div className="max-h-[72vh] overflow-y-auto px-6 py-5" data-email-messages>
+            <div className="max-h-[72vh] overflow-y-auto px-5 py-4" data-email-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Messages</p>
@@ -769,7 +769,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               className="w-full max-w-md rounded-3xl border border-gray-200 bg-white shadow-sm"
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
+              <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
                 <div className="min-w-0">
                   <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp</p>
                   <h3 id="whatsapp-block-panel-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -789,7 +789,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 </button>
               </div>
 
-              <div className="max-h-[72vh] overflow-y-auto px-6 py-5" data-whatsapp-block-messages>
+              <div className="max-h-[72vh] overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
                 <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <div>
                     <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
@@ -886,7 +886,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
             className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp Group</p>
                 <h3 id="whatsapp-group-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -906,7 +906,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </button>
             </div>
 
-            <div className="max-h-[72vh] overflow-y-auto px-6 py-5" data-whatsapp-messages>
+            <div className="max-h-[72vh] overflow-y-auto px-5 py-4" data-whatsapp-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>

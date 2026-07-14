@@ -7,7 +7,7 @@ export const TENANT_SIDEBAR_DEFAULT_WIDTH = 260
 export const MIDDLE_COLUMN_MIN_WIDTH = 320
 export const RIGHT_PANEL_MIN_WIDTH = 360
 
-export const DIVIDER_WIDTH = 16
+export const DIVIDER_WIDTH = 10
 
 export type DashboardLayoutPreference = {
   version: 1
