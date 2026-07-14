@@ -147,17 +147,22 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         throw new Error(getErrorMessage(payload, 'Import failed'))
       }
 
-      const syncResponse = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-all`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      })
-      if (!syncResponse.ok) {
-        const payload = await readJsonSafely(syncResponse)
-        throw new Error(getErrorMessage(payload, 'Gmail sync failed after import'))
-      }
-      const syncPayload = await readJsonSafely(syncResponse)
-      if (syncPayload?.job_id) {
-        pollGmailSyncJob(syncPayload.job_id, token, () => onImported?.())
+      try {
+        const syncResponse = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-all`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!syncResponse.ok) {
+          const payload = await readJsonSafely(syncResponse)
+          console.error('Gmail sync failed after import:', getErrorMessage(payload, 'Gmail sync failed after import'))
+        } else {
+          const syncPayload = await readJsonSafely(syncResponse)
+          if (syncPayload?.job_id) {
+            pollGmailSyncJob(syncPayload.job_id, token, () => onImported?.())
+          }
+        }
+      } catch (syncErr) {
+        console.error('Gmail sync failed after import:', syncErr)
       }
 
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))

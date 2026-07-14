@@ -16,6 +16,13 @@ from app.services.email_quote_strip import strip_quoted_reply
 PROVIDER_GMAIL = "gmail"
 
 
+class AttachmentRead(BaseModel):
+    attachment_id: str
+    filename: str
+    mime_type: str | None = None
+    size: int | None = None
+
+
 class TimelineMessageRead(BaseModel):
     id: int
     provider: str
@@ -27,6 +34,7 @@ class TimelineMessageRead(BaseModel):
     body: str
     body_text: str | None = None
     body_html: str | None = None
+    attachments: list[AttachmentRead] = []
     sent_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
@@ -387,7 +395,7 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
                     subject=window.thread.subject,
                     preview_text=window.thread.preview_text,
                     anchor_timestamp=window.anchor_timestamp,
-                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "sent_at": message.sent_at}) for message in messages],
+                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "attachments": ((message.raw_payload or {}).get("attachments") if isinstance(message.raw_payload, dict) else None) or [], "sent_at": message.sent_at}) for message in messages],
                     whatsapp_blocks=whatsapp_blocks_by_thread_id.get(window.thread.id, []),
                 ),
             )

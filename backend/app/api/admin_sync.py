@@ -10,7 +10,7 @@ import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.gmail_integration import sync_account
+from app.api.gmail_integration import _sync_gmail_account
 from app.api.tenants import _extract_guest_fields
 from app.core.dependencies import get_current_admin_user, get_current_user, get_db
 from app.models.gmail_integration import GmailAccount
@@ -96,8 +96,7 @@ async def _sync_emails(db: Session, current_user: User) -> int:
     accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
     imported = 0
     for account in accounts:
-        result = sync_account(account.id, db=db, current_user=current_user)
-        imported += _to_int(result.get("synced_threads"))
+        imported += _sync_gmail_account(db, account)
     return imported
 
 

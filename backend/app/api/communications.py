@@ -157,6 +157,43 @@ def get_tenant_grouped_thread(
     return build_tenant_thread_timeline(db, tenant_id)
 
 
+@router.get("/tenants/{tenant_id}/thread-version")
+def get_tenant_thread_version(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str | None]:
+    """Cheap marker the frontend polls to detect new inbound messages for a tenant's thread.
+
+    Returns the latest of the WhatsApp (`communications`) and email
+    (`conversation_messages`) timestamps for this tenant. The frontend re-fetches the full
+    grouped thread only when this value changes, instead of polling the heavier endpoint.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    latest_communication_at = (
+        db.query(Communication.created_at)
+        .filter(Communication.tenant_id == tenant_id)
+        .order_by(Communication.created_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    latest_email_at = (
+        db.query(ConversationMessage.sent_at)
+        .join(Conversation, ConversationMessage.conversation_id == Conversation.id)
+        .filter(Conversation.tenant_id == tenant_id)
+        .order_by(ConversationMessage.sent_at.desc())
+        .limit(1)
+        .scalar()
+    )
+
+    candidates = [value for value in (latest_communication_at, latest_email_at) if value is not None]
+    latest_at = max(candidates) if candidates else None
+    return {"latest_at": latest_at.isoformat() if latest_at else None}
+
+
 @router.get("/whatsapp/outbound-resolution", response_model=WhatsAppOutboundResolutionRead)
 def resolve_whatsapp_outbound_communication(
     provider_message_id: str | None = None,

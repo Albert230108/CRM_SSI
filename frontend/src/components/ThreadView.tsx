@@ -21,6 +21,7 @@ type TimelineMessage = {
   body_display: string | null
   body_text: string | null
   body_html: string | null
+  attachments?: { attachment_id: string; filename: string; mime_type: string | null; size: number | null }[]
   external_account_id?: string | null
   external_phone_id?: string | null
   whatsapp_chat_id?: string | null
@@ -252,6 +253,24 @@ type ReplyTarget =
 
 export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
+  const downloadAttachment = useCallback(
+    async (messageId: number, attachmentId: string, filename: string) => {
+      const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/messages/${messageId}/attachments/${attachmentId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) {
+        return
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      link.click()
+      URL.revokeObjectURL(url)
+    },
+    [token],
+  )
   const [relativeTimestampsFirst] = useRelativeTimestampsFirstPreference()
   const formatTimestamp = useCallback((value?: string | number | Date | null) => formatCombinedDateTime(value, relativeTimestampsFirst), [relativeTimestampsFirst])
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
@@ -271,6 +290,40 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
+  const [livePollSignal, setLivePollSignal] = useState(0)
+
+  useEffect(() => {
+    if (!tenantId) return
+
+    let cancelled = false
+    let lastSeenVersion: string | null = null
+
+    const pollThreadVersion = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/thread-version`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!response.ok || cancelled) return
+        const data: { latest_at: string | null } = await response.json()
+        if (lastSeenVersion === null) {
+          lastSeenVersion = data.latest_at
+          return
+        }
+        if (data.latest_at !== lastSeenVersion) {
+          lastSeenVersion = data.latest_at
+          setLivePollSignal((current) => current + 1)
+        }
+      } catch {
+        // Ignore transient poll failures; next interval tick will retry.
+      }
+    }
+
+    const intervalId = window.setInterval(pollThreadVersion, 7000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [tenantId, token])
 
   useEffect(() => {
     if (!tenantId) {
@@ -339,7 +392,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
     loadThread()
     return () => controller.abort()
-  }, [tenantId, token, reloadSignal])
+  }, [tenantId, token, reloadSignal, livePollSignal])
 
   useEffect(() => {
     if (!selectedWhatsappGroup && !selectedEmailThread) return
@@ -674,6 +727,20 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                         ) : (
                           <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body_text || messageItem.body_display || messageItem.body}</p>
                         )}
+                        {messageItem.attachments && messageItem.attachments.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {messageItem.attachments.map((attachment) => (
+                              <button
+                                key={attachment.attachment_id}
+                                type="button"
+                                onClick={() => downloadAttachment(messageItem.id, attachment.attachment_id, attachment.filename)}
+                                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                              >
+                                📎 {attachment.filename}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                       </article>
                     )
                   }

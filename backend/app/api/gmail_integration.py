@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -166,6 +166,24 @@ def _extract_html(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    attachments: list[dict[str, Any]] = []
+    for part in payload.get("parts") or []:
+        filename = part.get("filename") or ""
+        attachment_id = (part.get("body") or {}).get("attachmentId")
+        if filename and attachment_id:
+            attachments.append(
+                {
+                    "attachment_id": attachment_id,
+                    "filename": filename,
+                    "mime_type": part.get("mimeType"),
+                    "size": (part.get("body") or {}).get("size"),
+                }
+            )
+        attachments.extend(_extract_attachments(part))
+    return attachments
+
+
 def _headers_map(headers: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
     for header in headers:
@@ -297,6 +315,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
 
         body_text = _extract_text(payload)
         body_html = _extract_html(payload)
+        attachments = _extract_attachments(payload)
         recipient_email = _email_address(headers.get("to"))
         direction = "outbound" if sender_email and sender_email == account_email else "inbound"
         db.add(
@@ -310,7 +329,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                 subject=headers.get("subject"),
                 body=body_text,
                 sent_at=sent_at,
-                raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html},
+                raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},
             )
         )
 
@@ -552,14 +571,12 @@ def sync_all_accounts_status(job_id: str, current_user: User = Depends(get_curre
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
     return job
 
-@router.post("/accounts/{account_id}/sync")
-def sync_account(account_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, int | str]:
-    account = db.query(GmailAccount).filter(GmailAccount.id == account_id).first()
-    if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gmail account not found")
-    if not account.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account is inactive")
+def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
+    """Sync a single active Gmail account's threads. Returns count of saved conversations.
 
+    Shared by the manual sync route and the background poller in app.main, so both paths
+    stay in sync as Gmail sync logic evolves.
+    """
     service = _build_service_for_account(account)
     tenant_emails = {
         tenant.email.strip().lower()
@@ -579,6 +596,18 @@ def sync_account(account_id: int, db: Session = Depends(get_db), current_user: U
 
     account.last_synced_at = datetime.now(timezone.utc)
     db.commit()
+    return saved
+
+
+@router.post("/accounts/{account_id}/sync")
+def sync_account(account_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, int | str]:
+    account = db.query(GmailAccount).filter(GmailAccount.id == account_id).first()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gmail account not found")
+    if not account.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account is inactive")
+
+    saved = _sync_gmail_account(db, account)
     return {"synced_threads": saved, "account_id": account.id}
 
 
@@ -607,14 +636,19 @@ def _backfill_message_bodies(db: Session) -> dict[str, int]:
 
         body_text = _extract_text(payload)
         body_html = _extract_html(payload)
+        attachments = _extract_attachments(payload)
         changed = False
 
         if body_text and body_text != message.body:
             message.body = body_text
             changed = True
 
-        if body_text != raw_payload.get("body_text") or body_html != raw_payload.get("body_html"):
-            message.raw_payload = {**raw_payload, "body_text": body_text, "body_html": body_html}
+        if (
+            body_text != raw_payload.get("body_text")
+            or body_html != raw_payload.get("body_html")
+            or attachments != raw_payload.get("attachments")
+        ):
+            message.raw_payload = {**raw_payload, "body_text": body_text, "body_html": body_html, "attachments": attachments}
             changed = True
 
         if changed:
@@ -628,6 +662,48 @@ def _backfill_message_bodies(db: Session) -> dict[str, int]:
 @router.post("/accounts/backfill-bodies")
 def backfill_message_bodies(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)) -> dict[str, int]:
     return _backfill_message_bodies(db)
+
+
+@router.get("/messages/{conversation_message_id}/attachments/{attachment_id}")
+def download_message_attachment(
+    conversation_message_id: int,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    message = db.query(ConversationMessage).filter(ConversationMessage.id == conversation_message_id).first()
+    if message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    raw_payload = message.raw_payload if isinstance(message.raw_payload, dict) else {}
+    attachments = raw_payload.get("attachments") or []
+    attachment_meta = next((item for item in attachments if item.get("attachment_id") == attachment_id), None)
+    if attachment_meta is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found on this message")
+
+    conversation = db.query(Conversation).filter(Conversation.id == message.conversation_id).first()
+    if conversation is None or conversation.provider_account_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gmail account not found for message")
+    account = db.query(GmailAccount).filter(GmailAccount.id == conversation.provider_account_id).first()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gmail account not found for message")
+
+    service = _build_service_for_account(account)
+    result = (
+        service.users()
+        .messages()
+        .attachments()
+        .get(userId="me", messageId=message.provider_message_id, id=attachment_id)
+        .execute()
+    )
+    data = base64.urlsafe_b64decode(result["data"].encode("utf-8"))
+    filename = attachment_meta.get("filename") or "attachment"
+    mime_type = attachment_meta.get("mime_type") or "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/tenants/{tenant_id}/conversations", response_model=list[ConversationRead])

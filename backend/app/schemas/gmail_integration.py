@@ -57,6 +57,13 @@ class ConversationMessageRead(BaseModel):
         html = self.raw_payload.get("body_html")
         return html or None
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def attachments(self) -> list[dict[str, Any]]:
+        if not isinstance(self.raw_payload, dict):
+            return []
+        return self.raw_payload.get("attachments") or []
+
 
 class ConversationRead(BaseModel):
     id: int
