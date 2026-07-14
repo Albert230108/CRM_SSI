@@ -66,6 +66,23 @@ async def _run_resync(external_account_id: str, chat_id: str) -> None:
         logger.warning("whatsapp_thread_link_resync_failed external_account_id=%s chat_id=%s error=%s", external_account_id, chat_id, exc)
 
 
+def _find_chat_ids_by_message_history(db: Session, external_account_id: str, search: str) -> set[str]:
+    rows = (
+        db.query(Communication.whatsapp_chat_id, Communication.external_chat_namespace)
+        .filter(
+            Communication.channel == "whatsapp",
+            Communication.external_account_id == external_account_id,
+            Communication.message.ilike(f"%{search}%"),
+        )
+        .distinct()
+        .all()
+    )
+    chat_ids: set[str] = set()
+    for whatsapp_chat_id, external_chat_namespace in rows:
+        chat_ids.update(value for value in (whatsapp_chat_id, external_chat_namespace) if value)
+    return chat_ids
+
+
 def _active_whatsapp_links_query(db: Session):
     return db.query(TenantChannelEndpoint).filter(
         TenantChannelEndpoint.channel_type == "whatsapp",
@@ -95,21 +112,37 @@ async def get_whatsapp_account_chats(
     except WhatsAppBridgeError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.args[0] if exc.args else "Failed to fetch WhatsApp chats") from exc
 
+    matched_chat_ids: set[str] = set()
+    if normalized_search:
+        matched_chat_ids = _find_chat_ids_by_message_history(db, external_account_id, normalized_search)
+        if matched_chat_ids:
+            existing_ids = {str(raw_chat.get("chat_id") or "").strip() for raw_chat in raw_chats if isinstance(raw_chat, dict)}
+            missing_ids = matched_chat_ids - existing_ids
+            if missing_ids:
+                try:
+                    all_chats = await fetch_whatsapp_chats(external_account_id, search=None, limit=limit, offset=offset)
+                except WhatsAppBridgeError as exc:
+                    raise HTTPException(status_code=exc.status_code, detail=exc.args[0] if exc.args else "Failed to fetch WhatsApp chats") from exc
+                raw_chats = raw_chats + [
+                    chat for chat in all_chats
+                    if isinstance(chat, dict) and str(chat.get("chat_id") or "").strip() in missing_ids
+                ]
+
     existing_links = {
         (link.provider, link.external_account_id, link.external_chat_namespace): link.tenant_id
         for link in _active_whatsapp_links_query(db).filter(TenantChannelEndpoint.external_account_id == external_account_id).all()
     }
 
     chats: list[WhatsAppChatRead] = []
+    seen_chat_ids: set[str] = set()
     for raw_chat in raw_chats:
         if not isinstance(raw_chat, dict):
             continue
         chat_id = str(raw_chat.get("chat_id") or "").strip()
-        if not chat_id:
+        if not chat_id or chat_id in seen_chat_ids:
             continue
+        seen_chat_ids.add(chat_id)
         chat_provider = str(raw_chat.get("provider") or provider).strip() or provider
-        if normalized_search and normalized_search.lower() not in chat_id.lower() and normalized_search.lower() not in str(raw_chat.get("chat_name") or "").lower():
-            continue
         linked_thread_id = existing_links.get((chat_provider, external_account_id, chat_id))
         chats.append(
             WhatsAppChatRead(

@@ -41,13 +41,83 @@ def test_get_whatsapp_account_chats_search_by_chat_id(user_client, db_session):
         {"chat_id": "326472368@lid", "chat_name": "Alberto", "last_message_timestamp": None, "last_message_preview": "Hi there"},
         {"chat_id": "111222333@c.us", "chat_name": "Someone Else", "last_message_timestamp": None, "last_message_preview": None},
     ]
-    with patch("app.api.whatsapp_thread_links.fetch_whatsapp_chats", new=AsyncMock(return_value=fake_chats)):
+
+    async def fake_fetch(external_account_id, *, search=None, limit=200, offset=0):
+        if not search:
+            return fake_chats
+        return [chat for chat in fake_chats if search in chat["chat_id"]]
+
+    with patch("app.api.whatsapp_thread_links.fetch_whatsapp_chats", new=AsyncMock(side_effect=fake_fetch)):
         response = user_client.get("/api/whatsapp/accounts/edi-crm-whatsapp/chats", params={"search": "326472368"})
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 1
     assert body[0]["chat_id"] == "326472368@lid"
     assert body[0]["already_linked"] is False
+
+
+def test_get_whatsapp_account_chats_search_trusts_upstream_normalization(user_client, db_session):
+    """The backend must not re-filter results from whatsapp-service with a stricter,
+    non-digit-normalized substring check -- that previously dropped valid matches
+    (e.g. a query like "+35 191 234 5678" that whatsapp-service already normalized
+    and matched, but which isn't a literal substring of the stored chat_id)."""
+    fake_chats = [
+        {"chat_id": "351912345678@c.us", "chat_name": None, "last_message_timestamp": None, "last_message_preview": None},
+    ]
+
+    async def fake_fetch(external_account_id, *, search=None, limit=200, offset=0):
+        return fake_chats
+
+    with patch("app.api.whatsapp_thread_links.fetch_whatsapp_chats", new=AsyncMock(side_effect=fake_fetch)):
+        response = user_client.get(
+            "/api/whatsapp/accounts/edi-crm-whatsapp/chats",
+            params={"search": "+351 912 345 678"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["chat_id"] == "351912345678@c.us"
+
+
+def test_get_whatsapp_account_chats_search_matches_message_history(user_client, db_session):
+    """A chat whose id/name/preview don't match the search term should still surface
+    if the search term appears in that chat's persisted message history."""
+    from app.models.communication import Communication
+
+    db_session.add(
+        Communication(
+            tenant_id=1,
+            channel="whatsapp",
+            direction="inbound",
+            provider="whatsapp-service",
+            external_account_id="edi-crm-whatsapp",
+            whatsapp_chat_id="351912345678@c.us",
+            external_chat_namespace="351912345678@c.us",
+            message="Hi, this is Fernanda calling about the booking",
+        )
+    )
+    db_session.commit()
+
+    search_result_chats = [
+        {"chat_id": "111222333@c.us", "chat_name": "Someone Else", "last_message_timestamp": None, "last_message_preview": None},
+    ]
+    all_chats = search_result_chats + [
+        {"chat_id": "351912345678@c.us", "chat_name": None, "last_message_timestamp": None, "last_message_preview": "See you then"},
+    ]
+
+    async def fake_fetch(external_account_id, *, search=None, limit=200, offset=0):
+        return all_chats if not search else search_result_chats
+
+    with patch("app.api.whatsapp_thread_links.fetch_whatsapp_chats", new=AsyncMock(side_effect=fake_fetch)):
+        response = user_client.get(
+            "/api/whatsapp/accounts/edi-crm-whatsapp/chats",
+            params={"search": "Fernanda"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    chat_ids = {chat["chat_id"] for chat in body}
+    assert "351912345678@c.us" in chat_ids
+    assert "111222333@c.us" in chat_ids
 
 
 def test_create_manual_whatsapp_thread_link(user_client, db_session):
