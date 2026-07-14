@@ -253,21 +253,27 @@ type ReplyTarget =
 
 export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
+  const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const downloadAttachment = useCallback(
     async (messageId: number, attachmentId: string, filename: string) => {
-      const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/messages/${messageId}/attachments/${attachmentId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      })
-      if (!response.ok) {
-        return
+      setDownloadingAttachmentId(attachmentId)
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/messages/${messageId}/attachments/${attachmentId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!response.ok) {
+          return
+        }
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = filename
+        link.click()
+        URL.revokeObjectURL(url)
+      } finally {
+        setDownloadingAttachmentId((current) => (current === attachmentId ? null : current))
       }
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = filename
-      link.click()
-      URL.revokeObjectURL(url)
     },
     [token],
   )
@@ -729,16 +735,27 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                         )}
                         {messageItem.attachments && messageItem.attachments.length > 0 ? (
                           <div className="mt-2 flex flex-wrap gap-2">
-                            {messageItem.attachments.map((attachment) => (
-                              <button
-                                key={attachment.attachment_id}
-                                type="button"
-                                onClick={() => downloadAttachment(messageItem.id, attachment.attachment_id, attachment.filename)}
-                                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                              >
-                                📎 {attachment.filename}
-                              </button>
-                            ))}
+                            {messageItem.attachments.map((attachment) => {
+                              const isDownloading = downloadingAttachmentId === attachment.attachment_id
+                              return (
+                                <button
+                                  key={attachment.attachment_id}
+                                  type="button"
+                                  disabled={isDownloading}
+                                  onClick={() => downloadAttachment(messageItem.id, attachment.attachment_id, attachment.filename)}
+                                  className="flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70"
+                                >
+                                  {isDownloading ? (
+                                    <>
+                                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                                      Downloading {attachment.filename}…
+                                    </>
+                                  ) : (
+                                    <>📎 {attachment.filename}</>
+                                  )}
+                                </button>
+                              )
+                            })}
                           </div>
                         ) : null}
                       </article>
