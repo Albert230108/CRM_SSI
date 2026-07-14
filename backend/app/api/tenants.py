@@ -240,6 +240,8 @@ def _extract_guest_fields(item: dict) -> dict:
     ).strip() or None
     check_in = str(item.get("arrival") or item.get("checkIn") or item.get("arrivalDate") or "").strip() or None
     check_out = str(item.get("departure") or item.get("checkOut") or item.get("departureDate") or "").strip() or None
+    booking_time = str(item.get("bookingTime") or "").strip() or None
+    modified_time = str(item.get("modifiedTime") or "").strip() or None
     room_id = room_details["room_id"]
     notes = str(item.get("comments") or item.get("comment") or item.get("note") or item.get("message") or "").strip() or None
     info_items = item.get("infoItems") or item.get("infoCodes") or []
@@ -303,6 +305,8 @@ def _extract_guest_fields(item: dict) -> dict:
         "responsible_comm": responsible_comm,
         "room_id": room_id,
         "property_name": room_details["property_name"],
+        "booking_time": booking_time,
+        "modified_time": modified_time,
     }
 async def _get_graph_access_token() -> str:
     tenant_id = os.getenv("MS_GRAPH_TENANT_ID")

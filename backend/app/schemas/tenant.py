@@ -115,5 +115,7 @@ class Beds24BookingPreview(BaseModel):
     notes: str | None = None
     booking_status: str | None = None
     responsible_comm: str | None = None
+    booking_time: str | None = None
+    modified_time: str | None = None
     imported: bool = False
 

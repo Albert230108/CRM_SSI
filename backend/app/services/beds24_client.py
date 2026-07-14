@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -154,7 +155,13 @@ def _booking_type_filters() -> list[str]:
 
 async def get_bookings() -> list[dict[str, Any]]:
     headers = await _async_headers()
-    params: dict[str, Any] = {"includeInfoItems": "true", "bookingType": _booking_type_filters()}
+    # Include current guests (checked out up to 1 month ago) through all future bookings.
+    departure_from = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+    params: dict[str, Any] = {
+        "includeInfoItems": "true",
+        "bookingType": _booking_type_filters(),
+        "departureFrom": departure_from,
+    }
     all_items: list[dict[str, Any]] = []
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
         next_url: str | None = f"{READ_BASE_URL}/bookings"

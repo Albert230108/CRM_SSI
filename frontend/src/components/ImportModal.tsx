@@ -19,7 +19,8 @@ type Booking = {
   imported: boolean
   room_name: string | null
   property_name: string | null
-  insertDate?: string | null
+  booking_time?: string | null
+  modified_time?: string | null
 }
 
 type ImportModalProps = {
@@ -77,6 +78,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
   const [filterResponsible, setFilterResponsible] = useState<string | null>(null)
   const [filterStatus, setFilterStatus] = useState<string | null>(null)
   const [filterRecentDays, setFilterRecentDays] = useState<number | null>(null)
+  const [filterRecentField, setFilterRecentField] = useState<'booking_time' | 'modified_time'>('booking_time')
   const [filterCheckInStart, setFilterCheckInStart] = useState('')
   const [filterCheckInEnd, setFilterCheckInEnd] = useState('')
 
@@ -268,13 +270,14 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
     return Array.from(statuses).sort()
   }
 
-  const isRecentBooking = (booking: Booking, days: number): boolean => {
-    if (!booking.insertDate) return false
+  const isRecentBooking = (booking: Booking, days: number, field: 'booking_time' | 'modified_time'): boolean => {
+    const value = field === 'booking_time' ? booking.booking_time : booking.modified_time
+    if (!value) return false
     try {
-      const bookingDate = new Date(booking.insertDate)
+      const referenceDate = new Date(value)
       const cutoffDate = new Date()
       cutoffDate.setDate(cutoffDate.getDate() - days)
-      return bookingDate >= cutoffDate
+      return referenceDate >= cutoffDate
     } catch {
       return false
     }
@@ -308,7 +311,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
 
     const matchesStatus = !filterStatus || booking.booking_status === filterStatus
 
-    const matchesRecent = !filterRecentDays || isRecentBooking(booking, filterRecentDays)
+    const matchesRecent = !filterRecentDays || isRecentBooking(booking, filterRecentDays, filterRecentField)
 
     const matchesCheckIn =
       isDateInRange(booking.check_in, filterCheckInStart, filterCheckInEnd)
@@ -462,6 +465,16 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         {days}d
                       </button>
                     ))}
+                    {filterRecentDays !== null && (
+                      <select
+                        value={filterRecentField}
+                        onChange={(e) => setFilterRecentField(e.target.value as 'booking_time' | 'modified_time')}
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      >
+                        <option value="booking_time">by booking date</option>
+                        <option value="modified_time">by modified date</option>
+                      </select>
+                    )}
                   </div>
                 </div>
 
