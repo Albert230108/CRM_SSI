@@ -895,14 +895,33 @@ async function backfillAllChats({
     throw new Error("WhatsApp client is not ready");
   }
 
-  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
-  let orderedChats = Array.isArray(chats)
-    ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
-    : [];
-
   const targetChatId = chatId ? String(chatId).trim() : null;
-  if (targetChatId) {
-    orderedChats = orderedChats.filter((chat) => String(getChatId(chat) || "") === targetChatId);
+
+  // getChats() walks every chat WhatsApp Web knows about in a single Promise.all; if any one
+  // chat's model construction throws (seen with @lid groups mid-migration to LID addressing),
+  // the whole call rejects and a single-chat backfill request fails even though the requested
+  // chat itself is fine. Fetch just the target chat directly when we can to avoid that blast radius.
+  let orderedChats;
+  if (targetChatId && typeof activeClient.getChatById === "function") {
+    let targetChat = null;
+    try {
+      targetChat = await activeClient.getChatById(targetChatId);
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: "whatsapp_history_get_chat_by_id_failed",
+        chat_id: targetChatId,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+    orderedChats = targetChat ? [targetChat] : [];
+  } else {
+    const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
+    orderedChats = Array.isArray(chats)
+      ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
+      : [];
+    if (targetChatId) {
+      orderedChats = orderedChats.filter((chat) => String(getChatId(chat) || "") === targetChatId);
+    }
   }
 
   let resolvedEligibleIdentityIndex = eligibleIdentityIndex;

@@ -140,6 +140,34 @@ test('backfillAllChats with chatId targets exactly one chat and forces full hist
   });
 });
 
+test('backfillAllChats with chatId uses getChatById so an unrelated broken chat cannot fail the whole request', async (t) => {
+  await withMockedForward(t, async (backfillAllChats) => {
+    const target = makeChat('326472368@lid', 250);
+
+    const result = await backfillAllChats({
+      all: false,
+      chatId: '326472368@lid',
+      clientOverride: {
+        // A real WhatsApp session's getChats() walks every chat in one Promise.all; if any
+        // single chat's model construction throws (seen with @lid groups mid-migration to LID
+        // addressing), the whole call rejects. A targeted single-chat backfill must not depend
+        // on that bulk call succeeding.
+        getChats: async () => {
+          throw new Error('r: r');
+        },
+        getChatById: async (chatId) => (chatId === '326472368@lid' ? target : undefined),
+      },
+      readyOverride: true,
+      limit: 100,
+      postSyncDelayMs: 0,
+    });
+
+    assert.equal(result.total_chats_in_whatsapp, 1, 'only the targeted chat should be considered');
+    assert.equal(result.fetched, 250);
+    assert.equal(result.imported, 250);
+  });
+});
+
 test('media messages (images, voice notes, etc.) are imported with a placeholder instead of being silently dropped', async (t) => {
   await withMockedForward(t, async (backfillAllChats) => {
     const chatId = '326472368@lid';
