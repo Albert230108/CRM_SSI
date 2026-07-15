@@ -84,6 +84,23 @@ test('backfillAllChats can be forced to sync every chat with all=true', async ()
         };
       }
 
+      if (options.body) {
+        try {
+          const parsedBody = JSON.parse(options.body);
+          if (Array.isArray(parsedBody.messages)) {
+            return {
+              ok: true,
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              json: async () => ({ ok: true, processed: parsedBody.messages.length, failed: 0 }),
+              text: async () => '',
+            };
+          }
+        } catch (error) {
+          // fall through to the generic response below
+        }
+      }
+
       return {
         ok: true,
         status: 200,
@@ -184,6 +201,23 @@ test('backfillAllChats scopes history to CRM identities when all=false', async (
           }),
           text: async () => '',
         };
+      }
+
+      if (options.body) {
+        try {
+          const parsedBody = JSON.parse(options.body);
+          if (Array.isArray(parsedBody.messages)) {
+            return {
+              ok: true,
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              json: async () => ({ ok: true, processed: parsedBody.messages.length, failed: 0 }),
+              text: async () => '',
+            };
+          }
+        } catch (error) {
+          // fall through to the generic response below
+        }
       }
 
       return {

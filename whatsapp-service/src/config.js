@@ -18,6 +18,7 @@ const crmApiBaseUrl = String(process.env.CRM_API_BASE_URL || "").trim() || deriv
 const crmOutboundResolutionUrl = String(process.env.CRM_OUTBOUND_RESOLUTION_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/api/communications/whatsapp/outbound-resolution` : "");
 const crmBackfillIdentitiesUrl = String(process.env.CRM_BACKFILL_IDENTITIES_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/webhooks/whatsapp/backfill-identities` : "");
 const crmWhatsAppResolveUrl = String(process.env.CRM_WHATSAPP_RESOLVE_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/webhooks/whatsapp/resolve` : "");
+const crmBackfillBatchUrl = String(process.env.CRM_BACKFILL_BATCH_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/webhooks/whatsapp/backfill-batch` : "");
 
 module.exports = {
   port: toInteger(process.env.PORT, 3001),
@@ -32,6 +33,9 @@ module.exports = {
   crmOutboundResolutionUrl,
   crmBackfillIdentitiesUrl,
   crmWhatsAppResolveUrl,
+  crmBackfillBatchUrl,
+  crmBackfillBatchTimeoutMs: Math.max(5000, toInteger(process.env.CRM_BACKFILL_BATCH_TIMEOUT_MS, 60000)),
+  whatsappHistoryBackfillBatchSize: Math.max(1, toInteger(process.env.WHATSAPP_HISTORY_BACKFILL_BATCH_SIZE, 200)),
   whatsappHistoryBackfillEnabled: String(process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED ?? "false").trim().toLowerCase() === "true",
   whatsappHistoryBackfillLimit: Math.max(1, toInteger(process.env.WHATSAPP_HISTORY_BACKFILL_LIMIT, 100)),
   forwardedMessageCacheTtlMs: Math.max(1000, toInteger(process.env.WHATSAPP_FORWARDED_MESSAGE_TTL_MS, 10 * 60 * 1000)),

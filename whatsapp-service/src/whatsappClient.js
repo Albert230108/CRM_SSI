@@ -7,9 +7,12 @@ const {
   crmWebhookTimeoutMs,
   crmWebhookUrl,
   crmBackfillIdentitiesUrl,
+  crmBackfillBatchUrl,
+  crmBackfillBatchTimeoutMs,
   crmOutboundResolutionUrl,
   reconnectDelayMs,
   whatsappClientId,
+  whatsappHistoryBackfillBatchSize,
   whatsappHistoryBackfillLimit,
   whatsappHistoryBackfillEnabled,
   forwardedMessageCacheTtlMs,
@@ -563,6 +566,58 @@ async function forwardCrmMessage(payload, contextLabel, options = {}) {
   }
 }
 
+// History backfill used to forward every historical message as its own sequential
+// forwardCrmMessage() call, so a chat with a few thousand messages meant a few thousand
+// serial HTTP round trips — this is what made "resync" take minutes to tens of minutes.
+// This sends a whole chunk of history payloads in a single request to the CRM's batch
+// endpoint, which applies the exact same per-message routing/dedup/persistence logic
+// in-process instead of over the network.
+async function forwardCrmMessageBatch(payloads) {
+  if (!crmBackfillBatchUrl) {
+    console.warn("CRM WhatsApp backfill batch URL is not configured; history messages will not be forwarded.");
+    return { processed: 0, failed: 0 };
+  }
+  if (!payloads.length) {
+    return { processed: 0, failed: 0 };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), crmBackfillBatchTimeoutMs);
+
+  try {
+    console.info(
+      "Forwarding WhatsApp history batch to CRM: count=%s chat_id=%s client_id=%s",
+      payloads.length,
+      payloads[0]?.whatsapp_chat_id,
+      payloads[0]?.whatsapp_client_id,
+    );
+
+    const response = await fetch(crmBackfillBatchUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(crmWebhookRouteToken ? { "X-Webhook-Token": crmWebhookRouteToken } : {}),
+        ...(crmWebhookSecret ? { "X-Webhook-Secret": crmWebhookSecret } : {}),
+      },
+      body: JSON.stringify({ messages: payloads }),
+      signal: controller.signal,
+    });
+
+    const responseBody = await response.json().catch(() => null);
+    if (!response.ok) {
+      const responseText = responseBody ? JSON.stringify(responseBody) : "";
+      throw new Error(`CRM backfill batch webhook responded with ${response.status}${responseText ? `: ${responseText}` : ""}`);
+    }
+
+    return {
+      processed: Number(responseBody?.processed || 0),
+      failed: Number(responseBody?.failed || 0),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function forwardInboundMessage(message) {
   if (!message || message?.isStatus) {
     return false;
@@ -743,6 +798,7 @@ async function backfillChatHistory(chat, options = {}) {
   let outbound = 0;
   const fetched = ordered.length;
   const seenIds = new Set();
+  const payloads = [];
 
   for (const message of ordered) {
     const whatsappMessageId = message?.id?._serialized || null;
@@ -773,30 +829,36 @@ async function backfillChatHistory(chat, options = {}) {
       inbound += 1;
     }
 
-    const payload = buildCrmPayload(message, direction, {
-      to: direction === "outbound" ? normalizeRecipient(chat?.id?.user || chat?.id || message?.to || message?.from) : null,
-      sender: message?.author || message?.from || null,
-      whatsapp_chat_id: chat?.id?._serialized || chat?.id || message?.from || message?.to || null,
-      whatsapp_message_id: whatsappMessageId,
-      source: "history",
-    });
-
-    try {
-      const forwarded = await forwardCrmMessage(payload, `history-${direction}`, { skipForwardedCache: true });
-      if (forwarded) {
-        imported += 1;
-      } else {
-        // forwardCrmMessage returned false without making a request (webhook URL not
-        // configured) - it must not be counted as a fresh delivery to the CRM.
-        deduped += 1;
-      }
-    } catch (error) {
-      failed += 1;
-      console.error(JSON.stringify({
-        event: "whatsapp_history_import_failure",
-        ...logBase,
+    payloads.push(
+      buildCrmPayload(message, direction, {
+        to: direction === "outbound" ? normalizeRecipient(chat?.id?.user || chat?.id || message?.to || message?.from) : null,
+        sender: message?.author || message?.from || null,
+        whatsapp_chat_id: chat?.id?._serialized || chat?.id || message?.from || message?.to || null,
         whatsapp_message_id: whatsappMessageId,
-        direction,
+        source: "history",
+      }),
+    );
+  }
+
+  // Forwarding each historical message as its own sequential HTTP request (the original
+  // design) made a resync of a chat with thousands of messages take minutes to tens of
+  // minutes — nearly all of that time was network/request-dispatch overhead, not actual
+  // work. Sending chunks of payloads to the batch endpoint collapses that to one round
+  // trip per chunk while the CRM applies identical per-message routing/dedup logic.
+  const batchSize = Math.max(1, whatsappHistoryBackfillBatchSize);
+  for (let start = 0; start < payloads.length; start += batchSize) {
+    const chunk = payloads.slice(start, start + batchSize);
+    try {
+      const result = await forwardCrmMessageBatch(chunk);
+      imported += result.processed;
+      failed += result.failed;
+    } catch (error) {
+      failed += chunk.length;
+      console.error(JSON.stringify({
+        event: "whatsapp_history_import_batch_failure",
+        ...logBase,
+        chunk_size: chunk.length,
+        chunk_start: start,
         error: error instanceof Error ? error.message : String(error),
       }));
     }

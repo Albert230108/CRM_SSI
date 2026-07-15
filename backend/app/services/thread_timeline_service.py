@@ -132,16 +132,23 @@ def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation
         .all()
     )
     account_lookup = {account.id: account for account in db.query(GmailAccount).all()}
-    result: list[Conversation] = []
-    for conversation in conversations:
-        messages = (
+
+    conversation_ids = [conversation.id for conversation in conversations]
+    messages_by_conversation_id: dict[int, list[ConversationMessage]] = {conversation_id: [] for conversation_id in conversation_ids}
+    if conversation_ids:
+        all_messages = (
             db.query(ConversationMessage)
-            .filter(ConversationMessage.conversation_id == conversation.id)
+            .filter(ConversationMessage.conversation_id.in_(conversation_ids))
             .order_by(ConversationMessage.sent_at.asc(), ConversationMessage.id.asc())
             .all()
         )
+        for message in all_messages:
+            messages_by_conversation_id[message.conversation_id].append(message)
+
+    result: list[Conversation] = []
+    for conversation in conversations:
         mailbox = account_lookup.get(conversation.provider_account_id)
-        setattr(conversation, "messages", messages)
+        setattr(conversation, "messages", messages_by_conversation_id.get(conversation.id, []))
         setattr(conversation, "provider_account_email", mailbox.email_address if mailbox else None)
         setattr(conversation, "provider_account_display_name", mailbox.display_name if mailbox else None)
         result.append(conversation)

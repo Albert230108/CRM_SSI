@@ -34,13 +34,32 @@ async function withMockedForward(t, run) {
   process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
   process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
 
-  global.fetch = async () => ({
-    ok: true,
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-    json: async () => ({ ok: true }),
-    text: async () => '',
-  });
+  global.fetch = async (url, options = {}) => {
+    if (options.body) {
+      try {
+        const parsedBody = JSON.parse(options.body);
+        if (Array.isArray(parsedBody.messages)) {
+          return {
+            ok: true,
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            json: async () => ({ ok: true, processed: parsedBody.messages.length, failed: 0 }),
+            text: async () => '',
+          };
+        }
+      } catch (error) {
+        // fall through to the generic response below
+      }
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      json: async () => ({ ok: true }),
+      text: async () => '',
+    };
+  };
 
   // config.js reads process.env once at require time, so whatsappClient must be
   // reloaded after the env vars above are set (see historyBackfill.test.js for the
