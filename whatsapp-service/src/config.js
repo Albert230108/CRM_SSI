@@ -34,4 +34,5 @@ module.exports = {
   crmWhatsAppResolveUrl,
   whatsappHistoryBackfillEnabled: String(process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED ?? "false").trim().toLowerCase() === "true",
   whatsappHistoryBackfillLimit: Math.max(1, toInteger(process.env.WHATSAPP_HISTORY_BACKFILL_LIMIT, 100)),
+  forwardedMessageCacheTtlMs: Math.max(1000, toInteger(process.env.WHATSAPP_FORWARDED_MESSAGE_TTL_MS, 10 * 60 * 1000)),
 };

@@ -79,3 +79,57 @@ test("falls back to in-memory mapping when durable lookup misses", async () => {
   assert.equal(result.resolutionSource, "memory");
   assert.equal(result.resolutionStrategy, "memory_fallback");
 });
+
+test("does not retry a non-transient not-found result, even under the production default retry policy", async () => {
+  const calls = [];
+  const result = await resolveOutboundTenantOwnership({
+    messageId: "msg-nf",
+    chatId: "chat-nf",
+    externalAccountId: "acct-nf",
+    lookupDurableTenant: async (params) => {
+      calls.push(params);
+      return { found: false, transient: false };
+    },
+    getMemoryTenantId: () => null,
+    // No retryDelaysMs override - exercises the real production default.
+  });
+
+  assert.equal(result, null);
+  // 2 candidates (provider_message_id, chat_id_external_account_id), 1 call each - no retries.
+  assert.equal(calls.length, 2);
+});
+
+test("retries a transient failure once, then gives up if it never resolves", async () => {
+  const calls = [];
+  const result = await resolveOutboundTenantOwnership({
+    messageId: "msg-transient",
+    lookupDurableTenant: async (params) => {
+      calls.push(params);
+      return { found: false, transient: true, resolution_strategy: "lookup_error" };
+    },
+    getMemoryTenantId: () => null,
+    retryDelaysMs: [0, 5],
+  });
+
+  assert.equal(result, null);
+  assert.equal(calls.length, 2);
+});
+
+test("a transient failure that resolves on retry returns the tenant without exhausting further retries", async () => {
+  const calls = [];
+  const result = await resolveOutboundTenantOwnership({
+    messageId: "msg-transient-ok",
+    lookupDurableTenant: async (params) => {
+      calls.push(params);
+      if (calls.length === 1) {
+        return { found: false, transient: true };
+      }
+      return { found: true, tenant_id: 55 };
+    },
+    getMemoryTenantId: () => null,
+    retryDelaysMs: [0, 5],
+  });
+
+  assert.equal(result.tenantId, 55);
+  assert.equal(calls.length, 2);
+});

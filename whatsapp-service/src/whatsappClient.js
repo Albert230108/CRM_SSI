@@ -12,8 +12,10 @@ const {
   whatsappClientId,
   whatsappHistoryBackfillLimit,
   whatsappHistoryBackfillEnabled,
+  forwardedMessageCacheTtlMs,
 } = require("./config");
 const { resolveOutboundTenantOwnership } = require("./outboundResolution");
+const { createForwardedMessageCache } = require("./forwardedMessageCache");
 const { buildWhatsAppIdentityCandidates, getCanonicalWhatsAppIdentity, normalizeWhatsAppChatId, normalizeWhatsAppPhone } = require("./whatsappIdentity");
 
 let client = null;
@@ -22,7 +24,7 @@ let initializingPromise = null;
 let reconnectTimer = null;
 let shuttingDown = false;
 let startupBackfillTriggered = false;
-let forwardedMessageIds = new Set();
+const forwardedMessages = createForwardedMessageCache({ ttlMs: forwardedMessageCacheTtlMs });
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
 const pendingOutboundTenantByIdentityKey = new Map();
@@ -60,7 +62,7 @@ function getMemoryTenantId({ messageId, chatId, identityKey }) {
 
 async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, externalAccountId }) {
   if (!crmOutboundResolutionUrl) {
-    return { found: false, resolution_strategy: "unconfigured" };
+    return { found: false, resolution_strategy: "unconfigured", transient: false };
   }
 
   const query = new URLSearchParams();
@@ -86,22 +88,37 @@ async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, ext
   }
 
   const url = `${crmOutboundResolutionUrl}?${query.toString()}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), crmWebhookTimeoutMs);
   try {
     const response = await fetch(url, {
       method: "GET",
       headers,
+      signal: controller.signal,
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      return payload || { found: false, resolution_strategy: `http_${response.status}` };
+      // 429/5xx are genuinely transient (worth one retry); other 4xx are not - retrying a
+      // malformed/unauthorized request won't produce a different answer.
+      const transient = response.status === 429 || response.status >= 500;
+      return {
+        ...(payload || {}),
+        found: false,
+        resolution_strategy: (payload && payload.resolution_strategy) || `http_${response.status}`,
+        transient,
+      };
     }
-    return payload || { found: false, resolution_strategy: "empty_response" };
+    return payload || { found: false, resolution_strategy: "empty_response", transient: false };
   } catch (error) {
+    const isTimeout = error instanceof Error && error.name === "AbortError";
     return {
       found: false,
-      resolution_strategy: "lookup_error",
+      resolution_strategy: isTimeout ? "timeout" : "lookup_error",
+      transient: true,
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -476,18 +493,34 @@ async function forwardCrmMessage(payload, contextLabel, options = {}) {
     return false;
   }
 
-  // The in-memory forwardedMessageIds cache only tracks "did this process already send this
-  // message id", not "does the CRM still have it" - it can't see a relink or a CRM-side data
-  // reset that happened without restarting this service. History/backfill forwarding relies on
-  // the CRM's own provider_message_id dedup instead (see _find_existing_inbound_whatsapp_communication),
+  // The forwardedMessages cache only tracks "did this process already send this message id",
+  // not "does the CRM still have it" - it can't see a relink or a CRM-side data reset that
+  // happened without restarting this service. History/backfill forwarding relies on the CRM's
+  // own provider_message_id dedup instead (see _find_existing_inbound_whatsapp_communication),
   // so it opts out of this cache to make "resync full history" actually able to redeliver.
-  if (!options.skipForwardedCache && payload.whatsapp_message_id && forwardedMessageIds.has(payload.whatsapp_message_id)) {
-    console.info(
-      "Skipping duplicate %s WhatsApp message for CRM forwarding: message_id=%s",
-      contextLabel,
-      payload.whatsapp_message_id,
-    );
-    return false;
+  const messageId = payload.whatsapp_message_id || null;
+  const dedupeEnabled = !options.skipForwardedCache && Boolean(messageId);
+
+  if (dedupeEnabled) {
+    if (forwardedMessages.isForwarded(messageId)) {
+      console.info(
+        "Skipping duplicate %s WhatsApp message for CRM forwarding: message_id=%s",
+        contextLabel,
+        messageId,
+      );
+      return false;
+    }
+    // Claim synchronously (before the first await below) so the explicit sendMessage path and
+    // the message_create listener - which can both observe the same outbound message - can't
+    // both win this race and double-post to the CRM webhook.
+    if (!forwardedMessages.claimInFlight(messageId)) {
+      console.info(
+        "Skipping in-flight duplicate %s WhatsApp message for CRM forwarding: message_id=%s",
+        contextLabel,
+        messageId,
+      );
+      return false;
+    }
   }
 
   const controller = new AbortController();
@@ -518,12 +551,15 @@ async function forwardCrmMessage(payload, contextLabel, options = {}) {
       throw new Error(`CRM webhook responded with ${response.status}${responseText ? `: ${responseText}` : ""}`);
     }
 
-    if (payload.whatsapp_message_id) {
-      forwardedMessageIds.add(payload.whatsapp_message_id);
+    if (messageId) {
+      forwardedMessages.markForwarded(messageId);
     }
     return true;
   } finally {
     clearTimeout(timeout);
+    if (dedupeEnabled) {
+      forwardedMessages.releaseInFlight(messageId);
+    }
   }
 }
 
@@ -978,8 +1014,12 @@ function attachClientEvents(nextClient) {
       external_account_id: externalAccountId,
       tenant_id_received: null,
     };
-    const attemptForward = async (remainingAttempts = 10) => {
-      if (messageId && forwardedMessageIds.has(messageId)) {
+    // One bounded retry (not a full 10x rerun) to cover real eventual consistency - e.g. the
+    // CRM hasn't committed a durable link yet at the instant this event fires. A normal,
+    // durably-confirmed "not found" is not retried here; resolveOutboundTenantOwnership already
+    // handles per-candidate transient retries (network error/timeout/429/5xx) on its own.
+    const attemptForward = async (remainingAttempts = 1) => {
+      if (messageId && forwardedMessages.isForwarded(messageId)) {
         return;
       }
       const resolved = await resolveOutboundTenantOwnership({
@@ -992,7 +1032,7 @@ function attachClientEvents(nextClient) {
         getMemoryTenantId,
       });
       if (!resolved && remainingAttempts > 0) {
-        await sleep(100);
+        await sleep(1000);
         return attemptForward(remainingAttempts - 1);
       }
       if (!resolved) {
@@ -1387,6 +1427,7 @@ module.exports = {
   buildHistoryDedupeKey,
   sortBackfillMessages,
   listChats,
+  forwardCrmMessage,
 };
 
 
