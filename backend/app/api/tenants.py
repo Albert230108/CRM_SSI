@@ -379,29 +379,58 @@ def list_tenants(
 
     query = query.order_by(desc(Tenant.id) if sort_desc else Tenant.id)
     tenants = query.all()
+    tenant_ids = [tenant.id for tenant in tenants]
+
+    # Querying the latest Communication/email per tenant one tenant at a time (2 queries x N
+    # tenants) meant every tenant-list load did hundreds of sequential DB round trips as the
+    # tenant count grew. A window-function query ranks rows per tenant_id in a single pass, so
+    # this is 2 queries total regardless of how many tenants there are.
+    last_comm_by_tenant_id: dict[int, tuple[datetime, str, str]] = {}
+    last_email_by_tenant_id: dict[int, tuple[datetime, str]] = {}
+    if tenant_ids:
+        from sqlalchemy import func
+
+        comm_ranked = (
+            db.query(
+                Communication.tenant_id.label("tenant_id"),
+                Communication.created_at.label("created_at"),
+                Communication.channel.label("channel"),
+                Communication.direction.label("direction"),
+                func.row_number()
+                .over(partition_by=Communication.tenant_id, order_by=Communication.created_at.desc())
+                .label("rn"),
+            )
+            .filter(Communication.tenant_id.in_(tenant_ids))
+            .subquery()
+        )
+        for row in db.query(comm_ranked).filter(comm_ranked.c.rn == 1).all():
+            last_comm_by_tenant_id[row.tenant_id] = (row.created_at, row.channel, row.direction)
+
+        email_ranked = (
+            db.query(
+                Conversation.tenant_id.label("tenant_id"),
+                ConversationMessage.sent_at.label("sent_at"),
+                ConversationMessage.direction.label("direction"),
+                func.row_number()
+                .over(partition_by=Conversation.tenant_id, order_by=ConversationMessage.sent_at.desc())
+                .label("rn"),
+            )
+            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+            .filter(Conversation.tenant_id.in_(tenant_ids))
+            .subquery()
+        )
+        for row in db.query(email_ranked).filter(email_ranked.c.rn == 1).all():
+            last_email_by_tenant_id[row.tenant_id] = (row.sent_at, row.direction)
 
     result = []
     for tenant in tenants:
-        last_comm = db.query(Communication).filter(
-            Communication.tenant_id == tenant.id
-        ).order_by(desc(Communication.created_at)).first()
-
-        # Email conversations live in a separate table (Conversation/ConversationMessage)
-        # from WhatsApp Communication rows, so the most recent activity must be picked
-        # across both sources rather than only Communication.
-        last_email = (
-            db.query(ConversationMessage)
-            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-            .filter(Conversation.tenant_id == tenant.id)
-            .order_by(desc(ConversationMessage.sent_at))
-            .first()
-        )
-
         candidates: list[tuple[datetime, str, str]] = []
+        last_comm = last_comm_by_tenant_id.get(tenant.id)
         if last_comm:
-            candidates.append((last_comm.created_at, last_comm.channel, last_comm.direction))
+            candidates.append(last_comm)
+        last_email = last_email_by_tenant_id.get(tenant.id)
         if last_email:
-            candidates.append((last_email.sent_at, "email", last_email.direction))
+            candidates.append((last_email[0], "email", last_email[1]))
 
         tenant_dict = TenantRead.from_orm(tenant).model_dump()
         if candidates:

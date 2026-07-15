@@ -26,21 +26,30 @@ logger = logging.getLogger(__name__)
 EMAIL_POLL_INTERVAL_SECONDS = int(os.getenv("EMAIL_POLL_INTERVAL_SECONDS", "45"))
 
 
+def _poll_gmail_accounts_once() -> None:
+    db = SessionLocal()
+    try:
+        accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
+        for account in accounts:
+            try:
+                _sync_gmail_account(db, account)
+            except Exception:
+                logger.exception("Background Gmail sync failed account_id=%s", account.id)
+    except Exception:
+        logger.exception("Background Gmail sync loop failed to load accounts")
+    finally:
+        db.close()
+
+
 async def _poll_gmail_accounts_forever() -> None:
     while True:
         await asyncio.sleep(EMAIL_POLL_INTERVAL_SECONDS)
-        db = SessionLocal()
-        try:
-            accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
-            for account in accounts:
-                try:
-                    _sync_gmail_account(db, account)
-                except Exception:
-                    logger.exception("Background Gmail sync failed account_id=%s", account.id)
-        except Exception:
-            logger.exception("Background Gmail sync loop failed to load accounts")
-        finally:
-            db.close()
+        # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
+        # per account). Running this loop inline on the event loop — as it was before — froze
+        # every concurrent request across the whole app (unrelated to any user action) for the
+        # entire duration of this poll, every 45s, forever. asyncio.to_thread matches the
+        # pattern already used for the manual sync-all endpoint in gmail_integration.py.
+        await asyncio.to_thread(_poll_gmail_accounts_once)
 
 
 @asynccontextmanager

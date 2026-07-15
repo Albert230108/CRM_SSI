@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.dependencies import get_db
 from app.core.phone_normalization import phone_match_candidates
@@ -581,7 +582,11 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     if secret_error is not None:
         return secret_error
 
-    return _process_whatsapp_message(db, payload, dict(request.headers), dict(request.query_params))
+    # _process_whatsapp_message runs plain synchronous SQLAlchemy calls. Run it in the
+    # threadpool (like FastAPI does automatically for a `def` route) instead of inline in this
+    # coroutine, so its blocking DB I/O doesn't stall the single event loop for every other
+    # concurrent request (login, tenant loads, etc.) on this worker.
+    return await run_in_threadpool(_process_whatsapp_message, db, payload, dict(request.headers), dict(request.query_params))
 
 
 class WhatsAppBackfillBatchResponse(BaseModel):
@@ -624,7 +629,13 @@ async def whatsapp_backfill_batch(request: Request, db: Session = Depends(get_db
             failed += 1
             continue
         try:
-            _process_whatsapp_message(db, message_payload, request_headers, query_params)
+            # Looping this many synchronous DB calls inline, with no `await` between them,
+            # would monopolize this worker's single event loop for the whole batch — every
+            # other concurrent request (login, tenant loads, other threads) would stall until
+            # the batch finished. Running each message in the threadpool keeps the same
+            # sequential per-message DB work but yields control back to the event loop between
+            # messages, exactly like FastAPI does automatically for a `def` route.
+            await run_in_threadpool(_process_whatsapp_message, db, message_payload, request_headers, query_params)
             processed += 1
         except Exception:
             db.rollback()

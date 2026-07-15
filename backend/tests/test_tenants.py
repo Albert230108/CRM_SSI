@@ -1,5 +1,10 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy.exc import IntegrityError
 
+from app.api.tenants import list_tenants
+from app.models.communication import Communication
+from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 
@@ -140,3 +145,63 @@ def test_delete_imported_tenant_removes_whatsapp_endpoint_mapping(client, db_ses
     delete_response = client.delete(f"/api/tenants/{tenant.id}")
     assert delete_response.status_code == 204
     assert db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id).count() == 0
+
+
+def test_list_tenants_picks_latest_across_whatsapp_and_email_per_tenant(db_session):
+    # Regression test for the list_tenants N+1 fix: computing last_message_date/channel used to
+    # run two extra queries per tenant. This exercises the replacement bulk window-function
+    # queries against multiple tenants with a mix of WhatsApp and email activity, to confirm the
+    # per-tenant "most recent across both channels" result is unchanged.
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    tenant_whatsapp_latest = create_tenant(db_session, name="Tenant WhatsApp Latest", booking_id="LIST-A")
+    db_session.add(Communication(
+        tenant_id=tenant_whatsapp_latest.id, channel="whatsapp", direction="inbound",
+        provider="whatsapp-service", message="older whatsapp", created_at=base,
+    ))
+    db_session.add(Communication(
+        tenant_id=tenant_whatsapp_latest.id, channel="whatsapp", direction="outbound",
+        provider="whatsapp-service", message="newest whatsapp", created_at=base + timedelta(days=2),
+    ))
+    conversation_a = Conversation(provider="gmail", provider_thread_id="thread-a", tenant_id=tenant_whatsapp_latest.id, subject="s")
+    db_session.add(conversation_a)
+    db_session.commit()
+    db_session.refresh(conversation_a)
+    db_session.add(ConversationMessage(
+        conversation_id=conversation_a.id, provider="gmail", provider_message_id="msg-a-1",
+        direction="inbound", body="older email", sent_at=base + timedelta(days=1),
+    ))
+
+    tenant_email_latest = create_tenant(db_session, name="Tenant Email Latest", booking_id="LIST-B")
+    db_session.add(Communication(
+        tenant_id=tenant_email_latest.id, channel="whatsapp", direction="inbound",
+        provider="whatsapp-service", message="older whatsapp", created_at=base,
+    ))
+    conversation_b = Conversation(provider="gmail", provider_thread_id="thread-b", tenant_id=tenant_email_latest.id, subject="s")
+    db_session.add(conversation_b)
+    db_session.commit()
+    db_session.refresh(conversation_b)
+    db_session.add(ConversationMessage(
+        conversation_id=conversation_b.id, provider="gmail", provider_message_id="msg-b-1",
+        direction="outbound", body="newest email", sent_at=base + timedelta(days=3),
+    ))
+
+    tenant_no_activity = create_tenant(db_session, name="Tenant No Activity", booking_id="LIST-C")
+    db_session.commit()
+
+    # sort_by_message's final ordering step is untouched by this fix and separately hits a
+    # naive/aware datetime mismatch under the SQLite test DB (Postgres round-trips
+    # DateTime(timezone=True) as aware; SQLite doesn't) — out of scope here, so this exercises
+    # sort_by_message=False to isolate the per-tenant bulk-query correctness this test targets.
+    result = list_tenants(db=db_session, current_user=None, sort_by_message=False, sort_desc=True)
+    by_id = {tenant.id: tenant for tenant in result}
+
+    assert by_id[tenant_whatsapp_latest.id].last_message_channel == "whatsapp"
+    assert by_id[tenant_whatsapp_latest.id].last_message_direction == "outbound"
+    assert by_id[tenant_whatsapp_latest.id].last_message_date.replace(tzinfo=timezone.utc) == base + timedelta(days=2)
+
+    assert by_id[tenant_email_latest.id].last_message_channel == "email"
+    assert by_id[tenant_email_latest.id].last_message_direction == "outbound"
+    assert by_id[tenant_email_latest.id].last_message_date.replace(tzinfo=timezone.utc) == base + timedelta(days=3)
+
+    assert by_id[tenant_no_activity.id].last_message_date is None

@@ -9,6 +9,7 @@ import logging
 import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.gmail_integration import _sync_gmail_account
 from app.api.tenants import _extract_guest_fields
@@ -96,7 +97,10 @@ async def _sync_emails(db: Session, current_user: User) -> int:
     accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
     imported = 0
     for account in accounts:
-        imported += _sync_gmail_account(db, account)
+        # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
+        # per account) with no yield points of its own. Looping it inline here would monopolize
+        # this worker's event loop for every other concurrent request until all accounts finished.
+        imported += await run_in_threadpool(_sync_gmail_account, db, account)
     return imported
 
 
@@ -278,7 +282,10 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
     try:
         summary["tenant_threads_updated"] = 0
         for tenant in db.query(Tenant).order_by(Tenant.id.asc()).all():
-            build_tenant_thread_timeline(db, tenant.id)
+            # Rebuilding every tenant's thread timeline synchronously in this loop, with no
+            # yield points, would freeze this worker's event loop (and every other concurrent
+            # request — logins, thread loads, everything) for the whole loop's duration.
+            await run_in_threadpool(build_tenant_thread_timeline, db, tenant.id)
             summary["tenant_threads_updated"] += 1
     except Exception as exc:
         summary["partial_failures"].append({"step": "tenant_threads", "error": str(exc)})
