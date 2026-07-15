@@ -1,5 +1,6 @@
 const qrcode = require("qrcode-terminal");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const ChatFactory = require("whatsapp-web.js/src/factories/ChatFactory");
 
 const {
   crmWebhookRouteToken,
@@ -35,6 +36,52 @@ let outboundCaptureCount = 0;
 
 function getChatId(chat) {
   return chat?.id?._serialized || chat?.id?.serialized || chat?.id || null;
+}
+
+// whatsapp-web.js's own Client#getChats() builds every chat's model in one Promise.all; if
+// WhatsApp Web's internal store throws while building the model for a single chat (seen with
+// @lid groups mid-migration to LID-only addressing), the whole call rejects and every caller of
+// getChats() goes down with it, not just the broken chat. Rebuild the same chat list ourselves,
+// isolating failures per chat, so one unparsable chat can't take out /chats or a bulk backfill.
+async function fetchChatsResilient(activeClient, { wrap = false } = {}) {
+  if (!activeClient) {
+    return { chats: [], failed: [] };
+  }
+
+  if (typeof activeClient.pupPage?.evaluate === "function") {
+    const { models, failed } = await activeClient.pupPage.evaluate(async () => {
+      const rawChats = window.require("WAWebCollections").Chat.getModelsArray();
+      const models = [];
+      const failed = [];
+      for (const chat of rawChats) {
+        try {
+          models.push(await window.WWebJS.getChatModel(chat));
+        } catch (error) {
+          failed.push({
+            id: chat?.id?._serialized || null,
+            message: error && error.message ? String(error.message) : String(error),
+          });
+        }
+      }
+      return { models, failed };
+    });
+
+    for (const failure of failed) {
+      console.warn(JSON.stringify({
+        event: "whatsapp_chat_model_build_failed",
+        chat_id: failure.id,
+        error: failure.message,
+      }));
+    }
+
+    const chats = wrap ? models.map((data) => ChatFactory.create(activeClient, data)) : models;
+    return { chats, failed };
+  }
+
+  // Test doubles only expose getChats(); there's no per-chat isolation available for those,
+  // so a single simulated failure still fails the whole call, same as before this helper existed.
+  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
+  return { chats: Array.isArray(chats) ? chats : [], failed: [] };
 }
 
 function getChatName(chat) {
@@ -915,7 +962,7 @@ async function backfillAllChats({
     }
     orderedChats = targetChat ? [targetChat] : [];
   } else {
-    const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
+    const { chats } = await fetchChatsResilient(activeClient, { wrap: true });
     orderedChats = Array.isArray(chats)
       ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
       : [];
@@ -1253,7 +1300,7 @@ async function listChats({ externalAccountId, search = "", limit = 200, offset =
     throw new Error(`WhatsApp account id mismatch: requested ${externalAccountId} but this service is configured for ${whatsappClientId}`);
   }
 
-  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
+  const { chats } = await fetchChatsResilient(activeClient);
   const normalized = (Array.isArray(chats) ? chats : []).map((chat) => ({
     chat_id: String(getChatId(chat) || ""),
     chat_name: getChatName(chat) || null,
@@ -1390,7 +1437,7 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
     throw new Error("WhatsApp client is not ready");
   }
 
-  const chats = typeof client.getChats === "function" ? await client.getChats() : [];
+  const { chats } = await fetchChatsResilient(client, { wrap: true });
   const orderedChats = Array.isArray(chats)
     ? chats.slice().filter(isRelevantChat).sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || ""))).slice(0, chatCount)
     : [];
