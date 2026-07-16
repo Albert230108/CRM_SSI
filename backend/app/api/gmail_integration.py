@@ -14,6 +14,7 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from jose import jwt
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet
@@ -130,6 +131,25 @@ def _build_service(credentials: Credentials) -> Any:
 
 def _build_service_for_account(account: GmailAccount) -> Any:
     return _build_service(_account_credentials(account))
+
+
+def _start_watch(db: Session, account: GmailAccount) -> None:
+    """Register (or renew) Gmail push notifications for this account's mailbox.
+
+    Renewing re-calls watch() without disturbing last_history_id: the mailbox's history
+    stream is continuous regardless of watch registration, so only a first-ever watch
+    should seed last_history_id from the response.
+    """
+    service = _build_service_for_account(account)
+    response = (
+        service.users()
+        .watch(userId="me", body={"topicName": _require_env("GMAIL_PUBSUB_TOPIC")})
+        .execute()
+    )
+    account.watch_expiration = datetime.fromtimestamp(int(response["expiration"]) / 1000, tz=timezone.utc)
+    if not account.last_history_id:
+        account.last_history_id = str(response["historyId"])
+    db.commit()
 
 
 def _parse_internal_date(value: str | int | None) -> datetime:
@@ -406,6 +426,12 @@ def _upsert_account_from_credentials(
     account.google_account_id = str(profile.get("id") or account.google_account_id or email_address)
     db.commit()
     db.refresh(account)
+
+    try:
+        _start_watch(db, account)
+    except Exception:
+        logger.exception("Failed to register Gmail push watch for account_id=%s", account.id)
+
     return account
 
 
@@ -597,6 +623,60 @@ def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     account.last_synced_at = datetime.now(timezone.utc)
     db.commit()
     return saved
+
+
+def _process_gmail_history_notification(db: Session, account: GmailAccount, new_history_id: str) -> None:
+    """Handle a Gmail Pub/Sub push notification by fetching only what changed since last sync.
+
+    Falls back to a full _sync_gmail_account() when there's no prior history cursor, or when
+    Gmail reports the cursor has expired (history.list 404s once startHistoryId ages out).
+    """
+    if not account.last_history_id:
+        _sync_gmail_account(db, account)
+        account.last_history_id = new_history_id
+        db.commit()
+        return
+
+    service = _build_service_for_account(account)
+    thread_ids: set[str] = set()
+    page_token = None
+    try:
+        while True:
+            response = (
+                service.users()
+                .history()
+                .list(
+                    userId="me",
+                    startHistoryId=account.last_history_id,
+                    historyTypes=["messageAdded"],
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+            for entry in response.get("history") or []:
+                for added in entry.get("messagesAdded") or []:
+                    thread_id = added.get("message", {}).get("threadId")
+                    if thread_id:
+                        thread_ids.add(thread_id)
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+    except HttpError as exc:
+        if exc.resp is not None and exc.resp.status == 404:
+            logger.info("Gmail history cursor expired for account_id=%s, falling back to full sync", account.id)
+            _sync_gmail_account(db, account)
+            account.last_history_id = new_history_id
+            db.commit()
+            return
+        raise
+
+    for thread_id in thread_ids:
+        thread = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
+        _upsert_thread(db, account, thread)
+
+    account.last_history_id = new_history_id
+    account.last_synced_at = datetime.now(timezone.utc)
+    db.commit()
 
 
 @router.post("/accounts/{account_id}/sync")

@@ -163,11 +163,12 @@ def get_tenant_thread_version(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str | None]:
-    """Cheap marker the frontend polls to detect new inbound messages for a tenant's thread.
+    """Cheap marker the frontend polls to detect changes for a tenant's thread.
 
-    Returns the latest of the WhatsApp (`communications`) and email
-    (`conversation_messages`) timestamps for this tenant. The frontend re-fetches the full
-    grouped thread only when this value changes, instead of polling the heavier endpoint.
+    Returns the latest of the WhatsApp (`communications`), email (`conversation_messages`),
+    and tenant-record (e.g. Beds24-driven booking_status) timestamps for this tenant. The
+    frontend re-fetches the full grouped thread only when this value changes, instead of
+    polling the heavier endpoint.
     """
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
@@ -189,7 +190,7 @@ def get_tenant_thread_version(
         .scalar()
     )
 
-    candidates = [value for value in (latest_communication_at, latest_email_at) if value is not None]
+    candidates = [value for value in (latest_communication_at, latest_email_at, tenant.updated_at) if value is not None]
     latest_at = max(candidates) if candidates else None
     return {"latest_at": latest_at.isoformat() if latest_at else None}
 
@@ -199,18 +200,20 @@ def get_global_thread_version(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str | None]:
-    """Cheap marker the tenant list polls to detect new messages across any tenant.
+    """Cheap marker the tenant list polls to detect changes across any tenant.
 
     Same idea as `get_tenant_thread_version` but with no tenant filter, so the sidebar can
-    re-sort/re-fetch the tenant list (e.g. to surface a new WhatsApp message at the top) without
-    the currently open tenant's thread being the only thing kept live.
+    re-sort/re-fetch the tenant list (e.g. to surface a new WhatsApp message, or recolor a
+    tenant whose booking_status just changed via the Beds24 webhook) without the currently
+    open tenant's thread being the only thing kept live.
     """
     from sqlalchemy import func
 
     latest_communication_at = db.query(func.max(Communication.created_at)).scalar()
     latest_email_at = db.query(func.max(ConversationMessage.sent_at)).scalar()
+    latest_tenant_update_at = db.query(func.max(Tenant.updated_at)).scalar()
 
-    candidates = [value for value in (latest_communication_at, latest_email_at) if value is not None]
+    candidates = [value for value in (latest_communication_at, latest_email_at, latest_tenant_update_at) if value is not None]
     latest_at = max(candidates) if candidates else None
     return {"latest_at": latest_at.isoformat() if latest_at else None}
 

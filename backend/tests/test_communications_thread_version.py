@@ -12,6 +12,10 @@ def create_tenant(db_session, name="Tenant A", booking_id="B-1"):
     return tenant
 
 
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def add_whatsapp_message(db_session, tenant_id, *, created_at, external_account_id="edi-crm-whatsapp"):
     message = Communication(
         tenant_id=tenant_id,
@@ -29,13 +33,35 @@ def add_whatsapp_message(db_session, tenant_id, *, created_at, external_account_
     return message
 
 
-def test_global_thread_version_is_none_with_no_messages(non_admin_client, db_session):
-    create_tenant(db_session)
-
+def test_global_thread_version_is_none_when_nothing_exists(non_admin_client, db_session):
     response = non_admin_client.get("/api/communications/thread-version")
 
     assert response.status_code == 200
     assert response.json() == {"latest_at": None}
+
+
+def test_global_thread_version_reflects_tenant_update_without_messages(non_admin_client, db_session):
+    tenant = create_tenant(db_session)
+    future = datetime.now(timezone.utc) + timedelta(days=1)
+    tenant.updated_at = future
+    db_session.commit()
+
+    response = non_admin_client.get("/api/communications/thread-version")
+
+    assert response.status_code == 200
+    assert _as_utc(datetime.fromisoformat(response.json()["latest_at"])) == future
+
+
+def test_tenant_thread_version_reflects_tenant_update_without_messages(non_admin_client, db_session):
+    tenant = create_tenant(db_session)
+    future = datetime.now(timezone.utc) + timedelta(days=1)
+    tenant.updated_at = future
+    db_session.commit()
+
+    response = non_admin_client.get(f"/api/communications/tenants/{tenant.id}/thread-version")
+
+    assert response.status_code == 200
+    assert _as_utc(datetime.fromisoformat(response.json()["latest_at"])) == future
 
 
 def test_global_thread_version_reflects_latest_message_across_tenants(non_admin_client, db_session):

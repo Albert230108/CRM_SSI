@@ -17,6 +17,7 @@ class GmailAccount(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     last_history_id = Column(String(100), nullable=True)
+    watch_expiration = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
