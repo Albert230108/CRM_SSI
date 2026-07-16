@@ -285,6 +285,14 @@ const WHATSAPP_ACCOUNT_PALETTES: WhatsappAccountPalette[] = [
 const getWhatsappMessageAccountKey = (message: WhatsappTimelineMessage) =>
   message.external_account_id || message.external_phone_id || message.whatsapp_chat_id || 'unknown'
 
+// Fixed identity -> color/label mapping so an account looks the same on every tenant's thread,
+// rather than being colored by the order it happened to get linked on a given tenant.
+// external_account_id values come from each whatsapp-service instance's WHATSAPP_CLIENT_ID.
+const WHATSAPP_ACCOUNT_DIRECTORY: Record<string, { label: string; paletteIndex: number }> = {
+  'ssi-crm-whatsapp': { label: 'SSI-Whatsapp', paletteIndex: 0 }, // green
+  'edi-crm-whatsapp': { label: 'EDI-Whatsapp', paletteIndex: 1 }, // violet
+}
+
 type ThreadViewProps = {
   tenantId?: number
   reloadSignal?: number
@@ -342,33 +350,22 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
   const [livePollSignal, setLivePollSignal] = useState(0)
 
-  // Assign each linked WhatsApp account a stable color/ordinal based on link creation order,
-  // so "Account 1"/"Account 2" and their colors stay consistent across reloads.
-  const whatsappAccountColorIndex = (() => {
-    const map = new Map<string, number>()
-    const orderedLinks = [...whatsappLinks].sort((a, b) => {
-      const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      return timeDiff !== 0 ? timeDiff : a.id - b.id
-    })
-    orderedLinks.forEach((link) => {
-      if (link.external_account_id && !map.has(link.external_account_id)) {
-        map.set(link.external_account_id, map.size % WHATSAPP_ACCOUNT_PALETTES.length)
-      }
-    })
-    return map
-  })()
-
+  // Color/label are resolved from the fixed WHATSAPP_ACCOUNT_DIRECTORY (by account identity),
+  // not from per-tenant link order, so SSI is always green and EDI is always violet everywhere.
   const getWhatsappAccountPalette = (accountKey: string) => {
-    const index = whatsappAccountColorIndex.get(accountKey)
-    if (index !== undefined) return WHATSAPP_ACCOUNT_PALETTES[index]
+    const known = WHATSAPP_ACCOUNT_DIRECTORY[accountKey]
+    if (known) return WHATSAPP_ACCOUNT_PALETTES[known.paletteIndex]
+    // Unrecognized account: still deterministic per key, but drawn from the remaining palette
+    // entries so it never collides with the reserved SSI/EDI colors.
+    const fallbackPalettes = WHATSAPP_ACCOUNT_PALETTES.slice(2)
     let hash = 0
     for (let i = 0; i < accountKey.length; i += 1) hash = (hash * 31 + accountKey.charCodeAt(i)) >>> 0
-    return WHATSAPP_ACCOUNT_PALETTES[hash % WHATSAPP_ACCOUNT_PALETTES.length]
+    return fallbackPalettes[hash % fallbackPalettes.length]
   }
 
   const getWhatsappAccountLabel = (accountKey: string) => {
-    const index = whatsappAccountColorIndex.get(accountKey)
-    if (index !== undefined) return `Account ${index + 1}`
+    const known = WHATSAPP_ACCOUNT_DIRECTORY[accountKey]
+    if (known) return known.label
     return accountKey === 'unknown' ? 'Unknown account' : accountKey
   }
 
