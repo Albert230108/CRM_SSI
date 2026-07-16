@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import traceback
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -97,19 +98,15 @@ def get_beds24_webhook_log(log_id: int, db: Session = Depends(get_db)) -> Beds24
     return log
 
 
-@router.post("")
-async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, str]:
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload")
-    if not _is_authorized(request, payload):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-
-    booking_id = _extract_booking_id(payload)
-    external_event_id = _extract_external_event_id(payload)
-    event = str(payload.get("event") or payload.get("type") or payload.get("action") or "").lower()
-    dedupe_key = _dedupe_key(event or None, booking_id, external_event_id, payload)
-
+async def _process_beds24_booking_event(
+    db: Session,
+    *,
+    booking_id: str | None,
+    event: str,
+    external_event_id: str | None,
+    dedupe_key: str,
+    raw_payload: dict[str, Any],
+) -> dict[str, str]:
     existing = db.query(Beds24WebhookLog).filter(Beds24WebhookLog.provider == "beds24", Beds24WebhookLog.dedupe_key == dedupe_key).first()
     if existing is not None:
         duplicate = Beds24WebhookLog(
@@ -121,8 +118,8 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
             event_type=event or None,
             status="duplicate",
             booking_id=booking_id,
-            raw_payload=payload,
-            parsed_fields=_summarize_payload(payload, booking_id, event or None, None, None),
+            raw_payload=raw_payload,
+            parsed_fields=_summarize_payload(raw_payload, booking_id, event or None, None, None),
             http_status=200,
             result_message="duplicate delivery ignored",
         )
@@ -138,8 +135,8 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         event_type=event or None,
         status="received",
         booking_id=booking_id,
-        raw_payload=payload,
-        parsed_fields=_summarize_payload(payload, booking_id, event or None, None, None),
+        raw_payload=raw_payload,
+        parsed_fields=_summarize_payload(raw_payload, booking_id, event or None, None, None),
     )
     db.add(log)
     db.flush()
@@ -233,7 +230,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         db.flush()
         log.tenant_id = tenant.id
         log.room_id = str(room_id) if room_id is not None else None
-        log.parsed_fields = _summarize_payload(payload, booking_id, event or None, room_id, tenant.id)
+        log.parsed_fields = _summarize_payload(raw_payload, booking_id, event or None, room_id, tenant.id)
 
         invoice_items = booking.get("invoiceItems") or []
         if invoice_items:
@@ -278,3 +275,53 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         except IntegrityError:
             db.rollback()
         raise
+
+
+@router.post("")
+async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, str]:
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload")
+    if not _is_authorized(request, payload):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    booking_id = _extract_booking_id(payload)
+    external_event_id = _extract_external_event_id(payload)
+    event = str(payload.get("event") or payload.get("type") or payload.get("action") or "").lower()
+    dedupe_key = _dedupe_key(event or None, booking_id, external_event_id, payload)
+
+    return await _process_beds24_booking_event(
+        db,
+        booking_id=booking_id,
+        event=event,
+        external_event_id=external_event_id,
+        dedupe_key=dedupe_key,
+        raw_payload=payload,
+    )
+
+
+@router.get("")
+async def beds24_booking_notifier(
+    request: Request,
+    db: Session = Depends(get_db),
+    bookid: str | None = Query(default=None),
+    booking_status: str | None = Query(default=None, alias="status"),
+) -> dict[str, str]:
+    payload = {"bookid": bookid, "status": booking_status}
+    if not _is_authorized(request, payload):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    booking_id = str(bookid).strip() if bookid is not None and str(bookid).strip() else None
+    event = (booking_status or "").lower()
+    # No event id/timestamp in this payload shape, so a content hash would dedupe
+    # distinct real updates that share the same bookid/status; always process instead.
+    dedupe_key = f"notifier:{booking_id or 'unknown'}:{uuid.uuid4()}"
+
+    return await _process_beds24_booking_event(
+        db,
+        booking_id=booking_id,
+        event=event,
+        external_event_id=None,
+        dedupe_key=dedupe_key,
+        raw_payload=payload,
+    )
