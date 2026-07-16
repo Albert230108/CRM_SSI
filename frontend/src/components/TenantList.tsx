@@ -34,6 +34,38 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
   const [selectedResponsible, setSelectedResponsible] = useState<string | null>(null)
   const [sortByMessage, setSortByMessage] = useState(true)
   const [sortDesc, setSortDesc] = useState(true)
+  const [livePollSignal, setLivePollSignal] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    let lastSeenVersion: string | null = null
+
+    const pollThreadVersion = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/communications/thread-version`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!response.ok || cancelled) return
+        const data: { latest_at: string | null } = await response.json()
+        if (lastSeenVersion === null) {
+          lastSeenVersion = data.latest_at
+          return
+        }
+        if (data.latest_at !== lastSeenVersion) {
+          lastSeenVersion = data.latest_at
+          setLivePollSignal((current) => current + 1)
+        }
+      } catch {
+        // Ignore transient poll failures; next interval tick will retry.
+      }
+    }
+
+    const intervalId = window.setInterval(pollThreadVersion, 7000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [token])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -68,7 +100,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
 
     loadTenants()
     return () => controller.abort()
-  }, [token, reloadSignal, searchQuery, selectedStatus, selectedResponsible, sortByMessage, sortDesc])
+  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatus, selectedResponsible, sortByMessage, sortDesc])
 
   const uniqueStatuses = useMemo(() => {
     const statuses = new Set<string>()

@@ -194,6 +194,27 @@ def get_tenant_thread_version(
     return {"latest_at": latest_at.isoformat() if latest_at else None}
 
 
+@router.get("/thread-version")
+def get_global_thread_version(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str | None]:
+    """Cheap marker the tenant list polls to detect new messages across any tenant.
+
+    Same idea as `get_tenant_thread_version` but with no tenant filter, so the sidebar can
+    re-sort/re-fetch the tenant list (e.g. to surface a new WhatsApp message at the top) without
+    the currently open tenant's thread being the only thing kept live.
+    """
+    from sqlalchemy import func
+
+    latest_communication_at = db.query(func.max(Communication.created_at)).scalar()
+    latest_email_at = db.query(func.max(ConversationMessage.sent_at)).scalar()
+
+    candidates = [value for value in (latest_communication_at, latest_email_at) if value is not None]
+    latest_at = max(candidates) if candidates else None
+    return {"latest_at": latest_at.isoformat() if latest_at else None}
+
+
 @router.get("/whatsapp/outbound-resolution", response_model=WhatsAppOutboundResolutionRead)
 def resolve_whatsapp_outbound_communication(
     provider_message_id: str | None = None,
