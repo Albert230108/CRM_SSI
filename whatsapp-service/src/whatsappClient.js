@@ -39,24 +39,97 @@ function getChatId(chat) {
   return chat?.id?._serialized || chat?.id?.serialized || chat?.id || null;
 }
 
-// whatsapp-web.js's own Client#getChats() builds every chat's model in one Promise.all; if
-// WhatsApp Web's internal store throws while building the model for a single chat (seen with
-// @lid groups mid-migration to LID-only addressing), the whole call rejects and every caller of
-// getChats() goes down with it, not just the broken chat. Rebuild the same chat list ourselves,
-// isolating failures per chat, so one unparsable chat can't take out /chats or a bulk backfill.
-async function fetchChatsResilient(activeClient, { wrap = false } = {}) {
+// whatsapp-web.js's own window.WWebJS.getChatModel() resolves a chat's last-message preview via
+// Msg.get()/Msg.getMessagesById(chat.lastReceivedKey._serialized) with no guard. For a fixed,
+// reproducible set of @lid contacts on this account, that lookup throws a DataError from
+// WhatsApp Web's own IndexedDB-backed message store ("bulkGet on Table: message" with an empty
+// key) - confirmed via /admin/debug/chat-model, which isolates getChatModel step by step. Because
+// getChatModel has no try/catch of its own, that one preview lookup fails the entire chat model,
+// which in turn fails whatsapp-web.js's own Client#getChats()/getChatById() (both build models via
+// Promise.all/getChatModel), taking every other chat down with it. Rebuild the same model
+// ourselves with that one step guarded - the preview is optional; the chat itself is not.
+async function fetchChatModelsSafe(activeClient, { targetChatId = null, wrap = false } = {}) {
   if (!activeClient) {
     return { chats: [], failed: [] };
   }
 
   if (typeof activeClient.pupPage?.evaluate === "function") {
-    const { models, failed } = await activeClient.pupPage.evaluate(async () => {
-      const rawChats = window.require("WAWebCollections").Chat.getModelsArray();
+    const { models, failed } = await activeClient.pupPage.evaluate(async (targetChatId) => {
+      async function buildModel(chat) {
+        const model = chat.serialize();
+        model.isGroup = false;
+        model.isMuted = chat.mute?.expiration !== 0;
+        model.formattedTitle = chat.formattedTitle;
+
+        if (chat.groupMetadata) {
+          model.isGroup = true;
+          try {
+            const chatWid = window.require("WAWebWidFactory").createWid(chat.id._serialized);
+            const groupMetadata =
+              window.require("WAWebCollections").GroupMetadata ||
+              window.require("WAWebCollections").WAWebGroupMetadataCollection;
+            await groupMetadata.update(chatWid);
+            const { toPn } = window.require("WAWebLidMigrationUtils");
+            const serializedMetadata = chat.groupMetadata.serialize();
+            for (const p of serializedMetadata.participants || []) {
+              p.id = toPn(p.id) ?? p.id;
+            }
+            model.groupMetadata = serializedMetadata;
+            model.isReadOnly = chat.groupMetadata.announce;
+          } catch (ignoredError) {
+            // Group metadata occasionally can't be resolved; keep the chat usable without it.
+          }
+        }
+
+        model.lastMessage = null;
+        if (model.msgs && model.msgs.length) {
+          try {
+            const lastMessage = chat.lastReceivedKey
+              ? window.require("WAWebCollections").Msg.get(chat.lastReceivedKey._serialized) ||
+                (
+                  await window
+                    .require("WAWebCollections")
+                    .Msg.getMessagesById([chat.lastReceivedKey._serialized])
+                )?.messages?.[0]
+              : null;
+            lastMessage && (model.lastMessage = window.WWebJS.getMessageModel(lastMessage));
+          } catch (ignoredError) {
+            // The known DataError: WhatsApp Web's message store can't resolve this chat's last
+            // message. The preview is a nice-to-have - skip it rather than losing the whole chat.
+          }
+        }
+
+        delete model.msgs;
+        delete model.msgUnsyncedButtonReplyMsgs;
+        delete model.unsyncedButtonReplies;
+        return model;
+      }
+
       const models = [];
       const failed = [];
+
+      if (targetChatId) {
+        try {
+          const chatWid = window.require("WAWebWidFactory").createWid(targetChatId);
+          const chat =
+            window.require("WAWebCollections").Chat.get(chatWid) ||
+            (await window.require("WAWebFindChatAction").findOrCreateLatestChat(chatWid))?.chat;
+          if (chat) {
+            models.push(await buildModel(chat));
+          }
+        } catch (error) {
+          failed.push({
+            id: targetChatId,
+            message: error && error.message ? String(error.message) : String(error),
+          });
+        }
+        return { models, failed };
+      }
+
+      const rawChats = window.require("WAWebCollections").Chat.getModelsArray();
       for (const chat of rawChats) {
         try {
-          models.push(await window.WWebJS.getChatModel(chat));
+          models.push(await buildModel(chat));
         } catch (error) {
           failed.push({
             id: chat?.id?._serialized || null,
@@ -65,7 +138,7 @@ async function fetchChatsResilient(activeClient, { wrap = false } = {}) {
         }
       }
       return { models, failed };
-    });
+    }, targetChatId);
 
     for (const failure of failed) {
       console.warn(JSON.stringify({
@@ -79,10 +152,27 @@ async function fetchChatsResilient(activeClient, { wrap = false } = {}) {
     return { chats, failed };
   }
 
-  // Test doubles only expose getChats(); there's no per-chat isolation available for those,
-  // so a single simulated failure still fails the whole call, same as before this helper existed.
+  // Test doubles don't expose a real pupPage - preserve the prior, simpler behavior exactly.
+  if (targetChatId && typeof activeClient.getChatById === "function") {
+    let targetChat = null;
+    try {
+      targetChat = await activeClient.getChatById(targetChatId);
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: "whatsapp_history_get_chat_by_id_failed",
+        chat_id: targetChatId,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+    return { chats: targetChat ? [targetChat] : [], failed: [] };
+  }
+
   const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
-  return { chats: Array.isArray(chats) ? chats : [], failed: [] };
+  let filteredChats = Array.isArray(chats) ? chats : [];
+  if (targetChatId) {
+    filteredChats = filteredChats.filter((chat) => String(getChatId(chat) || "") === targetChatId);
+  }
+  return { chats: filteredChats, failed: [] };
 }
 
 // One-off diagnostic: window.WWebJS.getChatModel() is a single opaque call from our side, and
@@ -1061,32 +1151,10 @@ async function backfillAllChats({
 
   const targetChatId = chatId ? String(chatId).trim() : null;
 
-  // getChats() walks every chat WhatsApp Web knows about in a single Promise.all; if any one
-  // chat's model construction throws (seen with @lid groups mid-migration to LID addressing),
-  // the whole call rejects and a single-chat backfill request fails even though the requested
-  // chat itself is fine. Fetch just the target chat directly when we can to avoid that blast radius.
-  let orderedChats;
-  if (targetChatId && typeof activeClient.getChatById === "function") {
-    let targetChat = null;
-    try {
-      targetChat = await activeClient.getChatById(targetChatId);
-    } catch (error) {
-      console.warn(JSON.stringify({
-        event: "whatsapp_history_get_chat_by_id_failed",
-        chat_id: targetChatId,
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    }
-    orderedChats = targetChat ? [targetChat] : [];
-  } else {
-    const { chats } = await fetchChatsResilient(activeClient, { wrap: true });
-    orderedChats = Array.isArray(chats)
-      ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
-      : [];
-    if (targetChatId) {
-      orderedChats = orderedChats.filter((chat) => String(getChatId(chat) || "") === targetChatId);
-    }
-  }
+  const { chats } = await fetchChatModelsSafe(activeClient, { targetChatId, wrap: true });
+  const orderedChats = Array.isArray(chats)
+    ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
+    : [];
 
   let resolvedEligibleIdentityIndex = eligibleIdentityIndex;
   let crmLookupFailed = null;
@@ -1422,7 +1490,7 @@ async function listChats({ externalAccountId, search = "", limit = 200, offset =
     throw new Error(`WhatsApp account id mismatch: requested ${externalAccountId} but this service is configured for ${whatsappClientId}`);
   }
 
-  const { chats } = await fetchChatsResilient(activeClient);
+  const { chats } = await fetchChatModelsSafe(activeClient);
   const normalized = (Array.isArray(chats) ? chats : []).map((chat) => ({
     chat_id: String(getChatId(chat) || ""),
     chat_name: getChatName(chat) || null,
@@ -1559,7 +1627,7 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
     throw new Error("WhatsApp client is not ready");
   }
 
-  const { chats } = await fetchChatsResilient(client, { wrap: true });
+  const { chats } = await fetchChatModelsSafe(client, { wrap: true });
   const orderedChats = Array.isArray(chats)
     ? chats.slice().filter(isRelevantChat).sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || ""))).slice(0, chatCount)
     : [];
