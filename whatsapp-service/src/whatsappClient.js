@@ -13,6 +13,7 @@ const {
   crmOutboundResolutionUrl,
   reconnectDelayMs,
   whatsappClientId,
+  whatsappWebVersion,
   whatsappHistoryBackfillBatchSize,
   whatsappHistoryBackfillLimit,
   whatsappHistoryBackfillEnabled,
@@ -1214,6 +1215,11 @@ function createClient() {
     puppeteer: {
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    },
+    webVersion: whatsappWebVersion,
+    webVersionCache: {
+      type: "local",
+      strict: true,
     },
   });
 

@@ -24,6 +24,13 @@ module.exports = {
   port: toInteger(process.env.PORT, 3001),
   apiKey: String(process.env.API_KEY || "").trim(),
   whatsappClientId: String(process.env.WHATSAPP_CLIENT_ID || "edi-crm-whatsapp").trim(),
+  // Pins the WhatsApp Web client build whatsapp-web.js loads. Without a pin, whatsapp-web.js
+  // fetches whatever build WhatsApp is currently serving on every fresh browser session (i.e.
+  // every service restart), so an unannounced WhatsApp-side rollout can silently break chat
+  // parsing (seen 2026-07-15: a same-day WhatsApp Web update broke @lid chat model construction
+  // account-wide). Bump this only after confirming the new version works; see .wwebjs_cache/
+  // for other previously-seen versions to roll back to.
+  whatsappWebVersion: String(process.env.WHATSAPP_WEB_VERSION || "2.3000.1043053164").trim(),
   reconnectDelayMs: Math.max(1000, toInteger(process.env.RECONNECT_DELAY_MS, 5000)),
   crmWebhookUrl,
   crmWebhookSecret: String(process.env.CRM_WEBHOOK_SECRET || "").trim(),
