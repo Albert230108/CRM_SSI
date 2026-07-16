@@ -241,6 +241,50 @@ type WhatsappTimelineMessage = {
   created_at: string
 }
 
+// Distinct hue per linked WhatsApp account; darker shade = outbound, lighter shade = inbound.
+// Direction is also encoded by bubble alignment, so this is a secondary (not sole) signal.
+type WhatsappAccountPalette = {
+  outboundBubble: string
+  outboundBadge: string
+  inboundBubble: string
+  inboundBadge: string
+  dot: string
+}
+
+const WHATSAPP_ACCOUNT_PALETTES: WhatsappAccountPalette[] = [
+  {
+    outboundBubble: 'ml-auto border-green-300 bg-green-100',
+    outboundBadge: 'bg-green-200 text-green-900',
+    inboundBubble: 'border-green-200 bg-green-50',
+    inboundBadge: 'bg-green-100 text-green-700',
+    dot: 'bg-green-500',
+  },
+  {
+    outboundBubble: 'ml-auto border-violet-300 bg-violet-100',
+    outboundBadge: 'bg-violet-200 text-violet-900',
+    inboundBubble: 'border-violet-200 bg-violet-50',
+    inboundBadge: 'bg-violet-100 text-violet-700',
+    dot: 'bg-violet-500',
+  },
+  {
+    outboundBubble: 'ml-auto border-orange-300 bg-orange-100',
+    outboundBadge: 'bg-orange-200 text-orange-900',
+    inboundBubble: 'border-orange-200 bg-orange-50',
+    inboundBadge: 'bg-orange-100 text-orange-700',
+    dot: 'bg-orange-500',
+  },
+  {
+    outboundBubble: 'ml-auto border-sky-300 bg-sky-100',
+    outboundBadge: 'bg-sky-200 text-sky-900',
+    inboundBubble: 'border-sky-200 bg-sky-50',
+    inboundBadge: 'bg-sky-100 text-sky-700',
+    dot: 'bg-sky-500',
+  },
+]
+
+const getWhatsappMessageAccountKey = (message: WhatsappTimelineMessage) =>
+  message.external_account_id || message.external_phone_id || message.whatsapp_chat_id || 'unknown'
+
 type ThreadViewProps = {
   tenantId?: number
   reloadSignal?: number
@@ -297,6 +341,36 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
   const [livePollSignal, setLivePollSignal] = useState(0)
+
+  // Assign each linked WhatsApp account a stable color/ordinal based on link creation order,
+  // so "Account 1"/"Account 2" and their colors stay consistent across reloads.
+  const whatsappAccountColorIndex = (() => {
+    const map = new Map<string, number>()
+    const orderedLinks = [...whatsappLinks].sort((a, b) => {
+      const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      return timeDiff !== 0 ? timeDiff : a.id - b.id
+    })
+    orderedLinks.forEach((link) => {
+      if (link.external_account_id && !map.has(link.external_account_id)) {
+        map.set(link.external_account_id, map.size % WHATSAPP_ACCOUNT_PALETTES.length)
+      }
+    })
+    return map
+  })()
+
+  const getWhatsappAccountPalette = (accountKey: string) => {
+    const index = whatsappAccountColorIndex.get(accountKey)
+    if (index !== undefined) return WHATSAPP_ACCOUNT_PALETTES[index]
+    let hash = 0
+    for (let i = 0; i < accountKey.length; i += 1) hash = (hash * 31 + accountKey.charCodeAt(i)) >>> 0
+    return WHATSAPP_ACCOUNT_PALETTES[hash % WHATSAPP_ACCOUNT_PALETTES.length]
+  }
+
+  const getWhatsappAccountLabel = (accountKey: string) => {
+    const index = whatsappAccountColorIndex.get(accountKey)
+    if (index !== undefined) return `Account ${index + 1}`
+    return accountKey === 'unknown' ? 'Unknown account' : accountKey
+  }
 
   useEffect(() => {
     if (!tenantId) return
@@ -886,17 +960,22 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 <div className="space-y-3 mb-4">
                   {selectedWhatsappBlock.messages.map((blockMessage) => {
                     const isOutbound = blockMessage.direction === 'outbound'
+                    const accountKey = getWhatsappMessageAccountKey(blockMessage)
+                    const palette = getWhatsappAccountPalette(accountKey)
                     return (
                       <article
                         key={blockMessage.id}
-                        className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                        className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                          <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {isOutbound ? 'Outbound' : 'Inbound'}
+                          <span
+                            title={accountKey}
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold ${isOutbound ? palette.outboundBadge : palette.inboundBadge}`}
+                          >
+                            <span className={`h-2 w-2 rounded-full ${palette.dot}`} />
+                            {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
                           </span>
                           <span>{formatTimestamp(blockMessage.created_at)}</span>
-                          <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
                         </div>
                         {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                         <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
@@ -1008,17 +1087,22 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               <div className="space-y-3 mb-4">
                 {selectedWhatsappGroup.messages.map((blockMessage) => {
                   const isOutbound = blockMessage.direction === 'outbound'
+                  const accountKey = getWhatsappMessageAccountKey(blockMessage)
+                  const palette = getWhatsappAccountPalette(accountKey)
                   return (
                     <article
                       key={blockMessage.id}
-                      className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                      className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                     >
                       <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                        <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {isOutbound ? 'Outbound' : 'Inbound'}
+                        <span
+                          title={accountKey}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold ${isOutbound ? palette.outboundBadge : palette.inboundBadge}`}
+                        >
+                          <span className={`h-2 w-2 rounded-full ${palette.dot}`} />
+                          {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
                         </span>
                         <span>{formatTimestamp(blockMessage.created_at)}</span>
-                        <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
                       </div>
                       {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
