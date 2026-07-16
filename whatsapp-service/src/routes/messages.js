@@ -1,6 +1,6 @@
 const express = require("express");
 
-function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample, listChats }) {
+function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats }) {
   const router = express.Router();
 
   router.get("/chats", requireApiKey, async (req, res) => {
@@ -124,6 +124,24 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
       const message = error instanceof Error ? error.message : "Failed to debug WhatsApp history sync";
       const status = message.includes("not ready") ? 503 : 500;
       console.error("Failed to handle /admin/debug/whatsapp-history-sync request:", error);
+      return res.status(status).json({ ok: false, error: message });
+    }
+  });
+
+  router.post("/admin/debug/chat-model", requireApiKey, async (req, res) => {
+    const chatId = typeof req.body?.chatId === "string" ? req.body.chatId.trim() : (typeof req.query?.chatId === "string" ? req.query.chatId.trim() : "");
+    console.info("[whatsapp] chat model debug endpoint hit", { path: "/admin/debug/chat-model", chatId: chatId || null });
+    try {
+      if (!chatId) {
+        return res.status(400).json({ ok: false, error: "chatId is required" });
+      }
+      const result = await debugChatModelBuild(chatId);
+      console.info("[whatsapp] chat model debug finished", result);
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to debug chat model build";
+      const status = message.includes("not ready") ? 503 : 500;
+      console.error("Failed to handle /admin/debug/chat-model request:", error);
       return res.status(status).json({ ok: false, error: message });
     }
   });

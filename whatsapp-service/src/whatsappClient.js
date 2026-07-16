@@ -85,6 +85,122 @@ async function fetchChatsResilient(activeClient, { wrap = false } = {}) {
   return { chats: Array.isArray(chats) ? chats : [], failed: [] };
 }
 
+// One-off diagnostic: window.WWebJS.getChatModel() is a single opaque call from our side, and
+// its errors serialize across the puppeteer bridge as a bare minified identifier (e.g. "r") with
+// no useful message. This reimplements it step by step so we can see exactly which sub-step
+// throws for a given chat, and with what real error name/message/stack, instead of a dead end.
+async function debugChatModelBuild(chatId) {
+  if (!client || !ready) {
+    throw new Error("WhatsApp client is not ready");
+  }
+  const targetChatId = String(chatId || "").trim();
+  if (!targetChatId) {
+    throw new Error("chatId is required");
+  }
+
+  return client.pupPage.evaluate(async (chatId) => {
+    function describeError(error) {
+      const details = {
+        name: error?.name ?? null,
+        message: error?.message ?? String(error),
+        stack: error?.stack ?? null,
+      };
+      try {
+        for (const key of Object.getOwnPropertyNames(error || {})) {
+          if (!(key in details)) details[key] = error[key];
+        }
+      } catch (ignored) {
+        // best-effort only
+      }
+      return details;
+    }
+
+    const steps = [];
+    let chatWid;
+    try {
+      chatWid = window.require("WAWebWidFactory").createWid(chatId);
+      steps.push({ step: "createWid", ok: true });
+    } catch (error) {
+      steps.push({ step: "createWid", ok: false, error: describeError(error) });
+      return { steps, chatFound: false };
+    }
+
+    let chat;
+    try {
+      chat =
+        window.require("WAWebCollections").Chat.get(chatWid) ||
+        (await window.require("WAWebFindChatAction").findOrCreateLatestChat(chatWid))?.chat;
+      steps.push({ step: "resolveChat", ok: true, found: Boolean(chat) });
+    } catch (error) {
+      steps.push({ step: "resolveChat", ok: false, error: describeError(error) });
+      return { steps, chatFound: false };
+    }
+
+    if (!chat) {
+      return { steps, chatFound: false };
+    }
+
+    try {
+      chat.serialize();
+      steps.push({ step: "serialize", ok: true });
+    } catch (error) {
+      steps.push({ step: "serialize", ok: false, error: describeError(error) });
+    }
+
+    try {
+      const formattedTitle = chat.formattedTitle;
+      steps.push({ step: "formattedTitle", ok: true, value: formattedTitle || null });
+    } catch (error) {
+      steps.push({ step: "formattedTitle", ok: false, error: describeError(error) });
+    }
+
+    const hasGroupMetadata = Boolean(chat.groupMetadata);
+    steps.push({ step: "groupMetadataPresence", ok: true, value: hasGroupMetadata });
+    if (hasGroupMetadata) {
+      try {
+        const groupChatWid = window.require("WAWebWidFactory").createWid(chat.id._serialized);
+        const groupMetadata =
+          window.require("WAWebCollections").GroupMetadata ||
+          window.require("WAWebCollections").WAWebGroupMetadataCollection;
+        await groupMetadata.update(groupChatWid);
+        steps.push({ step: "groupMetadata.update", ok: true });
+      } catch (error) {
+        steps.push({ step: "groupMetadata.update", ok: false, error: describeError(error) });
+      }
+      try {
+        const { toPn } = window.require("WAWebLidMigrationUtils");
+        const serializedMetadata = chat.groupMetadata.serialize();
+        for (const p of serializedMetadata.participants || []) {
+          toPn(p.id);
+        }
+        steps.push({ step: "groupMetadata.serialize+toPn", ok: true });
+      } catch (error) {
+        steps.push({ step: "groupMetadata.serialize+toPn", ok: false, error: describeError(error) });
+      }
+    }
+
+    const hasLastReceivedKey = Boolean(chat.lastReceivedKey);
+    steps.push({ step: "lastReceivedKeyPresence", ok: true, value: hasLastReceivedKey });
+    if (hasLastReceivedKey) {
+      try {
+        const lastMessage =
+          window.require("WAWebCollections").Msg.get(chat.lastReceivedKey._serialized) ||
+          (await window.require("WAWebCollections").Msg.getMessagesById([chat.lastReceivedKey._serialized]))?.messages?.[0];
+        steps.push({ step: "lastMessageLookup", ok: true, found: Boolean(lastMessage) });
+      } catch (error) {
+        steps.push({ step: "lastMessageLookup", ok: false, error: describeError(error) });
+      }
+    }
+
+    return {
+      steps,
+      chatFound: true,
+      chatId: chat?.id?._serialized || null,
+      isGroup: Boolean(chat?.groupMetadata),
+    };
+  }, targetChatId);
+}
+
 function getChatName(chat) {
   const explicitName = chat?.name || chat?.formattedTitle || chat?.contact?.pushname || chat?.contact?.name || null;
   if (explicitName) {
@@ -1558,6 +1674,7 @@ module.exports = {
   runHistoryBackfill,
   backfillAllChats,
   runHistoryDebugSample,
+  debugChatModelBuild,
   buildHistoryDedupeKey,
   sortBackfillMessages,
   listChats,
