@@ -171,8 +171,9 @@ def _extract_guest_fields(item: dict) -> dict:
     departure_time = str(item.get("departureTime") or item.get("checkOutTime") or "").strip() or None
     room_details = _extract_room_details(item)
     room_name = room_details["room_name"]
-    source = str(item.get("source") or item.get("channel") or item.get("referer2") or item.get("portalId") or "").strip() or None
+    source = str(item.get("source") or item.get("channel") or item.get("portalId") or "").strip() or None
     referer = str(item.get("referer") or item.get("referralSource") or "").strip() or None
+    original_referer = str(item.get("referer2") or "").strip() or None
     try:
         total_price = Decimal(str(item.get("totalPrice") or item.get("price") or item.get("total") or 0)) or None
     except (TypeError, ValueError, ArithmeticError):
@@ -296,6 +297,7 @@ def _extract_guest_fields(item: dict) -> dict:
         "room_name": room_name,
         "source": source,
         "referer": referer,
+        "original_referer": original_referer,
         "total_price": total_price,
         "commission": commission,
         "deposit": deposit,

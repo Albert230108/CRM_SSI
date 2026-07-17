@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -158,37 +159,11 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
     return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700' }
   }
 
-  const getChannelIcon = (channel: string | null) => {
-    if (!channel) return null
-    if (channel.toLowerCase().includes('email')) return '✉️'
-    if (channel.toLowerCase().includes('whatsapp')) return '💬'
-    return '💬'
-  }
-
   const getDirectionIcon = (direction: string | null) => {
     if (!direction) return null
     if (direction.toLowerCase() === 'inbound') return '⬇'
     if (direction.toLowerCase() === 'outbound') return '⬆'
     return '↔'
-  }
-
-  const formatMessageTime = (dateStr: string | null) => {
-    if (!dateStr) return null
-    try {
-      const date = new Date(dateStr)
-      const now = new Date()
-      const diffMs = now.getTime() - date.getTime()
-      const diffMins = Math.floor(diffMs / 60000)
-      const diffHours = Math.floor(diffMs / 3600000)
-      const diffDays = Math.floor(diffMs / 86400000)
-
-      if (diffMins < 60) return `${diffMins}m ago`
-      if (diffHours < 24) return `${diffHours}h ago`
-      if (diffDays < 7) return `${diffDays}d ago`
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    } catch {
-      return null
-    }
   }
 
   return (
@@ -255,7 +230,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
             const active = selectedTenantId === tenant.id
             const colors = getStatusColor(tenant.booking_status)
             const contact = [tenant.email, tenant.phone, tenant.mobile].filter(Boolean).join(' · ') || 'No contact'
-            const msgTime = formatMessageTime(tenant.last_message_date)
+            const msgTime = formatRelativeTime(tenant.last_message_date)
             const channelIcon = getChannelIcon(tenant.last_message_channel)
             const directionIcon = getDirectionIcon(tenant.last_message_direction)
 

@@ -21,6 +21,8 @@ type Booking = {
   property_name: string | null
   booking_time?: string | null
   modified_time?: string | null
+  referer: string | null
+  original_referer: string | null
 }
 
 type ImportModalProps = {
@@ -584,6 +586,13 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                     <p className="mt-1 text-sm text-gray-500">{booking.booking_status || 'Unknown status'}</p>
                     {booking.responsible_comm && (
                       <p className="mt-1 text-sm text-cyan-600">Responsible: {booking.responsible_comm}</p>
+                    )}
+                    {(booking.referer || booking.original_referer) && (
+                      <p className="mt-1 text-xs text-gray-400">
+                        {booking.referer && <>Referer: {booking.referer}</>}
+                        {booking.referer && booking.original_referer && ' · '}
+                        {booking.original_referer && <>Original referer: {booking.original_referer}</>}
+                      </p>
                     )}
                   </div>
                 </div>

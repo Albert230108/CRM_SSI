@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
+import NotificationBell from './NotificationBell'
 import { useAuthStore } from '../store/authStore'
 import crmLogo from '../assets/logo.jpg'
 
@@ -18,6 +19,7 @@ export default function Navbar() {
         </Link>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-500">{user?.full_name || user?.email || 'Signed in'}</span>
+          <NotificationBell />
           {user?.is_admin ? (
             <Link
               to="/admin/settings"

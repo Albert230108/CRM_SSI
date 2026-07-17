@@ -16,6 +16,7 @@ from app.core.whatsapp_identity import get_canonical_whatsapp_identity
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.notification_service import create_notification
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
@@ -567,6 +568,14 @@ def _process_whatsapp_message(
             message=msg_text,
             created_at=ts,
         )
+    )
+    create_notification(
+        db,
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        channel="whatsapp",
+        direction="inbound",
+        preview=msg_text,
     )
     db.commit()
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)

@@ -28,6 +28,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
 from app.services.background_jobs import get_job, start_job
+from app.services.notification_service import create_notification
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
@@ -358,6 +359,15 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         sent_at=sent_at,
                         raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},
                     )
+                )
+            if direction == "inbound" and tenant is not None:
+                create_notification(
+                    db,
+                    tenant_id=tenant.id,
+                    tenant_name=tenant.name,
+                    channel="email",
+                    direction="inbound",
+                    preview=body_text[:255] if body_text else None,
                 )
         except IntegrityError:
             continue

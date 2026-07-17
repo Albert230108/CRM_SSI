@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
 
 from sqlalchemy.exc import IntegrityError
@@ -141,10 +141,14 @@ def _find_outbound_communication(
         # history. Matching on message text alone isn't enough either — two distinct messages
         # sent moments apart with similar/identical text (e.g. from another linked device) would
         # collide on text and still overwrite each other. A genuine "same message reported twice"
-        # (e.g. both message_create and an explicit send path capturing one physical WhatsApp
-        # message) shares the exact same WhatsApp-reported timestamp; two separate sends do not
-        # (even sent seconds apart). Requiring both text AND timestamp to match keeps this a
-        # same-message upgrade instead of matching a genuinely different message.
+        # (e.g. once via the CRM's own send API — persisted immediately with the backend's
+        # wall-clock time — and once via the message_create listener observing the same physical
+        # WhatsApp message a moment later) has matching text but a created_at that can differ by
+        # a few seconds due to that processing gap, not an exact match. Two truly separate sends
+        # ("no response in between") are realistically at least tens of seconds apart. A narrow
+        # time window on top of the text match distinguishes "same message, reported twice" from
+        # "two different messages that happen to say the same thing".
+        DUPLICATE_CAPTURE_WINDOW = timedelta(seconds=30)
         normalized_message = _normalize_text(message)
         for match_field, match_value in (
             ("whatsapp_identity_key", whatsapp_identity_key),
@@ -165,9 +169,23 @@ def _find_outbound_communication(
             )
             if normalized_message is not None:
                 query = query.filter(Communication.message == normalized_message)
+            candidates = query.order_by(Communication.created_at.desc(), Communication.id.desc()).limit(5).all()
             if created_at is not None:
-                query = query.filter(Communication.created_at == created_at)
-            communication = query.order_by(Communication.created_at.desc(), Communication.id.desc()).first()
+                target = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+                communication = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if abs(
+                            (candidate.created_at if candidate.created_at.tzinfo else candidate.created_at.replace(tzinfo=timezone.utc))
+                            - target
+                        )
+                        <= DUPLICATE_CAPTURE_WINDOW
+                    ),
+                    None,
+                )
+            else:
+                communication = candidates[0] if candidates else None
             if communication is not None:
                 return communication, f"{match_field}_external_account_id"
 

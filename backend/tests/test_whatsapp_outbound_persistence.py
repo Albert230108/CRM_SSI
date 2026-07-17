@@ -60,6 +60,55 @@ def test_second_distinct_outbound_message_without_provider_message_id_creates_ne
     assert second.communication.message == "Second, different message from another device"
 
 
+def test_duplicate_capture_of_same_message_seconds_apart_upgrades_placeholder(db_session):
+    # Regression: sending a message from the CRM persists it immediately (backend wall-clock
+    # created_at, often with a real provider_message_id already). The message_create listener
+    # also observes that same physical WhatsApp message a moment later, sometimes without a
+    # provider_message_id, and reports WhatsApp's own timestamp for it - which can differ from
+    # the first capture's created_at by a few seconds. Requiring exact created_at equality
+    # (rather than a tolerance window) caused this second capture to create a duplicate row
+    # instead of being recognized as the same message, showing the message twice in the UI.
+    tenant = create_tenant(db_session, name="Tenant Outbound Persist D", booking_id="B-outbound-persist-d")
+
+    first = persist_whatsapp_outbound_communication(
+        db_session,
+        tenant_id=tenant.id,
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_phone_id=None,
+        external_chat_namespace=None,
+        whatsapp_chat_id="155066153590862@lid",
+        whatsapp_identity_key="155066153590862@lid",
+        whatsapp_normalized_phone=None,
+        provider_message_id=None,
+        subject=None,
+        message="Hi Giacomo, here are the next steps",
+        created_at=datetime(2026, 7, 17, 14, 42, 0, tzinfo=timezone.utc),
+    )
+    db_session.commit()
+    assert first.persistence_state == "created"
+
+    second = persist_whatsapp_outbound_communication(
+        db_session,
+        tenant_id=tenant.id,
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_phone_id=None,
+        external_chat_namespace=None,
+        whatsapp_chat_id="155066153590862@lid",
+        whatsapp_identity_key="155066153590862@lid",
+        whatsapp_normalized_phone=None,
+        provider_message_id=None,
+        subject=None,
+        message="Hi Giacomo, here are the next steps",
+        created_at=datetime(2026, 7, 17, 14, 42, 4, tzinfo=timezone.utc),
+    )
+    db_session.commit()
+
+    assert second.persistence_state == "deduped"
+    assert second.communication.id == first.communication.id
+
+
 def test_duplicate_capture_of_the_same_physical_message_upgrades_placeholder(db_session):
     # The original "upgrade a pending placeholder" behavior must still work when the same
     # physical WhatsApp message is reported twice without a provider_message_id (e.g. captured
