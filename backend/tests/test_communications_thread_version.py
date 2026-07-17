@@ -37,7 +37,13 @@ def test_global_thread_version_is_none_when_nothing_exists(non_admin_client, db_
     response = non_admin_client.get("/api/communications/thread-version")
 
     assert response.status_code == 200
-    assert response.json() == {"latest_at": None}
+    assert response.json() == {
+        "latest_at": None,
+        "tenant_id": None,
+        "tenant_name": None,
+        "channel": None,
+        "direction": None,
+    }
 
 
 def test_global_thread_version_reflects_tenant_update_without_messages(non_admin_client, db_session):
@@ -49,7 +55,12 @@ def test_global_thread_version_reflects_tenant_update_without_messages(non_admin
     response = non_admin_client.get("/api/communications/thread-version")
 
     assert response.status_code == 200
-    assert _as_utc(datetime.fromisoformat(response.json()["latest_at"])) == future
+    payload = response.json()
+    assert _as_utc(datetime.fromisoformat(payload["latest_at"])) == future
+    # A plain tenant-record update (no new message) carries no tenant/channel/direction info.
+    assert payload["tenant_id"] is None
+    assert payload["channel"] is None
+    assert payload["direction"] is None
 
 
 def test_tenant_thread_version_reflects_tenant_update_without_messages(non_admin_client, db_session):
@@ -79,3 +90,17 @@ def test_global_thread_version_reflects_latest_message_across_tenants(non_admin_
 
     assert baseline["latest_at"] is not None
     assert updated["latest_at"] != baseline["latest_at"]
+
+
+def test_global_thread_version_reports_tenant_and_channel_for_latest_message(non_admin_client, db_session):
+    tenant = create_tenant(db_session, name="Jane Doe", booking_id="B-3")
+    add_whatsapp_message(db_session, tenant.id, created_at=datetime.now(timezone.utc))
+
+    response = non_admin_client.get("/api/communications/thread-version")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_id"] == tenant.id
+    assert payload["tenant_name"] == "Jane Doe"
+    assert payload["channel"] == "whatsapp"
+    assert payload["direction"] == "inbound"

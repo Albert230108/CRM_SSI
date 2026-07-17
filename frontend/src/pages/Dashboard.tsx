@@ -7,6 +7,7 @@ import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
 import SyncProgressOverlay from '../components/SyncProgressOverlay'
 import ThreadView from '../components/ThreadView'
+import ToastCard from '../components/ToastCard'
 import TileLoadingOverlay from '../components/TileLoadingOverlay'
 import {
   clampMiddleColumnWidth,
@@ -24,8 +25,14 @@ import {
 import { useAuthStore } from '../store/authStore'
 
 const DESKTOP_BREAKPOINT = '(min-width: 768px)'
+const MESSAGE_TOAST_DURATION_MS = 6000
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+type MessageToast = {
+  id: number
+  text: string
+}
 
 type SyncSummary = {
   started_at: string
@@ -98,6 +105,17 @@ export default function Dashboard() {
   const [syncError, setSyncError] = useState('')
   const [syncToken, setSyncToken] = useState(0)
   const [toastVisible, setToastVisible] = useState(false)
+  const [messageToasts, setMessageToasts] = useState<MessageToast[]>([])
+  const messageToastIdRef = useRef(0)
+
+  const handleNewMessage = useCallback(({ tenantName, channel }: { tenantName: string; channel: string; direction: string }) => {
+    const id = ++messageToastIdRef.current
+    const channelLabel = channel.toLowerCase() === 'whatsapp' ? 'WhatsApp message' : channel.toLowerCase() === 'email' ? 'email' : channel
+    setMessageToasts((current) => [...current, { id, text: `New ${channelLabel} from ${tenantName}` }])
+    window.setTimeout(() => {
+      setMessageToasts((current) => current.filter((toast) => toast.id !== id))
+    }, MESSAGE_TOAST_DURATION_MS)
+  }, [])
 
   const columnsContainerRef = useRef<HTMLDivElement | null>(null)
   const [containerWidth, setContainerWidth] = useState(1200)
@@ -295,14 +313,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {toastVisible && (syncSummary || syncError) ? (
-        <div
-          className={[
-            'fixed right-4 top-4 z-50 w-80 overflow-hidden rounded-2xl border shadow-lg',
-            syncError ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900',
-          ].join(' ')}
-        >
-          <div className="px-4 py-3 text-sm">
+      <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+        {toastVisible && (syncSummary || syncError) ? (
+          <ToastCard toastKey={syncToken} tone={syncError ? 'error' : 'success'} durationMs={8000}>
             {syncError ? (
               <p className="font-semibold">{syncError}</p>
             ) : syncSummary ? (
@@ -319,15 +332,15 @@ export default function Dashboard() {
                 ) : null}
               </>
             ) : null}
-          </div>
-          <div className={['h-1 w-full', syncError ? 'bg-rose-200' : 'bg-emerald-200'].join(' ')}>
-            <div
-              key={syncToken}
-              className={['h-full animate-toast-countdown', syncError ? 'bg-rose-500' : 'bg-emerald-500'].join(' ')}
-            />
-          </div>
-        </div>
-      ) : null}
+          </ToastCard>
+        ) : null}
+
+        {messageToasts.map((toast) => (
+          <ToastCard key={toast.id} toastKey={toast.id} tone="info" durationMs={MESSAGE_TOAST_DURATION_MS}>
+            <p className="font-medium">{toast.text}</p>
+          </ToastCard>
+        ))}
+      </div>
 
       <div ref={columnsContainerRef} className="flex flex-row flex-1 min-h-0 overflow-hidden">
         <section
@@ -354,6 +367,7 @@ export default function Dashboard() {
             <TenantList
               selectedTenantId={selectedTenantId}
               reloadSignal={tenantReloadSignal}
+              onNewMessage={handleNewMessage}
             />
           </div>
         </section>

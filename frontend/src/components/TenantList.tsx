@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 
@@ -18,12 +18,21 @@ type Tenant = {
   last_message_direction: string | null
 }
 
+type ThreadVersion = {
+  latest_at: string | null
+  tenant_id?: number | null
+  tenant_name?: string | null
+  channel?: string | null
+  direction?: string | null
+}
+
 type TenantListProps = {
   selectedTenantId?: number
   reloadSignal?: number
+  onNewMessage?: (info: { tenantName: string; channel: string; direction: string }) => void
 }
 
-export default function TenantList({ selectedTenantId, reloadSignal }: TenantListProps) {
+export default function TenantList({ selectedTenantId, reloadSignal, onNewMessage }: TenantListProps) {
   const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
   const [tenants, setTenants] = useState<Tenant[]>([])
@@ -35,6 +44,11 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
   const [sortByMessage, setSortByMessage] = useState(true)
   const [sortDesc, setSortDesc] = useState(true)
   const [livePollSignal, setLivePollSignal] = useState(0)
+  const onNewMessageRef = useRef(onNewMessage)
+
+  useEffect(() => {
+    onNewMessageRef.current = onNewMessage
+  }, [onNewMessage])
 
   useEffect(() => {
     let cancelled = false
@@ -46,7 +60,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         })
         if (!response.ok || cancelled) return
-        const data: { latest_at: string | null } = await response.json()
+        const data: ThreadVersion = await response.json()
         if (lastSeenVersion === null) {
           lastSeenVersion = data.latest_at
           return
@@ -54,6 +68,9 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
         if (data.latest_at !== lastSeenVersion) {
           lastSeenVersion = data.latest_at
           setLivePollSignal((current) => current + 1)
+          if (data.tenant_id != null && data.channel && data.direction === 'inbound' && data.tenant_name) {
+            onNewMessageRef.current?.({ tenantName: data.tenant_name, channel: data.channel, direction: data.direction })
+          }
         }
       } catch {
         // Ignore transient poll failures; next interval tick will retry.

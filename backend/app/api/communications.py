@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
@@ -200,27 +201,70 @@ def get_tenant_thread_version(
     return {"latest_at": latest_at.isoformat() if latest_at else None}
 
 
-@router.get("/thread-version")
+class ThreadVersionRead(BaseModel):
+    latest_at: str | None
+    tenant_id: int | None = None
+    tenant_name: str | None = None
+    channel: str | None = None
+    direction: str | None = None
+
+
+@router.get("/thread-version", response_model=ThreadVersionRead)
 def get_global_thread_version(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> dict[str, str | None]:
+) -> ThreadVersionRead:
     """Cheap marker the tenant list polls to detect changes across any tenant.
 
     Same idea as `get_tenant_thread_version` but with no tenant filter, so the sidebar can
     re-sort/re-fetch the tenant list (e.g. to surface a new WhatsApp message, or recolor a
     tenant whose booking_status just changed via the Beds24 webhook) without the currently
     open tenant's thread being the only thing kept live.
-    """
-    from sqlalchemy import func
 
-    latest_communication_at = db.query(func.max(Communication.created_at)).scalar()
-    latest_email_at = db.query(func.max(ConversationMessage.sent_at)).scalar()
+    Also carries the tenant/channel/direction of whichever event produced `latest_at`, so the
+    frontend can show a "new message" toast without a second request. When the latest event is
+    a plain tenant-record update (e.g. Beds24 status change, no new message), those fields stay
+    null. This only reflects the single most-recent event per poll tick, not a full event log.
+    """
+    latest_communication = (
+        db.query(Communication).order_by(Communication.created_at.desc()).limit(1).first()
+    )
+    latest_email = (
+        db.query(ConversationMessage, Conversation.tenant_id)
+        .join(Conversation, ConversationMessage.conversation_id == Conversation.id)
+        .order_by(ConversationMessage.sent_at.desc())
+        .limit(1)
+        .first()
+    )
     latest_tenant_update_at = db.query(func.max(Tenant.updated_at)).scalar()
 
-    candidates = [value for value in (latest_communication_at, latest_email_at, latest_tenant_update_at) if value is not None]
-    latest_at = max(candidates) if candidates else None
-    return {"latest_at": latest_at.isoformat() if latest_at else None}
+    candidates: list[tuple[Any, int | None, str | None, str | None]] = []
+    if latest_communication is not None:
+        candidates.append(
+            (latest_communication.created_at, latest_communication.tenant_id, latest_communication.channel, latest_communication.direction)
+        )
+    if latest_email is not None:
+        email_message, email_tenant_id = latest_email
+        candidates.append((email_message.sent_at, email_tenant_id, "email", email_message.direction))
+    if latest_tenant_update_at is not None:
+        candidates.append((latest_tenant_update_at, None, None, None))
+
+    if not candidates:
+        return ThreadVersionRead(latest_at=None)
+
+    latest_at, tenant_id, channel, direction = max(candidates, key=lambda item: item[0])
+
+    tenant_name = None
+    if tenant_id is not None:
+        tenant_name = db.query(Tenant.name).filter(Tenant.id == tenant_id).scalar()
+
+    return ThreadVersionRead(
+        latest_at=latest_at.isoformat() if latest_at else None,
+        tenant_id=tenant_id,
+        tenant_name=tenant_name,
+        channel=channel,
+        direction=direction,
+    )
 
 
 @router.get("/whatsapp/outbound-resolution", response_model=WhatsAppOutboundResolutionRead)
