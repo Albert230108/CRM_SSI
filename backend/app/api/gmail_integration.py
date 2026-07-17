@@ -25,6 +25,7 @@ from app.core.security import ALGORITHM, SECRET_KEY, generate_secure_token
 from app.database import SessionLocal
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
 from app.services.background_jobs import get_job, start_job
@@ -223,7 +224,12 @@ def _email_address(raw_value: str | None) -> str | None:
     return email.strip().lower() if email else raw_value.strip().lower()
 
 
-def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email: str) -> Tenant | None:
+def _find_tenants_for_message(db: Session, headers: dict[str, str], account_email: str) -> list[Tenant]:
+    # Multiple tenants can share the same email address (e.g. duplicate bookings for the
+    # same guest). Every matching tenant must be returned so the conversation can be linked
+    # to all of them, instead of a single arbitrary match "stealing" the conversation.
+    tenants: list[Tenant] = []
+    seen_ids: set[int] = set()
     for field in ("from", "to", "cc", "bcc"):
         raw_value = headers.get(field)
         if not raw_value:
@@ -231,10 +237,44 @@ def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email
         for candidate in raw_value.split(","):
             address = _email_address(candidate)
             if address and address != account_email.lower():
-                tenant = db.query(Tenant).filter(Tenant.email == address).first()
-                if tenant is not None:
-                    return tenant
-    return None
+                for tenant in db.query(Tenant).filter(Tenant.email == address).all():
+                    if tenant.id not in seen_ids:
+                        seen_ids.add(tenant.id)
+                        tenants.append(tenant)
+    return tenants
+
+
+def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email: str) -> Tenant | None:
+    matches = _find_tenants_for_message(db, headers, account_email)
+    return matches[0] if matches else None
+
+
+def _ensure_tenant_conversation_link(
+    db: Session, tenant_id: int, conversation_id: int, matched_email: str | None, source: str = "email_match"
+) -> None:
+    existing = (
+        db.query(TenantConversationLink)
+        .filter(TenantConversationLink.tenant_id == tenant_id)
+        .filter(TenantConversationLink.conversation_id == conversation_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
+        .first()
+    )
+    if existing is not None:
+        return
+    try:
+        # Mirrors the savepoint pattern used for ConversationMessage inserts above: a
+        # concurrent sync could create the same link between our check and this insert.
+        with db.begin_nested():
+            db.add(
+                TenantConversationLink(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    matched_email=matched_email,
+                    source=source,
+                )
+            )
+    except IntegrityError:
+        pass
 
 
 
@@ -312,14 +352,23 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
     latest_preview = conversation.preview_text
     last_message_at = conversation.last_message_at
     tenant = None
+    matched_tenants: dict[int, Tenant] = {}
 
     for message in messages:
         payload = message.get("payload") or {}
         headers = _headers_map(payload.get("headers") or [])
         sender_email = _email_address(headers.get("from"))
-        tenant = tenant or _find_tenant_for_message(db, headers, account_email)
+        message_tenants = _find_tenants_for_message(db, headers, account_email)
+        for matched_tenant in message_tenants:
+            matched_tenants.setdefault(matched_tenant.id, matched_tenant)
+        tenant = tenant or (message_tenants[0] if message_tenants else None)
         sent_at = _parse_internal_date(message.get("internalDate"))
-        if last_message_at is None or sent_at > last_message_at:
+        # SQLite drops tzinfo on round-trip, so a conversation's stored last_message_at can
+        # come back naive on a later sync while sent_at (freshly parsed) is always aware.
+        comparable_last_message_at = (
+            last_message_at.replace(tzinfo=timezone.utc) if last_message_at is not None and last_message_at.tzinfo is None else last_message_at
+        )
+        if comparable_last_message_at is None or sent_at > comparable_last_message_at:
             last_message_at = sent_at
             latest_preview = _extract_text(payload)[:500] or latest_preview
         if not subject:
@@ -360,28 +409,43 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},
                     )
                 )
-            if direction == "inbound" and tenant is not None:
-                create_notification(
-                    db,
-                    tenant_id=tenant.id,
-                    tenant_name=tenant.name,
-                    channel="email",
-                    direction="inbound",
-                    preview=body_text[:255] if body_text else None,
-                )
+            if direction == "inbound":
+                for notify_tenant in message_tenants:
+                    create_notification(
+                        db,
+                        tenant_id=notify_tenant.id,
+                        tenant_name=notify_tenant.name,
+                        channel="email",
+                        direction="inbound",
+                        preview=body_text[:255] if body_text else None,
+                    )
         except IntegrityError:
             continue
 
-    if tenant is None and conversation.tenant_id is not None:
-        tenant = db.query(Tenant).filter(Tenant.id == conversation.tenant_id).first()
+    if not matched_tenants and conversation.tenant_id is not None:
+        existing_tenant = db.query(Tenant).filter(Tenant.id == conversation.tenant_id).first()
+        if existing_tenant is not None:
+            matched_tenants[existing_tenant.id] = existing_tenant
+            tenant = tenant or existing_tenant
     tenant_email_candidates = _thread_email_candidates(messages, account_email)
     if tenant is not None and not tenant.email and len(tenant_email_candidates) == 1:
         tenant.email = tenant_email_candidates[0]
 
     conversation.subject = subject
-    conversation.tenant_id = tenant.id if tenant else conversation.tenant_id
+    # Never reassign an already-linked conversation away from its current tenant: the
+    # tenant_id column is only a "primary tenant" convenience value now. Actual multi-tenant
+    # visibility is granted via TenantConversationLink below.
+    if conversation.tenant_id is None and matched_tenants:
+        conversation.tenant_id = next(iter(matched_tenants.values())).id
     conversation.last_message_at = last_message_at
     conversation.preview_text = latest_preview
+    db.flush()
+
+    for matched_tenant in matched_tenants.values():
+        _ensure_tenant_conversation_link(
+            db, matched_tenant.id, conversation.id, matched_email=matched_tenant.email
+        )
+
     return conversation
 
 
@@ -813,7 +877,9 @@ def get_tenant_conversations(tenant_id: int, db: Session = Depends(get_db), curr
 
     conversations = (
         db.query(Conversation)
-        .filter(Conversation.tenant_id == tenant_id)
+        .join(TenantConversationLink, TenantConversationLink.conversation_id == Conversation.id)
+        .filter(TenantConversationLink.tenant_id == tenant_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
         .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.id.desc())
         .all()
     )

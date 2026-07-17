@@ -7,6 +7,7 @@ from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.tenant_conversation_link import TenantConversationLink
 
 
 def create_tenant(db_session, name='Tenant A', booking_id='B-1'):
@@ -167,6 +168,8 @@ def test_list_tenants_picks_latest_across_whatsapp_and_email_per_tenant(db_sessi
     db_session.add(conversation_a)
     db_session.commit()
     db_session.refresh(conversation_a)
+    db_session.add(TenantConversationLink(tenant_id=tenant_whatsapp_latest.id, conversation_id=conversation_a.id))
+    db_session.commit()
     db_session.add(ConversationMessage(
         conversation_id=conversation_a.id, provider="gmail", provider_message_id="msg-a-1",
         direction="inbound", body="older email", sent_at=base + timedelta(days=1),
@@ -181,6 +184,8 @@ def test_list_tenants_picks_latest_across_whatsapp_and_email_per_tenant(db_sessi
     db_session.add(conversation_b)
     db_session.commit()
     db_session.refresh(conversation_b)
+    db_session.add(TenantConversationLink(tenant_id=tenant_email_latest.id, conversation_id=conversation_b.id))
+    db_session.commit()
     db_session.add(ConversationMessage(
         conversation_id=conversation_b.id, provider="gmail", provider_message_id="msg-b-1",
         direction="outbound", body="newest email", sent_at=base + timedelta(days=3),

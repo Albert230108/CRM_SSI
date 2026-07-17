@@ -11,6 +11,7 @@ from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.email_quote_strip import strip_quoted_reply
 
 PROVIDER_GMAIL = "gmail"
@@ -127,7 +128,9 @@ def _communication_sort_key(message: Communication) -> tuple[datetime, int]:
 def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation]:
     conversations = (
         db.query(Conversation)
-        .filter(Conversation.tenant_id == tenant_id)
+        .join(TenantConversationLink, TenantConversationLink.conversation_id == Conversation.id)
+        .filter(TenantConversationLink.tenant_id == tenant_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
         .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.id.desc())
         .all()
     )

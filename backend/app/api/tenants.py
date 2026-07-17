@@ -22,6 +22,7 @@ from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.beds24_client import get_booking_detail, get_bookings
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
@@ -410,15 +411,20 @@ def list_tenants(
 
         email_ranked = (
             db.query(
-                Conversation.tenant_id.label("tenant_id"),
+                TenantConversationLink.tenant_id.label("tenant_id"),
                 ConversationMessage.sent_at.label("sent_at"),
                 ConversationMessage.direction.label("direction"),
                 func.row_number()
-                .over(partition_by=Conversation.tenant_id, order_by=ConversationMessage.sent_at.desc())
+                .over(partition_by=TenantConversationLink.tenant_id, order_by=ConversationMessage.sent_at.desc())
                 .label("rn"),
             )
             .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-            .filter(Conversation.tenant_id.in_(tenant_ids))
+            .join(
+                TenantConversationLink,
+                (TenantConversationLink.conversation_id == Conversation.id)
+                & (TenantConversationLink.unlinked_at.is_(None)),
+            )
+            .filter(TenantConversationLink.tenant_id.in_(tenant_ids))
             .subquery()
         )
         for row in db.query(email_ranked).filter(email_ranked.c.rn == 1).all():

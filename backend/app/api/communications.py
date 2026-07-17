@@ -12,6 +12,7 @@ from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
@@ -190,7 +191,12 @@ def get_tenant_thread_version(
     latest_email_at = (
         db.query(ConversationMessage.sent_at)
         .join(Conversation, ConversationMessage.conversation_id == Conversation.id)
-        .filter(Conversation.tenant_id == tenant_id)
+        .join(
+            TenantConversationLink,
+            (TenantConversationLink.conversation_id == Conversation.id)
+            & (TenantConversationLink.unlinked_at.is_(None)),
+        )
+        .filter(TenantConversationLink.tenant_id == tenant_id)
         .order_by(ConversationMessage.sent_at.desc())
         .limit(1)
         .scalar()
@@ -474,7 +480,12 @@ async def send_tenant_communication(
 
         conversation = (
             db.query(Conversation)
-            .filter(Conversation.id == payload.email_thread_id, Conversation.tenant_id == tenant.id)
+            .join(
+                TenantConversationLink,
+                (TenantConversationLink.conversation_id == Conversation.id)
+                & (TenantConversationLink.unlinked_at.is_(None)),
+            )
+            .filter(Conversation.id == payload.email_thread_id, TenantConversationLink.tenant_id == tenant.id)
             .first()
         )
         if conversation is None:

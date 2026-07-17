@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 
 
@@ -25,6 +26,8 @@ def add_email_conversation(db_session, tenant_id, *, subject, message_times):
     db_session.add(conversation)
     db_session.commit()
     db_session.refresh(conversation)
+    db_session.add(TenantConversationLink(tenant_id=tenant_id, conversation_id=conversation.id))
+    db_session.commit()
 
     for index, sent_at in enumerate(message_times):
         db_session.add(

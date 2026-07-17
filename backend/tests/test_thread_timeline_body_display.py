@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 
 QUOTED_BODY = (
@@ -33,6 +34,8 @@ def test_grouped_thread_timeline_exposes_quote_stripped_body_display(db_session)
     db_session.add(conversation)
     db_session.commit()
     db_session.refresh(conversation)
+    db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=conversation.id))
+    db_session.commit()
 
     db_session.add(
         ConversationMessage(
