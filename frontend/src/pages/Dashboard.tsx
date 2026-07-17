@@ -434,7 +434,7 @@ export default function Dashboard() {
             ].join(' ')}
           >
             <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
-              <div className="flex h-full min-h-0 flex-1 overflow-auto">
+              <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
                 <FinanceBox tenantId={selectedTenantId} onReady={handleFinanceReady} />
               </div>
               <TileLoadingOverlay active={isSwitchingTenant} />
@@ -442,14 +442,14 @@ export default function Dashboard() {
 
             <div className="flex min-h-0 flex-1 flex-col gap-2">
               <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
-                <div className="flex h-full min-h-0 flex-1 overflow-auto">
+                <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
                   <NotesBox tenantId={selectedTenantId} onReady={handleNotesReady} />
                 </div>
                 <TileLoadingOverlay active={isSwitchingTenant} />
               </section>
 
               <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
-                <div className="flex h-full min-h-0 flex-1 overflow-auto">
+                <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
                   <OneDriveBox tenantId={selectedTenantId} onReady={handleOneDriveReady} />
                 </div>
                 <TileLoadingOverlay active={isSwitchingTenant} />
