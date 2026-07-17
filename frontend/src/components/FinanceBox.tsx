@@ -243,7 +243,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   }, [charges, payments])
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Tenant Info</h2>
       </div>
@@ -270,43 +270,43 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
             <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-2 md:grid-cols-2">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Booking ID</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryBookingId}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryBookingId}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Full name</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryName}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryName}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Property</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryProperty}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryProperty}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Room</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryRoom}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryRoom}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Check in</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryCheckIn}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryCheckIn}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Check out</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryCheckOut}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryCheckOut}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Status</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryStatus}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryStatus}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Sub-status</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summarySubStatus}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summarySubStatus}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Original referer</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryReferer}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryReferer}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Referer</p>
-                <p className="mt-0.5 text-sm font-medium text-gray-900">{summaryRefererEditable}</p>
+                <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryRefererEditable}</p>
               </div>
             </div>
           </div>

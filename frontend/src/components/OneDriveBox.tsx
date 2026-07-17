@@ -217,7 +217,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
           : 'Loading tenant...'
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Files</h2>
@@ -257,7 +257,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
             <li key={item.name} className="rounded-xl border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-gray-900">{item.name}</p>
+                  <p className="break-words text-sm font-medium text-gray-900">{item.name}</p>
                   <p className="mt-0.5 text-[11px] uppercase tracking-[0.15em] text-gray-500">
                     {item.kind}
                     {item.size !== undefined ? ` - ${item.size} bytes` : ''}
