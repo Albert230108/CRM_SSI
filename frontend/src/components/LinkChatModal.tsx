@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
+import { useDraggablePosition } from '../hooks/useDraggablePosition'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -97,6 +98,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
   const [resyncingId, setResyncingId] = useState<number | null>(null)
   const [resyncResults, setResyncResults] = useState<Record<number, ResyncResult>>({})
+  const drag = useDraggablePosition()
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
   const activeLinks = existingLinks.filter((link) => link.is_active)
@@ -321,15 +323,19 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
   const tenantSubtitle = [tenantName ? `Tenant: ${tenantName}` : null, bookingId ? `Booking #${bookingId}` : null].filter(Boolean).join(' · ')
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="link-chat-modal-title"
         className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+        style={drag.style}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
+        <div
+          className="flex cursor-move items-start justify-between gap-4 border-b border-gray-200 px-6 py-4"
+          onPointerDown={drag.handlePointerDown}
+        >
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-emerald-600">WhatsApp</p>
             <h2 id="link-chat-modal-title" className="mt-1 text-2xl font-semibold text-gray-900">
@@ -344,7 +350,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                   : `Search the ${selectedAccount?.label} chat list by phone number, name, or message text.`}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-900">
+          <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={onClose} className="text-sm text-gray-500 hover:text-gray-900">
             Close
           </button>
         </div>

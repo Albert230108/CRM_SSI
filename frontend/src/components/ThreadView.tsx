@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatCombinedDateTime } from '../lib/date'
 import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
+import { useDraggablePosition } from '../hooks/useDraggablePosition'
 import LinkChatModal from './LinkChatModal'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
@@ -353,6 +354,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [replySubject, setReplySubject] = useState('')
   const [replySending, setReplySending] = useState(false)
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
+  const emailThreadDrag = useDraggablePosition()
+  const whatsappGroupDrag = useDraggablePosition()
+  const emailReplyDrag = useDraggablePosition()
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
   const [livePollSignal, setLivePollSignal] = useState(0)
@@ -759,7 +763,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
 
       {selectedEmailThread ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center gap-4 bg-gray-900/45 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center gap-4 px-4"
           onClick={() => {
             setSelectedEmailThread(null)
             setSelectedWhatsappBlock(null)
@@ -770,9 +774,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             aria-modal="true"
             aria-labelledby="email-thread-modal-title"
             className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            style={emailThreadDrag.style}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+            <div
+              className="flex cursor-move items-start justify-between gap-4 border-b border-gray-200 px-5 py-4"
+              onPointerDown={emailThreadDrag.handlePointerDown}
+            >
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-cyan-700">Email Thread</p>
                 <h3 id="email-thread-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -784,6 +792,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </div>
               <button
                 type="button"
+                onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedEmailThread(null)}
                 className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
@@ -1062,7 +1071,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
 
       {selectedWhatsappGroup ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
           onClick={() => setSelectedWhatsappGroup(null)}
         >
           <div
@@ -1070,9 +1079,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             aria-modal="true"
             aria-labelledby="whatsapp-group-modal-title"
             className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            style={whatsappGroupDrag.style}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+            <div
+              className="flex cursor-move items-start justify-between gap-4 border-b border-gray-200 px-5 py-4"
+              onPointerDown={whatsappGroupDrag.handlePointerDown}
+            >
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp Group</p>
                 <h3 id="whatsapp-group-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -1085,6 +1098,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </div>
               <button
                 type="button"
+                onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedWhatsappGroup(null)}
                 className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
@@ -1189,7 +1203,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
 
       {replyTarget?.type === 'email' ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
           onClick={() => setReplyTarget(null)}
         >
           <div
@@ -1197,14 +1211,19 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             aria-modal="true"
             aria-labelledby="email-reply-modal-title"
             className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            style={emailReplyDrag.style}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-4 border-b border-gray-200 px-6 py-5">
+            <div
+              className="flex cursor-move items-center justify-between gap-4 border-b border-gray-200 px-6 py-5"
+              onPointerDown={emailReplyDrag.handlePointerDown}
+            >
               <h3 id="email-reply-modal-title" className="text-lg font-semibold text-gray-900">
                 Reply to Email
               </h3>
               <button
                 type="button"
+                onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setReplyTarget(null)}
                 className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
