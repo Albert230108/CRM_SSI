@@ -128,7 +128,7 @@ export default function NotificationBell() {
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-2 w-96 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-lg">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
             <span className="text-sm font-semibold text-gray-900">Notifications</span>
             <button type="button" onClick={handleMarkAllRead} className="text-xs font-medium text-cyan-700 transition hover:text-cyan-900">
@@ -151,7 +151,7 @@ export default function NotificationBell() {
             ))}
           </div>
 
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-72 overflow-y-auto">
             {loading ? <p className="px-4 py-4 text-xs text-gray-500">Loading...</p> : null}
             {!loading && notifications.length === 0 ? (
               <p className="px-4 py-4 text-xs text-gray-400">No notifications yet.</p>
@@ -169,7 +169,7 @@ export default function NotificationBell() {
                 <div className="flex items-start gap-2">
                   <span className="mt-0.5">{getChannelIcon(notification.channel)}</span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900">
+                    <p className="break-words text-sm font-medium text-gray-900">
                       {notification.channel.toLowerCase() === 'email' ? 'New email' : 'New WhatsApp message'}
                       {notification.tenant_name ? ` from ${notification.tenant_name}` : ''}
                     </p>
