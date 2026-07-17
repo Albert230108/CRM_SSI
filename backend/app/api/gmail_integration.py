@@ -16,6 +16,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from jose import jwt
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet
 
@@ -338,20 +339,28 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
         attachments = _extract_attachments(payload)
         recipient_email = _email_address(headers.get("to"))
         direction = "outbound" if sender_email and sender_email == account_email else "inbound"
-        db.add(
-            ConversationMessage(
-                conversation_id=conversation.id,
-                provider=PROVIDER_GMAIL,
-                provider_message_id=provider_message_id,
-                direction=direction,
-                sender_email=sender_email,
-                recipient_email=recipient_email,
-                subject=headers.get("subject"),
-                body=body_text,
-                sent_at=sent_at,
-                raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},
-            )
-        )
+        try:
+            # A concurrent sync (background poller vs. manual "sync all") can insert this
+            # same provider_message_id between our exists-check above and this insert. The
+            # savepoint confines that failure to just this message instead of rolling back
+            # every other message/conversation change staged in this account's sync.
+            with db.begin_nested():
+                db.add(
+                    ConversationMessage(
+                        conversation_id=conversation.id,
+                        provider=PROVIDER_GMAIL,
+                        provider_message_id=provider_message_id,
+                        direction=direction,
+                        sender_email=sender_email,
+                        recipient_email=recipient_email,
+                        subject=headers.get("subject"),
+                        body=body_text,
+                        sent_at=sent_at,
+                        raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},
+                    )
+                )
+        except IntegrityError:
+            continue
 
     if tenant is None and conversation.tenant_id is not None:
         tenant = db.query(Tenant).filter(Tenant.id == conversation.tenant_id).first()

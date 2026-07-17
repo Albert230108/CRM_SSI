@@ -35,10 +35,16 @@ def _poll_gmail_accounts_once() -> None:
     try:
         accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
         for account in accounts:
+            account_id = account.id
             try:
                 _sync_gmail_account(db, account)
             except Exception:
-                logger.exception("Background Gmail sync failed account_id=%s", account.id)
+                # A failed flush/commit leaves the session needing a rollback before any
+                # further use, including lazy-loading account.id for this log line — so
+                # capture the id above and roll back here, or logging the error itself
+                # raises PendingRollbackError and aborts the remaining accounts this cycle.
+                db.rollback()
+                logger.exception("Background Gmail sync failed account_id=%s", account_id)
     except Exception:
         logger.exception("Background Gmail sync loop failed to load accounts")
     finally:
