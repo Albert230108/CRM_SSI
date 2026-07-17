@@ -90,6 +90,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
   const [chatsLoading, setChatsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedChat, setSelectedChat] = useState<WhatsappChat | null>(null)
+  const [replaceTarget, setReplaceTarget] = useState<ThreadWhatsappLink | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmingUnlinkId, setConfirmingUnlinkId] = useState<number | null>(null)
@@ -106,6 +107,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
     setChats([])
     setSearch('')
     setSelectedChat(null)
+    setReplaceTarget(null)
     setError('')
     setConfirmingUnlinkId(null)
     setUnlinkingId(null)
@@ -203,15 +205,16 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
     setExistingLinks(Array.isArray(data) ? data : [])
   }
 
-  const existingLinkForAccount = selectedAccount
-    ? activeLinks.find((link) => link.provider === selectedAccount.provider && link.external_account_id === selectedAccount.external_account_id)
-    : null
   const conflictsWithAnotherThread = selectedChat ? selectedChat.already_linked && selectedChat.linked_thread_id !== threadId : false
-  const willReplaceExisting = Boolean(existingLinkForAccount && selectedChat && existingLinkForAccount.chat_id !== selectedChat.chat_id)
+  // A tenant can have several active chats linked on the same account at once, so picking a new
+  // chat only replaces an existing link when the user explicitly chose "Replace" on that specific
+  // link (replaceTarget) -- otherwise it's simply added alongside whatever is already linked.
+  const willReplaceExisting = Boolean(replaceTarget && selectedChat && replaceTarget.chat_id !== selectedChat.chat_id)
 
-  const handleSelectAccount = (account: WhatsappAccount) => {
+  const handleSelectAccount = (account: WhatsappAccount, replaceTargetLink: ThreadWhatsappLink | null = null) => {
     setSelectedAccount(account)
     setSelectedChat(null)
+    setReplaceTarget(replaceTargetLink)
     setView('chat')
   }
 
@@ -231,7 +234,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
           external_account_id: selectedAccount.external_account_id,
           chat_id: selectedChat.chat_id,
           chat_display_name: selectedChat.chat_name,
-          replace_existing: willReplaceExisting,
+          replace_link_id: replaceTarget?.id ?? null,
         }),
       })
       if (!response.ok) {
@@ -241,6 +244,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
       await reloadLinks()
       setSelectedChat(null)
       setSelectedAccount(null)
+      setReplaceTarget(null)
       setView('linked')
       onChanged?.()
     } catch (err) {
@@ -386,6 +390,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                             external_account_id: link.external_account_id,
                             label: link.external_account_id,
                           },
+                          link,
                         )
                       }
                       className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900"
@@ -429,6 +434,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                 type="button"
                 onClick={() => {
                   setSelectedAccount(null)
+                  setReplaceTarget(null)
                   setView('account')
                 }}
                 className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
@@ -469,6 +475,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                 onClick={() => {
                   setView('account')
                   setSelectedChat(null)
+                  setReplaceTarget(null)
                 }}
                 className="mb-3 text-xs font-medium text-gray-500 hover:text-gray-900"
               >
@@ -529,7 +536,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                     </p>
                   ) : willReplaceExisting ? (
                     <p className="mt-2 text-sm font-semibold text-amber-600">
-                      This thread already has {existingLinkForAccount?.chat_id} linked for {selectedAccount?.label}. Confirming will replace it.
+                      Confirming will replace {formatChatDisplayName(replaceTarget?.chat_display_name)} ({replaceTarget?.chat_id}) with this chat.
                     </p>
                   ) : null}
                 </div>

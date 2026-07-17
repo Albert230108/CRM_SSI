@@ -225,27 +225,44 @@ def create_thread_whatsapp_link(
             detail=f"This WhatsApp chat is already linked to another thread (thread_id={conflicting_link.tenant_id})",
         )
 
-    existing_thread_link = (
+    # A tenant may have several active chats linked on the same account at once (e.g. multiple
+    # family members texting from different numbers, or a 1:1 chat alongside a group chat), so
+    # linking a new chat_id never implicitly replaces another active link for the same account.
+    # Replacing a specific existing link is only done when the caller explicitly targets it via
+    # replace_link_id (e.g. the "Replace" action on a specific linked chat in the UI).
+    same_chat_existing_link = (
         _active_whatsapp_links_query(db)
         .filter(
             TenantChannelEndpoint.tenant_id == thread_id,
             TenantChannelEndpoint.provider == provider,
             TenantChannelEndpoint.external_account_id == external_account_id,
+            TenantChannelEndpoint.external_chat_namespace == chat_id,
         )
         .first()
     )
-    if existing_thread_link is not None:
-        if existing_thread_link.external_chat_namespace == chat_id:
-            # Re-linking the exact same chat: nothing to replace, just refresh the display name.
-            existing_thread_link.chat_display_name = chat_display_name or existing_thread_link.chat_display_name
-            db.commit()
-            db.refresh(existing_thread_link)
-            return _to_link_read(existing_thread_link)
+    if same_chat_existing_link is not None:
+        # Re-linking the exact same chat: nothing to replace, just refresh the display name.
+        same_chat_existing_link.chat_display_name = chat_display_name or same_chat_existing_link.chat_display_name
+        db.commit()
+        db.refresh(same_chat_existing_link)
+        return _to_link_read(same_chat_existing_link)
 
-        if not payload.replace_existing:
+    existing_thread_link = None
+    if payload.replace_link_id is not None:
+        existing_thread_link = (
+            _active_whatsapp_links_query(db)
+            .filter(
+                TenantChannelEndpoint.id == payload.replace_link_id,
+                TenantChannelEndpoint.tenant_id == thread_id,
+                TenantChannelEndpoint.provider == provider,
+                TenantChannelEndpoint.external_account_id == external_account_id,
+            )
+            .first()
+        )
+        if existing_thread_link is None:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Thread already has a linked WhatsApp chat for this account. Set replace_existing=true to replace it.",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Active WhatsApp link to replace was not found for this thread/account",
             )
 
         now = datetime.now(timezone.utc)

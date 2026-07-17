@@ -127,7 +127,6 @@ def test_create_manual_whatsapp_thread_link(user_client, db_session):
         "external_account_id": "edi-crm-whatsapp",
         "chat_id": "326472368@lid",
         "chat_display_name": "Alberto",
-        "replace_existing": True,
     }
     response = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload)
     assert response.status_code == 200
@@ -154,7 +153,10 @@ def test_reject_duplicate_chat_linked_to_another_thread(user_client, db_session)
     assert str(tenant_a.id) in second.json()["detail"]
 
 
-def test_reject_second_active_link_without_replace_existing(user_client, db_session):
+def test_second_chat_same_account_is_added_not_replaced(user_client, db_session):
+    """A tenant can have multiple active chats linked on the same WhatsApp account at once
+    (e.g. two different phone numbers, or a 1:1 chat alongside a group chat) -- linking a new,
+    different chat_id must never implicitly deactivate an existing link for that account."""
     tenant = create_tenant(db_session, booking_id="B-second")
     payload_one = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "111@lid"}
     payload_two = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "222@lid"}
@@ -163,16 +165,42 @@ def test_reject_second_active_link_without_replace_existing(user_client, db_sess
     assert first.status_code == 200
 
     second = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload_two)
-    assert second.status_code == 409
+    assert second.status_code == 200
+    assert second.json()["chat_id"] == "222@lid"
 
-    third = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json={**payload_two, "replace_existing": True})
-    assert third.status_code == 200
-    assert third.json()["chat_id"] == "222@lid"
+    active_links = user_client.get(f"/api/threads/{tenant.id}/whatsapp-links").json()
+    active_chat_ids = {link["chat_id"] for link in active_links}
+    assert active_chat_ids == {"111@lid", "222@lid"}
+    assert all(link["is_active"] for link in active_links)
+
+
+def test_replace_specific_link_via_replace_link_id(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-replace")
+    payload_one = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "111@lid"}
+    payload_two = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "222@lid"}
+
+    first = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload_one).json()
+
+    replaced = user_client.post(
+        f"/api/threads/{tenant.id}/whatsapp-links",
+        json={**payload_two, "replace_link_id": first["id"]},
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["chat_id"] == "222@lid"
 
     links = user_client.get(f"/api/threads/{tenant.id}/whatsapp-links", params={"include_history": True}).json()
     old_link = next(link for link in links if link["chat_id"] == "111@lid")
     assert old_link["is_active"] is False
     assert old_link["unlinked_by_user_id"] == REGULAR_USER.id
+    new_link = next(link for link in links if link["chat_id"] == "222@lid")
+    assert new_link["is_active"] is True
+
+
+def test_replace_link_id_rejects_unknown_link(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-replace-404")
+    payload = {"provider": "whatsapp-service", "external_account_id": "edi-crm-whatsapp", "chat_id": "333@lid", "replace_link_id": 999999}
+    response = user_client.post(f"/api/threads/{tenant.id}/whatsapp-links", json=payload)
+    assert response.status_code == 404
 
 
 def test_unlink_whatsapp_thread_link(user_client, db_session):

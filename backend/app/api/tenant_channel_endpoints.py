@@ -41,6 +41,7 @@ def _to_read(endpoint: TenantChannelEndpoint) -> TenantChannelEndpointRead:
         external_account_id=endpoint.external_account_id,
         external_phone_id=endpoint.external_phone_id,
         external_chat_namespace=endpoint.external_chat_namespace,
+        chat_display_name=endpoint.chat_display_name,
         webhook_token=_mask(endpoint.webhook_token),
         signing_secret=_mask(endpoint.signing_secret),
         is_active=endpoint.is_active,

@@ -198,6 +198,7 @@ type WhatsappEndpointOption = {
   external_account_id: string | null
   external_phone_id: string | null
   external_chat_namespace: string | null
+  chat_display_name: string | null
   routing_strategy: string
   is_active: boolean
 }
@@ -219,6 +220,11 @@ type ThreadWhatsappLink = {
 
 const formatWhatsappEndpointLabel = (endpoint: WhatsappEndpointOption) => {
   const parts = [endpoint.external_account_id || `Endpoint ${endpoint.id}`]
+  // A tenant can have several chats linked on the same account, so the chat identity (not just
+  // the account) has to be in the label -- otherwise the dropdown shows duplicate-looking rows
+  // with no way to tell which chat each one actually sends to.
+  if (endpoint.chat_display_name) parts.push(endpoint.chat_display_name)
+  else if (endpoint.external_chat_namespace) parts.push(endpoint.external_chat_namespace)
   if (endpoint.external_phone_id) parts.push(endpoint.external_phone_id)
   if (endpoint.provider) parts.push(endpoint.provider)
   if (endpoint.routing_strategy) parts.push(endpoint.routing_strategy)
@@ -368,6 +374,22 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
     const known = WHATSAPP_ACCOUNT_DIRECTORY[accountKey]
     if (known) return known.label
     return accountKey === 'unknown' ? 'Unknown account' : accountKey
+  }
+
+  // Account color/label alone can't distinguish two chats linked on the same account (e.g. two
+  // different phone numbers on the same WhatsApp business number), so when that account has more
+  // than one active linked chat, surface which specific chat a message belongs to as extra badge
+  // text -- only when needed, so the common single-chat-per-account case stays uncluttered.
+  const getWhatsappMessageChatLabel = (message: WhatsappTimelineMessage) => {
+    const messageAccountId = (message.external_account_id || '').trim().toLowerCase()
+    if (!messageAccountId) return null
+    const accountLinks = whatsappLinks.filter((link) => link.is_active && (link.external_account_id || '').trim().toLowerCase() === messageAccountId)
+    if (accountLinks.length < 2) return null
+    const messageChatId = (message.external_chat_namespace || message.whatsapp_chat_id || '').trim().toLowerCase()
+    if (!messageChatId) return null
+    const matchedLink = accountLinks.find((link) => (link.chat_id || '').trim().toLowerCase() === messageChatId)
+    if (!matchedLink) return null
+    return matchedLink.chat_display_name?.trim() || matchedLink.chat_id
   }
 
   useEffect(() => {
@@ -974,6 +996,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                           >
                             <span className={`h-2 w-2 rounded-full ${palette.dot}`} />
                             {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
+                            {getWhatsappMessageChatLabel(blockMessage) ? ` · ${getWhatsappMessageChatLabel(blockMessage)}` : ''}
                           </span>
                           <span>{formatTimestamp(blockMessage.created_at)}</span>
                         </div>
@@ -1101,6 +1124,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                         >
                           <span className={`h-2 w-2 rounded-full ${palette.dot}`} />
                           {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
+                          {getWhatsappMessageChatLabel(blockMessage) ? ` · ${getWhatsappMessageChatLabel(blockMessage)}` : ''}
                         </span>
                         <span>{formatTimestamp(blockMessage.created_at)}</span>
                       </div>

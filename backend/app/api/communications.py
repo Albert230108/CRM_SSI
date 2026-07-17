@@ -92,6 +92,7 @@ def _to_endpoint_read(endpoint: TenantChannelEndpoint) -> TenantChannelEndpointR
         external_account_id=endpoint.external_account_id,
         external_phone_id=endpoint.external_phone_id,
         external_chat_namespace=endpoint.external_chat_namespace,
+        chat_display_name=endpoint.chat_display_name,
         webhook_token=_mask_endpoint_value(endpoint.webhook_token),
         signing_secret=_mask_endpoint_value(endpoint.signing_secret),
         is_active=endpoint.is_active,
@@ -317,9 +318,6 @@ async def send_tenant_communication(
 
     selected_endpoint = None
     if channel == "whatsapp":
-        whatsapp_to = get_tenant_primary_phone_raw(db, tenant)
-        if not whatsapp_to:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant phone is required for WhatsApp")
         if payload.whatsapp_endpoint_id is not None:
             selected_endpoint = (
                 db.query(TenantChannelEndpoint)
@@ -330,14 +328,24 @@ async def send_tenant_communication(
                 .first()
             )
         elif payload.external_account_id:
-            selected_endpoint = (
+            # A tenant can have multiple active chats linked on the same account, so this
+            # fallback (no specific whatsapp_endpoint_id given) is only safe when there's
+            # exactly one match — otherwise we'd silently pick an arbitrary chat to send to.
+            matching_endpoints = (
                 db.query(TenantChannelEndpoint)
                 .filter(
                     TenantChannelEndpoint.tenant_id == tenant.id,
                     TenantChannelEndpoint.external_account_id == payload.external_account_id.strip(),
+                    TenantChannelEndpoint.is_active.is_(True),
                 )
-                .first()
+                .all()
             )
+            if len(matching_endpoints) > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Tenant has multiple chats linked on this account; select a specific WhatsApp chat to send from",
+                )
+            selected_endpoint = matching_endpoints[0] if matching_endpoints else None
         if selected_endpoint is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select a WhatsApp account to send from")
         if not selected_endpoint.is_active:
@@ -351,6 +359,12 @@ async def send_tenant_communication(
         selected_external_account_id = (selected_endpoint.external_account_id or "").strip()
         if not selected_external_account_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected WhatsApp account is missing an external account id")
+        # Prefer the specific chat this endpoint is manually linked to, so a reply targets the
+        # right chat when a tenant has multiple linked on the same account. Only a bare/unlinked
+        # endpoint (no manual chat link) falls back to the tenant's generic primary phone.
+        whatsapp_to = selected_endpoint.external_chat_namespace or get_tenant_primary_phone_raw(db, tenant)
+        if not whatsapp_to:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant phone is required for WhatsApp")
         whatsapp_payload = {
             "to": whatsapp_to,
             "message": message,
