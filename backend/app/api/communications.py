@@ -15,6 +15,10 @@ from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
 from app.services.gmail_client import send_gmail_reply
+from app.services.tenant_channel_resolver import (
+    _lookup_whatsapp_endpoint_by_exact_chat_identity,
+    _lookup_whatsapp_endpoint_by_normalized_chat_identity,
+)
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
@@ -285,6 +289,38 @@ def resolve_whatsapp_outbound_communication(
                     whatsapp_identity_key=communication.whatsapp_identity_key,
                     external_account_id=communication.external_account_id,
                     resolution_strategy=("chat_id_external_account_id" if match_field == "whatsapp_chat_id" else f"{match_field}_external_account_id"),
+                )
+
+    # No prior outbound Communication exists for this chat yet (e.g. the very first message,
+    # or one sent from another linked device before this session ever observed the chat). Fall
+    # back to the manual TenantChannelEndpoint link, which is authoritative for outbound routing
+    # regardless of whether any Communication has been persisted yet.
+    if external_account_id:
+        default_provider = "whatsapp-service"
+        for chat_identity in (whatsapp_identity_key, whatsapp_chat_id):
+            if not chat_identity:
+                continue
+            endpoint = _lookup_whatsapp_endpoint_by_exact_chat_identity(
+                db,
+                provider=default_provider,
+                external_account_id=external_account_id,
+                chat_identity=chat_identity,
+            ) or _lookup_whatsapp_endpoint_by_normalized_chat_identity(
+                db,
+                provider=default_provider,
+                external_account_id=external_account_id,
+                chat_identity=chat_identity,
+            )
+            if endpoint is not None:
+                return WhatsAppOutboundResolutionRead(
+                    found=True,
+                    tenant_id=endpoint.tenant_id,
+                    provider_message_id=provider_message_id,
+                    whatsapp_chat_id=whatsapp_chat_id,
+                    whatsapp_identity_key=whatsapp_identity_key,
+                    whatsapp_normalized_phone=whatsapp_normalized_phone,
+                    external_account_id=external_account_id,
+                    resolution_strategy="manual_channel_endpoint",
                 )
 
     return WhatsAppOutboundResolutionRead(

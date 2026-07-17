@@ -1,5 +1,6 @@
 from app.models.communication import Communication
 from app.models.tenant import Tenant
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 
 
 def create_tenant(db_session, name='Tenant A', booking_id='B-1'):
@@ -67,6 +68,34 @@ def test_whatsapp_outbound_resolution_by_chat_and_account(client, db_session):
     assert payload['tenant_id'] == tenant.id
     assert payload['communication_id'] == communication.id
     assert payload['resolution_strategy'] == 'chat_id_external_account_id'
+
+
+def test_whatsapp_outbound_resolution_falls_back_to_manual_channel_endpoint(client, db_session):
+    # Regression: a message sent from another linked device (or the very first outbound message
+    # to a newly linked tenant) has no prior Communication row to match against. The manual
+    # TenantChannelEndpoint link must still resolve the tenant instead of returning unresolved.
+    tenant = create_tenant(db_session, name='Tenant Resolve C', booking_id='RES-C')
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type='whatsapp',
+        provider='whatsapp-service',
+        external_account_id='client-c',
+        external_chat_namespace='189516136587357@lid',
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    response = client.get(
+        '/api/communications/whatsapp/outbound-resolution',
+        params={'whatsapp_chat_id': '189516136587357@lid', 'external_account_id': 'client-c'},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['found'] is True
+    assert payload['tenant_id'] == tenant.id
+    assert payload['resolution_strategy'] == 'manual_channel_endpoint'
 
 
 def test_whatsapp_outbound_resolution_returns_unresolved_when_no_match(client):
