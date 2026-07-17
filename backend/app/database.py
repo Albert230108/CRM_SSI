@@ -9,7 +9,7 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg2://crm_user:crm_password@localhost:5432/crm",
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=20, max_overflow=40)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
