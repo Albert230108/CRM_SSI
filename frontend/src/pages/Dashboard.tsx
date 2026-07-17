@@ -389,7 +389,7 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-2 transition-all duration-300',
+              'h-full w-full min-w-0 overflow-hidden p-2 transition-all duration-300',
               tenantsCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
@@ -429,7 +429,7 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-2 transition-all duration-300 flex flex-col gap-2',
+              'h-full w-full min-w-0 overflow-hidden p-2 transition-all duration-300 flex flex-col gap-2',
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
