@@ -11,7 +11,7 @@ export default function Navbar() {
   const adminActive = location.pathname.startsWith('/admin')
 
   return (
-    <header className="w-full border-b border-gray-200 bg-white backdrop-blur">
+    <header className="relative z-50 w-full border-b border-gray-200 bg-white backdrop-blur">
       <div className="flex w-full items-center justify-between px-6 py-4">
         <Link to="/" className="flex items-center gap-3">
           <img src={crmLogo} alt="CRM logo" className="h-8 w-auto" />
