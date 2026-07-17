@@ -60,11 +60,13 @@ def test_second_distinct_outbound_message_without_provider_message_id_creates_ne
     assert second.communication.message == "Second, different message from another device"
 
 
-def test_repeated_identical_outbound_message_without_provider_message_id_upgrades_placeholder(db_session):
+def test_duplicate_capture_of_the_same_physical_message_upgrades_placeholder(db_session):
     # The original "upgrade a pending placeholder" behavior must still work when the same
-    # message text arrives again without a provider_message_id (e.g. a duplicate live capture
-    # of the same send before WhatsApp confirms delivery).
+    # physical WhatsApp message is reported twice without a provider_message_id (e.g. captured
+    # once via the explicit send path and once via the message_create listener). Both captures
+    # share WhatsApp's own reported timestamp for that message, so created_at is identical.
     tenant = create_tenant(db_session, name="Tenant Outbound Persist B", booking_id="B-outbound-persist-b")
+    shared_created_at = datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc)
 
     first = persist_whatsapp_outbound_communication(
         db_session,
@@ -79,7 +81,7 @@ def test_repeated_identical_outbound_message_without_provider_message_id_upgrade
         provider_message_id=None,
         subject=None,
         message="Same text",
-        created_at=datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc),
+        created_at=shared_created_at,
     )
     db_session.commit()
 
@@ -96,9 +98,57 @@ def test_repeated_identical_outbound_message_without_provider_message_id_upgrade
         provider_message_id=None,
         subject=None,
         message="Same text",
-        created_at=datetime(2026, 7, 17, 10, 0, 5, tzinfo=timezone.utc),
+        created_at=shared_created_at,
     )
     db_session.commit()
 
     assert second.persistence_state == "deduped"
     assert second.communication.id == first.communication.id
+
+
+def test_two_distinct_sends_with_similar_text_and_no_provider_message_id_both_appear(db_session):
+    # Regression: two separate messages sent moments apart from another linked device, with
+    # similar/identical text, previously collided on the text-only fallback match and the second
+    # silently overwrote the first (same bug class as the distinct-text case, but exposed here
+    # because the text happens to match too). Requiring the WhatsApp-reported timestamp to also
+    # match keeps these as two separate rows since they were sent at different times.
+    tenant = create_tenant(db_session, name="Tenant Outbound Persist C", booking_id="B-outbound-persist-c")
+
+    first = persist_whatsapp_outbound_communication(
+        db_session,
+        tenant_id=tenant.id,
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_phone_id=None,
+        external_chat_namespace=None,
+        whatsapp_chat_id="155066153590862@lid",
+        whatsapp_identity_key="155066153590862@lid",
+        whatsapp_normalized_phone=None,
+        provider_message_id=None,
+        subject=None,
+        message="Hey",
+        created_at=datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc),
+    )
+    db_session.commit()
+
+    second = persist_whatsapp_outbound_communication(
+        db_session,
+        tenant_id=tenant.id,
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_phone_id=None,
+        external_chat_namespace=None,
+        whatsapp_chat_id="155066153590862@lid",
+        whatsapp_identity_key="155066153590862@lid",
+        whatsapp_normalized_phone=None,
+        provider_message_id=None,
+        subject=None,
+        message="Hey",
+        created_at=datetime(2026, 7, 17, 10, 3, 0, tzinfo=timezone.utc),
+    )
+    db_session.commit()
+
+    assert second.persistence_state == "created"
+    assert second.communication.id != first.communication.id
+    assert first.communication.created_at.replace(tzinfo=timezone.utc) == datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc)
+    assert second.communication.created_at.replace(tzinfo=timezone.utc) == datetime(2026, 7, 17, 10, 3, 0, tzinfo=timezone.utc)

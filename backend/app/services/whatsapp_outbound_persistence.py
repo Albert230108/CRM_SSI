@@ -112,6 +112,7 @@ def _find_outbound_communication(
     whatsapp_normalized_phone: str | None,
     external_account_id: str | None,
     message: str | None = None,
+    created_at: datetime | None = None,
 ) -> tuple[Communication | None, str | None]:
     if provider_message_id:
         communication = (
@@ -137,8 +138,13 @@ def _find_outbound_communication(
         # or a live message_create capture that never got a real provider_message_id) falls
         # through to here and silently overwrites the most recent already-confirmed message's
         # text while leaving its original created_at/direction untouched, corrupting unrelated
-        # history. Requiring the message text to match too keeps this a same-message upgrade
-        # (identical content, ID arriving late) instead of matching a genuinely different message.
+        # history. Matching on message text alone isn't enough either — two distinct messages
+        # sent moments apart with similar/identical text (e.g. from another linked device) would
+        # collide on text and still overwrite each other. A genuine "same message reported twice"
+        # (e.g. both message_create and an explicit send path capturing one physical WhatsApp
+        # message) shares the exact same WhatsApp-reported timestamp; two separate sends do not
+        # (even sent seconds apart). Requiring both text AND timestamp to match keeps this a
+        # same-message upgrade instead of matching a genuinely different message.
         normalized_message = _normalize_text(message)
         for match_field, match_value in (
             ("whatsapp_identity_key", whatsapp_identity_key),
@@ -159,6 +165,8 @@ def _find_outbound_communication(
             )
             if normalized_message is not None:
                 query = query.filter(Communication.message == normalized_message)
+            if created_at is not None:
+                query = query.filter(Communication.created_at == created_at)
             communication = query.order_by(Communication.created_at.desc(), Communication.id.desc()).first()
             if communication is not None:
                 return communication, f"{match_field}_external_account_id"
@@ -259,6 +267,7 @@ def persist_whatsapp_outbound_communication(
         whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
         external_account_id=normalized_external_account_id,
         message=normalized_message,
+        created_at=created_at,
     )
 
     persistence_state = "created"
