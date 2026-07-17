@@ -576,6 +576,7 @@ def _process_whatsapp_message(
         channel="whatsapp",
         direction="inbound",
         preview=msg_text,
+        event_at=ts,
     )
     db.commit()
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)

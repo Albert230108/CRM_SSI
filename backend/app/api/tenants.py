@@ -23,7 +23,7 @@ from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant_conversation_link import TenantConversationLink
-from app.services.beds24_client import get_booking_detail, get_bookings
+from app.services.beds24_client import get_booking_detail, get_bookings, update_booking_notes
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
@@ -245,7 +245,10 @@ def _extract_guest_fields(item: dict) -> dict:
     booking_time = str(item.get("bookingTime") or "").strip() or None
     modified_time = str(item.get("modifiedTime") or "").strip() or None
     room_id = room_details["room_id"]
-    notes = str(item.get("comments") or item.get("comment") or item.get("note") or item.get("message") or "").strip() or None
+    # notes is a manual field on both sides (CRM and Beds24's booking "notes" property) that
+    # syncs bidirectionally; comments/comment/note/message are Beds24's separate
+    # guest-correspondence log and must not leak into it.
+    notes = str(item.get("notes") or "").strip() or None
     info_items = item.get("infoItems") or item.get("infoCodes") or []
     responsible_comm = None
     if isinstance(info_items, list):
@@ -352,6 +355,7 @@ def list_tenants(
     search: str | None = None,
     status: str | None = None,
     responsible: str | None = None,
+    last_message_direction: str | None = None,
     sort_by_message: bool = False,
     sort_desc: bool = True,
 ) -> list[TenantRead]:
@@ -449,6 +453,9 @@ def list_tenants(
 
         result.append(TenantRead(**tenant_dict))
 
+    if last_message_direction:
+        result = [t for t in result if t.last_message_direction == last_message_direction]
+
     if sort_by_message:
         epoch = datetime.min.replace(tzinfo=timezone.utc)
         result.sort(key=lambda t: t.last_message_date or epoch, reverse=sort_desc)
@@ -475,6 +482,34 @@ def get_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: User
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     return tenant
+
+
+class TenantNotesUpdate(BaseModel):
+    notes: Optional[str] = None
+
+
+@router.patch("/tenants/{tenant_id}/notes")
+async def update_tenant_notes(
+    tenant_id: int,
+    payload: TenantNotesUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    tenant.notes = payload.notes
+    db.commit()
+    db.refresh(tenant)
+
+    try:
+        await update_booking_notes(tenant.booking_id, tenant.notes)
+    except HTTPException as exc:
+        logger.warning("Beds24 notes sync failed tenant_id=%s booking_id=%s detail=%s", tenant_id, tenant.booking_id, exc.detail)
+        return {"notes": tenant.notes, "beds24_synced": False, "beds24_error": str(exc.detail)}
+
+    return {"notes": tenant.notes, "beds24_synced": True}
 
 
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)

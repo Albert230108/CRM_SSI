@@ -210,3 +210,106 @@ def test_list_tenants_picks_latest_across_whatsapp_and_email_per_tenant(db_sessi
     assert by_id[tenant_email_latest.id].last_message_date.replace(tzinfo=timezone.utc) == base + timedelta(days=3)
 
     assert by_id[tenant_no_activity.id].last_message_date is None
+
+
+async def fake_update_booking_notes_success(booking_id, notes):
+    return None
+
+
+async def fake_update_booking_notes_failure(booking_id, notes):
+    from fastapi import HTTPException, status
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 upstream error (500)")
+
+
+def test_update_tenant_notes_syncs_to_beds24(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_success)
+    tenant = create_tenant(db_session, name="Tenant Notes A", booking_id="NOTES-A")
+
+    response = client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "Guest requested late checkout"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["notes"] == "Guest requested late checkout"
+    assert payload["beds24_synced"] is True
+    db_session.refresh(tenant)
+    assert tenant.notes == "Guest requested late checkout"
+
+
+def test_update_tenant_notes_saves_locally_when_beds24_sync_fails(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_failure)
+    tenant = create_tenant(db_session, name="Tenant Notes B", booking_id="NOTES-B")
+
+    response = client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "Left a key with neighbor"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["notes"] == "Left a key with neighbor"
+    assert payload["beds24_synced"] is False
+    assert "beds24_error" in payload
+    db_session.refresh(tenant)
+    assert tenant.notes == "Left a key with neighbor"
+
+
+def test_update_tenant_notes_returns_404_for_missing_tenant(client, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_success)
+
+    response = client.patch("/api/tenants/999999/notes", json={"notes": "x"})
+
+    assert response.status_code == 404
+
+
+def test_webhook_extracts_notes_key_from_beds24_payload():
+    from app.api.tenants import _extract_guest_fields
+
+    fields = _extract_guest_fields({"notes": "Direct beds24 notes field", "comments": "fallback comments"})
+
+    assert fields["notes"] == "Direct beds24 notes field"
+
+
+def test_webhook_does_not_leak_guest_correspondence_into_notes():
+    from app.api.tenants import _extract_guest_fields
+
+    fields = _extract_guest_fields({
+        "comments": "quoted email from guest",
+        "comment": "another log entry",
+        "note": "yet another",
+        "message": "guest correspondence text",
+    })
+
+    assert fields["notes"] is None
+
+
+def test_list_tenants_filters_by_last_message_direction(db_session):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    tenant_inbound = create_tenant(db_session, name="Tenant Inbound", booking_id="DIR-A")
+    db_session.add(Communication(
+        tenant_id=tenant_inbound.id, channel="whatsapp", direction="inbound",
+        provider="whatsapp-service", message="hello", created_at=base,
+    ))
+
+    tenant_outbound = create_tenant(db_session, name="Tenant Outbound", booking_id="DIR-B")
+    db_session.add(Communication(
+        tenant_id=tenant_outbound.id, channel="whatsapp", direction="outbound",
+        provider="whatsapp-service", message="hi back", created_at=base,
+    ))
+
+    tenant_no_activity = create_tenant(db_session, name="Tenant No Activity", booking_id="DIR-C")
+    db_session.commit()
+
+    inbound_result = list_tenants(
+        db=db_session, current_user=None, last_message_direction="inbound",
+        sort_by_message=False, sort_desc=True,
+    )
+    inbound_ids = {tenant.id for tenant in inbound_result}
+    assert inbound_ids == {tenant_inbound.id}
+
+    outbound_result = list_tenants(
+        db=db_session, current_user=None, last_message_direction="outbound",
+        sort_by_message=False, sort_desc=True,
+    )
+    outbound_ids = {tenant.id for tenant in outbound_result}
+    assert outbound_ids == {tenant_outbound.id}
+
+    assert tenant_no_activity.id not in inbound_ids
+    assert tenant_no_activity.id not in outbound_ids

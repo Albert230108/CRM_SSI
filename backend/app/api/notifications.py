@@ -54,6 +54,7 @@ def list_notifications(
             direction=n.direction,
             preview=n.preview,
             created_at=n.created_at,
+            event_at=n.event_at,
             is_read=n.id in read_ids,
         )
         for n in notifications
@@ -105,6 +106,7 @@ def mark_notification_read(
         direction=notification.direction,
         preview=notification.preview,
         created_at=notification.created_at,
+        event_at=notification.event_at,
         is_read=True,
     )
 

@@ -42,6 +42,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
   const [selectedResponsible, setSelectedResponsible] = useState<string | null>(null)
+  const [selectedDirection, setSelectedDirection] = useState<string | null>(null)
   const [sortByMessage, setSortByMessage] = useState(true)
   const [sortDesc, setSortDesc] = useState(true)
   const [livePollSignal, setLivePollSignal] = useState(0)
@@ -96,6 +97,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         if (searchQuery) params.append('search', searchQuery)
         if (selectedStatus) params.append('status', selectedStatus)
         if (selectedResponsible) params.append('responsible', selectedResponsible)
+        if (selectedDirection) params.append('last_message_direction', selectedDirection)
         params.append('sort_by_message', sortByMessage.toString())
         params.append('sort_desc', sortDesc.toString())
 
@@ -118,7 +120,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
 
     loadTenants()
     return () => controller.abort()
-  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatus, selectedResponsible, sortByMessage, sortDesc])
+  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatus, selectedResponsible, selectedDirection, sortByMessage, sortDesc])
 
   const uniqueStatuses = useMemo(() => {
     const statuses = new Set<string>()
@@ -172,7 +174,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         <h2 className="text-lg font-semibold text-gray-900">Tenants</h2>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <input
           type="text"
           placeholder="Search by name, ID, email..."
@@ -181,11 +183,11 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm placeholder-gray-400 outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
         />
 
-        <div className="flex gap-2">
+        <div className="flex gap-1.5">
           <select
             value={selectedStatus || ''}
             onChange={(e) => setSelectedStatus(e.target.value || null)}
-            className="flex-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
           >
             <option value="">All Statuses</option>
             {uniqueStatuses.map((status) => (
@@ -195,9 +197,23 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
             ))}
           </select>
 
+          <select
+            value={selectedResponsible || ''}
+            onChange={(e) => setSelectedResponsible(e.target.value || null)}
+            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+          >
+            <option value="">All Responsible</option>
+            <option value="unassigned">Unassigned</option>
+            {uniqueResponsibles.map((responsible) => (
+              <option key={responsible} value={responsible}>
+                {responsible}
+              </option>
+            ))}
+          </select>
+
           <button
             onClick={() => setSortDesc(!sortDesc)}
-            className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+            className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
             title={sortDesc ? 'Sort ascending' : 'Sort descending'}
           >
             {sortDesc ? '↓' : '↑'}
@@ -205,17 +221,13 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         </div>
 
         <select
-          value={selectedResponsible || ''}
-          onChange={(e) => setSelectedResponsible(e.target.value || null)}
-          className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+          value={selectedDirection || ''}
+          onChange={(e) => setSelectedDirection(e.target.value || null)}
+          className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
         >
-          <option value="">All Responsible</option>
-          <option value="unassigned">Unassigned</option>
-          {uniqueResponsibles.map((responsible) => (
-            <option key={responsible} value={responsible}>
-              {responsible}
-            </option>
-          ))}
+          <option value="">All Last Messages</option>
+          <option value="inbound">Last Message Inbound ⬇</option>
+          <option value="outbound">Last Message Outbound ⬆</option>
         </select>
       </div>
 

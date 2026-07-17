@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import FinanceBox from '../components/FinanceBox'
 import ImportModal from '../components/ImportModal'
+import NotesBox from '../components/NotesBox'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
 import SyncProgressOverlay from '../components/SyncProgressOverlay'
@@ -69,6 +70,7 @@ export default function Dashboard() {
   // is ready (rather than un-blurring independently as each fetch resolves).
   const [financeReady, setFinanceReady] = useState(false)
   const [oneDriveReady, setOneDriveReady] = useState(false)
+  const [notesReady, setNotesReady] = useState(false)
   const [threadReady, setThreadReady] = useState(false)
   const selectedTenantIdRef = useRef(selectedTenantId)
 
@@ -79,6 +81,7 @@ export default function Dashboard() {
   useEffect(() => {
     setFinanceReady(false)
     setOneDriveReady(false)
+    setNotesReady(false)
     setThreadReady(false)
   }, [selectedTenantId])
 
@@ -90,11 +93,14 @@ export default function Dashboard() {
   const handleOneDriveReady = useCallback((readyTenantId: number) => {
     if (readyTenantId === selectedTenantIdRef.current) setOneDriveReady(true)
   }, [])
+  const handleNotesReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setNotesReady(true)
+  }, [])
   const handleThreadReady = useCallback((readyTenantId: number) => {
     if (readyTenantId === selectedTenantIdRef.current) setThreadReady(true)
   }, [])
 
-  const isSwitchingTenant = selectedTenantId !== undefined && !(financeReady && oneDriveReady && threadReady)
+  const isSwitchingTenant = selectedTenantId !== undefined && !(financeReady && oneDriveReady && notesReady && threadReady)
 
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
@@ -288,9 +294,9 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="flex h-full w-full flex-col overflow-hidden px-4 py-4">
+    <main className="flex h-full w-full flex-col overflow-hidden px-3 py-3">
       <SyncProgressOverlay active={syncRunning} />
-      <div className="mb-3 flex w-full items-center justify-between gap-4">
+      <div className="mb-2 flex w-full items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold text-gray-900">Dashboard</h1>
         </div>
@@ -360,7 +366,7 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-3 transition-all duration-300',
+              'h-full min-w-0 overflow-hidden p-2 transition-all duration-300',
               tenantsCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
@@ -400,23 +406,32 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-3 transition-all duration-300 flex flex-col gap-3',
+              'h-full min-w-0 overflow-hidden p-2 transition-all duration-300 flex flex-col gap-2',
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
               <div className="flex h-full min-h-0 flex-1 overflow-auto">
                 <FinanceBox tenantId={selectedTenantId} onReady={handleFinanceReady} />
               </div>
               <TileLoadingOverlay active={isSwitchingTenant} />
             </section>
 
-            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-              <div className="flex h-full min-h-0 flex-1 overflow-auto">
-                <OneDriveBox tenantId={selectedTenantId} onReady={handleOneDriveReady} />
-              </div>
-              <TileLoadingOverlay active={isSwitchingTenant} />
-            </section>
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
+              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+                <div className="flex h-full min-h-0 flex-1 overflow-auto">
+                  <NotesBox tenantId={selectedTenantId} onReady={handleNotesReady} />
+                </div>
+                <TileLoadingOverlay active={isSwitchingTenant} />
+              </section>
+
+              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+                <div className="flex h-full min-h-0 flex-1 overflow-auto">
+                  <OneDriveBox tenantId={selectedTenantId} onReady={handleOneDriveReady} />
+                </div>
+                <TileLoadingOverlay active={isSwitchingTenant} />
+              </section>
+            </div>
           </div>
         </section>
 
@@ -435,7 +450,7 @@ export default function Dashboard() {
         />
 
         <section
-          className="relative flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition-all duration-300"
+          className="relative flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm transition-all duration-300"
           style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
         >
           <div className="h-full w-full min-h-0 overflow-hidden">

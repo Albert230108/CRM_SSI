@@ -11,5 +11,6 @@ class NotificationRead(BaseModel):
     direction: str
     preview: str | None = None
     created_at: datetime
+    event_at: datetime
     is_read: bool
     model_config = ConfigDict(from_attributes=True)

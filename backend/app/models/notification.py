@@ -13,6 +13,11 @@ class Notification(Base):
     direction = Column(String(20), nullable=False, server_default="inbound")
     preview = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, index=True, server_default=func.now())
+    # The message's actual send/receive time (Gmail internalDate, WhatsApp timestamp), as
+    # opposed to created_at which is when this row was written. A delayed sync can insert a
+    # notification for a message that arrived hours/days ago, so "how new is this" must be
+    # judged from event_at, not created_at.
+    event_at = Column(DateTime(timezone=True), nullable=False, index=True, server_default=func.now())
 
 
 class NotificationReadState(Base):

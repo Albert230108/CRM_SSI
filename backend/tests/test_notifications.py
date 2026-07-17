@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime, timedelta, timezone
 
 from app.api.gmail_integration import _upsert_thread
 from app.core.dependencies import get_current_user
@@ -130,6 +131,50 @@ def test_inbound_email_linked_to_tenant_creates_notification(db_session):
     assert notification.channel == "email"
     assert notification.direction == "inbound"
     assert notification.preview == "Hi, I have a question."
+
+
+def test_inbound_email_notification_uses_message_time_not_import_time(db_session):
+    """Regression test: a Gmail sync that finally picks up a message hours/days after it
+    actually arrived (delayed history poll, expired watch, manual "sync all") must not make
+    the notification look like it just came in. event_at must reflect the message's own
+    internalDate, independent of when this row happens to be inserted."""
+    tenant = create_tenant(db_session, name="Eva Toth-Nagy", booking_id="B-notif-7", email="eva@example.com")
+    account = GmailAccount(email_address="crm@example.com", refresh_token_encrypted="x")
+    db_session.add(account)
+    db_session.commit()
+    db_session.refresh(account)
+
+    two_days_ago_ms = int((datetime.now(timezone.utc) - timedelta(days=2)).timestamp() * 1000)
+    thread = {
+        "id": "thread-stale",
+        "messages": [
+            {
+                "id": "msg-stale",
+                "internalDate": str(two_days_ago_ms),
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "From", "value": "Eva Toth-Nagy <eva@example.com>"},
+                        {"name": "To", "value": "crm@example.com"},
+                        {"name": "Subject", "value": "Delayed message"},
+                    ],
+                    "mimeType": "text/plain",
+                    "body": {"data": b64("Arrived 2 days ago, synced just now.")},
+                },
+            }
+        ],
+    }
+
+    before_import = datetime.now(timezone.utc)
+    conversation = _upsert_thread(db_session, account, thread)
+    db_session.commit()
+
+    assert conversation is not None
+    notification = db_session.query(Notification).filter(Notification.tenant_id == tenant.id).one()
+    event_at = notification.event_at.replace(tzinfo=timezone.utc) if notification.event_at.tzinfo is None else notification.event_at
+    created_at = notification.created_at.replace(tzinfo=timezone.utc) if notification.created_at.tzinfo is None else notification.created_at
+    assert event_at < before_import - timedelta(hours=1)
+    assert created_at >= before_import - timedelta(seconds=1)
 
 
 def test_inbound_email_without_matching_tenant_does_not_create_notification(db_session):

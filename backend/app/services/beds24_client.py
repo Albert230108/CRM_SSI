@@ -137,6 +137,41 @@ async def _get_with_retry(
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Beds24 upstream retry exhausted")
 
 
+async def _post_with_retry(
+    client: httpx.AsyncClient, url: str, json_body: Any
+) -> httpx.Response:
+    max_retries = 5
+    base_delay = 1.0
+    for attempt in range(max_retries + 1):
+        try:
+            response = await client.post(url, json=json_body)
+        except httpx.TimeoutException as exc:
+            logger.warning("Beds24 write request timed out url=%s", url)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Beds24 request timed out") from exc
+        except httpx.HTTPError as exc:
+            logger.warning("Beds24 write request network error url=%s error=%s", url, type(exc).__name__)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Beds24 request unavailable") from exc
+
+        if response.status_code == 429 and attempt < max_retries:
+            try:
+                delay = float(response.headers.get("Retry-After", 0) or 0)
+            except (TypeError, ValueError):
+                delay = 0.0
+            delay = delay if delay > 0 else base_delay * (2 ** attempt)
+            await asyncio.sleep(min(delay, 20.0))
+            continue
+        if response.status_code in (401, 403):
+            logger.warning("Beds24 upstream write auth failed url=%s status=%s", url, response.status_code)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Beds24 credentials were rejected")
+        if response.status_code >= 400:
+            logger.warning("Beds24 upstream write error url=%s status=%s", url, response.status_code)
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 upstream error ({response.status_code})")
+        return response
+
+    logger.warning("Beds24 upstream write retry exhausted url=%s", url)
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Beds24 upstream retry exhausted")
+
+
 def _extract_beds24_data(payload: Any, *, endpoint: str) -> Any:
     if isinstance(payload, dict):
         if payload.get("errors"):
@@ -239,3 +274,16 @@ async def get_charges(booking_id: str) -> list[dict[str, Any]]:
         data = data.get("invoiceItems") or data.get("items") or []
     items = [item for item in (data or []) if isinstance(item, dict)]
     return [item for item in items if str(item.get("type", "")).lower() not in ("payment", "pay", "deposit")]
+
+
+async def update_booking_notes(booking_id: str, notes: str | None) -> None:
+    headers = await _async_headers()
+    body = [{"id": booking_id, "notes": notes or ""}]
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        response = await _post_with_retry(client, f"{WRITE_BASE_URL}/bookings", body)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        logger.warning("Beds24 update notes invalid JSON booking_id=%s", booking_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 update notes response was not valid JSON") from exc
+    _extract_beds24_data(payload, endpoint="update booking notes")

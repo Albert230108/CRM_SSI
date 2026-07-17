@@ -13,6 +13,7 @@ type NotificationItem = {
   direction: string
   preview: string | null
   created_at: string
+  event_at: string
   is_read: boolean
 }
 
@@ -174,7 +175,7 @@ export default function NotificationBell() {
                       {notification.tenant_name ? ` from ${notification.tenant_name}` : ''}
                     </p>
                     {notification.preview ? <p className="truncate text-xs text-gray-500">{notification.preview}</p> : null}
-                    <p className="mt-0.5 text-[10px] text-gray-400">{formatRelativeTime(notification.created_at)}</p>
+                    <p className="mt-0.5 text-[10px] text-gray-400">{formatRelativeTime(notification.event_at)}</p>
                   </div>
                   {!notification.is_read ? <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-cyan-500" /> : null}
                 </div>

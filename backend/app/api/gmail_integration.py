@@ -207,6 +207,23 @@ def _extract_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return attachments
 
 
+def _message_direction(message: dict[str, Any], sender_email: str | None, account_email: str | None) -> str:
+    """Classify a Gmail message as inbound/outbound.
+
+    Gmail's own SENT/INBOX labels reflect which mailbox a message actually landed in and are
+    authoritative even when the From header doesn't match the account's primary address (a
+    guest replying via an alias, a Send-As address, or a shared support inbox). Fall back to
+    comparing the From header against the account's own address only when labels are absent
+    (e.g. older cached payloads).
+    """
+    label_ids = {str(label).upper() for label in (message.get("labelIds") or [])}
+    if "SENT" in label_ids:
+        return "outbound"
+    if "INBOX" in label_ids:
+        return "inbound"
+    return "outbound" if sender_email and sender_email == account_email else "inbound"
+
+
 def _headers_map(headers: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
     for header in headers:
@@ -388,7 +405,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
         body_html = _extract_html(payload)
         attachments = _extract_attachments(payload)
         recipient_email = _email_address(headers.get("to"))
-        direction = "outbound" if sender_email and sender_email == account_email else "inbound"
+        direction = _message_direction(message, sender_email, account_email)
         try:
             # A concurrent sync (background poller vs. manual "sync all") can insert this
             # same provider_message_id between our exists-check above and this insert. The
@@ -418,6 +435,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         channel="email",
                         direction="inbound",
                         preview=body_text[:255] if body_text else None,
+                        event_at=sent_at,
                     )
         except IntegrityError:
             continue
