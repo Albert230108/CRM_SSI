@@ -111,6 +111,7 @@ def _find_outbound_communication(
     whatsapp_identity_key: str | None,
     whatsapp_normalized_phone: str | None,
     external_account_id: str | None,
+    message: str | None = None,
 ) -> tuple[Communication | None, str | None]:
     if provider_message_id:
         communication = (
@@ -132,17 +133,20 @@ def _find_outbound_communication(
         # message live (before WhatsApp confirms delivery with a provider_message_id) once that
         # ID arrives. It must NEVER match a row that already has its own distinct
         # provider_message_id — otherwise every subsequent outbound message in the same chat
-        # whose ID lookup finds nothing (e.g. a genuinely new historical message during backfill)
-        # falls through to here and silently overwrites the most recent already-confirmed
-        # message's text while leaving its original created_at/direction untouched, corrupting
-        # unrelated history.
+        # whose ID lookup finds nothing (e.g. a genuinely new historical message during backfill,
+        # or a live message_create capture that never got a real provider_message_id) falls
+        # through to here and silently overwrites the most recent already-confirmed message's
+        # text while leaving its original created_at/direction untouched, corrupting unrelated
+        # history. Requiring the message text to match too keeps this a same-message upgrade
+        # (identical content, ID arriving late) instead of matching a genuinely different message.
+        normalized_message = _normalize_text(message)
         for match_field, match_value in (
             ("whatsapp_identity_key", whatsapp_identity_key),
             ("whatsapp_chat_id", whatsapp_chat_id),
         ):
             if not match_value:
                 continue
-            communication = (
+            query = (
                 db.query(Communication)
                 .filter(
                     Communication.tenant_id == tenant_id,
@@ -152,9 +156,10 @@ def _find_outbound_communication(
                     Communication.provider_message_id.is_(None),
                     getattr(Communication, match_field) == match_value,
                 )
-                .order_by(Communication.created_at.desc(), Communication.id.desc())
-                .first()
             )
+            if normalized_message is not None:
+                query = query.filter(Communication.message == normalized_message)
+            communication = query.order_by(Communication.created_at.desc(), Communication.id.desc()).first()
             if communication is not None:
                 return communication, f"{match_field}_external_account_id"
 
@@ -253,6 +258,7 @@ def persist_whatsapp_outbound_communication(
         whatsapp_identity_key=normalized_whatsapp_identity_key,
         whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
         external_account_id=normalized_external_account_id,
+        message=normalized_message,
     )
 
     persistence_state = "created"
