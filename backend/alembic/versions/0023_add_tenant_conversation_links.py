@@ -39,9 +39,14 @@ def upgrade() -> None:
 
     # Backfill: every conversation that already has a tenant_id gets a link to that tenant,
     # so existing single-tenant assignments keep working immediately after migration.
+    # conversations.tenant_id was never FK-constrained, so some rows can point at tenants
+    # that were since deleted -- join against tenants to skip those dangling references.
     op.execute(
         "INSERT INTO tenant_conversation_links (tenant_id, conversation_id, source, created_at, updated_at) "
-        "SELECT tenant_id, id, 'backfill', now(), now() FROM conversations WHERE tenant_id IS NOT NULL"
+        "SELECT c.tenant_id, c.id, 'backfill', now(), now() "
+        "FROM conversations c "
+        "JOIN tenants t ON t.id = c.tenant_id "
+        "WHERE c.tenant_id IS NOT NULL"
     )
 
     # Also backfill: link any OTHER tenant that shares the same email address as a conversation's
