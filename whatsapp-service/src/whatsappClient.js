@@ -1030,7 +1030,19 @@ async function backfillChatHistory(chat, options = {}) {
 
   let messages = [];
   try {
-    messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit }) : [];
+    const fetched = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit }) : [];
+    // fetchMessages() without fromMe alone can miss messages sent from another linked device
+    // (phone, another PC) that never round-tripped through this session's local store. The
+    // fromMe: true query path retrieves them separately, so merge and dedupe both results.
+    const fromMeFetched = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit, fromMe: true }) : [];
+    const seenMergeIds = new Set();
+    for (const message of [...(Array.isArray(fetched) ? fetched : []), ...(Array.isArray(fromMeFetched) ? fromMeFetched : [])]) {
+      const mergeId = message?.id?._serialized || buildHistoryDedupeKey(message, chatId, message?.fromMe ? "outbound" : "inbound");
+      if (!seenMergeIds.has(mergeId)) {
+        seenMergeIds.add(mergeId);
+        messages.push(message);
+      }
+    }
   } catch (error) {
     console.error(JSON.stringify({
       event: "whatsapp_history_fetch_failure",
