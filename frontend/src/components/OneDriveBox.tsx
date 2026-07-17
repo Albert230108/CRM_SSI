@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { getDirectoryHandleForUser } from '../lib/fileHandleStore'
 import { useLocalFolderRootPath } from '../lib/displayPreferences'
@@ -83,15 +83,6 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
   }, [tenantId, token])
 
   const tenantBookingId = tenant?.booking_id?.trim() || ''
-
-  const tenantDisplayName = useMemo(() => {
-    if (!tenant) return ''
-    const firstName = tenant.first_name?.trim() || ''
-    const lastName = tenant.last_name?.trim() || ''
-    const combinedName = [firstName, lastName].filter(Boolean).join(' ').trim()
-    if (combinedName) return combinedName
-    return tenant.name?.trim() || ''
-  }, [tenant])
 
   const resolveTenantFiles = async (selectedRoot: FileSystemDirectoryHandle) => {
     const yearName = new Date().getFullYear().toString()
@@ -215,14 +206,22 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
     }
   }
 
+  const subtitleMessage = !tenantId
+    ? 'No tenant selected'
+    : unsupported
+      ? 'Local folder access is not supported in this browser.'
+      : !rootHandle
+        ? 'No folder configured - go to Settings to connect a local folder.'
+        : tenantBookingId
+          ? ''
+          : 'Loading tenant...'
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Files</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            {!tenantId ? 'No tenant selected' : unsupported ? 'Local folder access is not supported in this browser.' : !rootHandle ? 'No folder configured - go to Settings to connect a local folder.' : tenantBookingId ? 'Local booking files' : 'Loading tenant...'}
-          </p>
+          {subtitleMessage ? <p className="mt-1 text-sm text-gray-500">{subtitleMessage}</p> : null}
         </div>
         {tenantHandle ? (
           <button
@@ -239,9 +238,8 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
 
       {loading ? <p className="text-sm text-gray-500">Loading...</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
-      {tenantDisplayName ? <p className="text-sm text-gray-500">{tenantDisplayName}</p> : null}
       {rootHandle ? (
-        <p className="text-xs uppercase tracking-[0.2em] text-gray-500">
+        <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
           {[
             `Root: ${rootHandle.name}`,
             yearHandle ? `Year: ${yearHandle.name}` : null,
@@ -253,14 +251,14 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
       ) : null}
 
       {tenantId ? (
-        <ul className="space-y-1.5">
+        <ul className="space-y-1">
           {items.length === 0 && !loading && !error ? <li className="text-sm text-gray-500">No files in tenant folder.</li> : null}
           {items.map((item) => (
-            <li key={item.name} className="rounded-2xl border border-gray-200 bg-white p-3 transition hover:border-gray-300 hover:bg-gray-50">
+            <li key={item.name} className="rounded-xl border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="font-medium text-gray-900">{item.name}</p>
-                  <p className="mt-1 text-xs uppercase tracking-[0.2em] text-gray-500">
+                  <p className="text-sm font-medium text-gray-900">{item.name}</p>
+                  <p className="mt-0.5 text-[11px] uppercase tracking-[0.15em] text-gray-500">
                     {item.kind}
                     {item.size !== undefined ? ` - ${item.size} bytes` : ''}
                   </p>
@@ -269,12 +267,12 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
                   <button
                     type="button"
                     onClick={() => handleOpenFile(item.handle as FileSystemFileHandle)}
-                    className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs text-cyan-700"
+                    className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] text-cyan-700"
                   >
                     Open
                   </button>
                 ) : (
-                  <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">Folder</span>
+                  <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">Folder</span>
                 )}
               </div>
             </li>
