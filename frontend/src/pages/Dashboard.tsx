@@ -5,6 +5,7 @@ import FinanceBox from '../components/FinanceBox'
 import ImportModal from '../components/ImportModal'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
+import SyncProgressOverlay from '../components/SyncProgressOverlay'
 import ThreadView from '../components/ThreadView'
 import TileLoadingOverlay from '../components/TileLoadingOverlay'
 import {
@@ -270,6 +271,7 @@ export default function Dashboard() {
 
   return (
     <main className="flex h-full w-full flex-col overflow-hidden px-4 py-4">
+      <SyncProgressOverlay active={syncRunning} />
       <div className="mb-3 flex w-full items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold text-gray-900">Dashboard</h1>

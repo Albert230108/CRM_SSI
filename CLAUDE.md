@@ -1,5 +1,6 @@
 # CLAUDE.md — CRM_SSI Agent Instructions
-
+## IMPORTANT NOTES!
+- NEVER ASSUME ANYTHING! ASK ME FIRST!
 ## 🗺️ Project Overview & Stack
 
 - **Project:** CRM_SSI — a short-stay tenant CRM integrating Beds24 bookings, Gmail conversations, and WhatsApp messaging/history.
