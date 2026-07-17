@@ -22,9 +22,10 @@ type LocalFolderItem = {
 
 type OneDriveBoxProps = {
   tenantId?: number
+  onReady?: (tenantId: number) => void
 }
 
-export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
+export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
   const userKey = userEmail ?? 'anonymous'
@@ -56,6 +57,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
     }
 
     const controller = new AbortController()
+    const activeTenantId = tenantId
     const loadTenant = async () => {
       try {
         setLoading(true)
@@ -72,6 +74,7 @@ export default function OneDriveBox({ tenantId }: OneDriveBoxProps) {
         setError(err instanceof Error ? err.message : 'Failed to load tenant details')
       } finally {
         setLoading(false)
+        onReady?.(activeTenantId)
       }
     }
 

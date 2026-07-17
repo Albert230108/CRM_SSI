@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import FinanceBox from '../components/FinanceBox'
@@ -6,6 +6,7 @@ import ImportModal from '../components/ImportModal'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
 import ThreadView from '../components/ThreadView'
+import TileLoadingOverlay from '../components/TileLoadingOverlay'
 import {
   clampMiddleColumnWidth,
   clampTenantSidebarWidth,
@@ -54,6 +55,38 @@ export default function Dashboard() {
     const parsed = Number(tenantId)
     return Number.isFinite(parsed) ? parsed : undefined
   }, [tenantId])
+
+  // Tracks whether each of the finance/OneDrive/thread tiles has finished loading data for
+  // the currently selected tenant, so all three can stay blurred together until every tile
+  // is ready (rather than un-blurring independently as each fetch resolves).
+  const [financeReady, setFinanceReady] = useState(false)
+  const [oneDriveReady, setOneDriveReady] = useState(false)
+  const [threadReady, setThreadReady] = useState(false)
+  const selectedTenantIdRef = useRef(selectedTenantId)
+
+  useEffect(() => {
+    selectedTenantIdRef.current = selectedTenantId
+  }, [selectedTenantId])
+
+  useEffect(() => {
+    setFinanceReady(false)
+    setOneDriveReady(false)
+    setThreadReady(false)
+  }, [selectedTenantId])
+
+  // Stable callback identities (empty deps) so passing them down doesn't retrigger the
+  // tiles' own data-fetching effects; staleness is avoided via selectedTenantIdRef.
+  const handleFinanceReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setFinanceReady(true)
+  }, [])
+  const handleOneDriveReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setOneDriveReady(true)
+  }, [])
+  const handleThreadReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setThreadReady(true)
+  }, [])
+
+  const isSwitchingTenant = selectedTenantId !== undefined && !(financeReady && oneDriveReady && threadReady)
 
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
@@ -355,16 +388,18 @@ export default function Dashboard() {
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
               <div className="flex h-full min-h-0 flex-1 overflow-auto">
-                <FinanceBox tenantId={selectedTenantId} />
+                <FinanceBox tenantId={selectedTenantId} onReady={handleFinanceReady} />
               </div>
+              <TileLoadingOverlay active={isSwitchingTenant} />
             </section>
 
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
               <div className="flex h-full min-h-0 flex-1 overflow-auto">
-                <OneDriveBox tenantId={selectedTenantId} />
+                <OneDriveBox tenantId={selectedTenantId} onReady={handleOneDriveReady} />
               </div>
+              <TileLoadingOverlay active={isSwitchingTenant} />
             </section>
           </div>
         </section>
@@ -384,12 +419,13 @@ export default function Dashboard() {
         />
 
         <section
-          className="flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition-all duration-300"
+          className="relative flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition-all duration-300"
           style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
         >
           <div className="h-full w-full min-h-0 overflow-hidden">
-            <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} />
+            <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} onReady={handleThreadReady} />
           </div>
+          <TileLoadingOverlay active={isSwitchingTenant} />
         </section>
       </div>
 

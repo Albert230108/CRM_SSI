@@ -73,9 +73,10 @@ type TenantSummary = FinanceResponse['tenant']
 
 type FinanceBoxProps = {
   tenantId?: number
+  onReady?: (tenantId: number) => void
 }
 
-export default function FinanceBox({ tenantId }: FinanceBoxProps) {
+export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const token = useAuthStore((state) => state.token)
   const [charges, setCharges] = useState<FinanceItem[]>([])
   const [payments, setPayments] = useState<FinanceItem[]>([])
@@ -94,6 +95,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
     }
 
     const controller = new AbortController()
+    const activeTenantId = tenantId
     const loadFinance = async () => {
       try {
         setLoading(true)
@@ -123,6 +125,7 @@ export default function FinanceBox({ tenantId }: FinanceBoxProps) {
         setError(err instanceof Error ? err.message : 'Failed to load finance data')
       } finally {
         setLoading(false)
+        onReady?.(activeTenantId)
       }
     }
 

@@ -296,6 +296,7 @@ const WHATSAPP_ACCOUNT_DIRECTORY: Record<string, { label: string; paletteIndex: 
 type ThreadViewProps = {
   tenantId?: number
   reloadSignal?: number
+  onReady?: (tenantId: number) => void
 }
 
 type ReplyTarget =
@@ -303,7 +304,7 @@ type ReplyTarget =
   | { type: 'whatsapp'; groupId: string }
   | null
 
-export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) {
+export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const downloadAttachment = useCallback(
@@ -415,6 +416,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     }
 
     const controller = new AbortController()
+    const activeTenantId = tenantId
 
     const loadThread = async () => {
       try {
@@ -464,6 +466,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         setError(err instanceof Error ? err.message : 'Failed to load thread')
       } finally {
         setLoading(false)
+        onReady?.(activeTenantId)
       }
     }
 
