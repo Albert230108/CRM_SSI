@@ -195,8 +195,30 @@ export default function Dashboard() {
     })
   }
 
+  const middleColumnMaxWidth = Math.max(
+    MIDDLE_COLUMN_MIN_WIDTH,
+    containerWidth - DIVIDER_WIDTH * 2 - tenantSidebarWidth - RIGHT_PANEL_MIN_WIDTH,
+  )
+  // Tracks whether the user's last explicit drag pinned the middle column to its
+  // max available width, so it keeps growing to fill the space on later resizes
+  // instead of staying stuck at the pixel value captured at drag time.
+  const middleColumnPinnedToMaxRef = useRef(false)
+
   const effectiveMiddleWidth =
     middleColumnWidth ?? Math.max(MIDDLE_COLUMN_MIN_WIDTH, (containerWidth - DIVIDER_WIDTH * 2 - tenantSidebarWidth) / 2)
+
+  // Re-clamp (or, if the user previously maximized it, re-grow) an explicitly-set
+  // middle width whenever the available space changes (window resize, sidebar
+  // collapse/expand, other divider drag).
+  useEffect(() => {
+    setMiddleColumnWidth((current) => {
+      if (current === null) return current
+      if (middleColumnPinnedToMaxRef.current) return middleColumnMaxWidth
+      const clamped = clampMiddleColumnWidth(current, containerWidth, tenantSidebarWidth)
+      return clamped === current ? current : clamped
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerWidth, tenantSidebarWidth, middleColumnMaxWidth])
 
   const handleTenantDividerStart = () => {
     dragBaseWidthRef.current = tenantSidebarWidth
@@ -219,6 +241,7 @@ export default function Dashboard() {
   }
   const handleMiddleDividerEnd = () => {
     setMiddleColumnWidth((current) => {
+      middleColumnPinnedToMaxRef.current = current !== null && current >= middleColumnMaxWidth
       persistLayout(tenantSidebarWidth, current)
       return current
     })
