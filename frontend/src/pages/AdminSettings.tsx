@@ -110,6 +110,10 @@ export default function AdminSettings() {
   const [backfillingBodies, setBackfillingBodies] = useState(false)
   const [backfillMessage, setBackfillMessage] = useState('')
 
+  const [forwardToEmail, setForwardToEmail] = useState('')
+  const [savingForwardToEmail, setSavingForwardToEmail] = useState(false)
+  const [forwardToEmailMessage, setForwardToEmailMessage] = useState('')
+
   const loadLogs = async () => {
     const params = new URLSearchParams()
     params.set('limit', '50')
@@ -132,6 +136,13 @@ export default function AdminSettings() {
       if (usersResponse.ok) setUsers(await usersResponse.json())
       if (invitesResponse.ok) setInvites(await invitesResponse.json())
       await loadLogs()
+      const adminSettingsResponse = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (adminSettingsResponse.ok) {
+        const data = await adminSettingsResponse.json()
+        setForwardToEmail(data.forward_to_email ?? '')
+      }
     }
     load()
   }, [token])
@@ -311,6 +322,30 @@ export default function AdminSettings() {
     }
   }
 
+  const saveForwardToEmail = async (event: FormEvent) => {
+    event.preventDefault()
+    setForwardToEmailMessage('')
+    setSavingForwardToEmail(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ forward_to_email: forwardToEmail.trim() || null }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setForwardToEmailMessage(typeof data.detail === 'string' ? data.detail : 'Failed to save forwarding address')
+        return
+      }
+      setForwardToEmail(data.forward_to_email ?? '')
+      setForwardToEmailMessage('Saved')
+    } catch {
+      setForwardToEmailMessage('Failed to save forwarding address')
+    } finally {
+      setSavingForwardToEmail(false)
+    }
+  }
+
   const confirmClearInvites = async () => {
     setClearInvitesError('')
     setClearingInvites(true)
@@ -353,6 +388,30 @@ export default function AdminSettings() {
           {backfillingBodies ? 'Backfilling...' : 'Backfill email bodies'}
         </button>
         {backfillMessage ? <p className="mt-3 text-sm text-gray-600">{backfillMessage}</p> : null}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">AI Reply forwarding address</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          When a user clicks "AI Reply" on an email thread, the thread is forwarded to this address for AI drafting.
+        </p>
+        <form onSubmit={saveForwardToEmail} className="mt-4 flex max-w-lg items-center gap-3">
+          <input
+            type="email"
+            value={forwardToEmail}
+            onChange={(event) => setForwardToEmail(event.target.value)}
+            placeholder="ai-drafts@example.com"
+            className="flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          />
+          <button
+            type="submit"
+            disabled={savingForwardToEmail}
+            className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+          >
+            {savingForwardToEmail ? 'Saving...' : 'Save'}
+          </button>
+        </form>
+        {forwardToEmailMessage ? <p className="mt-3 text-sm text-gray-600">{forwardToEmailMessage}</p> : null}
       </section>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">

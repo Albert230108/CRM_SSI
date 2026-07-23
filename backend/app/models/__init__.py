@@ -1,6 +1,8 @@
 from app.models.admin_invite import AdminInvite
+from app.models.admin_settings import AdminSettings
 from app.models.beds24_webhook_log import Beds24WebhookLog
 from app.models.communication import Communication
+from app.models.email_template import EmailTemplate
 from app.models.finance import Finance
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.notification import Notification, NotificationReadState

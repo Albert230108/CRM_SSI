@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
 import { useLocalFolderRootPath, useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
@@ -15,6 +15,21 @@ type GmailAccount = {
   last_history_id: string | null
 }
 
+type EmailTemplate = {
+  id: number
+  name: string
+  subject: string | null
+  body: string
+}
+
+const EMAIL_TEMPLATE_PLACEHOLDERS = [
+  'tenant_name', 'first_name', 'last_name', 'email', 'phone', 'check_in', 'check_out',
+  'num_nights', 'num_adults', 'num_children', 'room_name', 'property_name', 'booking_id',
+  'language', 'arrival_time', 'departure_time', 'city', 'country',
+]
+
+const emptyTemplateForm = { id: null as number | null, name: '', subject: '', body: '' }
+
 export default function Settings() {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
@@ -29,11 +44,23 @@ export default function Settings() {
   const [gmailAccounts, setGmailAccounts] = useState<GmailAccount[]>([])
   const [gmailMessage, setGmailMessage] = useState('')
 
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([])
+  const [templateForm, setTemplateForm] = useState(emptyTemplateForm)
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [templateMessage, setTemplateMessage] = useState('')
+
   const loadGmailAccounts = async () => {
     const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     if (response.ok) setGmailAccounts(await response.json())
+  }
+
+  const loadEmailTemplates = async () => {
+    const response = await fetch(`${API_BASE_URL}/api/email-templates`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) setEmailTemplates(await response.json())
   }
 
   useEffect(() => {
@@ -75,6 +102,7 @@ export default function Settings() {
     setPermissionState(null)
     loadHandle()
     loadGmailAccounts()
+    loadEmailTemplates()
 
     return () => {
       cancelled = true
@@ -203,6 +231,59 @@ export default function Settings() {
     if (response.ok) {
       await loadGmailAccounts()
       setGmailMessage('Gmail account disconnected')
+    }
+  }
+
+  const startEditTemplate = (template: EmailTemplate) => {
+    setTemplateMessage('')
+    setTemplateForm({ id: template.id, name: template.name, subject: template.subject ?? '', body: template.body })
+  }
+
+  const cancelEditTemplate = () => {
+    setTemplateMessage('')
+    setTemplateForm(emptyTemplateForm)
+  }
+
+  const saveEmailTemplate = async (event: FormEvent) => {
+    event.preventDefault()
+    setTemplateMessage('')
+    setSavingTemplate(true)
+    try {
+      const isEditing = templateForm.id !== null
+      const response = await fetch(
+        `${API_BASE_URL}/api/email-templates${isEditing ? `/${templateForm.id}` : ''}`,
+        {
+          method: isEditing ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({
+            name: templateForm.name.trim(),
+            subject: templateForm.subject.trim() || null,
+            body: templateForm.body,
+          }),
+        },
+      )
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setTemplateMessage(data?.detail ?? 'Failed to save template')
+        return
+      }
+      setTemplateForm(emptyTemplateForm)
+      await loadEmailTemplates()
+    } catch {
+      setTemplateMessage('Failed to save template')
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
+  const deleteEmailTemplate = async (templateId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/email-templates/${templateId}`, {
+      method: 'DELETE',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) {
+      if (templateForm.id === templateId) setTemplateForm(emptyTemplateForm)
+      await loadEmailTemplates()
     }
   }
 
@@ -340,6 +421,69 @@ export default function Settings() {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">Email Templates</h2>
+        <p className="mt-2 text-sm text-gray-500">
+          Personal templates you can select as a starting body when using "AI Reply" to forward an email thread.
+          Use placeholders below and they'll be filled in with the tenant's info: {EMAIL_TEMPLATE_PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}
+        </p>
+
+        <div className="mt-4 space-y-3">
+          {emailTemplates.map((template) => (
+            <div key={template.id} className="rounded-xl border border-gray-200 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900">{template.name}</p>
+                  {template.subject ? <p className="text-xs text-gray-500">Subject: {template.subject}</p> : null}
+                  <p className="mt-1 truncate text-sm text-gray-600">{template.body}</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button type="button" className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700" onClick={() => startEditTemplate(template)}>Edit</button>
+                  <button type="button" className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600" onClick={() => deleteEmailTemplate(template.id)}>Delete</button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {!emailTemplates.length ? <p className="text-sm text-gray-500">No templates yet.</p> : null}
+        </div>
+
+        <form onSubmit={saveEmailTemplate} className="mt-5 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <p className="text-sm font-semibold text-gray-900">{templateForm.id !== null ? 'Edit template' : 'Add template'}</p>
+          <input
+            type="text"
+            value={templateForm.name}
+            onChange={(event) => setTemplateForm((current) => ({ ...current, name: event.target.value }))}
+            placeholder="Template name"
+            required
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          />
+          <input
+            type="text"
+            value={templateForm.subject}
+            onChange={(event) => setTemplateForm((current) => ({ ...current, subject: event.target.value }))}
+            placeholder="Subject (optional)"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          />
+          <textarea
+            value={templateForm.body}
+            onChange={(event) => setTemplateForm((current) => ({ ...current, body: event.target.value }))}
+            placeholder="Body, e.g. Hi {{first_name}}, your stay at {{property_name}} runs from {{check_in}} to {{check_out}}..."
+            rows={4}
+            required
+            className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          />
+          <div className="flex items-center gap-2">
+            <button type="submit" disabled={savingTemplate} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
+              {savingTemplate ? 'Saving...' : templateForm.id !== null ? 'Save changes' : 'Add template'}
+            </button>
+            {templateForm.id !== null ? (
+              <button type="button" onClick={cancelEditTemplate} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700">Cancel</button>
+            ) : null}
+          </div>
+          {templateMessage ? <p className="text-sm text-gray-600">{templateMessage}</p> : null}
+        </form>
       </section>
     </main>
   )

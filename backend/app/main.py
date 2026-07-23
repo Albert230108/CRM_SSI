@@ -7,10 +7,12 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 
 from app.api.admin_invites import router as admin_invites_router
+from app.api.admin_settings import router as admin_settings_router
 from app.api.admin_sync import router as admin_sync_router
 from app.api.auth import router as auth_router
 from app.api.beds24_webhooks import router as beds24_webhook_router
 from app.api.communications import router as communications_router
+from app.api.email_templates import router as email_templates_router
 from app.api.gmail_integration import _start_watch, _sync_gmail_account
 from app.api.gmail_integration import router as gmail_integration_router
 from app.api.invites import router as invites_router
@@ -113,9 +115,11 @@ print(f"[backend] WHATSAPP_SERVICE_URL={resolved_whatsapp_service_url}")
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(admin_invites_router, prefix="/api")
+app.include_router(admin_settings_router, prefix="/api")
 app.include_router(admin_sync_router, prefix="/api")
 app.include_router(invites_router, prefix="/api")
 app.include_router(communications_router, prefix="/api")
+app.include_router(email_templates_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(gmail_integration_router)
 app.include_router(tenants_router, prefix="/api")

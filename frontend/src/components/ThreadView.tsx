@@ -311,6 +311,21 @@ type ReplyTarget =
   | { type: 'whatsapp'; groupId: string }
   | null
 
+type ForwardTarget = { threadId: number; providerThreadId: string; subject: string | null } | null
+
+type EmailTemplateOption = {
+  id: number
+  name: string
+  subject: string | null
+  body: string
+}
+
+type GmailDraft = {
+  draft_id: string | null
+  subject: string
+  body_text: string
+}
+
 export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
@@ -354,6 +369,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [replySubject, setReplySubject] = useState('')
   const [replySending, setReplySending] = useState(false)
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
+  const [forwardTarget, setForwardTarget] = useState<ForwardTarget>(null)
+  const [forwardSubject, setForwardSubject] = useState('')
+  const [forwardBody, setForwardBody] = useState('')
+  const [forwardSending, setForwardSending] = useState(false)
+  const [forwardToEmail, setForwardToEmail] = useState<string | null>(null)
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplateOption[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
+  const [templateLoading, setTemplateLoading] = useState(false)
+  const [draftResults, setDraftResults] = useState<GmailDraft[] | null>(null)
+  const [draftChecking, setDraftChecking] = useState(false)
+  const [draftError, setDraftError] = useState('')
   const emailThreadDrag = useDraggablePosition()
   const whatsappGroupDrag = useDraggablePosition()
   const emailReplyDrag = useDraggablePosition()
@@ -428,6 +454,27 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
       window.clearInterval(intervalId)
     }
   }, [tenantId, token])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const loadForwardSetup = async () => {
+      const [templatesResponse, adminSettingsResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/email-templates`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/api/admin-settings`, { headers: { Authorization: `Bearer ${token}` } }),
+      ])
+      if (cancelled) return
+      if (templatesResponse.ok) setEmailTemplates(await templatesResponse.json())
+      if (adminSettingsResponse.ok) {
+        const data = await adminSettingsResponse.json()
+        setForwardToEmail(data.forward_to_email ?? null)
+      }
+    }
+    loadForwardSetup()
+    return () => {
+      cancelled = true
+    }
+  }, [token])
 
   useEffect(() => {
     if (!tenantId) {
@@ -531,7 +578,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   }
 
   const openEmailThread = (thread: EmailThreadItem) => {
-    setSelectedEmailThread(thread)
+    setSelectedEmailThread((current) => {
+      if (!current || current.thread_id !== thread.thread_id) {
+        setDraftResults(null)
+        setDraftError('')
+      }
+      return thread
+    })
   }
 
   const loadGroupedThread = async () => {
@@ -649,6 +702,104 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
     }
   }
 
+  const openForwardPanel = (thread: EmailThreadItem) => {
+    openEmailThread(thread)
+    setForwardTarget({ threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, subject: thread.subject })
+    setForwardSubject(thread.subject ? (thread.subject.toLowerCase().startsWith('fwd:') ? thread.subject : `Fwd: ${thread.subject}`) : 'Fwd:')
+    setForwardBody('')
+    setSelectedTemplateId('')
+    setDraftResults(null)
+    setDraftError('')
+  }
+
+  const handleSelectTemplate = async (templateId: string) => {
+    setSelectedTemplateId(templateId)
+    if (!templateId || !tenantId) return
+    try {
+      setTemplateLoading(true)
+      const response = await fetch(`${API_BASE_URL}/api/email-templates/${templateId}/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ tenant_id: tenantId }),
+      })
+      if (!response.ok) return
+      const data = await response.json()
+      setForwardBody(data.body ?? '')
+      if (data.subject) setForwardSubject(data.subject)
+    } finally {
+      setTemplateLoading(false)
+    }
+  }
+
+  const handleSendForward = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!tenantId || !forwardTarget || !forwardBody.trim() || forwardSending) return
+
+    try {
+      setForwardSending(true)
+      setError('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/forward`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          email_thread_id: forwardTarget.threadId,
+          subject: forwardSubject.trim() || forwardTarget.subject || '',
+          body: forwardBody,
+        }),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || 'Failed to forward email')
+      }
+
+      await loadGroupedThread()
+      setForwardTarget(null)
+      setForwardBody('')
+      setForwardSubject('')
+      setSelectedTemplateId('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to forward email')
+    } finally {
+      setForwardSending(false)
+    }
+  }
+
+  const checkForAiDraft = async (thread: EmailThreadItem) => {
+    if (!tenantId) return
+    try {
+      setDraftChecking(true)
+      setDraftError('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/threads/${thread.thread_id}/draft`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || 'Failed to check for AI draft')
+      }
+      const data = await response.json()
+      setDraftResults(Array.isArray(data) ? data : [])
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : 'Failed to check for AI draft')
+      setDraftResults(null)
+    } finally {
+      setDraftChecking(false)
+    }
+  }
+
+  const useDraftAsReply = (draft: GmailDraft, thread: EmailThreadItem) => {
+    setReplyTarget({ type: 'email', threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, providerAccountId: thread.provider_account_id || 0, subject: thread.subject })
+    setReplySubject(draft.subject || '')
+    setReplyMessage(draft.body_text || '')
+    setForwardTarget(null)
+    setDraftResults(null)
+  }
+
   return (
     <div className="flex h-full min-h-0 min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-200 px-4 py-3">
@@ -701,17 +852,29 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
                         {item.messages.length} messages
                       </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openEmailThread(item)
-                          setReplyTarget({ type: 'email', threadId: item.thread_id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
-                        }}
-                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                      >
-                        Reply
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openEmailThread(item)
+                            setReplyTarget({ type: 'email', threadId: item.thread_id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
+                          }}
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                        >
+                          Reply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openForwardPanel(item)
+                          }}
+                          className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                        >
+                          AI Reply
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -943,6 +1106,115 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {!replyTarget && !forwardTarget ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openForwardPanel(selectedEmailThread)}
+                    className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                  >
+                    AI Reply
+                  </button>
+                  <button
+                    type="button"
+                    disabled={draftChecking}
+                    onClick={() => checkForAiDraft(selectedEmailThread)}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {draftChecking ? 'Checking...' : 'Check for AI draft'}
+                  </button>
+                </div>
+              ) : null}
+
+              {draftError ? <p className="text-sm text-rose-500">{draftError}</p> : null}
+
+              {draftResults ? (
+                draftResults.length ? (
+                  <div className="space-y-3">
+                    {draftResults.map((draft, index) => (
+                      <div key={draft.draft_id ?? index} className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">AI Draft</p>
+                        {draft.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{draft.subject}</p> : null}
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{draft.body_text}</p>
+                        <button
+                          type="button"
+                          onClick={() => useDraftAsReply(draft, selectedEmailThread)}
+                          className="mt-3 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+                        >
+                          Use this draft
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No AI draft found yet for this thread.</p>
+                )
+              ) : null}
+
+              {forwardTarget && forwardTarget.threadId === selectedEmailThread.thread_id ? (
+                <form onSubmit={handleSendForward} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                  <p className="text-xs text-gray-500">
+                    Forwards this thread to {forwardToEmail || 'the configured AI Reply address (set it in Admin Settings)'}.
+                  </p>
+                  {emailTemplates.length ? (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-forward-template">
+                        Template
+                      </label>
+                      <select
+                        id="modal-forward-template"
+                        value={selectedTemplateId}
+                        onChange={(event) => handleSelectTemplate(event.target.value)}
+                        disabled={templateLoading}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                      >
+                        <option value="">No template</option>
+                        {emailTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-forward-subject">
+                      Subject
+                    </label>
+                    <input
+                      id="modal-forward-subject"
+                      value={forwardSubject}
+                      onChange={(event) => setForwardSubject(event.target.value)}
+                      placeholder="Subject"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                    />
+                  </div>
+                  <textarea
+                    value={forwardBody}
+                    onChange={(event) => setForwardBody(event.target.value)}
+                    rows={5}
+                    placeholder="Write a note or pick a template above..."
+                    disabled={forwardSending || templateLoading}
+                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                  />
+                  <p className="text-xs text-gray-500">The full thread history is included automatically below this text when sent.</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setForwardTarget(null)}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={forwardSending || !forwardBody.trim()}
+                      className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {forwardSending ? 'Forwarding...' : 'Forward'}
                     </button>
                   </div>
                 </form>

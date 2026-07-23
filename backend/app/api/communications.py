@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
+from app.models.admin_settings import AdminSettings
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
@@ -16,7 +17,7 @@ from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
-from app.services.gmail_client import send_gmail_reply
+from app.services.gmail_client import GMAIL_SCOPES, list_thread_drafts, send_gmail_forward, send_gmail_reply
 from app.services.tenant_channel_resolver import (
     _lookup_whatsapp_endpoint_by_exact_chat_identity,
     _lookup_whatsapp_endpoint_by_normalized_chat_identity,
@@ -59,7 +60,7 @@ def _build_gmail_credentials(account: GmailAccount) -> Credentials | None:
             token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
             client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
             client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
-            scopes=account.scopes_json or ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
+            scopes=account.scopes_json or GMAIL_SCOPES,
         )
         # Refresh the token to get a valid access token
         credentials.refresh(GoogleAuthRequest())
@@ -79,6 +80,41 @@ class WhatsAppOutboundResolutionRead(BaseModel):
     whatsapp_normalized_phone: str | None = None
     external_account_id: str | None = None
     resolution_strategy: str | None = None
+
+
+class EmailForwardRequest(BaseModel):
+    email_thread_id: int
+    subject: str | None = None
+    body: str
+
+
+class GmailDraftRead(BaseModel):
+    draft_id: str | None = None
+    subject: str
+    body_text: str
+
+
+def _resolve_tenant_conversation(db: Session, tenant: Tenant, email_thread_id: int) -> tuple[Conversation, GmailAccount]:
+    conversation = (
+        db.query(Conversation)
+        .join(
+            TenantConversationLink,
+            (TenantConversationLink.conversation_id == Conversation.id)
+            & (TenantConversationLink.unlinked_at.is_(None)),
+        )
+        .filter(Conversation.id == email_thread_id, TenantConversationLink.tenant_id == tenant.id)
+        .first()
+    )
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email thread not found")
+
+    account = db.query(GmailAccount).filter(GmailAccount.id == conversation.provider_account_id).first()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account for this thread is not found")
+    if not account.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account is inactive")
+
+    return conversation, account
 
 
 def _mask_endpoint_value(value: str | None) -> str | None:
@@ -616,3 +652,130 @@ async def send_tenant_communication(
             communication.external_chat_namespace,
         )
         return communication
+
+
+@router.post("/tenants/{tenant_id}/forward", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)
+async def forward_tenant_email_thread(
+    tenant_id: int,
+    payload: EmailForwardRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Communication:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
+
+    conversation, account = _resolve_tenant_conversation(db, tenant, payload.email_thread_id)
+
+    admin_settings = db.query(AdminSettings).first()
+    forward_to_email = (admin_settings.forward_to_email if admin_settings else None) or None
+    if not forward_to_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Forwarding address is not configured in Admin Settings")
+
+    # Extract In-Reply-To/References from the latest message, and quote the full thread
+    # history, so the forward stays within the same Gmail thread — this lets draft
+    # retrieval later filter by threadId to find the AI-authored reply for this tenant.
+    thread_messages = (
+        db.query(ConversationMessage)
+        .filter(ConversationMessage.conversation_id == conversation.id)
+        .order_by(ConversationMessage.sent_at.asc())
+        .all()
+    )
+    latest_message = thread_messages[-1] if thread_messages else None
+    in_reply_to_message_id = None
+    references = None
+    if latest_message and latest_message.raw_payload and isinstance(latest_message.raw_payload, dict):
+        headers = (latest_message.raw_payload.get("gmail", {}).get("payload") or {}).get("headers") or []
+        for header in headers:
+            if str(header.get("name", "")).lower() == "message-id":
+                in_reply_to_message_id = str(header.get("value", "")).strip()
+            elif str(header.get("name", "")).lower() == "references":
+                references = str(header.get("value", "")).strip()
+
+    quote_lines = ["", "---------- Forwarded message ----------"]
+    for thread_message in thread_messages:
+        sender = thread_message.sender_email or (account.email_address if thread_message.direction == "outbound" else "Unknown")
+        quote_lines.append(f"\nOn {thread_message.sent_at.isoformat()}, {sender} wrote:")
+        quote_lines.append(thread_message.body or "")
+    full_body = body + "\n".join(quote_lines)
+
+    subject = payload.subject.strip() if payload.subject else (conversation.subject or "")
+
+    credentials = _build_gmail_credentials(account)
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing or could not be decrypted")
+
+    try:
+        gmail_result = send_gmail_forward(
+            credentials,
+            thread_id=conversation.provider_thread_id,
+            to_email=forward_to_email,
+            subject=subject,
+            body_text=full_body,
+            from_email=account.email_address,
+            in_reply_to_message_id=in_reply_to_message_id,
+            references=references,
+        )
+    except Exception as exc:
+        logger.exception("Failed to forward Gmail thread")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to forward email: {str(exc)}") from exc
+
+    provider_message_id = gmail_result.get("id")
+    db.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider=PROVIDER_GMAIL,
+            provider_message_id=provider_message_id or "",
+            direction="outbound",
+            sender_email=account.email_address,
+            recipient_email=forward_to_email,
+            subject=subject,
+            body=body,
+            sent_at=datetime.now(timezone.utc),
+            raw_payload={"gmail": gmail_result},
+        )
+    )
+    db.commit()
+
+    communication = Communication(
+        tenant_id=tenant.id,
+        channel="email",
+        direction="outbound",
+        provider=PROVIDER_GMAIL,
+        external_account_id=account.email_address,
+        subject=subject,
+        message=body,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(communication)
+    db.commit()
+    db.refresh(communication)
+    return communication
+
+
+@router.get("/tenants/{tenant_id}/threads/{conversation_id}/draft", response_model=list[GmailDraftRead])
+async def get_tenant_thread_draft(
+    tenant_id: int,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    conversation, account = _resolve_tenant_conversation(db, tenant, conversation_id)
+
+    credentials = _build_gmail_credentials(account)
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing or could not be decrypted")
+
+    try:
+        return list_thread_drafts(credentials, conversation.provider_thread_id)
+    except Exception as exc:
+        logger.exception("Failed to list Gmail drafts for thread")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve drafts: {str(exc)}") from exc

@@ -32,7 +32,11 @@ from app.services.background_jobs import get_job, start_job
 from app.services.notification_service import create_notification
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
 PROVIDER_GMAIL = "gmail"
 FRONTEND_SETTINGS_PATH = "/settings"
 logger = logging.getLogger(__name__)

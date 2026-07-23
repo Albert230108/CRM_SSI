@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
 
 
 def _build_service(credentials_info: dict[str, Any]) -> Any:
@@ -53,7 +57,7 @@ def _find_tenant(db: Session, headers: list[dict[str, Any]]) -> Tenant | None:
     return db.query(Tenant).filter(Tenant.email == email).first()
 
 
-def send_gmail_reply(
+def _send_gmail_message(
     credentials: Credentials,
     *,
     thread_id: str,
@@ -61,6 +65,7 @@ def send_gmail_reply(
     subject: str,
     body_text: str,
     from_email: str,
+    subject_prefix: str,
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
 ) -> dict[str, Any]:
@@ -69,8 +74,8 @@ def send_gmail_reply(
     message = EmailMessage()
     message["To"] = to_email
     message["From"] = from_email
-    if not subject.lower().startswith("re:"):
-        subject = f"Re: {subject}"
+    if not subject.lower().startswith(subject_prefix.lower()):
+        subject = f"{subject_prefix} {subject}"
     message["Subject"] = subject
     if in_reply_to_message_id:
         message["In-Reply-To"] = in_reply_to_message_id
@@ -84,6 +89,85 @@ def send_gmail_reply(
         body={"raw": raw_message, "threadId": thread_id},
     ).execute()
     return result
+
+
+def send_gmail_reply(
+    credentials: Credentials,
+    *,
+    thread_id: str,
+    to_email: str,
+    subject: str,
+    body_text: str,
+    from_email: str,
+    in_reply_to_message_id: str | None = None,
+    references: str | None = None,
+) -> dict[str, Any]:
+    return _send_gmail_message(
+        credentials,
+        thread_id=thread_id,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        from_email=from_email,
+        subject_prefix="Re:",
+        in_reply_to_message_id=in_reply_to_message_id,
+        references=references,
+    )
+
+
+def send_gmail_forward(
+    credentials: Credentials,
+    *,
+    thread_id: str,
+    to_email: str,
+    subject: str,
+    body_text: str,
+    from_email: str,
+    in_reply_to_message_id: str | None = None,
+    references: str | None = None,
+) -> dict[str, Any]:
+    return _send_gmail_message(
+        credentials,
+        thread_id=thread_id,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        from_email=from_email,
+        subject_prefix="Fwd:",
+        in_reply_to_message_id=in_reply_to_message_id,
+        references=references,
+    )
+
+
+def list_thread_drafts(credentials: Credentials, thread_id: str) -> list[dict[str, Any]]:
+    """List Gmail drafts belonging to the given thread. Used to retrieve an externally
+    AI-authored draft reply so a user can review/edit/send it from the CRM."""
+    service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+
+    result = service.users().drafts().list(userId="me").execute()
+    draft_stubs = result.get("drafts") or []
+
+    matches: list[dict[str, Any]] = []
+    for stub in draft_stubs:
+        draft = service.users().drafts().get(userId="me", id=stub["id"], format="full").execute()
+        message = draft.get("message") or {}
+        if message.get("threadId") != thread_id:
+            continue
+        payload = message.get("payload") or {}
+        headers = payload.get("headers") or []
+        subject = ""
+        for header in headers:
+            if str(header.get("name", "")).lower() == "subject":
+                subject = str(header.get("value") or "")
+                break
+        matches.append(
+            {
+                "draft_id": draft.get("id"),
+                "subject": subject,
+                "body_text": _extract_message_text(payload),
+            }
+        )
+    return matches
 
 
 def sync_relevant_threads(db: Session, credentials_info: dict[str, Any], query: str) -> int:
