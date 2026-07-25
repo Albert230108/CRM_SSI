@@ -13,7 +13,7 @@ from app.api.auth import router as auth_router
 from app.api.beds24_webhooks import router as beds24_webhook_router
 from app.api.communications import router as communications_router
 from app.api.email_templates import router as email_templates_router
-from app.api.gmail_integration import _start_watch, _sync_gmail_account
+from app.api.gmail_integration import _catch_up_gmail_account, _start_watch
 from app.api.gmail_integration import router as gmail_integration_router
 from app.api.invites import router as invites_router
 from app.api.notifications import router as notifications_router
@@ -28,7 +28,7 @@ from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
 logger = logging.getLogger(__name__)
 
-EMAIL_POLL_INTERVAL_SECONDS = int(os.getenv("EMAIL_POLL_INTERVAL_SECONDS", "45"))
+EMAIL_POLL_INTERVAL_SECONDS = int(os.getenv("EMAIL_POLL_INTERVAL_SECONDS", "14400"))  # 4 hours
 GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS = int(os.getenv("GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS", str(6 * 60 * 60)))
 GMAIL_WATCH_RENEWAL_MARGIN = timedelta(hours=24)
 
@@ -40,14 +40,14 @@ def _poll_gmail_accounts_once() -> None:
         for account in accounts:
             account_id = account.id
             try:
-                _sync_gmail_account(db, account)
+                _catch_up_gmail_account(db, account)
             except Exception:
                 # A failed flush/commit leaves the session needing a rollback before any
                 # further use, including lazy-loading account.id for this log line — so
                 # capture the id above and roll back here, or logging the error itself
                 # raises PendingRollbackError and aborts the remaining accounts this cycle.
                 db.rollback()
-                logger.exception("Background Gmail sync failed account_id=%s", account_id)
+                logger.exception("Background Gmail catch-up failed account_id=%s", account_id)
     except Exception:
         logger.exception("Background Gmail sync loop failed to load accounts")
     finally:
@@ -57,11 +57,15 @@ def _poll_gmail_accounts_once() -> None:
 async def _poll_gmail_accounts_forever() -> None:
     while True:
         await asyncio.sleep(EMAIL_POLL_INTERVAL_SECONDS)
-        # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
-        # per account). Running this loop inline on the event loop — as it was before — froze
-        # every concurrent request across the whole app (unrelated to any user action) for the
-        # entire duration of this poll, every 45s, forever. asyncio.to_thread matches the
-        # pattern already used for the manual sync-all endpoint in gmail_integration.py.
+        # _catch_up_gmail_account makes a blocking, synchronous Gmail getProfile call every
+        # cycle (cheap - one call, no-op if nothing changed), escalating to the incremental
+        # history sync (or, rarely, a full resync) only when the mailbox's historyId has
+        # moved since our last cursor. This is a safety net for missed Pub/Sub push
+        # notifications, not the primary sync path, hence the long interval. Still blocking,
+        # so still routed through asyncio.to_thread — running it inline on the event loop
+        # would freeze every concurrent request across the whole app for its duration, and
+        # asyncio.to_thread matches the pattern already used for the manual sync-all endpoint
+        # in gmail_integration.py.
         await asyncio.to_thread(_poll_gmail_accounts_once)
 
 
@@ -98,7 +102,7 @@ async def _renew_gmail_watches_forever() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     task = asyncio.create_task(_poll_gmail_accounts_forever())
-    logger.info("Started background Gmail poll loop interval_seconds=%s", EMAIL_POLL_INTERVAL_SECONDS)
+    logger.info("Started background Gmail incremental catch-up poll loop interval_seconds=%s", EMAIL_POLL_INTERVAL_SECONDS)
     renewal_task = asyncio.create_task(_renew_gmail_watches_forever())
     logger.info("Started Gmail push watch renewal loop interval_seconds=%s", GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS)
     try:

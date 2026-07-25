@@ -50,7 +50,7 @@ def test_poll_continues_to_next_account_after_duplicate_key_error(monkeypatch):
 
     synced_account_ids = []
 
-    def fake_sync_gmail_account(db, account):
+    def fake_catch_up_gmail_account(db, account):
         synced_account_ids.append(account.id)
         if account.id == account_a_id:
             # Same provider_message_id another sync already committed - triggers the
@@ -74,7 +74,7 @@ def test_poll_continues_to_next_account_after_duplicate_key_error(monkeypatch):
             account.last_synced_at = datetime.now(timezone.utc)
             db.commit()
 
-    monkeypatch.setattr(main_module, "_sync_gmail_account", fake_sync_gmail_account)
+    monkeypatch.setattr(main_module, "_catch_up_gmail_account", fake_catch_up_gmail_account)
 
     try:
         main_module._poll_gmail_accounts_once()

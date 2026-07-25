@@ -1,8 +1,11 @@
 import base64
 import json
 
+from fastapi.testclient import TestClient
 from googleapiclient.errors import HttpError
 
+from app.database import SessionLocal
+from app.main import app
 from app.models.gmail_integration import ConversationMessage, GmailAccount
 
 
@@ -157,3 +160,56 @@ def test_webhook_falls_back_to_full_sync_when_history_cursor_expired(client, db_
     db_session.refresh(account)
     assert full_sync_calls == [account.id]
     assert account.last_history_id == "999"
+
+
+def test_webhook_returns_ok_false_when_processing_fails_after_retries_exhausted(monkeypatch):
+    """Regression test: a Gmail HttpError (e.g. 429 after retries exhausted) inside the
+    webhook must not become an unhandled 500 - that would make Pub/Sub redeliver the same
+    notification immediately, re-hitting the same rate limit and compounding the problem.
+
+    Uses real SessionLocal() calls and a plain TestClient (not the shared client/db_session
+    fixture), because the webhook's db.rollback() on failure rolls back the fixture's shared,
+    externally-managed connection/transaction wholesale - including data committed earlier in
+    the same test - which doesn't reflect how db.rollback() behaves in production, where each
+    request gets its own independent SessionLocal(). See test_gmail_background_poll.py for the
+    same pattern applied to main.py's poller.
+    """
+    monkeypatch.setenv("GMAIL_PUBSUB_WEBHOOK_SECRET", "test-secret")
+
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(email_address="info@shortstayinn.com", is_active=True, last_history_id="100")
+        setup_db.add(account)
+        setup_db.commit()
+        account_id = account.id
+    finally:
+        setup_db.close()
+
+    def fake_process(db, acct, new_history_id):
+        raise HttpError(_FakeResp(429), b'{"error": {"message": "User Rate Limit Exceeded"}}')
+
+    monkeypatch.setattr("app.webhooks.gmail._process_gmail_history_notification", fake_process)
+
+    try:
+        with TestClient(app) as test_client:
+            response = test_client.post(
+                "/webhooks/gmail?token=test-secret",
+                json=_notification_body("info@shortstayinn.com", "200"),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is False
+
+        verify_db = SessionLocal()
+        try:
+            refreshed = verify_db.get(GmailAccount, account_id)
+            assert refreshed.last_history_id == "100"
+        finally:
+            verify_db.close()
+    finally:
+        cleanup_db = SessionLocal()
+        try:
+            cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+            cleanup_db.commit()
+        finally:
+            cleanup_db.close()

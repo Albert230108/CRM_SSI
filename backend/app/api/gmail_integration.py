@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
 from typing import Any
@@ -140,6 +141,43 @@ def _build_service_for_account(account: GmailAccount) -> Any:
     return _build_service(_account_credentials(account))
 
 
+def _execute_gmail_request(request: Any, *, max_retries: int = 5, base_delay: float = 1.0) -> Any:
+    """Run a googleapiclient request, retrying with backoff when Gmail rate-limits us.
+
+    Gmail signals rate-limiting as 429, or (legacy) 403 with a rate-limit reason string.
+    Retry-After is honored when Gmail sends it; otherwise we back off exponentially, capped
+    at 20s to match the retry pattern already used for Beds24 (services/beds24_client.py).
+    Non-rate-limit errors (e.g. the 404 expired-history-cursor case) re-raise immediately so
+    callers' existing except HttpError handling keeps working unchanged.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return request.execute()
+        except HttpError as exc:
+            status_code = exc.resp.status if exc.resp is not None else None
+            is_rate_limited = status_code == 429 or (
+                status_code == 403 and "rate limit" in (exc.reason or "").lower()
+            )
+            if not is_rate_limited or attempt >= max_retries:
+                raise
+            retry_after = 0.0
+            if exc.resp is not None:
+                try:
+                    retry_after = float(exc.resp.get("retry-after") or 0)
+                except (TypeError, ValueError):
+                    retry_after = 0.0
+            delay = retry_after if retry_after > 0 else base_delay * (2**attempt)
+            delay = min(delay, 20.0)
+            logger.warning(
+                "Gmail API rate limited status=%s attempt=%s/%s, retrying after %.1fs",
+                status_code,
+                attempt + 1,
+                max_retries,
+                delay,
+            )
+            time.sleep(delay)
+
+
 def _start_watch(db: Session, account: GmailAccount) -> None:
     """Register (or renew) Gmail push notifications for this account's mailbox.
 
@@ -148,10 +186,8 @@ def _start_watch(db: Session, account: GmailAccount) -> None:
     should seed last_history_id from the response.
     """
     service = _build_service_for_account(account)
-    response = (
-        service.users()
-        .watch(userId="me", body={"topicName": _require_env("GMAIL_PUBSUB_TOPIC")})
-        .execute()
+    response = _execute_gmail_request(
+        service.users().watch(userId="me", body={"topicName": _require_env("GMAIL_PUBSUB_TOPIC")})
     )
     account.watch_expiration = datetime.fromtimestamp(int(response["expiration"]) / 1000, tz=timezone.utc)
     if not account.last_history_id:
@@ -473,7 +509,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
 
 def _gmail_profile(credentials: Credentials) -> dict[str, Any]:
     service = _build_service(credentials)
-    return service.users().getProfile(userId="me").execute()
+    return _execute_gmail_request(service.users().getProfile(userId="me"))
 
 
 def _mailbox_label(account: GmailAccount) -> str:
@@ -614,12 +650,26 @@ def oauth_callback(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gmail token exchange failed") from exc
     credentials = flow.credentials
 
-    account = _upsert_account_from_credentials(
-        db,
-        account_id=account_id,
-        display_name=None,
-        credentials=credentials,
-    )
+    try:
+        account = _upsert_account_from_credentials(
+            db,
+            account_id=account_id,
+            display_name=None,
+            credentials=credentials,
+        )
+    except HttpError as exc:
+        # _gmail_profile already retries transient 429s with backoff (_execute_gmail_request);
+        # if Gmail is still rate-limited after that, surface a clear, actionable error instead
+        # of an opaque 500 - the token exchange above already succeeded, so the user just needs
+        # to wait for Gmail's per-user limit to clear and retry the reconnect.
+        status_code = exc.resp.status if exc.resp is not None else None
+        logger.warning("Gmail profile lookup failed during OAuth callback status=%s", status_code)
+        if status_code == 429:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Gmail is rate-limiting this account right now. Wait a minute and try reconnecting again.",
+            ) from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gmail account lookup failed") from exc
     target = urlencode({"gmail_oauth": "connected", "account": account.email_address})
     return RedirectResponse(url=f"{FRONTEND_SETTINGS_PATH}?{target}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -705,8 +755,11 @@ def sync_all_accounts_status(job_id: str, current_user: User = Depends(get_curre
 def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     """Sync a single active Gmail account's threads. Returns count of saved conversations.
 
-    Shared by the manual sync route and the background poller in app.main, so both paths
-    stay in sync as Gmail sync logic evolves.
+    Full re-list + re-fetch of every matching thread - used by the manual sync route, the
+    admin "sync all" job, and as the bootstrap/cursor-expired fallback inside
+    _process_gmail_history_notification. The background poller in app.main goes through
+    _catch_up_gmail_account instead, which only reaches this function for those same
+    bootstrap/fallback cases rather than calling it directly every cycle.
     """
     service = _build_service_for_account(account)
     tenant_emails = {
@@ -717,10 +770,12 @@ def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     query_parts = [f'"{email}"' for email in sorted(tenant_emails)]
     query = " OR ".join(query_parts) if query_parts else None
     request = service.users().threads().list(userId="me", maxResults=100, q=query) if query else None
-    threads = request.execute().get("threads") or [] if request is not None else []
+    threads = _execute_gmail_request(request).get("threads") or [] if request is not None else []
     saved = 0
     for thread_ref in threads:
-        thread = service.users().threads().get(userId="me", id=thread_ref["id"], format="full").execute()
+        thread = _execute_gmail_request(
+            service.users().threads().get(userId="me", id=thread_ref["id"], format="full")
+        )
         conversation = _upsert_thread(db, account, thread)
         if conversation is not None and conversation.tenant_id is not None:
             saved += 1
@@ -747,16 +802,13 @@ def _process_gmail_history_notification(db: Session, account: GmailAccount, new_
     page_token = None
     try:
         while True:
-            response = (
-                service.users()
-                .history()
-                .list(
+            response = _execute_gmail_request(
+                service.users().history().list(
                     userId="me",
                     startHistoryId=account.last_history_id,
                     historyTypes=["messageAdded"],
                     pageToken=page_token,
                 )
-                .execute()
             )
             for entry in response.get("history") or []:
                 for added in entry.get("messagesAdded") or []:
@@ -776,12 +828,35 @@ def _process_gmail_history_notification(db: Session, account: GmailAccount, new_
         raise
 
     for thread_id in thread_ids:
-        thread = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
+        thread = _execute_gmail_request(service.users().threads().get(userId="me", id=thread_id, format="full"))
         _upsert_thread(db, account, thread)
 
     account.last_history_id = new_history_id
     account.last_synced_at = datetime.now(timezone.utc)
     db.commit()
+
+
+def _catch_up_gmail_account(db: Session, account: GmailAccount) -> None:
+    """Incremental fallback poll: reconcile via Gmail's history API instead of a full resync.
+
+    Safety net for the background poller in case a Pub/Sub push notification never arrived.
+    Costs a single getProfile call when nothing changed; only escalates to history.list/
+    threads.get (or a full resync, via _process_gmail_history_notification) when the
+    mailbox's historyId has actually moved since our last cursor.
+    """
+    service = _build_service_for_account(account)
+    profile = _execute_gmail_request(service.users().getProfile(userId="me"))
+    current_history_id = str(profile.get("historyId") or "")
+    if not current_history_id:
+        logger.warning("Gmail getProfile returned no historyId for account_id=%s; skipping catch-up", account.id)
+        return
+
+    if account.last_history_id and current_history_id == account.last_history_id:
+        account.last_synced_at = datetime.now(timezone.utc)
+        db.commit()
+        return
+
+    _process_gmail_history_notification(db, account, current_history_id)
 
 
 @router.post("/accounts/{account_id}/sync")
