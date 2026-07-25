@@ -29,6 +29,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
+from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.background_jobs import get_job, start_job
 from app.services.notification_service import create_notification
 
@@ -477,6 +478,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         preview=body_text[:255] if body_text else None,
                         event_at=sent_at,
                     )
+                    register_inbound_message(db, tenant=notify_tenant, channel="email", email_thread_id=conversation.id)
         except IntegrityError:
             continue
 

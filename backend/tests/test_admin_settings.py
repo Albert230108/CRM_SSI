@@ -4,7 +4,11 @@ from app.models.admin_settings import AdminSettings
 def test_get_admin_settings_defaults_to_null(non_admin_client):
     response = non_admin_client.get("/api/admin-settings")
     assert response.status_code == 200
-    assert response.json() == {"forward_to_email": None}
+    assert response.json() == {
+        "forward_to_email": None,
+        "ai_draft_debounce_seconds": 120,
+        "ai_auto_send_delay_seconds": 300,
+    }
 
 
 def test_put_admin_settings_requires_admin(non_admin_client):

@@ -1,0 +1,235 @@
+import asyncio
+import logging
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy.orm import Session
+
+from app.models.admin_settings import AdminSettings
+from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
+from app.models.ai_reply_template import AiReplyTemplate
+from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.models.tenant import Tenant
+from app.models.tenant_ai_settings import TenantAiSettings
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services import ai_reply_service
+from app.services.email_outbound_persistence import persist_gmail_outbound_message
+from app.services.gmail_client import build_gmail_credentials, send_gmail_reply
+from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
+from app.services.whatsapp_client import send_whatsapp_message
+from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
+
+logger = logging.getLogger(__name__)
+
+
+def _auto_send_delay_seconds(db: Session) -> int:
+    settings = db.query(AdminSettings).first()
+    return settings.ai_auto_send_delay_seconds if settings is not None else 300
+
+
+def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAutoDraft | None:
+    """Generate the auto-draft a due trigger represents.
+
+    Returns None (without raising) for any state that makes generation impossible or
+    pointless - tenant/settings/template missing - so the scheduler can just skip and move on.
+    Does not commit; the caller (the scheduler sweep) owns the transaction per trigger.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == trigger.tenant_id).first()
+    if tenant is None:
+        return None
+
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
+    if ai_settings is None:
+        return None
+
+    template_id = ai_settings.default_email_template_id if trigger.channel == "email" else ai_settings.default_whatsapp_template_id
+    if template_id is None:
+        logger.info("Skipping AI auto-draft: no default template configured tenant_id=%s channel=%s", tenant.id, trigger.channel)
+        return None
+
+    template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == template_id).first()
+    if template is None:
+        return None
+
+    generated_text = ai_reply_service.build_prompt_and_generate(
+        db,
+        tenant=tenant,
+        template=template,
+        channel=trigger.channel,
+        rough_draft=None,
+    )
+
+    auto_send_enabled = ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel=trigger.channel,
+        template_id=template.id,
+        email_thread_id=trigger.email_thread_id,
+        whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
+        generated_text=generated_text,
+        status="pending_auto_send" if auto_send_enabled else "pending",
+        scheduled_send_at=(datetime.now(timezone.utc) + timedelta(seconds=_auto_send_delay_seconds(db))) if auto_send_enabled else None,
+    )
+    db.add(draft)
+    return draft
+
+
+def _send_email_draft(db: Session, draft: AiAutoDraft) -> bool:
+    if draft.email_thread_id is None:
+        logger.warning("Cannot auto-send email draft without an email_thread_id draft_id=%s", draft.id)
+        return False
+
+    conversation = db.query(Conversation).filter(Conversation.id == draft.email_thread_id).first()
+    if conversation is None:
+        return False
+    account = db.query(GmailAccount).filter(GmailAccount.id == conversation.provider_account_id).first()
+    if account is None or not account.is_active:
+        return False
+
+    latest_message = (
+        db.query(ConversationMessage)
+        .filter(ConversationMessage.conversation_id == conversation.id)
+        .order_by(ConversationMessage.sent_at.desc())
+        .first()
+    )
+    to_email = None
+    in_reply_to_message_id = None
+    references = None
+    if latest_message:
+        if latest_message.direction == "inbound" and latest_message.sender_email:
+            to_email = latest_message.sender_email
+        elif latest_message.direction == "outbound" and latest_message.recipient_email:
+            to_email = latest_message.recipient_email
+        if isinstance(latest_message.raw_payload, dict):
+            headers = (latest_message.raw_payload.get("gmail", {}).get("payload") or {}).get("headers") or []
+            for header in headers:
+                if str(header.get("name", "")).lower() == "message-id":
+                    in_reply_to_message_id = str(header.get("value", "")).strip()
+                elif str(header.get("name", "")).lower() == "references":
+                    references = str(header.get("value", "")).strip()
+    if not to_email:
+        logger.warning("Cannot auto-send email draft: no recipient resolved draft_id=%s", draft.id)
+        return False
+
+    credentials = build_gmail_credentials(account)
+    if not credentials:
+        logger.warning("Cannot auto-send email draft: Gmail credentials unavailable draft_id=%s", draft.id)
+        return False
+
+    try:
+        gmail_result = send_gmail_reply(
+            credentials,
+            thread_id=conversation.provider_thread_id,
+            to_email=to_email,
+            subject=conversation.subject or "",
+            body_text=draft.generated_text,
+            from_email=account.email_address,
+            in_reply_to_message_id=in_reply_to_message_id,
+            references=references,
+        )
+    except Exception:
+        logger.exception("AI auto-send failed to send Gmail reply draft_id=%s", draft.id)
+        return False
+
+    communication = persist_gmail_outbound_message(
+        db,
+        tenant_id=draft.tenant_id,
+        conversation=conversation,
+        account=account,
+        to_email=to_email,
+        subject=conversation.subject or "",
+        message=draft.generated_text,
+        gmail_result=gmail_result,
+        ai_generated=True,
+    )
+    draft.sent_communication_id = communication.id
+    return True
+
+
+def _resolve_whatsapp_endpoint(db: Session, draft: AiAutoDraft) -> TenantChannelEndpoint | None:
+    if draft.whatsapp_endpoint_id is not None:
+        endpoint = db.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.id == draft.whatsapp_endpoint_id).first()
+        if endpoint is not None and endpoint.is_active:
+            return endpoint
+
+    # No endpoint captured at trigger time - only safe to guess when the tenant has exactly one
+    # active WhatsApp endpoint; multiple candidates means we can't tell which chat to reply in.
+    active_endpoints = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.tenant_id == draft.tenant_id,
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.is_active.is_(True),
+        )
+        .all()
+    )
+    return active_endpoints[0] if len(active_endpoints) == 1 else None
+
+
+def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> bool:
+    endpoint = _resolve_whatsapp_endpoint(db, draft)
+    if endpoint is None:
+        logger.warning("Cannot auto-send WhatsApp draft: no unambiguous WhatsApp endpoint draft_id=%s", draft.id)
+        return False
+
+    tenant = db.query(Tenant).filter(Tenant.id == draft.tenant_id).first()
+    if tenant is None:
+        return False
+
+    whatsapp_to = endpoint.external_chat_namespace or get_tenant_primary_phone_raw(db, tenant)
+    if not whatsapp_to:
+        logger.warning("Cannot auto-send WhatsApp draft: no destination chat/phone draft_id=%s", draft.id)
+        return False
+
+    try:
+        whatsapp_result = asyncio.run(
+            send_whatsapp_message(
+                {
+                    "to": whatsapp_to,
+                    "message": draft.generated_text,
+                    "tenant_id": draft.tenant_id,
+                    "whatsapp_endpoint_id": endpoint.id,
+                    "external_account_id": endpoint.external_account_id,
+                }
+            )
+        )
+    except Exception:
+        logger.exception("AI auto-send failed to send WhatsApp message draft_id=%s", draft.id)
+        return False
+
+    persistence_result = persist_whatsapp_outbound_communication(
+        db,
+        tenant_id=draft.tenant_id,
+        provider=endpoint.provider,
+        external_account_id=endpoint.external_account_id,
+        external_phone_id=endpoint.external_phone_id,
+        external_chat_namespace=endpoint.external_chat_namespace,
+        whatsapp_chat_id=(whatsapp_result.get("whatsapp_chat_id") if isinstance(whatsapp_result, dict) else None),
+        whatsapp_identity_key=(whatsapp_result.get("whatsapp_identity_key") if isinstance(whatsapp_result, dict) else None),
+        whatsapp_normalized_phone=(whatsapp_result.get("whatsapp_normalized_phone") if isinstance(whatsapp_result, dict) else None),
+        provider_message_id=(
+            (whatsapp_result.get("whatsapp_message_id") if isinstance(whatsapp_result, dict) else None)
+            or (whatsapp_result.get("provider_message_id") if isinstance(whatsapp_result, dict) else None)
+        ),
+        subject=None,
+        message=draft.generated_text,
+        created_at=datetime.now(timezone.utc),
+        ai_generated=True,
+    )
+    draft.sent_communication_id = persistence_result.communication.id
+    return True
+
+
+def send_scheduled_draft(db: Session, draft: AiAutoDraft) -> bool:
+    """Sends a `pending_auto_send` draft via the same primitives manual sends use.
+
+    Returns True and mutates draft.status/sent_communication_id on success; on failure the
+    draft is left as `pending_auto_send` (unlogged failures would otherwise silently drop a
+    reply the tenant is waiting on) so it's retried on the next scheduler sweep, and still
+    visible/actionable (dismiss/use manually) in the pending-drafts UI in the meantime.
+    """
+    sent = _send_email_draft(db, draft) if draft.channel == "email" else _send_whatsapp_draft(db, draft)
+    if not sent:
+        return False
+    draft.status = "sent"
+    return True

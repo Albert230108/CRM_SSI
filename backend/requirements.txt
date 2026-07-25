@@ -8,6 +8,7 @@ google-api-python-client
 google-auth
 google-auth-httplib2
 google-auth-oauthlib
+google-genai
 cryptography
 
 passlib[bcrypt]==1.7.4

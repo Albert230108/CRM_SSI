@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, UniqueConstraint, func
 
 from app.database import Base
 
@@ -23,4 +23,7 @@ class Communication(Base):
     provider_message_id = Column(String(255), nullable=True, index=True)
     subject = Column(String(255), nullable=True)
     message = Column(Text, nullable=False)
+    # Set only when this message was sent unattended by the AI auto-send pipeline (never for
+    # manual sends, even ones seeded by "Draft with AI") so the UI can badge it distinctly.
+    ai_generated = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

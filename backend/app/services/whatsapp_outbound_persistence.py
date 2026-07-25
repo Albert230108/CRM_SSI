@@ -249,6 +249,7 @@ def persist_whatsapp_outbound_communication(
     subject: str | None,
     message: str,
     created_at: datetime,
+    ai_generated: bool = False,
 ) -> WhatsAppOutboundPersistenceResult:
     normalized_provider = _normalize_text(provider)
     normalized_external_account_id = _normalize_text(external_account_id)
@@ -305,6 +306,7 @@ def persist_whatsapp_outbound_communication(
             subject=normalized_subject,
             message=normalized_message,
             created_at=created_at,
+            ai_generated=ai_generated,
         )
         db.add(communication)
     else:

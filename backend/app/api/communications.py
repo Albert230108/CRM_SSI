@@ -9,15 +9,20 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.admin_settings import AdminSettings
+from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
-from app.services.gmail_client import GMAIL_SCOPES, list_thread_drafts, send_gmail_forward, send_gmail_reply
+from app.services import ai_reply_service
+from app.services.email_outbound_persistence import persist_gmail_outbound_message
+from app.services.gemini_client import GeminiClientError
+from app.services.gmail_client import GMAIL_SCOPES, build_gmail_credentials, list_thread_drafts, send_gmail_forward, send_gmail_reply
 from app.services.tenant_channel_resolver import (
     _lookup_whatsapp_endpoint_by_exact_chat_identity,
     _lookup_whatsapp_endpoint_by_normalized_chat_identity,
@@ -26,9 +31,7 @@ from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
 from app.services.whatsapp_client import WhatsAppBridgeError, send_whatsapp_message
-from cryptography.fernet import Fernet
 from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request as GoogleAuthRequest
 import os
 
 router = APIRouter(prefix="/communications", tags=["communications"])
@@ -36,38 +39,8 @@ logger = logging.getLogger(__name__)
 PROVIDER_GMAIL = "gmail"
 
 
-def _decrypt_refresh_token(encrypted_refresh_token: str | None) -> str | None:
-    if not encrypted_refresh_token:
-        return None
-    try:
-        key = os.getenv("GMAIL_TOKEN_ENCRYPTION_KEY")
-        if not key:
-            return None
-        cipher = Fernet(key.encode("utf-8"))
-        return cipher.decrypt(encrypted_refresh_token.encode("utf-8")).decode("utf-8")
-    except Exception:
-        return None
-
-
 def _build_gmail_credentials(account: GmailAccount) -> Credentials | None:
-    refresh_token = _decrypt_refresh_token(account.refresh_token_encrypted)
-    if not refresh_token:
-        return None
-    try:
-        credentials = Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
-            client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
-            client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
-            scopes=account.scopes_json or GMAIL_SCOPES,
-        )
-        # Refresh the token to get a valid access token
-        credentials.refresh(GoogleAuthRequest())
-        return credentials
-    except Exception as exc:
-        logger.exception("Failed to build Gmail credentials")
-        return None
+    return build_gmail_credentials(account)
 
 
 class WhatsAppOutboundResolutionRead(BaseModel):
@@ -92,6 +65,17 @@ class GmailDraftRead(BaseModel):
     draft_id: str | None = None
     subject: str
     body_text: str
+
+
+class AiDraftGenerateRequest(BaseModel):
+    channel: str
+    template_id: int | None = None
+    rough_draft: str | None = None
+
+
+class AiDraftGenerateResponse(BaseModel):
+    generated_text: str
+    template_id: int
 
 
 def _resolve_tenant_conversation(db: Session, tenant: Tenant, email_thread_id: int) -> tuple[Conversation, GmailAccount]:
@@ -586,39 +570,16 @@ async def send_tenant_communication(
             logger.exception("Failed to send Gmail reply")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send email: {str(exc)}") from exc
 
-        # Persist the sent message immediately so it shows up in the timeline
-        provider_message_id = gmail_result.get("id")
-        db.add(
-            ConversationMessage(
-                conversation_id=conversation.id,
-                provider=PROVIDER_GMAIL,
-                provider_message_id=provider_message_id or "",
-                direction="outbound",
-                sender_email=account.email_address,
-                recipient_email=to_email,
-                subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
-                body=message,
-                sent_at=datetime.now(timezone.utc),
-                raw_payload={"gmail": gmail_result},
-            )
-        )
-        db.commit()
-
-        # Also add to Communication table for compatibility
-        communication = Communication(
+        return persist_gmail_outbound_message(
+            db,
             tenant_id=tenant.id,
-            channel=channel,
-            direction="outbound",
-            provider=PROVIDER_GMAIL,
-            external_account_id=account.email_address,
+            conversation=conversation,
+            account=account,
+            to_email=to_email,
             subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
             message=message,
-            created_at=datetime.now(timezone.utc),
+            gmail_result=gmail_result,
         )
-        db.add(communication)
-        db.commit()
-        db.refresh(communication)
-        return communication
 
     if channel == "whatsapp":
         # Immediately persist the outbound message to ensure UI visibility
@@ -779,3 +740,50 @@ async def get_tenant_thread_draft(
     except Exception as exc:
         logger.exception("Failed to list Gmail drafts for thread")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve drafts: {str(exc)}") from exc
+
+
+@router.post("/tenants/{tenant_id}/ai-draft", response_model=AiDraftGenerateResponse)
+def generate_tenant_ai_draft(
+    tenant_id: int,
+    payload: AiDraftGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiDraftGenerateResponse:
+    """Stateless "Draft with AI" generation for the reply box - the caller pastes the result
+    into the reply textarea for proofreading before sending; nothing is persisted here."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    channel = payload.channel.strip().lower()
+    if channel not in {"email", "whatsapp"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported channel")
+
+    template_id = payload.template_id
+    if template_id is None:
+        ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+        if ai_settings is not None:
+            template_id = ai_settings.default_email_template_id if channel == "email" else ai_settings.default_whatsapp_template_id
+    if template_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No AI template selected and no default template is configured for this tenant and channel",
+        )
+
+    template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == template_id).first()
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    try:
+        generated_text = ai_reply_service.build_prompt_and_generate(
+            db,
+            tenant=tenant,
+            template=template,
+            channel=channel,
+            rough_draft=payload.rough_draft,
+        )
+    except GeminiClientError as exc:
+        logger.exception("AI draft generation failed")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return AiDraftGenerateResponse(generated_text=generated_text, template_id=template.id)

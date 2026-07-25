@@ -37,6 +37,7 @@ class TimelineMessageRead(BaseModel):
     body_html: str | None = None
     attachments: list[AttachmentRead] = []
     sent_at: datetime
+    ai_generated: bool = False
     model_config = ConfigDict(from_attributes=True)
 
     @computed_field  # type: ignore[misc]
@@ -62,6 +63,7 @@ class TimelineWhatsappMessageRead(BaseModel):
     subject: str | None = None
     message: str
     created_at: datetime
+    ai_generated: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -363,11 +365,25 @@ def _build_whatsapp_blocks_for_thread(
     return blocks
 
 
+def _load_ai_generated_email_timestamps(db: Session, tenant_id: int) -> set[datetime]:
+    # Email has no shared id between ConversationMessage and Communication, but
+    # persist_gmail_outbound_message() stamps both rows with the exact same `now` value for an
+    # ai_generated send, so an exact created_at/sent_at match reliably identifies which
+    # ConversationMessage a given ai_generated Communication corresponds to.
+    rows = (
+        db.query(Communication.created_at)
+        .filter(Communication.tenant_id == tenant_id, Communication.channel == "email", Communication.ai_generated.is_(True))
+        .all()
+    )
+    return {_ensure_utc(row.created_at) for row in rows}
+
+
 def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRead:
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
         raise ValueError("Tenant not found")
 
+    ai_generated_email_timestamps = _load_ai_generated_email_timestamps(db, tenant_id)
     conversations = _load_tenant_conversations(db, tenant_id)
     whatsapp_messages = _load_tenant_whatsapp(db, tenant_id)
     thread_windows = _build_thread_windows(conversations)
@@ -405,7 +421,7 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
                     subject=window.thread.subject,
                     preview_text=window.thread.preview_text,
                     anchor_timestamp=window.anchor_timestamp,
-                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "attachments": ((message.raw_payload or {}).get("attachments") if isinstance(message.raw_payload, dict) else None) or [], "sent_at": message.sent_at}) for message in messages],
+                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "attachments": ((message.raw_payload or {}).get("attachments") if isinstance(message.raw_payload, dict) else None) or [], "sent_at": message.sent_at, "ai_generated": _ensure_utc(message.sent_at) in ai_generated_email_timestamps}) for message in messages],
                     whatsapp_blocks=whatsapp_blocks_by_thread_id.get(window.thread.id, []),
                 ),
             )

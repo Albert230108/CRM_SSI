@@ -4,12 +4,14 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any
 
+from cryptography.fernet import Fernet
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build
 from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
+from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
 
 GMAIL_SCOPES = [
@@ -17,6 +19,39 @@ GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.compose",
 ]
+
+
+def decrypt_refresh_token(encrypted_refresh_token: str | None) -> str | None:
+    if not encrypted_refresh_token:
+        return None
+    try:
+        key = os.getenv("GMAIL_TOKEN_ENCRYPTION_KEY")
+        if not key:
+            return None
+        cipher = Fernet(key.encode("utf-8"))
+        return cipher.decrypt(encrypted_refresh_token.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return None
+
+
+def build_gmail_credentials(account: GmailAccount) -> Credentials | None:
+    refresh_token = decrypt_refresh_token(account.refresh_token_encrypted)
+    if not refresh_token:
+        return None
+    try:
+        credentials = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+            scopes=account.scopes_json or GMAIL_SCOPES,
+        )
+        # Refresh the token to get a valid access token
+        credentials.refresh(GoogleAuthRequest())
+        return credentials
+    except Exception:
+        return None
 
 
 def _build_service(credentials_info: dict[str, Any]) -> Any:

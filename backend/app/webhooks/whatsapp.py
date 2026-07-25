@@ -16,6 +16,7 @@ from app.core.whatsapp_identity import get_canonical_whatsapp_identity
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.notification_service import create_notification
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
@@ -578,6 +579,8 @@ def _process_whatsapp_message(
         preview=msg_text,
         event_at=ts,
     )
+    if not is_history_payload:
+        register_inbound_message(db, tenant=tenant, channel="whatsapp")
     db.commit()
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)
 

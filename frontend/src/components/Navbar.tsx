@@ -7,8 +7,9 @@ export default function Navbar() {
   const location = useLocation()
   const user = useAuthStore((state) => state.user)
   const logout = useAuthStore((state) => state.logout)
-  const settingsActive = location.pathname === '/settings'
+  const settingsActive = location.pathname.startsWith('/settings')
   const adminActive = location.pathname.startsWith('/admin')
+  const aiDraftsActive = location.pathname.startsWith('/ai-drafts')
 
   return (
     <header className="relative z-50 w-full border-b border-gray-200 bg-white backdrop-blur">
@@ -28,6 +29,12 @@ export default function Navbar() {
               <span>Admin Settings</span>
             </Link>
           ) : null}
+          <Link
+            to="/ai-drafts"
+            className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${aiDraftsActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+          >
+            <span>AI Drafts</span>
+          </Link>
           <Link
             to="/settings"
             className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${settingsActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}

@@ -6,6 +6,8 @@ import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
 import SessionExpiredModal from './components/SessionExpiredModal'
 import Settings from './pages/Settings'
+import AiTenantSettings from './pages/AiTenantSettings'
+import AiPendingDrafts from './pages/AiPendingDrafts'
 import AdminSettings from './pages/AdminSettings'
 import InvitationSetup from './pages/InvitationSetup'
 import PasswordReset from './pages/PasswordReset'
@@ -50,6 +52,8 @@ export default function App() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/dashboard/tenant/:tenantId" element={<Dashboard />} />
                     <Route path="/settings" element={<Settings />} />
+                    <Route path="/settings/ai-tenants" element={<AiTenantSettings />} />
+                    <Route path="/ai-drafts" element={<AiPendingDrafts />} />
                     <Route
                       path="/admin/settings"
                       element={

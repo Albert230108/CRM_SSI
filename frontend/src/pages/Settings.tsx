@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
 import { useLocalFolderRootPath, useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
@@ -30,6 +31,28 @@ const EMAIL_TEMPLATE_PLACEHOLDERS = [
 
 const emptyTemplateForm = { id: null as number | null, name: '', subject: '', body: '' }
 
+type AiTemplateSection = { label: string; content: string }
+
+type AiReplyTemplate = {
+  id: number
+  name: string
+  sections: AiTemplateSection[]
+  include_history: boolean
+  history_message_limit: number | null
+  include_beds24: boolean
+  include_payments: boolean
+}
+
+const emptyAiTemplateForm = {
+  id: null as number | null,
+  name: '',
+  sections: [{ label: '', content: '' }] as AiTemplateSection[],
+  include_history: false,
+  history_message_limit: 20 as number | null,
+  include_beds24: false,
+  include_payments: false,
+}
+
 export default function Settings() {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
@@ -49,6 +72,11 @@ export default function Settings() {
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [templateMessage, setTemplateMessage] = useState('')
 
+  const [aiTemplates, setAiTemplates] = useState<AiReplyTemplate[]>([])
+  const [aiTemplateForm, setAiTemplateForm] = useState(emptyAiTemplateForm)
+  const [savingAiTemplate, setSavingAiTemplate] = useState(false)
+  const [aiTemplateMessage, setAiTemplateMessage] = useState('')
+
   const loadGmailAccounts = async () => {
     const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -61,6 +89,13 @@ export default function Settings() {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     if (response.ok) setEmailTemplates(await response.json())
+  }
+
+  const loadAiTemplates = async () => {
+    const response = await fetch(`${API_BASE_URL}/api/ai-reply-templates`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) setAiTemplates(await response.json())
   }
 
   useEffect(() => {
@@ -103,6 +138,7 @@ export default function Settings() {
     loadHandle()
     loadGmailAccounts()
     loadEmailTemplates()
+    loadAiTemplates()
 
     return () => {
       cancelled = true
@@ -284,6 +320,96 @@ export default function Settings() {
     if (response.ok) {
       if (templateForm.id === templateId) setTemplateForm(emptyTemplateForm)
       await loadEmailTemplates()
+    }
+  }
+
+  const startEditAiTemplate = (template: AiReplyTemplate) => {
+    setAiTemplateMessage('')
+    setAiTemplateForm({
+      id: template.id,
+      name: template.name,
+      sections: template.sections.length ? template.sections : [{ label: '', content: '' }],
+      include_history: template.include_history,
+      history_message_limit: template.history_message_limit ?? 20,
+      include_beds24: template.include_beds24,
+      include_payments: template.include_payments,
+    })
+  }
+
+  const cancelEditAiTemplate = () => {
+    setAiTemplateMessage('')
+    setAiTemplateForm(emptyAiTemplateForm)
+  }
+
+  const updateAiTemplateSection = (index: number, field: keyof AiTemplateSection, value: string) => {
+    setAiTemplateForm((current) => ({
+      ...current,
+      sections: current.sections.map((section, i) => (i === index ? { ...section, [field]: value } : section)),
+    }))
+  }
+
+  const addAiTemplateSection = () => {
+    setAiTemplateForm((current) => ({ ...current, sections: [...current.sections, { label: '', content: '' }] }))
+  }
+
+  const removeAiTemplateSection = (index: number) => {
+    setAiTemplateForm((current) => ({ ...current, sections: current.sections.filter((_, i) => i !== index) }))
+  }
+
+  const moveAiTemplateSection = (index: number, direction: -1 | 1) => {
+    setAiTemplateForm((current) => {
+      const targetIndex = index + direction
+      if (targetIndex < 0 || targetIndex >= current.sections.length) return current
+      const sections = [...current.sections]
+      const [moved] = sections.splice(index, 1)
+      sections.splice(targetIndex, 0, moved)
+      return { ...current, sections }
+    })
+  }
+
+  const saveAiTemplate = async (event: FormEvent) => {
+    event.preventDefault()
+    setAiTemplateMessage('')
+    setSavingAiTemplate(true)
+    try {
+      const isEditing = aiTemplateForm.id !== null
+      const response = await fetch(
+        `${API_BASE_URL}/api/ai-reply-templates${isEditing ? `/${aiTemplateForm.id}` : ''}`,
+        {
+          method: isEditing ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({
+            name: aiTemplateForm.name.trim(),
+            sections: aiTemplateForm.sections.filter((section) => section.label.trim() || section.content.trim()),
+            include_history: aiTemplateForm.include_history,
+            history_message_limit: aiTemplateForm.include_history ? aiTemplateForm.history_message_limit : null,
+            include_beds24: aiTemplateForm.include_beds24,
+            include_payments: aiTemplateForm.include_payments,
+          }),
+        },
+      )
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setAiTemplateMessage(data?.detail ?? 'Failed to save template')
+        return
+      }
+      setAiTemplateForm(emptyAiTemplateForm)
+      await loadAiTemplates()
+    } catch {
+      setAiTemplateMessage('Failed to save template')
+    } finally {
+      setSavingAiTemplate(false)
+    }
+  }
+
+  const deleteAiTemplate = async (templateId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/ai-reply-templates/${templateId}`, {
+      method: 'DELETE',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) {
+      if (aiTemplateForm.id === templateId) setAiTemplateForm(emptyAiTemplateForm)
+      await loadAiTemplates()
     }
   }
 
@@ -483,6 +609,135 @@ export default function Settings() {
             ) : null}
           </div>
           {templateMessage ? <p className="text-sm text-gray-600">{templateMessage}</p> : null}
+        </form>
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Shared AI Reply Templates</h2>
+            <p className="mt-2 text-sm text-gray-500">
+              Templates used by "Draft with AI" in the reply box, shared across all users. Each template is built from
+              ordered sections that get combined into the background prompt sent to Gemini, plus optional context to
+              include (conversation history, Beds24 booking info, payments/charges).
+            </p>
+          </div>
+          <Link to="/settings/ai-tenants" className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+            Configure per tenant &rarr;
+          </Link>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {aiTemplates.map((template) => (
+            <div key={template.id} className="rounded-xl border border-gray-200 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900">{template.name}</p>
+                  <p className="mt-1 text-xs text-gray-500">{template.sections.length} section{template.sections.length === 1 ? '' : 's'}</p>
+                  <p className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
+                    {template.include_history ? <span className="rounded-full bg-gray-100 px-2 py-0.5">History ({template.history_message_limit ?? '-'} msgs)</span> : null}
+                    {template.include_beds24 ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Beds24 info</span> : null}
+                    {template.include_payments ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Payments/charges</span> : null}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button type="button" className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700" onClick={() => startEditAiTemplate(template)}>Edit</button>
+                  <button type="button" className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600" onClick={() => deleteAiTemplate(template.id)}>Delete</button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {!aiTemplates.length ? <p className="text-sm text-gray-500">No AI templates yet.</p> : null}
+        </div>
+
+        <form onSubmit={saveAiTemplate} className="mt-5 space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <p className="text-sm font-semibold text-gray-900">{aiTemplateForm.id !== null ? 'Edit template' : 'Add template'}</p>
+          <input
+            type="text"
+            value={aiTemplateForm.name}
+            onChange={(event) => setAiTemplateForm((current) => ({ ...current, name: event.target.value }))}
+            placeholder="Template name"
+            required
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          />
+
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt sections</p>
+            {aiTemplateForm.sections.map((section, index) => (
+              <div key={index} className="rounded-lg border border-gray-200 bg-white p-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={section.label}
+                    onChange={(event) => updateAiTemplateSection(index, 'label', event.target.value)}
+                    placeholder="Section label, e.g. Persona"
+                    className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                  />
+                  <button type="button" onClick={() => moveAiTemplateSection(index, -1)} disabled={index === 0} className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-600 disabled:opacity-30">&uarr;</button>
+                  <button type="button" onClick={() => moveAiTemplateSection(index, 1)} disabled={index === aiTemplateForm.sections.length - 1} className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-600 disabled:opacity-30">&darr;</button>
+                  <button type="button" onClick={() => removeAiTemplateSection(index)} className="rounded-lg border border-rose-200 px-2 py-1.5 text-xs text-rose-600">Remove</button>
+                </div>
+                <textarea
+                  value={section.content}
+                  onChange={(event) => updateAiTemplateSection(index, 'content', event.target.value)}
+                  placeholder="Section content, e.g. You are a friendly host responding on behalf of..."
+                  rows={3}
+                  className="mt-2 w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                />
+              </div>
+            ))}
+            <button type="button" onClick={addAiTemplateSection} className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100">+ Add section</button>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Extra context to send Gemini</p>
+            <label className="flex items-center gap-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={aiTemplateForm.include_history}
+                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_history: event.target.checked }))}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              Include conversation history, last
+              <input
+                type="number"
+                min={1}
+                value={aiTemplateForm.history_message_limit ?? ''}
+                onChange={(event) => setAiTemplateForm((current) => ({ ...current, history_message_limit: event.target.value ? Number(event.target.value) : null }))}
+                disabled={!aiTemplateForm.include_history}
+                className="w-20 rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none disabled:cursor-not-allowed disabled:bg-gray-100"
+              />
+              messages
+            </label>
+            <label className="flex items-center gap-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={aiTemplateForm.include_beds24}
+                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_beds24: event.target.checked }))}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              Include Beds24 booking info
+            </label>
+            <label className="flex items-center gap-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={aiTemplateForm.include_payments}
+                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_payments: event.target.checked }))}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              Include payments/charges
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button type="submit" disabled={savingAiTemplate} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
+              {savingAiTemplate ? 'Saving...' : aiTemplateForm.id !== null ? 'Save changes' : 'Add template'}
+            </button>
+            {aiTemplateForm.id !== null ? (
+              <button type="button" onClick={cancelEditAiTemplate} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700">Cancel</button>
+            ) : null}
+          </div>
+          {aiTemplateMessage ? <p className="text-sm text-gray-600">{aiTemplateMessage}</p> : null}
         </form>
       </section>
     </main>

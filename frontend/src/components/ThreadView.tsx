@@ -27,7 +27,14 @@ type TimelineMessage = {
   external_phone_id?: string | null
   whatsapp_chat_id?: string | null
   sent_at: string
+  ai_generated?: boolean
 }
+
+const AiGeneratedBadge = () => (
+  <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-700" title="Sent automatically by AI, without human review">
+    AI
+  </span>
+)
 
 const decodeHtmlEntities = (value: string) => {
   const textarea = document.createElement('textarea')
@@ -246,6 +253,7 @@ type WhatsappTimelineMessage = {
   subject: string | null
   message: string
   created_at: string
+  ai_generated?: boolean
 }
 
 // Distinct hue per linked WhatsApp account; darker shade = outbound, lighter shade = inbound.
@@ -326,6 +334,32 @@ type GmailDraft = {
   body_text: string
 }
 
+type AiTemplateOption = {
+  id: number
+  name: string
+}
+
+type TenantAiSettings = {
+  tenant_id: number
+  available_template_ids: number[]
+  default_email_template_id: number | null
+  default_whatsapp_template_id: number | null
+  auto_draft_email: boolean
+  auto_draft_whatsapp: boolean
+  auto_send_email: boolean
+  auto_send_whatsapp: boolean
+}
+
+type AiAutoDraftItem = {
+  id: number
+  tenant_id: number
+  channel: string
+  generated_text: string
+  status: string
+  scheduled_send_at: string | null
+  created_at: string
+}
+
 export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
@@ -368,6 +402,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [replyMessage, setReplyMessage] = useState('')
   const [replySubject, setReplySubject] = useState('')
   const [replySending, setReplySending] = useState(false)
+  const [aiTemplates, setAiTemplates] = useState<AiTemplateOption[]>([])
+  const [tenantAiSettings, setTenantAiSettings] = useState<TenantAiSettings | null>(null)
+  const [selectedAiTemplateId, setSelectedAiTemplateId] = useState('')
+  const [aiDraftGenerating, setAiDraftGenerating] = useState(false)
+  const [aiDraftError, setAiDraftError] = useState('')
+  const [pendingAutoDrafts, setPendingAutoDrafts] = useState<AiAutoDraftItem[]>([])
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
   const [forwardTarget, setForwardTarget] = useState<ForwardTarget>(null)
   const [forwardSubject, setForwardSubject] = useState('')
@@ -475,6 +515,161 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
       cancelled = true
     }
   }, [token])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const loadAiTemplates = async () => {
+      const response = await fetch(`${API_BASE_URL}/api/ai-reply-templates`, { headers: { Authorization: `Bearer ${token}` } })
+      if (cancelled || !response.ok) return
+      setAiTemplates(await response.json())
+    }
+    loadAiTemplates()
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!tenantId || !token) {
+      setTenantAiSettings(null)
+      return
+    }
+    let cancelled = false
+    const loadTenantAiSettings = async () => {
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/ai-settings`, { headers: { Authorization: `Bearer ${token}` } })
+      if (cancelled || !response.ok) return
+      setTenantAiSettings(await response.json())
+    }
+    loadTenantAiSettings()
+    return () => {
+      cancelled = true
+    }
+  }, [tenantId, token])
+
+  // Preselect the tenant's default AI template for whichever channel the reply box is
+  // currently open for, so "Draft with AI" works with zero clicks beyond typing a rough draft.
+  useEffect(() => {
+    if (!replyTarget || !tenantAiSettings) return
+    const defaultId = replyTarget.type === 'email' ? tenantAiSettings.default_email_template_id : tenantAiSettings.default_whatsapp_template_id
+    setSelectedAiTemplateId(defaultId ? String(defaultId) : '')
+    setAiDraftError('')
+  }, [replyTarget, tenantAiSettings])
+
+  const loadPendingAutoDrafts = useCallback(async () => {
+    if (!tenantId || !token) {
+      setPendingAutoDrafts([])
+      return
+    }
+    const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts?tenant_id=${tenantId}`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!response.ok) return
+    setPendingAutoDrafts(await response.json())
+  }, [tenantId, token])
+
+  useEffect(() => {
+    loadPendingAutoDrafts()
+  }, [loadPendingAutoDrafts, livePollSignal])
+
+  const pendingAutoDraftForChannel = (channel: 'email' | 'whatsapp') =>
+    pendingAutoDrafts.find((draft) => draft.channel === channel) ?? null
+
+  const useAutoDraft = async (draft: AiAutoDraftItem) => {
+    setReplyMessage(draft.generated_text)
+    await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/mark-used`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    await loadPendingAutoDrafts()
+  }
+
+  const dismissAutoDraft = async (draft: AiAutoDraftItem) => {
+    await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/dismiss`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    await loadPendingAutoDrafts()
+  }
+
+  const cancelAutoSend = async (draft: AiAutoDraftItem) => {
+    await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/cancel-auto-send`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    await loadPendingAutoDrafts()
+  }
+
+  const renderPendingAutoDraftBanner = (channel: 'email' | 'whatsapp') => {
+    const draft = pendingAutoDraftForChannel(channel)
+    if (!draft) return null
+    return (
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
+          {draft.status === 'pending_auto_send' ? 'AI draft - sending automatically soon' : 'Pending AI draft'}
+        </p>
+        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{draft.generated_text}</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => useAutoDraft(draft)}
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+          >
+            Use this draft
+          </button>
+          {draft.status === 'pending_auto_send' ? (
+            <button
+              type="button"
+              onClick={() => cancelAutoSend(draft)}
+              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+            >
+              Cancel auto-send
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => dismissAutoDraft(draft)}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const aiTemplateOptions = tenantAiSettings && tenantAiSettings.available_template_ids.length
+    ? aiTemplates.filter((template) => tenantAiSettings.available_template_ids.includes(template.id))
+    : aiTemplates
+
+  const handleGenerateAiDraft = async () => {
+    if (!tenantId || !replyTarget || aiDraftGenerating) return
+    try {
+      setAiDraftGenerating(true)
+      setAiDraftError('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-draft`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          channel: replyTarget.type,
+          template_id: selectedAiTemplateId ? Number(selectedAiTemplateId) : null,
+          rough_draft: replyMessage.trim() || null,
+        }),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || 'Failed to generate AI draft')
+      }
+      const data: { generated_text: string; template_id: number } = await response.json()
+      setReplyMessage(data.generated_text)
+      setSelectedAiTemplateId(String(data.template_id))
+    } catch (err) {
+      setAiDraftError(err instanceof Error ? err.message : 'Failed to generate AI draft')
+    } finally {
+      setAiDraftGenerating(false)
+    }
+  }
 
   useEffect(() => {
     if (!tenantId) {
@@ -990,6 +1185,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                           <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
                             {isOutbound ? 'Outbound' : 'Inbound'}
                           </span>
+                          {messageItem.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(messageItem.sent_at)}</span>
                         </div>
                         {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
@@ -1084,6 +1280,30 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
                     />
                   </div>
+                  {renderPendingAutoDraftBanner('email')}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      id="modal-email-ai-template"
+                      value={selectedAiTemplateId}
+                      onChange={(event) => setSelectedAiTemplateId(event.target.value)}
+                      disabled={aiDraftGenerating}
+                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    >
+                      <option value="">No AI template</option>
+                      {aiTemplateOptions.map((template) => (
+                        <option key={template.id} value={template.id}>{template.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleGenerateAiDraft}
+                      disabled={aiDraftGenerating || !selectedAiTemplateId}
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                    </button>
+                  </div>
+                  {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
@@ -1279,6 +1499,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                             {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
                             {getWhatsappMessageChatLabel(blockMessage) ? ` · ${getWhatsappMessageChatLabel(blockMessage)}` : ''}
                           </span>
+                          {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(blockMessage.created_at)}</span>
                         </div>
                         {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
@@ -1309,6 +1530,30 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                         ))}
                       </select>
                     </div>
+                    {renderPendingAutoDraftBanner('whatsapp')}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        id="block-whatsapp-ai-template"
+                        value={selectedAiTemplateId}
+                        onChange={(event) => setSelectedAiTemplateId(event.target.value)}
+                        disabled={aiDraftGenerating}
+                        className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="">No AI template</option>
+                        {aiTemplateOptions.map((template) => (
+                          <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleGenerateAiDraft}
+                        disabled={aiDraftGenerating || !selectedAiTemplateId}
+                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                      </button>
+                    </div>
+                    {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                     <textarea
                       value={replyMessage}
                       onChange={(event) => setReplyMessage(event.target.value)}
@@ -1412,6 +1657,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                           {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
                           {getWhatsappMessageChatLabel(blockMessage) ? ` · ${getWhatsappMessageChatLabel(blockMessage)}` : ''}
                         </span>
+                        {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                         <span>{formatTimestamp(blockMessage.created_at)}</span>
                       </div>
                       {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
@@ -1442,6 +1688,30 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       ))}
                     </select>
                   </div>
+                  {renderPendingAutoDraftBanner('whatsapp')}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      id="modal-whatsapp-ai-template"
+                      value={selectedAiTemplateId}
+                      onChange={(event) => setSelectedAiTemplateId(event.target.value)}
+                      disabled={aiDraftGenerating}
+                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    >
+                      <option value="">No AI template</option>
+                      {aiTemplateOptions.map((template) => (
+                        <option key={template.id} value={template.id}>{template.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleGenerateAiDraft}
+                      disabled={aiDraftGenerating || !selectedAiTemplateId}
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                    </button>
+                  </div>
+                  {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
@@ -1520,6 +1790,30 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                 <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500 mb-2">
                   Message
                 </label>
+                <div className="mb-2">{renderPendingAutoDraftBanner('email')}</div>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <select
+                    id="standalone-email-ai-template"
+                    value={selectedAiTemplateId}
+                    onChange={(event) => setSelectedAiTemplateId(event.target.value)}
+                    disabled={aiDraftGenerating}
+                    className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                  >
+                    <option value="">No AI template</option>
+                    {aiTemplateOptions.map((template) => (
+                      <option key={template.id} value={template.id}>{template.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleGenerateAiDraft}
+                    disabled={aiDraftGenerating || !selectedAiTemplateId}
+                    className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                  </button>
+                </div>
+                {aiDraftError ? <p className="mb-2 text-xs text-rose-500">{aiDraftError}</p> : null}
                 <textarea
                   value={replyMessage}
                   onChange={(event) => setReplyMessage(event.target.value)}

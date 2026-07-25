@@ -27,6 +27,10 @@ def get_admin_settings(db: Session = Depends(get_db)) -> AdminSettings:
 def update_admin_settings(payload: AdminSettingsUpdate, db: Session = Depends(get_db)) -> AdminSettings:
     settings = _get_or_create_settings(db)
     settings.forward_to_email = payload.forward_to_email.strip() if payload.forward_to_email else None
+    if payload.ai_draft_debounce_seconds is not None:
+        settings.ai_draft_debounce_seconds = payload.ai_draft_debounce_seconds
+    if payload.ai_auto_send_delay_seconds is not None:
+        settings.ai_auto_send_delay_seconds = payload.ai_auto_send_delay_seconds
     db.commit()
     db.refresh(settings)
     return settings
