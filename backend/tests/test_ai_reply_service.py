@@ -106,6 +106,20 @@ def test_beds24_and_payments_blocks_only_appear_when_checked(db_session, monkeyp
     assert "City tax" in captured["system_prompt"]
 
 
+def test_notes_block_only_appears_when_checked(db_session, monkeypatch):
+    tenant = _create_tenant(db_session, notes="VIP guest, prefers late checkout.")
+
+    captured = _capture_gemini_call(monkeypatch)
+    template_off = _template(include_notes=False)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template_off, channel="email", rough_draft="hi")
+    assert "Internal Notes" not in captured["system_prompt"]
+
+    template_on = _template(include_notes=True)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template_on, channel="email", rough_draft="hi")
+    assert "Internal Notes" in captured["system_prompt"]
+    assert "VIP guest, prefers late checkout." in captured["system_prompt"]
+
+
 def test_history_is_channel_wide_not_thread_scoped(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
 

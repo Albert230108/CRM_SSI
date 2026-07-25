@@ -15,6 +15,7 @@ class AiReplyTemplateCreate(BaseModel):
     history_message_limit: int | None = None
     include_beds24: bool = False
     include_payments: bool = False
+    include_notes: bool = False
 
 
 class AiReplyTemplateUpdate(BaseModel):
@@ -24,6 +25,7 @@ class AiReplyTemplateUpdate(BaseModel):
     history_message_limit: int | None = None
     include_beds24: bool = False
     include_payments: bool = False
+    include_notes: bool = False
 
 
 class AiReplyTemplateRead(BaseModel):
@@ -34,6 +36,7 @@ class AiReplyTemplateRead(BaseModel):
     history_message_limit: int | None = None
     include_beds24: bool
     include_payments: bool
+    include_notes: bool
     created_by_user_id: int
     created_at: datetime
     updated_at: datetime

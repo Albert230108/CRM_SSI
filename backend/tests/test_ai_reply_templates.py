@@ -17,6 +17,7 @@ def test_create_list_update_delete_template(non_admin_client):
             "history_message_limit": 15,
             "include_beds24": True,
             "include_payments": False,
+            "include_notes": True,
         },
     )
     assert create_response.status_code == 201
@@ -28,6 +29,7 @@ def test_create_list_update_delete_template(non_admin_client):
     ]
     assert body["include_history"] is True
     assert body["history_message_limit"] == 15
+    assert body["include_notes"] is True
 
     list_response = non_admin_client.get("/api/ai-reply-templates")
     assert list_response.status_code == 200

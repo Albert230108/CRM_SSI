@@ -117,6 +117,61 @@ def test_auto_send_requires_auto_draft_on_the_same_channel(non_admin_client, db_
     assert response.json()["auto_send_email"] is False
 
 
+def test_bulk_add_links_every_tenant_to_every_template(non_admin_client, db_session):
+    tenant_a = _create_tenant(db_session, booking_id="B-bulk-1", name="Bulk A")
+    tenant_b = _create_tenant(db_session, booking_id="B-bulk-2", name="Bulk B")
+    template_a = _create_template(non_admin_client, "Bulk Template A")
+    template_b = _create_template(non_admin_client, "Bulk Template B")
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-templates",
+        json={"tenant_ids": [tenant_a.id, tenant_b.id], "template_ids": [template_a, template_b], "action": "add"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tenants_affected"] == 2
+    assert body["links_added"] == 4
+
+    for tenant in (tenant_a, tenant_b):
+        available = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()["available_template_ids"]
+        assert sorted(available) == sorted([template_a, template_b])
+
+    # Re-running add is idempotent - already-linked pairs aren't duplicated.
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-templates",
+        json={"tenant_ids": [tenant_a.id, tenant_b.id], "template_ids": [template_a, template_b], "action": "add"},
+    )
+    assert response.json()["links_added"] == 0
+
+
+def test_bulk_remove_unlinks_and_clears_dangling_defaults(non_admin_client, db_session):
+    tenant = _create_tenant(db_session, booking_id="B-bulk-3", name="Bulk Remove")
+    template_a = _create_template(non_admin_client, "Removable Template A")
+    template_b = _create_template(non_admin_client, "Removable Template B")
+
+    non_admin_client.put(
+        f"/api/tenants/{tenant.id}/ai-settings",
+        json={
+            "available_template_ids": [template_a, template_b],
+            "default_email_template_id": template_a,
+            "default_whatsapp_template_id": template_b,
+        },
+    )
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-templates",
+        json={"tenant_ids": [tenant.id], "template_ids": [template_a], "action": "remove"},
+    )
+    assert response.status_code == 200
+    assert response.json()["links_removed"] == 1
+
+    settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+    assert settings["available_template_ids"] == [template_b]
+    # The dangling default pointer for the removed template is cleared automatically.
+    assert settings["default_email_template_id"] is None
+    assert settings["default_whatsapp_template_id"] == template_b
+
+
 def test_auto_send_enforcement_is_independent_per_channel(non_admin_client, db_session):
     tenant = _create_tenant(db_session)
     response = non_admin_client.put(

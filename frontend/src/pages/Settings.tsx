@@ -41,6 +41,7 @@ type AiReplyTemplate = {
   history_message_limit: number | null
   include_beds24: boolean
   include_payments: boolean
+  include_notes: boolean
 }
 
 const emptyAiTemplateForm = {
@@ -51,6 +52,7 @@ const emptyAiTemplateForm = {
   history_message_limit: 20 as number | null,
   include_beds24: false,
   include_payments: false,
+  include_notes: false,
 }
 
 export default function Settings() {
@@ -333,6 +335,7 @@ export default function Settings() {
       history_message_limit: template.history_message_limit ?? 20,
       include_beds24: template.include_beds24,
       include_payments: template.include_payments,
+      include_notes: template.include_notes,
     })
   }
 
@@ -385,6 +388,7 @@ export default function Settings() {
             history_message_limit: aiTemplateForm.include_history ? aiTemplateForm.history_message_limit : null,
             include_beds24: aiTemplateForm.include_beds24,
             include_payments: aiTemplateForm.include_payments,
+            include_notes: aiTemplateForm.include_notes,
           }),
         },
       )
@@ -638,6 +642,7 @@ export default function Settings() {
                     {template.include_history ? <span className="rounded-full bg-gray-100 px-2 py-0.5">History ({template.history_message_limit ?? '-'} msgs)</span> : null}
                     {template.include_beds24 ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Beds24 info</span> : null}
                     {template.include_payments ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Payments/charges</span> : null}
+                    {template.include_notes ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Tenant notes</span> : null}
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-2">
@@ -726,6 +731,15 @@ export default function Settings() {
                 className="h-4 w-4 rounded border-gray-300"
               />
               Include payments/charges
+            </label>
+            <label className="flex items-center gap-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={aiTemplateForm.include_notes}
+                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_notes: event.target.checked }))}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              Include tenant notes
             </label>
           </div>
 

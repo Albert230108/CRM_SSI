@@ -80,6 +80,13 @@ def _load_whatsapp_history(db: Session, tenant_id: int, limit: int) -> list[str]
     return [f"[{message.direction}] {message.created_at.isoformat()}: {message.message}" for message in messages]
 
 
+def _build_notes_context(tenant: Tenant) -> str:
+    notes = (tenant.notes or "").strip()
+    if not notes:
+        return "## Internal Notes\nNo internal notes on file."
+    return "## Internal Notes\n" + notes
+
+
 def _build_history_context(db: Session, tenant: Tenant, channel: str, limit: int) -> str:
     lines = _load_email_history(db, tenant.id, limit) if channel == "email" else _load_whatsapp_history(db, tenant.id, limit)
     if not lines:
@@ -101,6 +108,8 @@ def build_prompt_and_generate(
         blocks.append(_build_beds24_context(tenant))
     if template.include_payments:
         blocks.append(_build_payments_context(db, tenant))
+    if template.include_notes:
+        blocks.append(_build_notes_context(tenant))
     if template.include_history:
         limit = template.history_message_limit or _DEFAULT_HISTORY_LIMIT
         blocks.append(_build_history_context(db, tenant, channel, limit))

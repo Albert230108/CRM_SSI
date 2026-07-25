@@ -25,6 +25,7 @@ from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.beds24_client import get_booking_detail, get_bookings, update_booking_notes
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.tenant_ai_template_provisioning import apply_default_ai_templates_if_enabled
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
@@ -471,6 +472,7 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     tenant = Tenant(**payload.model_dump())
     db.add(tenant)
     db.flush()
+    apply_default_ai_templates_if_enabled(db, tenant.id)
     db.commit()
     db.refresh(tenant)
     return tenant
@@ -828,6 +830,7 @@ async def _import_tenant(
         )
         db.add(tenant)
         db.flush()
+        apply_default_ai_templates_if_enabled(db, tenant.id)
     else:
         tenant = existing
         tenant.first_name = first_name

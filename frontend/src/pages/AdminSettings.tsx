@@ -117,6 +117,9 @@ export default function AdminSettings() {
   const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
   const [savingAiDraftTiming, setSavingAiDraftTiming] = useState(false)
   const [aiDraftTimingMessage, setAiDraftTimingMessage] = useState('')
+  const [autoApplyTemplatesToNewTenants, setAutoApplyTemplatesToNewTenants] = useState(false)
+  const [savingAutoApplyTemplates, setSavingAutoApplyTemplates] = useState(false)
+  const [autoApplyTemplatesMessage, setAutoApplyTemplatesMessage] = useState('')
 
   const loadLogs = async () => {
     const params = new URLSearchParams()
@@ -148,6 +151,7 @@ export default function AdminSettings() {
         setForwardToEmail(data.forward_to_email ?? '')
         if (typeof data.ai_draft_debounce_seconds === 'number') setDraftDebounceSeconds(data.ai_draft_debounce_seconds)
         if (typeof data.ai_auto_send_delay_seconds === 'number') setAutoSendDelaySeconds(data.ai_auto_send_delay_seconds)
+        if (typeof data.ai_auto_apply_templates_to_new_tenants === 'boolean') setAutoApplyTemplatesToNewTenants(data.ai_auto_apply_templates_to_new_tenants)
       }
     }
     load()
@@ -377,6 +381,33 @@ export default function AdminSettings() {
     }
   }
 
+  const saveAutoApplyTemplates = async (nextValue: boolean) => {
+    setAutoApplyTemplatesMessage('')
+    setSavingAutoApplyTemplates(true)
+    const previousValue = autoApplyTemplatesToNewTenants
+    setAutoApplyTemplatesToNewTenants(nextValue)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ ai_auto_apply_templates_to_new_tenants: nextValue }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setAutoApplyTemplatesToNewTenants(previousValue)
+        setAutoApplyTemplatesMessage(typeof data.detail === 'string' ? data.detail : 'Failed to save')
+        return
+      }
+      setAutoApplyTemplatesToNewTenants(data.ai_auto_apply_templates_to_new_tenants)
+      setAutoApplyTemplatesMessage('Saved')
+    } catch {
+      setAutoApplyTemplatesToNewTenants(previousValue)
+      setAutoApplyTemplatesMessage('Failed to save')
+    } finally {
+      setSavingAutoApplyTemplates(false)
+    }
+  }
+
   const confirmClearInvites = async () => {
     setClearInvitesError('')
     setClearingInvites(true)
@@ -488,6 +519,24 @@ export default function AdminSettings() {
           </button>
         </form>
         {aiDraftTimingMessage ? <p className="mt-3 text-sm text-gray-600">{aiDraftTimingMessage}</p> : null}
+
+        <div className="mt-5 border-t border-gray-200 pt-4">
+          <label className="flex items-center gap-3 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={autoApplyTemplatesToNewTenants}
+              disabled={savingAutoApplyTemplates}
+              onChange={(event) => saveAutoApplyTemplates(event.target.checked)}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            Automatically make every shared AI reply template available to newly created tenants
+          </label>
+          <p className="mt-1 text-xs text-gray-500">
+            When off (default), a new tenant starts with no AI templates available and must be configured manually
+            on the tenant AI settings page.
+          </p>
+          {autoApplyTemplatesMessage ? <p className="mt-2 text-sm text-gray-600">{autoApplyTemplatesMessage}</p> : null}
+        </div>
       </section>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">

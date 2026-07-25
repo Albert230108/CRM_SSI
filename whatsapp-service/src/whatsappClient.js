@@ -888,7 +888,6 @@ async function forwardInboundMessage(message) {
   const payload = buildCrmPayload(message, "inbound", {
     sender: message?.author || message?.from || null,
     whatsapp_chat_id: message?.from || null,
-    source: "history",
   });
   return forwardCrmMessage(payload, "inbound");
 }
@@ -1759,6 +1758,7 @@ module.exports = {
   sortBackfillMessages,
   listChats,
   forwardCrmMessage,
+  forwardInboundMessage,
 };
 
 

@@ -8,6 +8,7 @@ def test_get_admin_settings_defaults_to_null(non_admin_client):
         "forward_to_email": None,
         "ai_draft_debounce_seconds": 120,
         "ai_auto_send_delay_seconds": 300,
+        "ai_auto_apply_templates_to_new_tenants": False,
     }
 
 

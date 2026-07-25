@@ -48,6 +48,12 @@ export default function AiTenantSettings() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
+  const [bulkTenantIds, setBulkTenantIds] = useState<Set<number>>(new Set())
+  const [bulkTemplateIds, setBulkTemplateIds] = useState<Set<number>>(new Set())
+  const [bulkAction, setBulkAction] = useState<'add' | 'remove'>('add')
+  const [bulkSaving, setBulkSaving] = useState(false)
+  const [bulkMessage, setBulkMessage] = useState('')
+
   useEffect(() => {
     const loadTemplates = async () => {
       const response = await fetch(`${API_BASE_URL}/api/ai-reply-templates`, {
@@ -129,6 +135,58 @@ export default function AiTenantSettings() {
     })
   }
 
+  const toggleBulkTenant = (tenantId: number) => {
+    setBulkTenantIds((current) => {
+      const next = new Set(current)
+      if (next.has(tenantId)) next.delete(tenantId)
+      else next.add(tenantId)
+      return next
+    })
+  }
+
+  const toggleBulkTemplate = (templateId: number) => {
+    setBulkTemplateIds((current) => {
+      const next = new Set(current)
+      if (next.has(templateId)) next.delete(templateId)
+      else next.add(templateId)
+      return next
+    })
+  }
+
+  const runBulkAction = async () => {
+    if (!bulkTenantIds.size || !bulkTemplateIds.size) return
+    setBulkSaving(true)
+    setBulkMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenant-ai-settings/bulk-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          tenant_ids: Array.from(bulkTenantIds),
+          template_ids: Array.from(bulkTemplateIds),
+          action: bulkAction,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setBulkMessage(data?.detail ?? 'Failed to run bulk action')
+        return
+      }
+      setBulkMessage(
+        bulkAction === 'add'
+          ? `Added ${data.links_added} template link(s) across ${data.tenants_affected} tenant(s).`
+          : `Removed ${data.links_removed} template link(s) across ${data.tenants_affected} tenant(s).`,
+      )
+      // The selected tenant's currently-open panel may now be stale (e.g. its availability or
+      // defaults changed), so reload it if it was part of this batch.
+      if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
+        await selectTenant(selectedTenant)
+      }
+    } finally {
+      setBulkSaving(false)
+    }
+  }
+
   const saveSettings = async () => {
     if (!selectedTenant || !settings) return
     setSaving(true)
@@ -177,6 +235,22 @@ export default function AiTenantSettings() {
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
+                <th className="w-8 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all shown tenants for bulk actions"
+                    checked={tenants.length > 0 && tenants.every((tenant) => bulkTenantIds.has(tenant.id))}
+                    onChange={(event) =>
+                      setBulkTenantIds((current) => {
+                        const next = new Set(current)
+                        if (event.target.checked) tenants.forEach((tenant) => next.add(tenant.id))
+                        else tenants.forEach((tenant) => next.delete(tenant.id))
+                        return next
+                      })
+                    }
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                </th>
                 <th className="py-2">Tenant</th>
                 <th>Booking</th>
                 <th></th>
@@ -185,6 +259,15 @@ export default function AiTenantSettings() {
             <tbody>
               {tenants.map((tenant) => (
                 <tr key={tenant.id} className="border-t border-gray-100">
+                  <td className="py-2">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${tenant.name} for bulk actions`}
+                      checked={bulkTenantIds.has(tenant.id)}
+                      onChange={() => toggleBulkTenant(tenant.id)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                  </td>
                   <td className="py-2">{tenant.name}</td>
                   <td>{tenant.booking_id}</td>
                   <td className="py-2 text-right">
@@ -200,11 +283,55 @@ export default function AiTenantSettings() {
               ))}
               {!tenants.length ? (
                 <tr>
-                  <td colSpan={3} className="py-3 text-sm text-gray-500">No tenants found.</td>
+                  <td colSpan={4} className="py-3 text-sm text-gray-500">No tenants found.</td>
                 </tr>
               ) : null}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-5 border-t border-gray-200 pt-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">
+            Bulk actions ({bulkTenantIds.size} tenant{bulkTenantIds.size === 1 ? '' : 's'} selected)
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Select tenants above, pick templates below, and add or remove them from all selected tenants at once.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-3">
+            {templates.map((template) => (
+              <label key={template.id} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={bulkTemplateIds.has(template.id)}
+                  onChange={() => toggleBulkTemplate(template.id)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                {template.name}
+              </label>
+            ))}
+            {!templates.length ? <p className="text-sm text-gray-500">No shared templates yet - add one in Settings.</p> : null}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <select
+              value={bulkAction}
+              onChange={(event) => setBulkAction(event.target.value as 'add' | 'remove')}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            >
+              <option value="add">Add to selected tenants</option>
+              <option value="remove">Remove from selected tenants</option>
+            </select>
+            <button
+              type="button"
+              onClick={runBulkAction}
+              disabled={bulkSaving || !bulkTenantIds.size || !bulkTemplateIds.size}
+              className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+            >
+              {bulkSaving ? 'Working...' : 'Apply'}
+            </button>
+            {bulkMessage ? <p className="text-sm text-gray-600">{bulkMessage}</p> : null}
+          </div>
         </div>
       </section>
 

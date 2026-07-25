@@ -34,6 +34,7 @@ def create_ai_reply_template(
         history_message_limit=payload.history_message_limit,
         include_beds24=payload.include_beds24,
         include_payments=payload.include_payments,
+        include_notes=payload.include_notes,
         created_by_user_id=current_user.id,
     )
     db.add(template)
@@ -56,6 +57,7 @@ def update_ai_reply_template(
     template.history_message_limit = payload.history_message_limit
     template.include_beds24 = payload.include_beds24
     template.include_payments = payload.include_payments
+    template.include_notes = payload.include_notes
     db.commit()
     db.refresh(template)
     return template

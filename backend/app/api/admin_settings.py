@@ -31,6 +31,8 @@ def update_admin_settings(payload: AdminSettingsUpdate, db: Session = Depends(ge
         settings.ai_draft_debounce_seconds = payload.ai_draft_debounce_seconds
     if payload.ai_auto_send_delay_seconds is not None:
         settings.ai_auto_send_delay_seconds = payload.ai_auto_send_delay_seconds
+    if payload.ai_auto_apply_templates_to_new_tenants is not None:
+        settings.ai_auto_apply_templates_to_new_tenants = payload.ai_auto_apply_templates_to_new_tenants
     db.commit()
     db.refresh(settings)
     return settings

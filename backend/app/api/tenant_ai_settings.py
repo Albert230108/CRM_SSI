@@ -6,7 +6,12 @@ from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
 from app.models.user import User
-from app.schemas.tenant_ai_settings import TenantAiSettingsRead, TenantAiSettingsUpdate
+from app.schemas.tenant_ai_settings import (
+    BulkTenantAiTemplateAssignment,
+    BulkTenantAiTemplateAssignmentResult,
+    TenantAiSettingsRead,
+    TenantAiSettingsUpdate,
+)
 
 router = APIRouter(tags=["tenant-ai-settings"])
 
@@ -90,3 +95,47 @@ def update_tenant_ai_settings(
     db.commit()
     db.refresh(settings)
     return _to_read(db, settings)
+
+
+@router.post("/tenant-ai-settings/bulk-templates", response_model=BulkTenantAiTemplateAssignmentResult)
+def bulk_update_tenant_ai_templates(
+    payload: BulkTenantAiTemplateAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantAiTemplateAssignmentResult:
+    tenant_ids = sorted(set(payload.tenant_ids))
+    template_ids = sorted(set(payload.template_ids))
+    if not tenant_ids or not template_ids:
+        return BulkTenantAiTemplateAssignmentResult(tenants_affected=0, links_added=0, links_removed=0)
+
+    if payload.action == "add":
+        existing_pairs = {
+            (row.tenant_id, row.template_id)
+            for row in db.query(TenantAiTemplateLink)
+            .filter(TenantAiTemplateLink.tenant_id.in_(tenant_ids), TenantAiTemplateLink.template_id.in_(template_ids))
+            .all()
+        }
+        links_added = 0
+        for tenant_id in tenant_ids:
+            for template_id in template_ids:
+                if (tenant_id, template_id) not in existing_pairs:
+                    db.add(TenantAiTemplateLink(tenant_id=tenant_id, template_id=template_id))
+                    links_added += 1
+        db.commit()
+        return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=links_added, links_removed=0)
+
+    # action == "remove": also clear any default-template pointer left dangling by the removal,
+    # since this bypasses the per-tenant settings form that would otherwise keep them in sync.
+    links_removed = (
+        db.query(TenantAiTemplateLink)
+        .filter(TenantAiTemplateLink.tenant_id.in_(tenant_ids), TenantAiTemplateLink.template_id.in_(template_ids))
+        .delete(synchronize_session=False)
+    )
+    affected_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id.in_(tenant_ids)).all()
+    for settings in affected_settings:
+        if settings.default_email_template_id in template_ids:
+            settings.default_email_template_id = None
+        if settings.default_whatsapp_template_id in template_ids:
+            settings.default_whatsapp_template_id = None
+    db.commit()
+    return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=0, links_removed=links_removed)

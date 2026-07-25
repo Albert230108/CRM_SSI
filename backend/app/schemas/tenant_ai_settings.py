@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -20,3 +22,15 @@ class TenantAiSettingsUpdate(BaseModel):
     auto_draft_whatsapp: bool = False
     auto_send_email: bool = False
     auto_send_whatsapp: bool = False
+
+
+class BulkTenantAiTemplateAssignment(BaseModel):
+    tenant_ids: list[int]
+    template_ids: list[int]
+    action: Literal["add", "remove"]
+
+
+class BulkTenantAiTemplateAssignmentResult(BaseModel):
+    tenants_affected: int
+    links_added: int
+    links_removed: int
