@@ -1380,8 +1380,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               ) : null}
             </div>
 
-            {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
-              <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+            <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+              {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
                 <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
                   <div className="space-y-2">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-email-subject">
@@ -1444,8 +1444,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                     </button>
                   </div>
                 </form>
-              </div>
-            ) : null}
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setReplyTarget({ type: 'email', threadId: selectedEmailThread.thread_id, providerThreadId: selectedEmailThread.provider_thread_id, providerAccountId: selectedEmailThread.provider_account_id || 0, subject: selectedEmailThread.subject })}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                >
+                  Reply
+                </button>
+              )}
+            </div>
           </div>
 
           {selectedWhatsappBlock && selectedWhatsappBlock.threadId === selectedEmailThread.thread_id ? (
@@ -1517,8 +1525,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
 
               </div>
 
-              {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappBlock.block_id ? (
-                <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+              <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+                {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappBlock.block_id ? (
                   <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
                     <div className="space-y-2">
                       <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="block-whatsapp-endpoint">
@@ -1588,8 +1596,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       </button>
                     </div>
                   </form>
-                </div>
-              ) : null}
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setReplyTarget({ type: 'whatsapp', groupId: selectedWhatsappBlock.block_id })}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    Reply
+                  </button>
+                )}
+              </div>
             </div>
           ) : null}
         </div>
@@ -1677,8 +1693,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </div>
             </div>
 
-            {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
-              <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+            <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+              {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
                 <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
                   <div className="space-y-2">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-whatsapp-endpoint">
@@ -1748,8 +1764,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                     </button>
                   </div>
                 </form>
-              </div>
-            ) : null}
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setReplyTarget({ type: 'whatsapp', groupId: selectedWhatsappGroup.group_id })}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                >
+                  Reply
+                </button>
+              )}
+            </div>
           </div>
         </div>
       ) : null}
