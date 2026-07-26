@@ -422,7 +422,6 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [draftError, setDraftError] = useState('')
   const emailThreadDrag = useDraggablePosition()
   const whatsappGroupDrag = useDraggablePosition()
-  const emailReplyDrag = useDraggablePosition()
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
   const [livePollSignal, setLivePollSignal] = useState(0)
@@ -1751,108 +1750,6 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                 </form>
               </div>
             ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      {replyTarget?.type === 'email' && !selectedEmailThread ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
-          onClick={() => setReplyTarget(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="email-reply-modal-title"
-            className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
-            style={emailReplyDrag.style}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div
-              className="flex cursor-move items-center justify-between gap-4 border-b border-gray-200 px-6 py-5"
-              onPointerDown={emailReplyDrag.handlePointerDown}
-            >
-              <h3 id="email-reply-modal-title" className="text-lg font-semibold text-gray-900">
-                Reply to Email
-              </h3>
-              <button
-                type="button"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => setReplyTarget(null)}
-                className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-              >
-                Close
-              </button>
-            </div>
-
-            <form onSubmit={handleSendReply} className="space-y-4 px-6 py-5">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500 mb-2">
-                  Subject
-                </label>
-                <input
-                  value={replySubject}
-                  onChange={(event) => setReplySubject(event.target.value)}
-                  placeholder={replyTarget.subject || 'Subject'}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500 mb-2">
-                  Message
-                </label>
-                <div className="mb-2">{renderPendingAutoDraftBanner('email')}</div>
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <select
-                    id="standalone-email-ai-template"
-                    value={selectedAiTemplateId}
-                    onChange={(event) => setSelectedAiTemplateId(event.target.value)}
-                    disabled={aiDraftGenerating}
-                    className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-                  >
-                    <option value="">No AI template</option>
-                    {aiTemplateOptions.map((template) => (
-                      <option key={template.id} value={template.id}>{template.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={handleGenerateAiDraft}
-                    disabled={aiDraftGenerating || !selectedAiTemplateId}
-                    className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
-                  </button>
-                </div>
-                {aiDraftError ? <p className="mb-2 text-xs text-rose-500">{aiDraftError}</p> : null}
-                <textarea
-                  value={replyMessage}
-                  onChange={(event) => setReplyMessage(event.target.value)}
-                  rows={6}
-                  placeholder="Write your reply..."
-                  disabled={replySending}
-                  className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3 border-t border-gray-200 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setReplyTarget(null)}
-                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={replySending || !replyMessage.trim()}
-                  className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {replySending ? 'Sending...' : 'Send Reply'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       ) : null}
