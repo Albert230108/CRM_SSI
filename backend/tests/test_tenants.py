@@ -313,3 +313,33 @@ def test_list_tenants_filters_by_last_message_direction(db_session):
 
     assert tenant_no_activity.id not in inbound_ids
     assert tenant_no_activity.id not in outbound_ids
+
+
+def test_list_tenants_filters_by_multiple_statuses(db_session):
+    tenant_enquiry = create_tenant(db_session, name="Tenant Enquiry", booking_id="STATUS-A")
+    tenant_enquiry.booking_status = "Enquiry"
+
+    tenant_request = create_tenant(db_session, name="Tenant Request", booking_id="STATUS-B")
+    tenant_request.booking_status = "Request"
+
+    tenant_confirmed = create_tenant(db_session, name="Tenant Confirmed", booking_id="STATUS-C")
+    tenant_confirmed.booking_status = "Confirmed"
+    db_session.commit()
+
+    result = list_tenants(
+        db=db_session, current_user=None, status=["Enquiry", "Request"], status_filter=True,
+        sort_by_message=False, sort_desc=True,
+    )
+    result_ids = {tenant.id for tenant in result}
+    assert result_ids == {tenant_enquiry.id, tenant_request.id}
+    assert tenant_confirmed.id not in result_ids
+
+
+def test_list_tenants_empty_status_filter_shows_nothing(db_session):
+    create_tenant(db_session, name="Tenant Confirmed", booking_id="STATUS-D")
+
+    result = list_tenants(
+        db=db_session, current_user=None, status=[], status_filter=True,
+        sort_by_message=False, sort_desc=True,
+    )
+    assert result == []

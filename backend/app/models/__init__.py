@@ -15,5 +15,6 @@ from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.tenant_phone_alias import TenantPhoneAlias
 from app.models.user import User

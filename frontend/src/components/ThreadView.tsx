@@ -4,6 +4,7 @@ import { formatCombinedDateTime } from '../lib/date'
 import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
 import { useDraggablePosition } from '../hooks/useDraggablePosition'
 import LinkChatModal from './LinkChatModal'
+import EmailLinkModal from './EmailLinkModal'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
 
@@ -444,6 +445,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [selectedWhatsappEndpointId, setSelectedWhatsappEndpointId] = useState<string>('')
   const [whatsappLinks, setWhatsappLinks] = useState<ThreadWhatsappLink[]>([])
   const [showLinkChatModal, setShowLinkChatModal] = useState(false)
+  const [showEmailLinkModal, setShowEmailLinkModal] = useState(false)
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
   const [replyMessage, setReplyMessage] = useState('')
   const [replySubject, setReplySubject] = useState('')
@@ -1112,13 +1114,22 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             </p>
           </div>
           {tenantId ? (
-            <button
-              type="button"
-              onClick={() => setShowLinkChatModal(true)}
-              className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
-            >
-              {whatsappLinks.some((link) => link.is_active) ? 'Manage chats' : 'Link chat'}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowLinkChatModal(true)}
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+              >
+                {whatsappLinks.some((link) => link.is_active) ? 'Manage chats' : 'Link chat'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowEmailLinkModal(true)}
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+              >
+                Manage emails
+              </button>
+            </div>
           ) : null}
         </div>
       </div>
@@ -1918,6 +1929,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
           bookingId={tenant?.booking_id ?? undefined}
           onClose={() => setShowLinkChatModal(false)}
           onChanged={handleWhatsappLinksChanged}
+        />
+      ) : null}
+
+      {tenantId ? (
+        <EmailLinkModal
+          open={showEmailLinkModal}
+          tenantId={tenantId}
+          tenantName={tenant?.name}
+          bookingId={tenant?.booking_id ?? undefined}
+          onClose={() => setShowEmailLinkModal(false)}
         />
       ) : null}
     </div>

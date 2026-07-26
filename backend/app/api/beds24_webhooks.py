@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import traceback
 import uuid
@@ -18,10 +19,13 @@ from app.models.beds24_webhook_log import Beds24WebhookLog
 from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.schemas.beds24_webhook_log import Beds24WebhookLogRead
+from app.services.beds24_client import get_booking_info_items
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.tenant_email_sync import sync_tenant_email_addresses_from_beds24
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 router = APIRouter(prefix="/webhooks/beds24", tags=["beds24-webhooks"])
+logger = logging.getLogger(__name__)
 
 
 def _extract_booking_id(payload: dict[str, Any]) -> str | None:
@@ -254,6 +258,16 @@ async def _process_beds24_booking_event(
                         description=description,
                     )
                 )
+
+        try:
+            info_items = await get_booking_info_items(booking_id)
+            sync_tenant_email_addresses_from_beds24(db, tenant, info_items)
+        except Exception:
+            # Info-item sync is best-effort: a Beds24 read hiccup here must not abort the
+            # tenant/finance upsert this webhook is otherwise committing below.
+            logger.warning(
+                "Beds24 webhook info item sync failed booking_id=%s tenant_id=%s", booking_id, tenant.id, exc_info=True
+            )
 
         db.commit()
         log.status = "processed"

@@ -12,6 +12,11 @@ from fastapi import HTTPException, status
 READ_BASE_URL = "https://api.beds24.com/v2"
 WRITE_BASE_URL = "https://beds24.com/api/v2"
 
+# Custom info-item code used to tag emails linked to a tenant from the CRM, so the CRM and
+# Beds24's booking info items stay reconcilable in both directions (mirrors the existing
+# QM_CREATED_BY custom code convention already used for responsible_comm).
+BEDS24_EMAIL_INFO_CODE = "CRM_EMAIL"
+
 _token_cache: dict[str, tuple[str, float]] = {}
 logger = logging.getLogger(__name__)
 
@@ -102,6 +107,15 @@ async def _async_headers() -> dict[str, str]:
     return {"Accept": "application/json", "token": token}
 
 
+def _response_snippet(response: httpx.Response, limit: int = 240) -> str:
+    try:
+        text = response.text
+    except Exception:
+        return "<unreadable>"
+    text = " ".join(text.split())
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+
 async def _get_with_retry(
     client: httpx.AsyncClient, url: str, params: dict[str, Any] | None = None
 ) -> httpx.Response:
@@ -161,10 +175,10 @@ async def _post_with_retry(
             await asyncio.sleep(min(delay, 20.0))
             continue
         if response.status_code in (401, 403):
-            logger.warning("Beds24 upstream write auth failed url=%s status=%s", url, response.status_code)
+            logger.warning("Beds24 upstream write auth failed url=%s status=%s body=%s", url, response.status_code, _response_snippet(response))
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Beds24 credentials were rejected")
         if response.status_code >= 400:
-            logger.warning("Beds24 upstream write error url=%s status=%s", url, response.status_code)
+            logger.warning("Beds24 upstream write error url=%s status=%s body=%s", url, response.status_code, _response_snippet(response))
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 upstream error ({response.status_code})")
         return response
 
@@ -175,10 +189,13 @@ async def _post_with_retry(
 def _extract_beds24_data(payload: Any, *, endpoint: str) -> Any:
     if isinstance(payload, dict):
         if payload.get("errors"):
+            logger.warning("Beds24 %s returned errors=%s", endpoint, payload.get("errors"))
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 {endpoint} returned an error response")
         if payload.get("error"):
+            logger.warning("Beds24 %s returned error=%s", endpoint, payload.get("error"))
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 {endpoint} returned an error response")
         if isinstance(payload.get("message"), str) and payload.get("message", "").strip() and "data" not in payload:
+            logger.warning("Beds24 %s returned unexpected message=%s", endpoint, payload.get("message"))
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Beds24 {endpoint} returned an unexpected response")
         return payload.get("data") if "data" in payload else payload
     return payload
@@ -287,3 +304,71 @@ async def update_booking_notes(booking_id: str, notes: str | None) -> None:
         logger.warning("Beds24 update notes invalid JSON booking_id=%s", booking_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 update notes response was not valid JSON") from exc
     _extract_beds24_data(payload, endpoint="update booking notes")
+
+
+async def get_booking_info_items(booking_id: str) -> list[dict[str, Any]]:
+    headers = await _async_headers()
+    params: dict[str, Any] = {"id": booking_id, "includeInfoItems": "true"}
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings", params)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        logger.warning("Beds24 booking info items invalid JSON booking_id=%s", booking_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 booking info items response was not valid JSON") from exc
+    data = _extract_beds24_data(payload, endpoint="booking info items")
+    if isinstance(data, list) and data:
+        data = data[0]
+    if not isinstance(data, dict):
+        return []
+    info_items = data.get("infoItems")
+    return [item for item in info_items if isinstance(item, dict)] if isinstance(info_items, list) else []
+
+
+async def add_booking_info_item(booking_id: str, code: str, text: str) -> dict | None:
+    headers = await _async_headers()
+    body = [{"id": booking_id, "infoItems": [{"code": code, "text": text}]}]
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        response = await _post_with_retry(client, f"{WRITE_BASE_URL}/bookings", body)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        logger.warning("Beds24 add info item invalid JSON booking_id=%s", booking_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 add info item response was not valid JSON") from exc
+    data = _extract_beds24_data(payload, endpoint="add booking info item")
+    if isinstance(data, list) and data:
+        data = data[0]
+    if isinstance(data, dict):
+        info_items = data.get("infoItems")
+        if isinstance(info_items, list):
+            for item in info_items:
+                if isinstance(item, dict) and item.get("code") == code and item.get("text") == text:
+                    return item
+
+    # The write response doesn't always echo back the booking's infoItems (observed in
+    # production: the POST succeeds and the item shows up in Beds24, but the response body
+    # we get back has no infoItems to read the new id from) -- fall back to reading the
+    # booking back so we still capture the id needed to delete this item later.
+    logger.info(
+        "Beds24 add info item response had no matching infoItems entry, falling back to re-fetch booking_id=%s code=%s",
+        booking_id,
+        code,
+    )
+    for item in await get_booking_info_items(booking_id):
+        if item.get("code") == code and item.get("text") == text:
+            return item
+    logger.warning("Beds24 add info item could not confirm the new item after re-fetch booking_id=%s code=%s", booking_id, code)
+    return None
+
+
+async def delete_booking_info_item(booking_id: str, info_item_id: str) -> None:
+    headers = await _async_headers()
+    body = [{"id": booking_id, "infoItems": [{"id": info_item_id}]}]
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        response = await _post_with_retry(client, f"{WRITE_BASE_URL}/bookings", body)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        logger.warning("Beds24 delete info item invalid JSON booking_id=%s", booking_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 delete info item response was not valid JSON") from exc
+    _extract_beds24_data(payload, endpoint="delete booking info item")

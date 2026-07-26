@@ -34,6 +34,14 @@ class UserRead(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TenantStatusFilterRead(BaseModel):
+    statuses: list[str] | None = None
+
+
+class TenantStatusFilterUpdate(BaseModel):
+    statuses: list[str]
+
+
 class AdminInviteCreate(BaseModel):
     email: str | None = None
     full_name: str | None = None

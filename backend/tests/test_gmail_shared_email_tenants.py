@@ -6,6 +6,7 @@ from app.models.gmail_integration import Conversation, ConversationMessage, Gmai
 from app.models.notification import Notification
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
+from app.models.tenant_email_address import TenantEmailAddress
 
 
 def _encode(text: str) -> str:
@@ -125,6 +126,52 @@ def test_two_tenants_sharing_an_email_both_keep_conversation_link():
         cleanup_db.query(Tenant).filter(Tenant.id.in_([old_tenant_id, new_tenant_id])).delete(
             synchronize_session=False
         )
+        cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+        cleanup_db.commit()
+    finally:
+        cleanup_db.close()
+
+
+def test_tenant_matched_via_secondary_linked_email():
+    """A tenant with no matching Tenant.email should still be resolved for an inbound
+    message when the sender address only matches one of their linked TenantEmailAddress
+    rows, not the primary email column."""
+    primary_email = "primary-guest@example.com"
+    secondary_email = "secondary-guest@example.com"
+
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(email_address="shared-account-2@example.com", is_active=True)
+        tenant = Tenant(name="Secondary Email Tenant", email=primary_email, booking_id="booking-secondary-email")
+        setup_db.add_all([account, tenant])
+        setup_db.commit()
+        account_id = account.id
+        tenant_id = tenant.id
+        setup_db.add(TenantEmailAddress(tenant_id=tenant_id, email=secondary_email, is_active=True))
+        setup_db.commit()
+    finally:
+        setup_db.close()
+
+    thread = {"id": "thread-secondary-email", "messages": [_message("secondary-msg-1", secondary_email)]}
+    db = SessionLocal()
+    try:
+        account_obj = db.get(GmailAccount, account_id)
+        conversation = gmail_integration._upsert_thread(db, account_obj, thread)
+        assert conversation is not None
+        db.commit()
+        conversation_id = conversation.id
+        assert conversation.tenant_id == tenant_id
+    finally:
+        db.close()
+
+    cleanup_db = SessionLocal()
+    try:
+        cleanup_db.query(Notification).filter(Notification.tenant_id == tenant_id).delete(synchronize_session=False)
+        cleanup_db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete()
+        cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
+        cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant_id).delete()
+        cleanup_db.query(Tenant).filter(Tenant.id == tenant_id).delete()
         cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
         cleanup_db.commit()
     finally:

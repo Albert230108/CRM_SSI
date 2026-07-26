@@ -23,6 +23,7 @@ from app.api.tenants import router as tenants_router
 from app.api.tenant_ai_settings import router as tenant_ai_settings_router
 from app.api.tenant_channel_endpoints import router as tenant_channel_endpoints_router
 from app.api.users import router as users_router
+from app.api.tenant_email_links import router as tenant_email_links_router
 from app.api.whatsapp_thread_links import router as whatsapp_thread_links_router
 from app.database import SessionLocal
 from app.models.ai_auto_draft import AiAutoDraft
@@ -199,6 +200,7 @@ app.include_router(gmail_integration_router)
 app.include_router(tenants_router, prefix="/api")
 app.include_router(tenant_channel_endpoints_router, prefix="/api")
 app.include_router(whatsapp_thread_links_router, prefix="/api")
+app.include_router(tenant_email_links_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(beds24_webhook_router, prefix="/api")
 app.include_router(whatsapp_webhook_router)

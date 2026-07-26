@@ -1,9 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
+import StatusFilterDropdown from './StatusFilterDropdown'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+// Fixed set of booking statuses, matching the Beds24 import status_map in
+// backend/app/api/tenants.py. Kept as a fixed list (rather than derived from
+// currently-loaded tenants) so the checkbox options never shrink once a filter is applied.
+const STATUS_OPTIONS = [
+  'Enquiry',
+  'Confirmed',
+  'Cancelled by guest',
+  'Cancelled by property',
+  'Request',
+  'Blocked',
+  'Confirmed (OTA)',
+]
 
 type Tenant = {
   id: number
@@ -36,11 +50,13 @@ type TenantListProps = {
 export default function TenantList({ selectedTenantId, reloadSignal, onNewMessage }: TenantListProps) {
   const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
+  const [statusesResolved, setStatusesResolved] = useState(false)
   const [selectedResponsible, setSelectedResponsible] = useState<string | null>(null)
   const [selectedDirection, setSelectedDirection] = useState<string | null>(null)
   const [sortByMessage, setSortByMessage] = useState(true)
@@ -51,6 +67,65 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   useEffect(() => {
     onNewMessageRef.current = onNewMessage
   }, [onNewMessage])
+
+  useEffect(() => {
+    if (searchParams.has('statuses')) {
+      const raw = searchParams.get('statuses') ?? ''
+      const parsed = raw
+        .split(',')
+        .map((value) => decodeURIComponent(value))
+        .filter(Boolean)
+      setSelectedStatuses(parsed)
+      setStatusesResolved(true)
+      return
+    }
+
+    let cancelled = false
+    const loadSavedPreference = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/users/me/tenant-status-filter`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (cancelled) return
+        if (response.ok) {
+          const data: { statuses: string[] | null } = await response.json()
+          setSelectedStatuses(data.statuses ?? STATUS_OPTIONS)
+        } else {
+          setSelectedStatuses(STATUS_OPTIONS)
+        }
+      } catch {
+        if (!cancelled) setSelectedStatuses(STATUS_OPTIONS)
+      } finally {
+        if (!cancelled) setStatusesResolved(true)
+      }
+    }
+
+    loadSavedPreference()
+    return () => {
+      cancelled = true
+    }
+    // Only resolve the initial filter once; subsequent changes go through handleStatusesChange.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleStatusesChange = (next: string[]) => {
+    setSelectedStatuses(next)
+
+    const params = new URLSearchParams(searchParams)
+    params.set('statuses', next.map((value) => encodeURIComponent(value)).join(','))
+    setSearchParams(params, { replace: true })
+
+    fetch(`${API_BASE_URL}/api/users/me/tenant-status-filter`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ statuses: next }),
+    }).catch(() => {
+      // Best-effort save; the URL still reflects the current session's selection.
+    })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -87,6 +162,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   }, [token])
 
   useEffect(() => {
+    if (!statusesResolved) return
     const controller = new AbortController()
 
     const loadTenants = async () => {
@@ -95,7 +171,8 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         setError('')
         const params = new URLSearchParams()
         if (searchQuery) params.append('search', searchQuery)
-        if (selectedStatus) params.append('status', selectedStatus)
+        params.append('status_filter', 'true')
+        selectedStatuses.forEach((status) => params.append('status', status))
         if (selectedResponsible) params.append('responsible', selectedResponsible)
         if (selectedDirection) params.append('last_message_direction', selectedDirection)
         params.append('sort_by_message', sortByMessage.toString())
@@ -120,15 +197,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
 
     loadTenants()
     return () => controller.abort()
-  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatus, selectedResponsible, selectedDirection, sortByMessage, sortDesc])
-
-  const uniqueStatuses = useMemo(() => {
-    const statuses = new Set<string>()
-    tenants.forEach((t) => {
-      if (t.booking_status) statuses.add(t.booking_status)
-    })
-    return Array.from(statuses).sort()
-  }, [tenants])
+  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatuses, statusesResolved, selectedResponsible, selectedDirection, sortByMessage, sortDesc])
 
   const uniqueResponsibles = useMemo(() => {
     const responsibles = new Set<string>()
@@ -198,18 +267,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         </div>
 
         <div className="flex gap-1.5">
-          <select
-            value={selectedStatus || ''}
-            onChange={(e) => setSelectedStatus(e.target.value || null)}
-            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
-          >
-            <option value="">All Statuses</option>
-            {uniqueStatuses.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
+          <StatusFilterDropdown options={STATUS_OPTIONS} selected={selectedStatuses} onChange={handleStatusesChange} />
 
           <select
             value={selectedResponsible || ''}

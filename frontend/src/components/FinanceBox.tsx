@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
 
@@ -64,12 +64,64 @@ type FinanceResponse = {
     booking_status?: string | null
     referer?: string | null
     beds24_raw?: Record<string, unknown> | null
+    email?: string | null
+    phone?: string | null
+    mobile?: string | null
   }
   charges: FinanceItem[]
   payments: FinanceItem[]
 }
 
 type TenantSummary = FinanceResponse['tenant']
+
+type WhatsappEndpointOption = {
+  id: number
+  tenant_id: number
+  channel_type: string
+  provider: string
+  external_account_id: string | null
+  external_phone_id: string | null
+  external_chat_namespace: string | null
+  chat_display_name: string | null
+  routing_strategy: string
+  is_active: boolean
+}
+
+const RAW_WHATSAPP_ID_PATTERN = /^\d+@(lid|c\.us|g\.us|s\.whatsapp\.net)$/i
+
+const formatWhatsappEndpointLabel = (endpoint: WhatsappEndpointOption) => {
+  if (endpoint.chat_display_name && !RAW_WHATSAPP_ID_PATTERN.test(endpoint.chat_display_name.trim())) {
+    return endpoint.chat_display_name
+  }
+  if (endpoint.external_account_id) return endpoint.external_account_id
+  return `Endpoint ${endpoint.id}`
+}
+
+const digitsOnly = (value: string | null | undefined): string | null => {
+  if (!value) return null
+  const digits = value.replace(/\D/g, '')
+  return digits.length >= 8 ? digits : null
+}
+
+// WhatsApp's real phone number can't be recovered for @lid chats (they're opaque linked-device
+// ids, not phone numbers) -- fall back to a phone-looking display name for that specific chat.
+// The tenant's own phone/mobile is only used when there's no linked chat at all (endpoint is
+// null): it must never substitute for a specific chat that can't be resolved, since every
+// unresolvable chat would then collapse to that same number, making the chat selection meaningless.
+const resolveWhatsappTarget = (
+  endpoint: WhatsappEndpointOption | null,
+  tenant: TenantSummary | null,
+): { url: string; targeted: boolean } => {
+  const namespaceMatch = endpoint?.external_chat_namespace?.match(/^(\d+)@(c\.us|s\.whatsapp\.net)$/i)
+  const resolvedPhone = endpoint
+    ? (namespaceMatch ? namespaceMatch[1] : null) ?? digitsOnly(endpoint.chat_display_name)
+    : digitsOnly(tenant?.phone) ?? digitsOnly(tenant?.mobile)
+
+  if (resolvedPhone) {
+    return { url: `https://web.whatsapp.com/send?phone=${resolvedPhone}`, targeted: true }
+  }
+  return { url: 'https://web.whatsapp.com/', targeted: false }
+}
 
 type FinanceBoxProps = {
   tenantId?: number
@@ -83,6 +135,21 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
+  const [whatsappEndpoints, setWhatsappEndpoints] = useState<WhatsappEndpointOption[]>([])
+  const [showWhatsappMenu, setShowWhatsappMenu] = useState(false)
+  const [showQuoteNotice, setShowQuoteNotice] = useState(false)
+  const whatsappMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showWhatsappMenu) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (whatsappMenuRef.current && !whatsappMenuRef.current.contains(event.target as Node)) {
+        setShowWhatsappMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showWhatsappMenu])
 
   useEffect(() => {
     if (!tenantId) {
@@ -90,6 +157,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
       setPayments([])
       setError('')
       setTenant(null)
+      setWhatsappEndpoints([])
       setLoading(false)
       return
     }
@@ -100,12 +168,16 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
       try {
         setLoading(true)
         setError('')
-        const [financeResponse, tenantResponse] = await Promise.all([
+        const [financeResponse, tenantResponse, whatsappResponse] = await Promise.all([
           fetch(`${API_BASE_URL}/api/tenants/${tenantId}/finance`, {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
           }),
           fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            signal: controller.signal,
+          }),
+          fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/whatsapp-endpoints`, {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
           }),
@@ -119,6 +191,12 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
           setTenant(tenantData)
         } else {
           setTenant(null)
+        }
+        if (whatsappResponse.ok) {
+          const endpoints: WhatsappEndpointOption[] = await whatsappResponse.json()
+          setWhatsappEndpoints(endpoints.filter((endpoint) => endpoint.is_active))
+        } else {
+          setWhatsappEndpoints([])
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -226,6 +304,37 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const summaryReferer = tenant?.referer || getRawField(tenant, 'referer') || 'Unknown'
   const summaryRefererEditable = getRawField(tenant, 'refererEditable') || 'Unknown'
 
+  const hasTenantPhoneFallback = Boolean(digitsOnly(tenant?.phone) || digitsOnly(tenant?.mobile))
+  const whatsappAvailable = whatsappEndpoints.length > 0 || hasTenantPhoneFallback
+  const gmailUrl = tenant?.email
+    ? `https://mail.google.com/mail/u/0/#search/from:(${encodeURIComponent(tenant.email)})`
+    : 'https://mail.google.com/mail/u/0/'
+
+  const openWhatsappTarget = (endpoint: WhatsappEndpointOption | null) => {
+    const { url } = resolveWhatsappTarget(endpoint, tenant)
+    window.open(url, '_blank', 'noopener,noreferrer')
+    setShowWhatsappMenu(false)
+  }
+
+  const handleWhatsappClick = () => {
+    if (whatsappEndpoints.length > 1) {
+      setShowWhatsappMenu((prev) => !prev)
+      return
+    }
+    if (whatsappEndpoints.length === 1) {
+      openWhatsappTarget(whatsappEndpoints[0])
+      return
+    }
+    if (hasTenantPhoneFallback) {
+      openWhatsappTarget(null)
+    }
+  }
+
+  const handleQuoteClick = () => {
+    setShowQuoteNotice(true)
+    window.setTimeout(() => setShowQuoteNotice(false), 2000)
+  }
+
   const totals = useMemo(() => {
     const totalPayments = payments.reduce((sum, item) => {
       const amount = Number(item.amount)
@@ -244,8 +353,68 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
 
   return (
     <div className="min-w-0 space-y-3">
-      <div>
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-xl font-semibold text-gray-900">Tenant Info</h2>
+        <div className="flex items-center gap-2">
+          <div className="relative" ref={whatsappMenuRef}>
+            <button
+              type="button"
+              onClick={handleWhatsappClick}
+              disabled={!whatsappAvailable}
+              title={whatsappAvailable ? 'Open WhatsApp' : 'No WhatsApp number linked to this tenant'}
+              className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-emerald-600">
+                <path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5.1-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1-.2.2-.7.8-.8 1-.2.2-.3.2-.5.1-.2-.1-1-.4-1.9-1.2-.7-.6-1.2-1.4-1.3-1.6-.2-.2 0-.4.1-.5.1-.1.2-.3.4-.4.1-.2.2-.3.2-.5.1-.2 0-.4 0-.5-.1-.1-.6-1.4-.8-2-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.2.2-.9.9-.9 2.2s1 2.6 1.1 2.8c.1.2 2 3 4.8 4.2.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.2-.2-.5-.3z" />
+              </svg>
+              WhatsApp
+            </button>
+            {showWhatsappMenu && whatsappEndpoints.length > 1 ? (
+              <div className="absolute right-0 z-10 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                {whatsappEndpoints.map((endpoint) => (
+                  <button
+                    key={endpoint.id}
+                    type="button"
+                    onClick={() => openWhatsappTarget(endpoint)}
+                    className="block w-full truncate px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                  >
+                    {formatWhatsappEndpointLabel(endpoint)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <a
+            href={gmailUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open Gmail"
+            className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-rose-500">
+              <path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 2-8 5-8-5h16zM4 18V7.4l8 5 8-5V18H4z" />
+            </svg>
+            Gmail
+          </a>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={handleQuoteClick}
+              title="Quotation Manager"
+              className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-cyan-700">
+                <path d="M7 2h8l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V8h4.5L14 3.5zM8 13h8v1.5H8V13zm0 3.5h8V18H8v-1.5zm0-7h4v1.5H8V9.5z" />
+              </svg>
+              Quote
+            </button>
+            {showQuoteNotice ? (
+              <div className="absolute right-0 z-10 mt-1 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg">
+                Quotation Manager — coming soon
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       {loading ? <p className="text-sm text-gray-500">Loading finance...</p> : null}

@@ -354,7 +354,8 @@ def list_tenants(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     search: str | None = None,
-    status: str | None = None,
+    status: list[str] | None = None,
+    status_filter: bool = False,
     responsible: str | None = None,
     last_message_direction: str | None = None,
     sort_by_message: bool = False,
@@ -376,8 +377,12 @@ def list_tenants(
             )
         )
 
-    if status:
-        query = query.filter(Tenant.booking_status == status)
+    if status_filter:
+        # Explicit multi-status checkbox filter: an empty selection intentionally means
+        # "show nothing" rather than "no filter", matching Excel-style checkbox behavior.
+        query = query.filter(Tenant.booking_status.in_(status or []))
+    elif status:
+        query = query.filter(Tenant.booking_status.in_(status))
 
     if responsible:
         if responsible == "unassigned":

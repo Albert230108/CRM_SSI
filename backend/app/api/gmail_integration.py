@@ -27,6 +27,7 @@ from app.database import SessionLocal
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
 from app.services.ai_draft_trigger_service import register_inbound_message
@@ -299,6 +300,17 @@ def _find_tenants_for_message(db: Session, headers: dict[str, str], account_emai
                     if tenant.id not in seen_ids:
                         seen_ids.add(tenant.id)
                         tenants.append(tenant)
+                linked_tenant_ids = (
+                    db.query(TenantEmailAddress.tenant_id)
+                    .filter(TenantEmailAddress.email == address, TenantEmailAddress.is_active.is_(True))
+                    .all()
+                )
+                for (linked_tenant_id,) in linked_tenant_ids:
+                    if linked_tenant_id not in seen_ids:
+                        tenant = db.query(Tenant).filter(Tenant.id == linked_tenant_id).first()
+                        if tenant is not None:
+                            seen_ids.add(tenant.id)
+                            tenants.append(tenant)
     return tenants
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.communication import Communication
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -89,7 +90,17 @@ def _find_tenant(db: Session, headers: list[dict[str, Any]]) -> Tenant | None:
             break
     if not email:
         return None
-    return db.query(Tenant).filter(Tenant.email == email).first()
+    tenant = db.query(Tenant).filter(Tenant.email == email).first()
+    if tenant is not None:
+        return tenant
+    linked = (
+        db.query(TenantEmailAddress)
+        .filter(TenantEmailAddress.email == email, TenantEmailAddress.is_active.is_(True))
+        .first()
+    )
+    if linked is not None:
+        return db.query(Tenant).filter(Tenant.id == linked.tenant_id).first()
+    return None
 
 
 def _send_gmail_message(
