@@ -36,6 +36,52 @@ const AiGeneratedBadge = () => (
   </span>
 )
 
+const MessageJumpNav = ({
+  total,
+  currentIndex,
+  onPrev,
+  onNext,
+}: {
+  total: number
+  currentIndex: number
+  onPrev: () => void
+  onNext: () => void
+}) => {
+  if (total <= 1) return null
+  return (
+    <div className="absolute right-3 top-3 z-10 flex flex-col items-center gap-1 rounded-xl border border-gray-200 bg-white/95 p-1 shadow-md backdrop-blur">
+      <button
+        type="button"
+        onClick={onPrev}
+        disabled={currentIndex <= 0}
+        aria-label="Jump to previous message"
+        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        ↑
+      </button>
+      <span className="select-none text-[10px] font-semibold tabular-nums text-gray-400">
+        {currentIndex + 1}/{total}
+      </span>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={currentIndex >= total - 1}
+        aria-label="Jump to next message"
+        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        ↓
+      </button>
+    </div>
+  )
+}
+
+const scrollToMessageIndex = (containerSelector: string, index: number) => {
+  const container = document.querySelector<HTMLElement>(containerSelector)
+  if (!container) return
+  const target = container.querySelector<HTMLElement>(`[data-message-index="${index}"]`)
+  target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
 const decodeHtmlEntities = (value: string) => {
   const textarea = document.createElement('textarea')
   textarea.innerHTML = value
@@ -409,6 +455,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [aiDraftError, setAiDraftError] = useState('')
   const [pendingAutoDrafts, setPendingAutoDrafts] = useState<AiAutoDraftItem[]>([])
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
+  const [emailNavIndex, setEmailNavIndex] = useState(0)
+  const [whatsappGroupNavIndex, setWhatsappGroupNavIndex] = useState(0)
+  const [whatsappBlockNavIndex, setWhatsappBlockNavIndex] = useState(0)
   const [forwardTarget, setForwardTarget] = useState<ForwardTarget>(null)
   const [forwardSubject, setForwardSubject] = useState('')
   const [forwardBody, setForwardBody] = useState('')
@@ -741,6 +790,25 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
     return () => controller.abort()
   }, [tenantId, token, reloadSignal, livePollSignal])
 
+  const navigateMessage = (kind: 'email' | 'whatsapp_group' | 'whatsapp_block', direction: 1 | -1) => {
+    if (kind === 'email' && selectedEmailThread) {
+      const total = buildThreadTimelineEntries(selectedEmailThread).length
+      const next = Math.max(0, Math.min(emailNavIndex + direction, total - 1))
+      setEmailNavIndex(next)
+      scrollToMessageIndex('[data-email-messages]', next)
+    } else if (kind === 'whatsapp_group' && selectedWhatsappGroup) {
+      const total = selectedWhatsappGroup.messages.length
+      const next = Math.max(0, Math.min(whatsappGroupNavIndex + direction, total - 1))
+      setWhatsappGroupNavIndex(next)
+      scrollToMessageIndex('[data-whatsapp-messages]', next)
+    } else if (kind === 'whatsapp_block' && selectedWhatsappBlock) {
+      const total = selectedWhatsappBlock.messages.length
+      const next = Math.max(0, Math.min(whatsappBlockNavIndex + direction, total - 1))
+      setWhatsappBlockNavIndex(next)
+      scrollToMessageIndex('[data-whatsapp-block-messages]', next)
+    }
+  }
+
   useEffect(() => {
     if (!selectedWhatsappGroup && !selectedEmailThread) return
 
@@ -748,12 +816,29 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
       if (event.key === 'Escape') {
         setSelectedWhatsappGroup(null)
         setSelectedEmailThread(null)
+        return
+      }
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+      // Reply/forward text areas also use arrow keys for cursor movement, so
+      // jump-navigation must yield to any focused editable element.
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+
+      event.preventDefault()
+      const direction = event.key === 'ArrowUp' ? -1 : 1
+      if (selectedWhatsappBlock) {
+        navigateMessage('whatsapp_block', direction)
+      } else if (selectedEmailThread) {
+        navigateMessage('email', direction)
+      } else if (selectedWhatsappGroup) {
+        navigateMessage('whatsapp_group', direction)
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedWhatsappGroup, selectedEmailThread])
+  }, [selectedWhatsappGroup, selectedEmailThread, selectedWhatsappBlock, emailNavIndex, whatsappGroupNavIndex, whatsappBlockNavIndex])
 
   useEffect(() => {
     if (!selectedWhatsappGroup && !selectedEmailThread) return
@@ -765,7 +850,27 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
         scrollContainer.scrollTop = scrollContainer.scrollHeight
       }, 0)
     }
+    if (selectedEmailThread) {
+      const total = buildThreadTimelineEntries(selectedEmailThread).length
+      setEmailNavIndex(total ? total - 1 : 0)
+    }
+    if (selectedWhatsappGroup) {
+      const total = selectedWhatsappGroup.messages.length
+      setWhatsappGroupNavIndex(total ? total - 1 : 0)
+    }
   }, [selectedWhatsappGroup, selectedEmailThread, replyTarget?.type])
+
+  useEffect(() => {
+    if (!selectedWhatsappBlock) return
+    const total = selectedWhatsappBlock.messages.length
+    setWhatsappBlockNavIndex(total ? total - 1 : 0)
+    const scrollContainer = document.querySelector('[data-whatsapp-block-messages]')
+    if (scrollContainer) {
+      setTimeout(() => {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight
+      }, 0)
+    }
+  }, [selectedWhatsappBlock])
 
   const openWhatsappGroup = (group: WhatsappGroupItem) => {
     setSelectedWhatsappGroup(group)
@@ -1159,7 +1264,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-email-messages>
+            <div className="relative min-h-0 flex-1">
+            <div className="h-full overflow-y-auto px-5 py-4" data-email-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Messages</p>
@@ -1173,13 +1279,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </div>
 
               <div className="space-y-3 mb-4">
-                {buildThreadTimelineEntries(selectedEmailThread).map((entry) => {
+                {buildThreadTimelineEntries(selectedEmailThread).map((entry, entryIndex) => {
                   if (entry.kind === 'email') {
                     const messageItem = entry.message
                     const isOutbound = messageItem.direction === 'outbound'
                     return (
                       <article
                         key={`email-${messageItem.id}`}
+                        data-message-index={entryIndex}
                         className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
@@ -1230,7 +1337,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                   const block = entry.block
                   const lastBlockMessage = block.messages[block.messages.length - 1]
                   return (
-                    <article key={`whatsapp-block-${block.block_id}`} className="rounded-2xl border border-emerald-200 bg-emerald-50">
+                    <article key={`whatsapp-block-${block.block_id}`} data-message-index={entryIndex} className="rounded-2xl border border-emerald-200 bg-emerald-50">
                       <div
                         onClick={() => {
                           setSelectedWhatsappBlock({ ...block, threadId: selectedEmailThread.thread_id })
@@ -1379,6 +1486,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                 </form>
               ) : null}
             </div>
+            <MessageJumpNav
+              total={buildThreadTimelineEntries(selectedEmailThread).length}
+              currentIndex={emailNavIndex}
+              onPrev={() => navigateMessage('email', -1)}
+              onNext={() => navigateMessage('email', 1)}
+            />
+            </div>
 
             <div className="shrink-0 border-t border-gray-200 px-5 py-4">
               {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
@@ -1484,7 +1598,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                 </button>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
+              <div className="relative min-h-0 flex-1">
+              <div className="h-full overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
                 <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <div>
                     <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
@@ -1495,13 +1610,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                 </div>
 
                 <div className="space-y-3 mb-4">
-                  {selectedWhatsappBlock.messages.map((blockMessage) => {
+                  {selectedWhatsappBlock.messages.map((blockMessage, blockMessageIndex) => {
                     const isOutbound = blockMessage.direction === 'outbound'
                     const accountKey = getWhatsappMessageAccountKey(blockMessage)
                     const palette = getWhatsappAccountPalette(accountKey)
                     return (
                       <article
                         key={blockMessage.id}
+                        data-message-index={blockMessageIndex}
                         className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
@@ -1523,6 +1639,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                   })}
                 </div>
 
+              </div>
+              <MessageJumpNav
+                total={selectedWhatsappBlock.messages.length}
+                currentIndex={whatsappBlockNavIndex}
+                onPrev={() => navigateMessage('whatsapp_block', -1)}
+                onNext={() => navigateMessage('whatsapp_block', 1)}
+              />
               </div>
 
               <div className="shrink-0 border-t border-gray-200 px-5 py-4">
@@ -1648,7 +1771,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-whatsapp-messages>
+            <div className="relative min-h-0 flex-1">
+            <div className="h-full overflow-y-auto px-5 py-4" data-whatsapp-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
@@ -1664,13 +1788,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </div>
 
               <div className="space-y-3 mb-4">
-                {selectedWhatsappGroup.messages.map((blockMessage) => {
+                {selectedWhatsappGroup.messages.map((blockMessage, blockMessageIndex) => {
                   const isOutbound = blockMessage.direction === 'outbound'
                   const accountKey = getWhatsappMessageAccountKey(blockMessage)
                   const palette = getWhatsappAccountPalette(accountKey)
                   return (
                     <article
                       key={blockMessage.id}
+                      data-message-index={blockMessageIndex}
                       className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                     >
                       <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
@@ -1691,6 +1816,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                   )
                 })}
               </div>
+            </div>
+            <MessageJumpNav
+              total={selectedWhatsappGroup.messages.length}
+              currentIndex={whatsappGroupNavIndex}
+              onPrev={() => navigateMessage('whatsapp_group', -1)}
+              onNext={() => navigateMessage('whatsapp_group', 1)}
+            />
             </div>
 
             <div className="shrink-0 border-t border-gray-200 px-5 py-4">
