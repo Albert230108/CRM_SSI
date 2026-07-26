@@ -360,13 +360,27 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         {!loading && bookings.length > 0 && (
           <>
             <div className="mt-6 space-y-3">
-              <input
-                type="text"
-                placeholder="Search by name or booking number..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm placeholder-gray-400 text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search by name or booking number..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 pr-9 text-sm placeholder-gray-400 text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-gray-400 hover:text-gray-600"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                      <path fillRule="evenodd" d="M10 8.586 5.707 4.293a1 1 0 0 0-1.414 1.414L8.586 10l-4.293 4.293a1 1 0 1 0 1.414 1.414L10 11.414l4.293 4.293a1 1 0 0 0 1.414-1.414L11.414 10l4.293-4.293a1 1 0 0 0-1.414-1.414L10 8.586Z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                )}
+              </div>
 
               <div className="space-y-2">
                 <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Quick filters</div>
