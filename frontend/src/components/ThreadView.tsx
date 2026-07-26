@@ -1265,7 +1265,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             </div>
 
             <div className="relative min-h-0 flex-1">
-            <div className="h-full overflow-y-auto px-5 py-4" data-email-messages>
+            <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-email-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Messages</p>
@@ -1599,7 +1599,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               </div>
 
               <div className="relative min-h-0 flex-1">
-              <div className="h-full overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
+              <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
                 <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <div>
                     <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
@@ -1772,7 +1772,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             </div>
 
             <div className="relative min-h-0 flex-1">
-            <div className="h-full overflow-y-auto px-5 py-4" data-whatsapp-messages>
+            <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-whatsapp-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
