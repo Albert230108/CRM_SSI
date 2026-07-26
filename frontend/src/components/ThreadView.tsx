@@ -79,7 +79,7 @@ const scrollToMessageIndex = (containerSelector: string, index: number) => {
   const container = document.querySelector<HTMLElement>(containerSelector)
   if (!container) return
   const target = container.querySelector<HTMLElement>(`[data-message-index="${index}"]`)
-  target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
 }
 
 const decodeHtmlEntities = (value: string) => {
