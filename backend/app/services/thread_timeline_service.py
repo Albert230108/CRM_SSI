@@ -82,6 +82,7 @@ class TimelineEmailThreadRead(BaseModel):
     provider_account_id: int | None = None
     provider_account_email: str | None = None
     provider_account_display_name: str | None = None
+    matched_tenant_email: str | None = None
     subject: str | None = None
     preview_text: str | None = None
     anchor_timestamp: datetime
@@ -127,7 +128,7 @@ def _communication_sort_key(message: Communication) -> tuple[datetime, int]:
     return (_ensure_utc(message.created_at), int(message.id))
 
 
-def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation]:
+def _load_tenant_conversations(db: Session, tenant_id: int, tenant_email_fallback: str | None = None) -> list[Conversation]:
     conversations = (
         db.query(Conversation)
         .join(TenantConversationLink, TenantConversationLink.conversation_id == Conversation.id)
@@ -140,6 +141,7 @@ def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation
 
     conversation_ids = [conversation.id for conversation in conversations]
     messages_by_conversation_id: dict[int, list[ConversationMessage]] = {conversation_id: [] for conversation_id in conversation_ids}
+    matched_email_by_conversation_id: dict[int, str | None] = {}
     if conversation_ids:
         all_messages = (
             db.query(ConversationMessage)
@@ -150,12 +152,26 @@ def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation
         for message in all_messages:
             messages_by_conversation_id[message.conversation_id].append(message)
 
+        links = (
+            db.query(TenantConversationLink)
+            .filter(
+                TenantConversationLink.tenant_id == tenant_id,
+                TenantConversationLink.conversation_id.in_(conversation_ids),
+                TenantConversationLink.unlinked_at.is_(None),
+            )
+            .all()
+        )
+        for link in links:
+            if link.matched_email:
+                matched_email_by_conversation_id[link.conversation_id] = link.matched_email
+
     result: list[Conversation] = []
     for conversation in conversations:
         mailbox = account_lookup.get(conversation.provider_account_id)
         setattr(conversation, "messages", messages_by_conversation_id.get(conversation.id, []))
         setattr(conversation, "provider_account_email", mailbox.email_address if mailbox else None)
         setattr(conversation, "provider_account_display_name", mailbox.display_name if mailbox else None)
+        setattr(conversation, "matched_tenant_email", matched_email_by_conversation_id.get(conversation.id) or tenant_email_fallback)
         result.append(conversation)
     return result
 
@@ -384,7 +400,7 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
         raise ValueError("Tenant not found")
 
     ai_generated_email_timestamps = _load_ai_generated_email_timestamps(db, tenant_id)
-    conversations = _load_tenant_conversations(db, tenant_id)
+    conversations = _load_tenant_conversations(db, tenant_id, tenant_email_fallback=tenant.email)
     whatsapp_messages = _load_tenant_whatsapp(db, tenant_id)
     thread_windows = _build_thread_windows(conversations)
 
@@ -418,6 +434,7 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
                     provider_account_id=window.thread.provider_account_id,
                     provider_account_email=getattr(window.thread, "provider_account_email", None),
                     provider_account_display_name=getattr(window.thread, "provider_account_display_name", None),
+                    matched_tenant_email=getattr(window.thread, "matched_tenant_email", None),
                     subject=window.thread.subject,
                     preview_text=window.thread.preview_text,
                     anchor_timestamp=window.anchor_timestamp,

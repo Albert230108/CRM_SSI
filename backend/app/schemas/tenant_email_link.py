@@ -29,3 +29,8 @@ class TenantEmailLinkRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class TenantEmailLinkCreateRead(BaseModel):
+    link: TenantEmailLinkRead
+    gmail_sync_job_id: str | None = None

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -5,11 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.gmail_integration import sync_email_across_gmail_accounts
 from app.core.dependencies import get_current_user, get_db
 from app.models.tenant import Tenant
 from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
-from app.schemas.tenant_email_link import TenantEmailLinkCreate, TenantEmailLinkRead
+from app.schemas.tenant_email_link import TenantEmailLinkCreate, TenantEmailLinkCreateRead, TenantEmailLinkRead
+from app.services.background_jobs import start_job
 from app.services.beds24_client import BEDS24_EMAIL_INFO_CODE, add_booking_info_item, delete_booking_info_item, get_booking_info_items
 
 router = APIRouter(tags=["tenant-email-links"])
@@ -44,13 +47,13 @@ def get_tenant_email_links(
     return list(links)
 
 
-@router.post("/tenants/{tenant_id}/email-links", response_model=TenantEmailLinkRead)
+@router.post("/tenants/{tenant_id}/email-links", response_model=TenantEmailLinkCreateRead)
 async def create_tenant_email_link(
     tenant_id: int,
     payload: TenantEmailLinkCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> TenantEmailLinkRead:
+) -> TenantEmailLinkCreateRead:
     tenant = _get_tenant_or_404(db, tenant_id)
     email = payload.email
 
@@ -60,7 +63,7 @@ async def create_tenant_email_link(
         .first()
     )
     if same_tenant_existing_link is not None:
-        return same_tenant_existing_link
+        return TenantEmailLinkCreateRead(link=TenantEmailLinkRead.model_validate(same_tenant_existing_link), gmail_sync_job_id=None)
 
     conflicting_link = (
         _active_email_links_query(db)
@@ -119,14 +122,22 @@ async def create_tenant_email_link(
     db.commit()
     db.refresh(new_link)
 
+    # Search existing Gmail history for this address across every connected account, so past
+    # messages involving it surface in this tenant's thread instead of only future ones -- the
+    # regular account-wide sync query is built from Tenant.email only, so a newly linked
+    # secondary address wouldn't otherwise get searched for. Tracked as a job (rather than a
+    # fire-and-forget background task) so the frontend can poll it and show progress/outcome.
+    gmail_sync_job_id = start_job("gmail_sync_email", asyncio.to_thread(sync_email_across_gmail_accounts, email))
+
     logger.info(
-        "tenant_email_link_created tenant_id=%s email=%s beds24_sync_status=%s actor_user_id=%s",
+        "tenant_email_link_created tenant_id=%s email=%s beds24_sync_status=%s gmail_sync_job_id=%s actor_user_id=%s",
         tenant_id,
         email,
         new_link.beds24_sync_status,
+        gmail_sync_job_id,
         current_user.id,
     )
-    return new_link
+    return TenantEmailLinkCreateRead(link=TenantEmailLinkRead.model_validate(new_link), gmail_sync_job_id=gmail_sync_job_id)
 
 
 @router.delete("/tenants/{tenant_id}/email-links/{link_id}", response_model=TenantEmailLinkRead)

@@ -799,6 +799,63 @@ def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     return saved
 
 
+def sync_gmail_account_for_email(db: Session, account: GmailAccount, email: str) -> int:
+    """Search a single Gmail account for threads involving `email` and upsert any matches.
+
+    Used right after a tenant links a new email address: the regular full-account sync query
+    (_sync_gmail_account) is built from Tenant.email only, so a newly linked secondary address
+    might never have been searched for -- this runs a targeted, one-off query for just that
+    address so its message history surfaces in the tenant's thread without waiting for it to
+    otherwise show up. Deliberately does not touch account.last_synced_at, since this is a
+    narrow supplementary search, not a full account sync.
+    """
+    service = _build_service_for_account(account)
+    request = service.users().threads().list(userId="me", maxResults=100, q=f'"{email}"')
+    threads = _execute_gmail_request(request).get("threads") or []
+    saved = 0
+    for thread_ref in threads:
+        thread = _execute_gmail_request(
+            service.users().threads().get(userId="me", id=thread_ref["id"], format="full")
+        )
+        conversation = _upsert_thread(db, account, thread)
+        if conversation is not None and conversation.tenant_id is not None:
+            saved += 1
+    db.commit()
+    return saved
+
+
+def sync_email_across_gmail_accounts(email: str) -> dict[str, Any]:
+    """Job entry point (see start_job): run sync_gmail_account_for_email against every active
+    Gmail account and return a summary so the caller can report progress/outcome to the user.
+    Opens its own DB session since it runs in a background thread outside the triggering
+    request's session, mirroring the pattern in app.main's background pollers.
+    """
+    db = SessionLocal()
+    accounts_checked = 0
+    accounts_failed = 0
+    conversations_matched = 0
+    try:
+        accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
+        for account in accounts:
+            account_id = account.id
+            accounts_checked += 1
+            try:
+                conversations_matched += sync_gmail_account_for_email(db, account, email)
+            except Exception:
+                db.rollback()
+                accounts_failed += 1
+                logger.exception("Gmail sync for linked email failed account_id=%s email=%s", account_id, email)
+    except Exception:
+        logger.exception("Gmail sync for linked email failed to load accounts email=%s", email)
+    finally:
+        db.close()
+    return {
+        "accounts_checked": accounts_checked,
+        "accounts_failed": accounts_failed,
+        "conversations_matched": conversations_matched,
+    }
+
+
 def _process_gmail_history_notification(db: Session, account: GmailAccount, new_history_id: str) -> None:
     """Handle a Gmail Pub/Sub push notification by fetching only what changed since last sync.
 

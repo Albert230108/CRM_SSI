@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatCombinedDateTime } from '../lib/date'
 import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
 import { useDraggablePosition } from '../hooks/useDraggablePosition'
 import LinkChatModal from './LinkChatModal'
 import EmailLinkModal from './EmailLinkModal'
+import ToastCard from './ToastCard'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
 
@@ -189,6 +190,7 @@ type EmailThreadItem = {
   provider_account_id: number | null
   provider_account_email: string | null
   provider_account_display_name: string | null
+  matched_tenant_email: string | null
   provider_thread_id: string
   subject: string | null
   preview_text: string | null
@@ -271,6 +273,19 @@ type ThreadWhatsappLink = {
   unlinked_by_user_id: number | null
   created_at: string
   updated_at: string
+}
+
+type EmailSyncToast = {
+  jobId: string
+  email: string
+  status: 'running' | 'done' | 'error'
+  result?: { accounts_checked: number; accounts_failed: number; conversations_matched: number }
+  error?: string
+}
+
+const formatMailboxAndTenantEmailLabel = (mailboxLabel: string | null, matchedTenantEmail: string | null) => {
+  const mailboxText = mailboxLabel ? `Mailbox: ${mailboxLabel}` : 'Mailbox: unknown'
+  return matchedTenantEmail ? `${mailboxText} → Tenant email: ${matchedTenantEmail}` : mailboxText
 }
 
 const formatWhatsappEndpointLabel = (endpoint: WhatsappEndpointOption) => {
@@ -446,6 +461,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [whatsappLinks, setWhatsappLinks] = useState<ThreadWhatsappLink[]>([])
   const [showLinkChatModal, setShowLinkChatModal] = useState(false)
   const [showEmailLinkModal, setShowEmailLinkModal] = useState(false)
+  const [emailSyncToast, setEmailSyncToast] = useState<EmailSyncToast | null>(null)
+  const emailSyncToastKeyRef = useRef(0)
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
   const [replyMessage, setReplyMessage] = useState('')
   const [replySubject, setReplySubject] = useState('')
@@ -937,6 +954,48 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
     await loadGroupedThread()
   }
 
+  const handleEmailSyncStarted = (jobId: string, email: string) => {
+    emailSyncToastKeyRef.current += 1
+    setEmailSyncToast({ jobId, email, status: 'running' })
+  }
+
+  useEffect(() => {
+    if (!emailSyncToast || emailSyncToast.status !== 'running') return
+    let cancelled = false
+    const pollOnce = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-status/${emailSyncToast.jobId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!response.ok) return
+        const job = await response.json()
+        if (cancelled || job.status === 'running') return
+        emailSyncToastKeyRef.current += 1
+        if (job.status === 'done') {
+          setEmailSyncToast((current) => (current?.jobId === emailSyncToast.jobId ? { ...current, status: 'done', result: job.result } : current))
+          await loadGroupedThread()
+        } else {
+          setEmailSyncToast((current) => (current?.jobId === emailSyncToast.jobId ? { ...current, status: 'error', error: job.error } : current))
+        }
+      } catch {
+        // Transient poll failure -- the interval below will retry.
+      }
+    }
+    const intervalId = window.setInterval(pollOnce, 1500)
+    pollOnce()
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailSyncToast?.jobId, emailSyncToast?.status, token])
+
+  useEffect(() => {
+    if (!emailSyncToast || emailSyncToast.status === 'running') return
+    const timeoutId = window.setTimeout(() => setEmailSyncToast(null), 8000)
+    return () => window.clearTimeout(timeoutId)
+  }, [emailSyncToast])
+
   const handleSendReply = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!tenantId || !replyMessage.trim() || replySending || !replyTarget) return
@@ -1134,6 +1193,30 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
         </div>
       </div>
 
+      {emailSyncToast ? (
+        <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+          <ToastCard toastKey={emailSyncToastKeyRef.current} tone={emailSyncToast.status === 'error' ? 'error' : emailSyncToast.status === 'done' ? 'success' : 'info'} durationMs={8000}>
+            {emailSyncToast.status === 'running' ? (
+              <p className="font-medium">Syncing Gmail history for {emailSyncToast.email}...</p>
+            ) : emailSyncToast.status === 'done' ? (
+              <>
+                <p className="font-semibold">Gmail sync complete</p>
+                <p className="mt-1">
+                  {emailSyncToast.result?.conversations_matched ?? 0} conversation
+                  {emailSyncToast.result?.conversations_matched === 1 ? '' : 's'} matched for {emailSyncToast.email} across{' '}
+                  {emailSyncToast.result?.accounts_checked ?? 0} account{emailSyncToast.result?.accounts_checked === 1 ? '' : 's'}.
+                </p>
+                {emailSyncToast.result?.accounts_failed ? (
+                  <p className="mt-1 text-xs text-emerald-800/80">{emailSyncToast.result.accounts_failed} account(s) failed to sync.</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="font-semibold">Gmail sync for {emailSyncToast.email} failed{emailSyncToast.error ? `: ${emailSyncToast.error}` : ''}</p>
+            )}
+          </ToastCard>
+        </div>
+      ) : null}
+
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">
         {loading ? <p className="text-sm text-gray-500">Loading tenant thread...</p> : null}
         {replySending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
@@ -1157,7 +1240,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
                       <p className="mt-1 truncate text-sm text-gray-600">{item.messages[0] ? extractPreviewText(item.messages[0]) : 'No preview available'}</p>
                       <p className="mt-2 text-xs font-medium text-gray-500">
-                        {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
+                        {formatMailboxAndTenantEmailLabel(item.provider_account_display_name || item.provider_account_email, item.matched_tenant_email)}
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">
@@ -1285,7 +1368,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                   </p>
                 </div>
                 <p className="text-xs text-gray-500">
-                  {selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email ? `Mailbox: ${selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email}` : 'Mailbox: unknown'}
+                  {formatMailboxAndTenantEmailLabel(
+                    selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email,
+                    selectedEmailThread.matched_tenant_email,
+                  )}
                 </p>
               </div>
 
@@ -1939,6 +2025,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
           tenantName={tenant?.name}
           bookingId={tenant?.booking_id ?? undefined}
           onClose={() => setShowEmailLinkModal(false)}
+          onSyncStarted={handleEmailSyncStarted}
         />
       ) : null}
     </div>

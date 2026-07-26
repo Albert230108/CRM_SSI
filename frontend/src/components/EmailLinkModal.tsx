@@ -26,6 +26,7 @@ type EmailLinkModalProps = {
   bookingId?: string
   onClose: () => void
   onChanged?: () => void
+  onSyncStarted?: (jobId: string, email: string) => void
 }
 
 type ConflictInfo = {
@@ -72,7 +73,7 @@ function syncStatusLabel(status: string) {
   return { text: 'Syncing to Beds24...', className: 'text-gray-500' }
 }
 
-export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, onClose, onChanged }: EmailLinkModalProps) {
+export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, onClose, onChanged, onSyncStarted }: EmailLinkModalProps) {
   const token = useAuthStore((state) => state.token)
   const [linksLoading, setLinksLoading] = useState(false)
   const [links, setLinks] = useState<TenantEmailLink[]>([])
@@ -167,10 +168,14 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
         const payload = await readJsonSafely(response)
         throw new Error(getErrorMessage(payload, 'Failed to link email'))
       }
+      const result: { link: TenantEmailLink; gmail_sync_job_id: string | null } = await readJsonSafely(response)
       setConflict(null)
       setEmail('')
       await reloadLinks()
       onChanged?.()
+      if (result?.gmail_sync_job_id) {
+        onSyncStarted?.(result.gmail_sync_job_id, result.link.email)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link email')
     } finally {
