@@ -1237,7 +1237,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             role="dialog"
             aria-modal="true"
             aria-labelledby="email-thread-modal-title"
-            className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            className="flex h-[85vh] max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
             style={emailThreadDrag.style}
             onClick={(event) => event.stopPropagation()}
           >
@@ -1575,7 +1575,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               role="dialog"
               aria-modal="true"
               aria-labelledby="whatsapp-block-panel-title"
-              className="flex max-h-[85vh] w-full max-w-md flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+              className="flex h-[85vh] max-h-[85vh] w-full max-w-md flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
@@ -1743,7 +1743,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             role="dialog"
             aria-modal="true"
             aria-labelledby="whatsapp-group-modal-title"
-            className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            className="flex h-[85vh] max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
             style={whatsappGroupDrag.style}
             onClick={(event) => event.stopPropagation()}
           >
