@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 
-from app.api.tenants import list_tenants
+from app.api.tenants import list_tenant_statuses, list_tenants
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
@@ -343,3 +343,20 @@ def test_list_tenants_empty_status_filter_shows_nothing(db_session):
         sort_by_message=False, sort_desc=True,
     )
     assert result == []
+
+
+def test_list_tenant_statuses_returns_distinct_values_from_data(db_session):
+    tenant_a = create_tenant(db_session, name="Tenant A", booking_id="STATUS-E")
+    tenant_a.booking_status = "confirmed"
+
+    tenant_b = create_tenant(db_session, name="Tenant B", booking_id="STATUS-F")
+    tenant_b.booking_status = "confirmed"
+
+    tenant_c = create_tenant(db_session, name="Tenant C", booking_id="STATUS-G")
+    tenant_c.booking_status = "Custom Status"
+
+    create_tenant(db_session, name="Tenant No Status", booking_id="STATUS-H")
+    db_session.commit()
+
+    statuses = list_tenant_statuses(db=db_session, current_user=None)
+    assert statuses == ["Custom Status", "confirmed"]

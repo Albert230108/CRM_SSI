@@ -6,19 +6,6 @@ import StatusFilterDropdown from './StatusFilterDropdown'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-// Fixed set of booking statuses, matching the Beds24 import status_map in
-// backend/app/api/tenants.py. Kept as a fixed list (rather than derived from
-// currently-loaded tenants) so the checkbox options never shrink once a filter is applied.
-const STATUS_OPTIONS = [
-  'Enquiry',
-  'Confirmed',
-  'Cancelled by guest',
-  'Cancelled by property',
-  'Request',
-  'Blocked',
-  'Confirmed (OTA)',
-]
-
 type Tenant = {
   id: number
   booking_id: string
@@ -55,8 +42,11 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [statusOptions, setStatusOptions] = useState<string[]>([])
+  const [statusOptionsLoaded, setStatusOptionsLoaded] = useState(false)
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
   const [statusesResolved, setStatusesResolved] = useState(false)
+  const statusesInitializedRef = useRef(false)
   const [selectedResponsible, setSelectedResponsible] = useState<string | null>(null)
   const [selectedDirection, setSelectedDirection] = useState<string | null>(null)
   const [sortByMessage, setSortByMessage] = useState(true)
@@ -69,6 +59,31 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   }, [onNewMessage])
 
   useEffect(() => {
+    let cancelled = false
+    const loadStatusOptions = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/tenants/statuses`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!cancelled && response.ok) {
+          const data: string[] = await response.json()
+          setStatusOptions(data)
+        }
+      } catch {
+        // Ignore; the status filter dropdown will just stay empty until the next refresh.
+      } finally {
+        if (!cancelled) setStatusOptionsLoaded(true)
+      }
+    }
+    loadStatusOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [token, reloadSignal, livePollSignal])
+
+  useEffect(() => {
+    if (statusesInitializedRef.current) return
+
     if (searchParams.has('statuses')) {
       const raw = searchParams.get('statuses') ?? ''
       const parsed = raw
@@ -76,9 +91,13 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         .map((value) => decodeURIComponent(value))
         .filter(Boolean)
       setSelectedStatuses(parsed)
+      statusesInitializedRef.current = true
       setStatusesResolved(true)
       return
     }
+
+    // Wait until we know which statuses actually exist before picking the "all selected" default.
+    if (!statusOptionsLoaded) return
 
     let cancelled = false
     const loadSavedPreference = async () => {
@@ -89,14 +108,17 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         if (cancelled) return
         if (response.ok) {
           const data: { statuses: string[] | null } = await response.json()
-          setSelectedStatuses(data.statuses ?? STATUS_OPTIONS)
+          setSelectedStatuses(data.statuses ?? statusOptions)
         } else {
-          setSelectedStatuses(STATUS_OPTIONS)
+          setSelectedStatuses(statusOptions)
         }
       } catch {
-        if (!cancelled) setSelectedStatuses(STATUS_OPTIONS)
+        if (!cancelled) setSelectedStatuses(statusOptions)
       } finally {
-        if (!cancelled) setStatusesResolved(true)
+        if (!cancelled) {
+          statusesInitializedRef.current = true
+          setStatusesResolved(true)
+        }
       }
     }
 
@@ -104,9 +126,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
     return () => {
       cancelled = true
     }
-    // Only resolve the initial filter once; subsequent changes go through handleStatusesChange.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [searchParams, statusOptionsLoaded, statusOptions, token])
 
   const handleStatusesChange = (next: string[]) => {
     setSelectedStatuses(next)
@@ -267,7 +287,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         </div>
 
         <div className="flex gap-1.5">
-          <StatusFilterDropdown options={STATUS_OPTIONS} selected={selectedStatuses} onChange={handleStatusesChange} />
+          <StatusFilterDropdown options={statusOptions} selected={selectedStatuses} onChange={handleStatusesChange} />
 
           <select
             value={selectedResponsible || ''}

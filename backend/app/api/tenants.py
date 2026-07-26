@@ -5,10 +5,10 @@ import traceback
 import re
 import os
 from urllib.parse import quote
-from typing import Optional
+from typing import Annotated, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
@@ -349,12 +349,24 @@ def _build_one_drive_folder_path(tenant: Tenant) -> str:
     return f"/01. Rentals/02. Short-Stay Inn/Tenants/2026/{folder_name}"
 
 
+@router.get("/tenants/statuses", response_model=list[str])
+def list_tenant_statuses(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[str]:
+    rows = db.query(Tenant.booking_status).filter(Tenant.booking_status.isnot(None)).distinct().all()
+    return sorted({row[0] for row in rows if row[0]})
+
+
 @router.get("/tenants", response_model=list[TenantRead])
 def list_tenants(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     search: str | None = None,
-    status: list[str] | None = None,
+    # Annotated + Query() (rather than a `Query()` default) so FastAPI binds repeated
+    # ?status=a&status=b query params over HTTP, while direct Python calls (e.g. tests)
+    # still see a plain `None` default instead of an unresolved Query sentinel object.
+    status: Annotated[list[str] | None, Query()] = None,
     status_filter: bool = False,
     responsible: str | None = None,
     last_message_direction: str | None = None,
