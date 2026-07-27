@@ -232,6 +232,76 @@ async def test_admin_sync_skips_bare_endpoints(db_session):
 
 
 @pytest.mark.asyncio
+async def test_admin_sync_delegates_to_resync_whatsapp_chat_service(db_session):
+    """Bulk sync must call the exact same resync_whatsapp_chat() service function that the
+    Manage Chats "Resync full history" button uses, so it honors per-account URL routing
+    (WHATSAPP_SERVICE_URL_MAP) instead of a single global WHATSAPP_SERVICE_URL -- previously
+    it built its own httpx request straight from WHATSAPP_SERVICE_URL, which sent every
+    linked chat to the same instance regardless of which WhatsApp account it belonged to."""
+    from app.api.admin_sync import _sync_whatsapp_linked_endpoints
+
+    tenant = create_tenant(db_session, booking_id="B-delegate-service")
+    endpoint = create_whatsapp_endpoint(
+        db_session,
+        tenant.id,
+        external_account_id="second-account",
+        external_chat_namespace="326472368@lid",
+    )
+
+    with patch(
+        "app.api.admin_sync.resync_whatsapp_chat",
+        new=AsyncMock(return_value={"ok": True, "fetched": 5, "imported": 5, "deduped": 0, "failed": 0}),
+    ) as mocked_resync:
+        result = await _sync_whatsapp_linked_endpoints(db_session)
+
+    mocked_resync.assert_awaited_once_with("second-account", "326472368@lid")
+    assert result["synced_endpoints"] == 1
+    assert result["results"][0]["endpoint_id"] == endpoint.id
+    assert result["total_imported"] == 5
+
+
+@pytest.mark.asyncio
+async def test_admin_sync_reconciles_existing_message_namespace(db_session):
+    """After a bulk resync, existing Communication rows for that chat must have their
+    external_chat_namespace backfilled to match the link, mirroring the reconciliation the
+    per-chat Manage Chats resync endpoint performs -- otherwise messages imported before this
+    fix (or without a namespace set) silently stay excluded from timeline filtering."""
+    from app.api.admin_sync import _sync_whatsapp_linked_endpoints
+
+    tenant = create_tenant(db_session, booking_id="B-reconcile")
+    create_whatsapp_endpoint(
+        db_session,
+        tenant.id,
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="326472368@lid",
+    )
+
+    stale_message = Communication(
+        tenant_id=tenant.id,
+        channel="whatsapp",
+        direction="inbound",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        whatsapp_chat_id="326472368@lid",
+        whatsapp_identity_key="326472368@lid",
+        external_chat_namespace=None,
+        message="hello",
+    )
+    db_session.add(stale_message)
+    db_session.commit()
+    db_session.refresh(stale_message)
+
+    with patch(
+        "app.api.admin_sync.resync_whatsapp_chat",
+        new=AsyncMock(return_value={"ok": True, "fetched": 1, "imported": 1, "deduped": 0, "failed": 0}),
+    ):
+        await _sync_whatsapp_linked_endpoints(db_session)
+
+    db_session.refresh(stale_message)
+    assert stale_message.external_chat_namespace == "326472368@lid"
+
+
+@pytest.mark.asyncio
 async def test_admin_sync_handles_service_errors(db_session):
     """Verify sync continues on service errors and reports them."""
     from app.api.admin_sync import _sync_whatsapp_linked_endpoints

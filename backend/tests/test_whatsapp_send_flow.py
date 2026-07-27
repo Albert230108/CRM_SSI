@@ -1,9 +1,25 @@
 from datetime import datetime, timezone
 
+import pytest
+
+from app.core.dependencies import get_current_user
+from app.main import app
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.user import User
 from app.services.whatsapp_client import WhatsAppBridgeError
+
+SEND_FLOW_USER = User(id=3, email="send-flow-agent@example.com", password_hash="x", is_active=True, is_admin=False)
+
+
+@pytest.fixture()
+def user_client(client):
+    # The shared `client` fixture only overrides get_current_admin_user; routes guarded by
+    # get_current_user (like the send endpoint) need this override too.
+    app.dependency_overrides[get_current_user] = lambda: SEND_FLOW_USER
+    yield client
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def create_tenant(db_session, name="Tenant Outbound", booking_id="B-outbound", phone="+31600000000"):
@@ -76,6 +92,71 @@ def test_whatsapp_send_payload_preserves_tenant_and_endpoint_identity(client, db
     assert saved.tenant_id == tenant.id
     assert saved.external_account_id == "edi-crm-whatsapp"
     assert saved.provider == "whatsapp-service"
+
+
+def test_whatsapp_send_targets_linked_chat_not_tenant_primary_phone(user_client, db_session, monkeypatch):
+    """When the selected endpoint has a manually-linked chat (external_chat_namespace), the
+    outbound send must go to that specific chat -- not the tenant's generic primary phone --
+    otherwise a tenant with two chats linked on the same account could never reply to the
+    second one (a reply would always land in the first/primary-phone chat)."""
+    tenant = create_tenant(db_session, booking_id="B-outbound-linked-chat")
+    endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    endpoint.external_chat_namespace = "999888777@g.us"
+    db_session.commit()
+
+    captured = {}
+
+    async def fake_send_whatsapp_message(payload):
+        captured.update(payload)
+        return {
+            "whatsapp_message_id": "msg-outbound-linked",
+            "whatsapp_chat_id": "999888777@g.us",
+            "tenant_id": payload["tenant_id"],
+            "external_account_id": payload["external_account_id"],
+            "whatsapp_endpoint_id": payload["whatsapp_endpoint_id"],
+        }
+
+    monkeypatch.setattr("app.api.communications.send_whatsapp_message", fake_send_whatsapp_message)
+
+    response = user_client.post(
+        f"/api/communications/tenants/{tenant.id}/send",
+        json={
+            "channel": "whatsapp",
+            "message": "Hello from the group chat",
+            "whatsapp_endpoint_id": endpoint.id,
+        },
+    )
+
+    assert response.status_code == 201
+    assert captured["to"] == "999888777@g.us"
+
+
+def test_whatsapp_send_requires_specific_endpoint_when_account_has_multiple_chats(user_client, db_session, monkeypatch):
+    """external_account_id alone can no longer disambiguate once a tenant has multiple active
+    chats linked on that account -- the caller must pick a specific whatsapp_endpoint_id."""
+    tenant = create_tenant(db_session, booking_id="B-outbound-ambiguous")
+    first = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    first.external_chat_namespace = "111@lid"
+    second = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    second.external_chat_namespace = "222@lid"
+    db_session.commit()
+
+    async def fake_send_whatsapp_message(payload):
+        raise AssertionError("send_whatsapp_message should not be called for an ambiguous account selection")
+
+    monkeypatch.setattr("app.api.communications.send_whatsapp_message", fake_send_whatsapp_message)
+
+    response = user_client.post(
+        f"/api/communications/tenants/{tenant.id}/send",
+        json={
+            "channel": "whatsapp",
+            "message": "Hello",
+            "external_account_id": "edi-crm-whatsapp",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "multiple chats" in response.json()["detail"]
 
 
 def test_whatsapp_send_returns_explicit_bridge_mismatch_error(client, db_session, monkeypatch):

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
+import StatusFilterDropdown from './StatusFilterDropdown'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -18,24 +20,169 @@ type Tenant = {
   last_message_direction: string | null
 }
 
+type ThreadVersion = {
+  latest_at: string | null
+  tenant_id?: number | null
+  tenant_name?: string | null
+  channel?: string | null
+  direction?: string | null
+}
+
 type TenantListProps = {
   selectedTenantId?: number
   reloadSignal?: number
+  onNewMessage?: (info: { tenantName: string; channel: string; direction: string }) => void
 }
 
-export default function TenantList({ selectedTenantId, reloadSignal }: TenantListProps) {
+export default function TenantList({ selectedTenantId, reloadSignal, onNewMessage }: TenantListProps) {
   const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
+  const [statusOptions, setStatusOptions] = useState<string[]>([])
+  const [statusOptionsLoaded, setStatusOptionsLoaded] = useState(false)
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
+  const [statusesResolved, setStatusesResolved] = useState(false)
+  const statusesInitializedRef = useRef(false)
   const [selectedResponsible, setSelectedResponsible] = useState<string | null>(null)
+  const [selectedDirection, setSelectedDirection] = useState<string | null>(null)
   const [sortByMessage, setSortByMessage] = useState(true)
   const [sortDesc, setSortDesc] = useState(true)
+  const [livePollSignal, setLivePollSignal] = useState(0)
+  const onNewMessageRef = useRef(onNewMessage)
 
   useEffect(() => {
+    onNewMessageRef.current = onNewMessage
+  }, [onNewMessage])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadStatusOptions = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/tenants/statuses`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!cancelled && response.ok) {
+          const data: string[] = await response.json()
+          setStatusOptions(data)
+        }
+      } catch {
+        // Ignore; the status filter dropdown will just stay empty until the next refresh.
+      } finally {
+        if (!cancelled) setStatusOptionsLoaded(true)
+      }
+    }
+    loadStatusOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [token, reloadSignal, livePollSignal])
+
+  useEffect(() => {
+    if (statusesInitializedRef.current) return
+
+    if (searchParams.has('statuses')) {
+      const raw = searchParams.get('statuses') ?? ''
+      const parsed = raw
+        .split(',')
+        .map((value) => decodeURIComponent(value))
+        .filter(Boolean)
+      setSelectedStatuses(parsed)
+      statusesInitializedRef.current = true
+      setStatusesResolved(true)
+      return
+    }
+
+    // Wait until we know which statuses actually exist before picking the "all selected" default.
+    if (!statusOptionsLoaded) return
+
+    let cancelled = false
+    const loadSavedPreference = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/users/me/tenant-status-filter`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (cancelled) return
+        if (response.ok) {
+          const data: { statuses: string[] | null } = await response.json()
+          setSelectedStatuses(data.statuses ?? statusOptions)
+        } else {
+          setSelectedStatuses(statusOptions)
+        }
+      } catch {
+        if (!cancelled) setSelectedStatuses(statusOptions)
+      } finally {
+        if (!cancelled) {
+          statusesInitializedRef.current = true
+          setStatusesResolved(true)
+        }
+      }
+    }
+
+    loadSavedPreference()
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, statusOptionsLoaded, statusOptions, token])
+
+  const handleStatusesChange = (next: string[]) => {
+    setSelectedStatuses(next)
+
+    const params = new URLSearchParams(searchParams)
+    params.set('statuses', next.map((value) => encodeURIComponent(value)).join(','))
+    setSearchParams(params, { replace: true })
+
+    fetch(`${API_BASE_URL}/api/users/me/tenant-status-filter`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ statuses: next }),
+    }).catch(() => {
+      // Best-effort save; the URL still reflects the current session's selection.
+    })
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    let lastSeenVersion: string | null = null
+
+    const pollThreadVersion = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/communications/thread-version`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!response.ok || cancelled) return
+        const data: ThreadVersion = await response.json()
+        if (lastSeenVersion === null) {
+          lastSeenVersion = data.latest_at
+          return
+        }
+        if (data.latest_at !== lastSeenVersion) {
+          lastSeenVersion = data.latest_at
+          setLivePollSignal((current) => current + 1)
+          if (data.tenant_id != null && data.channel && data.direction === 'inbound' && data.tenant_name) {
+            onNewMessageRef.current?.({ tenantName: data.tenant_name, channel: data.channel, direction: data.direction })
+          }
+        }
+      } catch {
+        // Ignore transient poll failures; next interval tick will retry.
+      }
+    }
+
+    const intervalId = window.setInterval(pollThreadVersion, 7000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!statusesResolved) return
     const controller = new AbortController()
 
     const loadTenants = async () => {
@@ -44,8 +191,10 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
         setError('')
         const params = new URLSearchParams()
         if (searchQuery) params.append('search', searchQuery)
-        if (selectedStatus) params.append('status', selectedStatus)
+        params.append('status_filter', 'true')
+        selectedStatuses.forEach((status) => params.append('status', status))
         if (selectedResponsible) params.append('responsible', selectedResponsible)
+        if (selectedDirection) params.append('last_message_direction', selectedDirection)
         params.append('sort_by_message', sortByMessage.toString())
         params.append('sort_desc', sortDesc.toString())
 
@@ -68,15 +217,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
 
     loadTenants()
     return () => controller.abort()
-  }, [token, reloadSignal, searchQuery, selectedStatus, selectedResponsible, sortByMessage, sortDesc])
-
-  const uniqueStatuses = useMemo(() => {
-    const statuses = new Set<string>()
-    tenants.forEach((t) => {
-      if (t.booking_status) statuses.add(t.booking_status)
-    })
-    return Array.from(statuses).sort()
-  }, [tenants])
+  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatuses, statusesResolved, selectedResponsible, selectedDirection, sortByMessage, sortDesc])
 
   const uniqueResponsibles = useMemo(() => {
     const responsibles = new Set<string>()
@@ -109,37 +250,11 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
     return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700' }
   }
 
-  const getChannelIcon = (channel: string | null) => {
-    if (!channel) return null
-    if (channel.toLowerCase().includes('email')) return '✉️'
-    if (channel.toLowerCase().includes('whatsapp')) return '💬'
-    return '💬'
-  }
-
   const getDirectionIcon = (direction: string | null) => {
     if (!direction) return null
     if (direction.toLowerCase() === 'inbound') return '⬇'
     if (direction.toLowerCase() === 'outbound') return '⬆'
     return '↔'
-  }
-
-  const formatMessageTime = (dateStr: string | null) => {
-    if (!dateStr) return null
-    try {
-      const date = new Date(dateStr)
-      const now = new Date()
-      const diffMs = now.getTime() - date.getTime()
-      const diffMins = Math.floor(diffMs / 60000)
-      const diffHours = Math.floor(diffMs / 3600000)
-      const diffDays = Math.floor(diffMs / 86400000)
-
-      if (diffMins < 60) return `${diffMins}m ago`
-      if (diffHours < 24) return `${diffHours}h ago`
-      if (diffDays < 7) return `${diffDays}d ago`
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    } catch {
-      return null
-    }
   }
 
   return (
@@ -148,32 +263,49 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
         <h2 className="text-lg font-semibold text-gray-900">Tenants</h2>
       </div>
 
-      <div className="space-y-2">
-        <input
-          type="text"
-          placeholder="Search by name, ID, email..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm placeholder-gray-400 outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
-        />
+      <div className="space-y-1.5">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Search by name, ID, email..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 px-3 py-1.5 pr-8 text-sm placeholder-gray-400 outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-gray-400 hover:text-gray-600"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                <path fillRule="evenodd" d="M10 8.586 5.707 4.293a1 1 0 0 0-1.414 1.414L8.586 10l-4.293 4.293a1 1 0 1 0 1.414 1.414L10 11.414l4.293 4.293a1 1 0 0 0 1.414-1.414L11.414 10l4.293-4.293a1 1 0 0 0-1.414-1.414L10 8.586Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+        </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-1.5">
+          <StatusFilterDropdown options={statusOptions} selected={selectedStatuses} onChange={handleStatusesChange} />
+
           <select
-            value={selectedStatus || ''}
-            onChange={(e) => setSelectedStatus(e.target.value || null)}
-            className="flex-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+            value={selectedResponsible || ''}
+            onChange={(e) => setSelectedResponsible(e.target.value || null)}
+            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
           >
-            <option value="">All Statuses</option>
-            {uniqueStatuses.map((status) => (
-              <option key={status} value={status}>
-                {status}
+            <option value="">All Responsible</option>
+            <option value="unassigned">Unassigned</option>
+            {uniqueResponsibles.map((responsible) => (
+              <option key={responsible} value={responsible}>
+                {responsible}
               </option>
             ))}
           </select>
 
           <button
             onClick={() => setSortDesc(!sortDesc)}
-            className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+            className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
             title={sortDesc ? 'Sort ascending' : 'Sort descending'}
           >
             {sortDesc ? '↓' : '↑'}
@@ -181,17 +313,13 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
         </div>
 
         <select
-          value={selectedResponsible || ''}
-          onChange={(e) => setSelectedResponsible(e.target.value || null)}
-          className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+          value={selectedDirection || ''}
+          onChange={(e) => setSelectedDirection(e.target.value || null)}
+          className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
         >
-          <option value="">All Responsible</option>
-          <option value="unassigned">Unassigned</option>
-          {uniqueResponsibles.map((responsible) => (
-            <option key={responsible} value={responsible}>
-              {responsible}
-            </option>
-          ))}
+          <option value="">All Last Messages</option>
+          <option value="inbound">Last Message Inbound ⬇</option>
+          <option value="outbound">Last Message Outbound ⬆</option>
         </select>
       </div>
 
@@ -206,7 +334,7 @@ export default function TenantList({ selectedTenantId, reloadSignal }: TenantLis
             const active = selectedTenantId === tenant.id
             const colors = getStatusColor(tenant.booking_status)
             const contact = [tenant.email, tenant.phone, tenant.mobile].filter(Boolean).join(' · ') || 'No contact'
-            const msgTime = formatMessageTime(tenant.last_message_date)
+            const msgTime = formatRelativeTime(tenant.last_message_date)
             const channelIcon = getChannelIcon(tenant.last_message_channel)
             const directionIcon = getDirectionIcon(tenant.last_message_direction)
 

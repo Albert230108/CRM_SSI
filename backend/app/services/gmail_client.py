@@ -4,15 +4,55 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any
 
+from cryptography.fernet import Fernet
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build
 from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
+from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
+
+
+def decrypt_refresh_token(encrypted_refresh_token: str | None) -> str | None:
+    if not encrypted_refresh_token:
+        return None
+    try:
+        key = os.getenv("GMAIL_TOKEN_ENCRYPTION_KEY")
+        if not key:
+            return None
+        cipher = Fernet(key.encode("utf-8"))
+        return cipher.decrypt(encrypted_refresh_token.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return None
+
+
+def build_gmail_credentials(account: GmailAccount) -> Credentials | None:
+    refresh_token = decrypt_refresh_token(account.refresh_token_encrypted)
+    if not refresh_token:
+        return None
+    try:
+        credentials = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
+            client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+            scopes=account.scopes_json or GMAIL_SCOPES,
+        )
+        # Refresh the token to get a valid access token
+        credentials.refresh(GoogleAuthRequest())
+        return credentials
+    except Exception:
+        return None
 
 
 def _build_service(credentials_info: dict[str, Any]) -> Any:
@@ -50,10 +90,20 @@ def _find_tenant(db: Session, headers: list[dict[str, Any]]) -> Tenant | None:
             break
     if not email:
         return None
-    return db.query(Tenant).filter(Tenant.email == email).first()
+    tenant = db.query(Tenant).filter(Tenant.email == email).first()
+    if tenant is not None:
+        return tenant
+    linked = (
+        db.query(TenantEmailAddress)
+        .filter(TenantEmailAddress.email == email, TenantEmailAddress.is_active.is_(True))
+        .first()
+    )
+    if linked is not None:
+        return db.query(Tenant).filter(Tenant.id == linked.tenant_id).first()
+    return None
 
 
-def send_gmail_reply(
+def _send_gmail_message(
     credentials: Credentials,
     *,
     thread_id: str,
@@ -61,6 +111,7 @@ def send_gmail_reply(
     subject: str,
     body_text: str,
     from_email: str,
+    subject_prefix: str,
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
 ) -> dict[str, Any]:
@@ -69,8 +120,8 @@ def send_gmail_reply(
     message = EmailMessage()
     message["To"] = to_email
     message["From"] = from_email
-    if not subject.lower().startswith("re:"):
-        subject = f"Re: {subject}"
+    if not subject.lower().startswith(subject_prefix.lower()):
+        subject = f"{subject_prefix} {subject}"
     message["Subject"] = subject
     if in_reply_to_message_id:
         message["In-Reply-To"] = in_reply_to_message_id
@@ -84,6 +135,85 @@ def send_gmail_reply(
         body={"raw": raw_message, "threadId": thread_id},
     ).execute()
     return result
+
+
+def send_gmail_reply(
+    credentials: Credentials,
+    *,
+    thread_id: str,
+    to_email: str,
+    subject: str,
+    body_text: str,
+    from_email: str,
+    in_reply_to_message_id: str | None = None,
+    references: str | None = None,
+) -> dict[str, Any]:
+    return _send_gmail_message(
+        credentials,
+        thread_id=thread_id,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        from_email=from_email,
+        subject_prefix="Re:",
+        in_reply_to_message_id=in_reply_to_message_id,
+        references=references,
+    )
+
+
+def send_gmail_forward(
+    credentials: Credentials,
+    *,
+    thread_id: str,
+    to_email: str,
+    subject: str,
+    body_text: str,
+    from_email: str,
+    in_reply_to_message_id: str | None = None,
+    references: str | None = None,
+) -> dict[str, Any]:
+    return _send_gmail_message(
+        credentials,
+        thread_id=thread_id,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        from_email=from_email,
+        subject_prefix="Fwd:",
+        in_reply_to_message_id=in_reply_to_message_id,
+        references=references,
+    )
+
+
+def list_thread_drafts(credentials: Credentials, thread_id: str) -> list[dict[str, Any]]:
+    """List Gmail drafts belonging to the given thread. Used to retrieve an externally
+    AI-authored draft reply so a user can review/edit/send it from the CRM."""
+    service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+
+    result = service.users().drafts().list(userId="me").execute()
+    draft_stubs = result.get("drafts") or []
+
+    matches: list[dict[str, Any]] = []
+    for stub in draft_stubs:
+        draft = service.users().drafts().get(userId="me", id=stub["id"], format="full").execute()
+        message = draft.get("message") or {}
+        if message.get("threadId") != thread_id:
+            continue
+        payload = message.get("payload") or {}
+        headers = payload.get("headers") or []
+        subject = ""
+        for header in headers:
+            if str(header.get("name", "")).lower() == "subject":
+                subject = str(header.get("value") or "")
+                break
+        matches.append(
+            {
+                "draft_id": draft.get("id"),
+                "subject": subject,
+                "body_text": _extract_message_text(payload),
+            }
+        )
+    return matches
 
 
 def sync_relevant_threads(db: Session, credentials_info: dict[str, Any], query: str) -> int:

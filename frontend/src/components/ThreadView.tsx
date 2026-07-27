@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatCombinedDateTime } from '../lib/date'
 import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
+import { useDraggablePosition } from '../hooks/useDraggablePosition'
+import { useResizableSize } from '../hooks/useResizableSize'
 import LinkChatModal from './LinkChatModal'
+import EmailLinkModal from './EmailLinkModal'
+import ToastCard from './ToastCard'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
 
@@ -26,6 +30,59 @@ type TimelineMessage = {
   external_phone_id?: string | null
   whatsapp_chat_id?: string | null
   sent_at: string
+  ai_generated?: boolean
+}
+
+const AiGeneratedBadge = () => (
+  <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-700" title="Sent automatically by AI, without human review">
+    AI
+  </span>
+)
+
+const MessageJumpNav = ({
+  total,
+  currentIndex,
+  onPrev,
+  onNext,
+}: {
+  total: number
+  currentIndex: number
+  onPrev: () => void
+  onNext: () => void
+}) => {
+  if (total <= 1) return null
+  return (
+    <div className="absolute right-3 top-3 z-10 flex flex-col items-center gap-1 rounded-xl border border-gray-200 bg-white/95 p-1 shadow-md backdrop-blur">
+      <button
+        type="button"
+        onClick={onPrev}
+        disabled={currentIndex <= 0}
+        aria-label="Jump to previous message"
+        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        ↑
+      </button>
+      <span className="select-none text-[10px] font-semibold tabular-nums text-gray-400">
+        {currentIndex + 1}/{total}
+      </span>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={currentIndex >= total - 1}
+        aria-label="Jump to next message"
+        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        ↓
+      </button>
+    </div>
+  )
+}
+
+const scrollToMessageIndex = (containerSelector: string, index: number) => {
+  const container = document.querySelector<HTMLElement>(containerSelector)
+  if (!container) return
+  const target = container.querySelector<HTMLElement>(`[data-message-index="${index}"]`)
+  target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
 }
 
 const decodeHtmlEntities = (value: string) => {
@@ -134,6 +191,7 @@ type EmailThreadItem = {
   provider_account_id: number | null
   provider_account_email: string | null
   provider_account_display_name: string | null
+  matched_tenant_email: string | null
   provider_thread_id: string
   subject: string | null
   preview_text: string | null
@@ -198,6 +256,7 @@ type WhatsappEndpointOption = {
   external_account_id: string | null
   external_phone_id: string | null
   external_chat_namespace: string | null
+  chat_display_name: string | null
   routing_strategy: string
   is_active: boolean
 }
@@ -217,8 +276,26 @@ type ThreadWhatsappLink = {
   updated_at: string
 }
 
+type EmailSyncToast = {
+  jobId: string
+  email: string
+  status: 'running' | 'done' | 'error'
+  result?: { accounts_checked: number; accounts_failed: number; conversations_matched: number }
+  error?: string
+}
+
+const formatMailboxAndTenantEmailLabel = (mailboxLabel: string | null, matchedTenantEmail: string | null) => {
+  const mailboxText = mailboxLabel ? `Mailbox: ${mailboxLabel}` : 'Mailbox: unknown'
+  return matchedTenantEmail ? `${mailboxText} → Tenant email: ${matchedTenantEmail}` : mailboxText
+}
+
 const formatWhatsappEndpointLabel = (endpoint: WhatsappEndpointOption) => {
   const parts = [endpoint.external_account_id || `Endpoint ${endpoint.id}`]
+  // A tenant can have several chats linked on the same account, so the chat identity (not just
+  // the account) has to be in the label -- otherwise the dropdown shows duplicate-looking rows
+  // with no way to tell which chat each one actually sends to.
+  if (endpoint.chat_display_name) parts.push(endpoint.chat_display_name)
+  else if (endpoint.external_chat_namespace) parts.push(endpoint.external_chat_namespace)
   if (endpoint.external_phone_id) parts.push(endpoint.external_phone_id)
   if (endpoint.provider) parts.push(endpoint.provider)
   if (endpoint.routing_strategy) parts.push(endpoint.routing_strategy)
@@ -239,11 +316,65 @@ type WhatsappTimelineMessage = {
   subject: string | null
   message: string
   created_at: string
+  ai_generated?: boolean
+}
+
+// Distinct hue per linked WhatsApp account; darker shade = outbound, lighter shade = inbound.
+// Direction is also encoded by bubble alignment, so this is a secondary (not sole) signal.
+type WhatsappAccountPalette = {
+  outboundBubble: string
+  outboundBadge: string
+  inboundBubble: string
+  inboundBadge: string
+  dot: string
+}
+
+const WHATSAPP_ACCOUNT_PALETTES: WhatsappAccountPalette[] = [
+  {
+    outboundBubble: 'ml-auto border-green-300 bg-green-100',
+    outboundBadge: 'bg-green-200 text-green-900',
+    inboundBubble: 'border-green-200 bg-green-50',
+    inboundBadge: 'bg-green-100 text-green-700',
+    dot: 'bg-green-500',
+  },
+  {
+    outboundBubble: 'ml-auto border-violet-300 bg-violet-100',
+    outboundBadge: 'bg-violet-200 text-violet-900',
+    inboundBubble: 'border-violet-200 bg-violet-50',
+    inboundBadge: 'bg-violet-100 text-violet-700',
+    dot: 'bg-violet-500',
+  },
+  {
+    outboundBubble: 'ml-auto border-orange-300 bg-orange-100',
+    outboundBadge: 'bg-orange-200 text-orange-900',
+    inboundBubble: 'border-orange-200 bg-orange-50',
+    inboundBadge: 'bg-orange-100 text-orange-700',
+    dot: 'bg-orange-500',
+  },
+  {
+    outboundBubble: 'ml-auto border-sky-300 bg-sky-100',
+    outboundBadge: 'bg-sky-200 text-sky-900',
+    inboundBubble: 'border-sky-200 bg-sky-50',
+    inboundBadge: 'bg-sky-100 text-sky-700',
+    dot: 'bg-sky-500',
+  },
+]
+
+const getWhatsappMessageAccountKey = (message: WhatsappTimelineMessage) =>
+  message.external_account_id || message.external_phone_id || message.whatsapp_chat_id || 'unknown'
+
+// Fixed identity -> color/label mapping so an account looks the same on every tenant's thread,
+// rather than being colored by the order it happened to get linked on a given tenant.
+// external_account_id values come from each whatsapp-service instance's WHATSAPP_CLIENT_ID.
+const WHATSAPP_ACCOUNT_DIRECTORY: Record<string, { label: string; paletteIndex: number }> = {
+  'ssi-crm-whatsapp': { label: 'SSI-Whatsapp', paletteIndex: 0 }, // green
+  'edi-crm-whatsapp': { label: 'EDI-Whatsapp', paletteIndex: 1 }, // violet
 }
 
 type ThreadViewProps = {
   tenantId?: number
   reloadSignal?: number
+  onReady?: (tenantId: number) => void
 }
 
 type ReplyTarget =
@@ -251,8 +382,50 @@ type ReplyTarget =
   | { type: 'whatsapp'; groupId: string }
   | null
 
-export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) {
+type ForwardTarget = { threadId: number; providerThreadId: string; subject: string | null } | null
+
+type EmailTemplateOption = {
+  id: number
+  name: string
+  subject: string | null
+  body: string
+}
+
+type GmailDraft = {
+  draft_id: string | null
+  subject: string
+  body_text: string
+}
+
+type AiTemplateOption = {
+  id: number
+  name: string
+}
+
+type TenantAiSettings = {
+  tenant_id: number
+  available_template_ids: number[]
+  default_email_template_id: number | null
+  default_whatsapp_template_id: number | null
+  auto_draft_email: boolean
+  auto_draft_whatsapp: boolean
+  auto_send_email: boolean
+  auto_send_whatsapp: boolean
+}
+
+type AiAutoDraftItem = {
+  id: number
+  tenant_id: number
+  channel: string
+  generated_text: string
+  status: string
+  scheduled_send_at: string | null
+  created_at: string
+}
+
+export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
+  const user = useAuthStore((state) => state.user)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const downloadAttachment = useCallback(
     async (messageId: number, attachmentId: string, filename: string) => {
@@ -289,14 +462,108 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   const [selectedWhatsappEndpointId, setSelectedWhatsappEndpointId] = useState<string>('')
   const [whatsappLinks, setWhatsappLinks] = useState<ThreadWhatsappLink[]>([])
   const [showLinkChatModal, setShowLinkChatModal] = useState(false)
+  const [showEmailLinkModal, setShowEmailLinkModal] = useState(false)
+  const [emailSyncToast, setEmailSyncToast] = useState<EmailSyncToast | null>(null)
+  const emailSyncToastKeyRef = useRef(0)
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
   const [replyMessage, setReplyMessage] = useState('')
   const [replySubject, setReplySubject] = useState('')
   const [replySending, setReplySending] = useState(false)
+  const [aiTemplates, setAiTemplates] = useState<AiTemplateOption[]>([])
+  const [tenantAiSettings, setTenantAiSettings] = useState<TenantAiSettings | null>(null)
+  const [selectedAiTemplateId, setSelectedAiTemplateId] = useState('')
+  const [aiDraftGenerating, setAiDraftGenerating] = useState(false)
+  const [aiDraftError, setAiDraftError] = useState('')
+  const [pendingAutoDrafts, setPendingAutoDrafts] = useState<AiAutoDraftItem[]>([])
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
+  const [emailNavIndex, setEmailNavIndex] = useState(0)
+  const [whatsappGroupNavIndex, setWhatsappGroupNavIndex] = useState(0)
+  const [whatsappBlockNavIndex, setWhatsappBlockNavIndex] = useState(0)
+  const [forwardTarget, setForwardTarget] = useState<ForwardTarget>(null)
+  const [forwardSubject, setForwardSubject] = useState('')
+  const [forwardBody, setForwardBody] = useState('')
+  const [forwardSending, setForwardSending] = useState(false)
+  const [forwardToEmail, setForwardToEmail] = useState<string | null>(null)
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplateOption[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
+  const [templateLoading, setTemplateLoading] = useState(false)
+  const [draftResults, setDraftResults] = useState<GmailDraft[] | null>(null)
+  const [draftChecking, setDraftChecking] = useState(false)
+  const [draftError, setDraftError] = useState('')
+  const emailThreadDrag = useDraggablePosition()
+  const whatsappGroupDrag = useDraggablePosition()
+
+  const emailThreadSize = useResizableSize({
+    boxType: 'email-thread',
+    defaultWidth: 800,
+    defaultHeight: window.innerHeight * 0.85,
+    minWidth: 320,
+    minHeight: 400,
+    maxWidth: window.innerWidth * 0.95,
+    maxHeight: window.innerHeight * 0.95,
+    user,
+  })
+
+  const whatsappGroupSize = useResizableSize({
+    boxType: 'whatsapp-group',
+    defaultWidth: 800,
+    defaultHeight: window.innerHeight * 0.85,
+    minWidth: 320,
+    minHeight: 400,
+    maxWidth: window.innerWidth * 0.95,
+    maxHeight: window.innerHeight * 0.95,
+    user,
+  })
+
+  const whatsappBlockSize = useResizableSize({
+    boxType: 'whatsapp-block',
+    defaultWidth: 500,
+    defaultHeight: window.innerHeight * 0.85,
+    minWidth: 320,
+    minHeight: 400,
+    maxWidth: window.innerWidth * 0.95,
+    maxHeight: window.innerHeight * 0.95,
+    user,
+  })
+
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
   const [livePollSignal, setLivePollSignal] = useState(0)
+
+  // Color/label are resolved from the fixed WHATSAPP_ACCOUNT_DIRECTORY (by account identity),
+  // not from per-tenant link order, so SSI is always green and EDI is always violet everywhere.
+  const getWhatsappAccountPalette = (accountKey: string) => {
+    const known = WHATSAPP_ACCOUNT_DIRECTORY[accountKey]
+    if (known) return WHATSAPP_ACCOUNT_PALETTES[known.paletteIndex]
+    // Unrecognized account: still deterministic per key, but drawn from the remaining palette
+    // entries so it never collides with the reserved SSI/EDI colors.
+    const fallbackPalettes = WHATSAPP_ACCOUNT_PALETTES.slice(2)
+    let hash = 0
+    for (let i = 0; i < accountKey.length; i += 1) hash = (hash * 31 + accountKey.charCodeAt(i)) >>> 0
+    return fallbackPalettes[hash % fallbackPalettes.length]
+  }
+
+  const getWhatsappAccountLabel = (accountKey: string) => {
+    const known = WHATSAPP_ACCOUNT_DIRECTORY[accountKey]
+    if (known) return known.label
+    return accountKey === 'unknown' ? 'Unknown account' : accountKey
+  }
+
+  // Account color/label alone can't distinguish two chats linked on the same account (e.g. two
+  // different phone numbers on the same WhatsApp business number), so when that account has more
+  // than one active linked chat, surface which specific chat a message belongs to as extra badge
+  // text -- only when needed, so the common single-chat-per-account case stays uncluttered.
+  const getWhatsappMessageChatLabel = (message: WhatsappTimelineMessage) => {
+    const messageAccountId = (message.external_account_id || '').trim().toLowerCase()
+    if (!messageAccountId) return null
+    const accountLinks = whatsappLinks.filter((link) => link.is_active && (link.external_account_id || '').trim().toLowerCase() === messageAccountId)
+    if (accountLinks.length < 2) return null
+    const messageChatId = (message.external_chat_namespace || message.whatsapp_chat_id || '').trim().toLowerCase()
+    if (!messageChatId) return null
+    const matchedLink = accountLinks.find((link) => (link.chat_id || '').trim().toLowerCase() === messageChatId)
+    if (!matchedLink) return null
+    return matchedLink.chat_display_name?.trim() || matchedLink.chat_id
+  }
 
   useEffect(() => {
     if (!tenantId) return
@@ -332,6 +599,182 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
   }, [tenantId, token])
 
   useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const loadForwardSetup = async () => {
+      const [templatesResponse, adminSettingsResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/email-templates`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/api/admin-settings`, { headers: { Authorization: `Bearer ${token}` } }),
+      ])
+      if (cancelled) return
+      if (templatesResponse.ok) setEmailTemplates(await templatesResponse.json())
+      if (adminSettingsResponse.ok) {
+        const data = await adminSettingsResponse.json()
+        setForwardToEmail(data.forward_to_email ?? null)
+      }
+    }
+    loadForwardSetup()
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const loadAiTemplates = async () => {
+      const response = await fetch(`${API_BASE_URL}/api/ai-reply-templates`, { headers: { Authorization: `Bearer ${token}` } })
+      if (cancelled || !response.ok) return
+      setAiTemplates(await response.json())
+    }
+    loadAiTemplates()
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!tenantId || !token) {
+      setTenantAiSettings(null)
+      return
+    }
+    let cancelled = false
+    const loadTenantAiSettings = async () => {
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/ai-settings`, { headers: { Authorization: `Bearer ${token}` } })
+      if (cancelled || !response.ok) return
+      setTenantAiSettings(await response.json())
+    }
+    loadTenantAiSettings()
+    return () => {
+      cancelled = true
+    }
+  }, [tenantId, token])
+
+  // Preselect the tenant's default AI template for whichever channel the reply box is
+  // currently open for, so "Draft with AI" works with zero clicks beyond typing a rough draft.
+  useEffect(() => {
+    if (!replyTarget || !tenantAiSettings) return
+    const defaultId = replyTarget.type === 'email' ? tenantAiSettings.default_email_template_id : tenantAiSettings.default_whatsapp_template_id
+    setSelectedAiTemplateId(defaultId ? String(defaultId) : '')
+    setAiDraftError('')
+  }, [replyTarget, tenantAiSettings])
+
+  const loadPendingAutoDrafts = useCallback(async () => {
+    if (!tenantId || !token) {
+      setPendingAutoDrafts([])
+      return
+    }
+    const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts?tenant_id=${tenantId}`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!response.ok) return
+    setPendingAutoDrafts(await response.json())
+  }, [tenantId, token])
+
+  useEffect(() => {
+    loadPendingAutoDrafts()
+  }, [loadPendingAutoDrafts, livePollSignal])
+
+  const pendingAutoDraftForChannel = (channel: 'email' | 'whatsapp') =>
+    pendingAutoDrafts.find((draft) => draft.channel === channel) ?? null
+
+  const useAutoDraft = async (draft: AiAutoDraftItem) => {
+    setReplyMessage(draft.generated_text)
+    await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/mark-used`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    await loadPendingAutoDrafts()
+  }
+
+  const dismissAutoDraft = async (draft: AiAutoDraftItem) => {
+    await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/dismiss`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    await loadPendingAutoDrafts()
+  }
+
+  const cancelAutoSend = async (draft: AiAutoDraftItem) => {
+    await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/cancel-auto-send`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    await loadPendingAutoDrafts()
+  }
+
+  const renderPendingAutoDraftBanner = (channel: 'email' | 'whatsapp') => {
+    const draft = pendingAutoDraftForChannel(channel)
+    if (!draft) return null
+    return (
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
+          {draft.status === 'pending_auto_send' ? 'AI draft - sending automatically soon' : 'Pending AI draft'}
+        </p>
+        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{draft.generated_text}</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => useAutoDraft(draft)}
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+          >
+            Use this draft
+          </button>
+          {draft.status === 'pending_auto_send' ? (
+            <button
+              type="button"
+              onClick={() => cancelAutoSend(draft)}
+              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+            >
+              Cancel auto-send
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => dismissAutoDraft(draft)}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const aiTemplateOptions = tenantAiSettings && tenantAiSettings.available_template_ids.length
+    ? aiTemplates.filter((template) => tenantAiSettings.available_template_ids.includes(template.id))
+    : aiTemplates
+
+  const handleGenerateAiDraft = async () => {
+    if (!tenantId || !replyTarget || aiDraftGenerating) return
+    try {
+      setAiDraftGenerating(true)
+      setAiDraftError('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-draft`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          channel: replyTarget.type,
+          template_id: selectedAiTemplateId ? Number(selectedAiTemplateId) : null,
+          rough_draft: replyMessage.trim() || null,
+        }),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || 'Failed to generate AI draft')
+      }
+      const data: { generated_text: string; template_id: number } = await response.json()
+      setReplyMessage(data.generated_text)
+      setSelectedAiTemplateId(String(data.template_id))
+    } catch (err) {
+      setAiDraftError(err instanceof Error ? err.message : 'Failed to generate AI draft')
+    } finally {
+      setAiDraftGenerating(false)
+    }
+  }
+
+  useEffect(() => {
     if (!tenantId) {
       setTenant(null)
       setItems([])
@@ -344,6 +787,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     }
 
     const controller = new AbortController()
+    const activeTenantId = tenantId
 
     const loadThread = async () => {
       try {
@@ -393,12 +837,32 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         setError(err instanceof Error ? err.message : 'Failed to load thread')
       } finally {
         setLoading(false)
+        onReady?.(activeTenantId)
       }
     }
 
     loadThread()
     return () => controller.abort()
   }, [tenantId, token, reloadSignal, livePollSignal])
+
+  const navigateMessage = (kind: 'email' | 'whatsapp_group' | 'whatsapp_block', direction: 1 | -1) => {
+    if (kind === 'email' && selectedEmailThread) {
+      const total = buildThreadTimelineEntries(selectedEmailThread).length
+      const next = Math.max(0, Math.min(emailNavIndex + direction, total - 1))
+      setEmailNavIndex(next)
+      scrollToMessageIndex('[data-email-messages]', next)
+    } else if (kind === 'whatsapp_group' && selectedWhatsappGroup) {
+      const total = selectedWhatsappGroup.messages.length
+      const next = Math.max(0, Math.min(whatsappGroupNavIndex + direction, total - 1))
+      setWhatsappGroupNavIndex(next)
+      scrollToMessageIndex('[data-whatsapp-messages]', next)
+    } else if (kind === 'whatsapp_block' && selectedWhatsappBlock) {
+      const total = selectedWhatsappBlock.messages.length
+      const next = Math.max(0, Math.min(whatsappBlockNavIndex + direction, total - 1))
+      setWhatsappBlockNavIndex(next)
+      scrollToMessageIndex('[data-whatsapp-block-messages]', next)
+    }
+  }
 
   useEffect(() => {
     if (!selectedWhatsappGroup && !selectedEmailThread) return
@@ -407,12 +871,29 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
       if (event.key === 'Escape') {
         setSelectedWhatsappGroup(null)
         setSelectedEmailThread(null)
+        return
+      }
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+      // Reply/forward text areas also use arrow keys for cursor movement, so
+      // jump-navigation must yield to any focused editable element.
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+
+      event.preventDefault()
+      const direction = event.key === 'ArrowUp' ? -1 : 1
+      if (selectedWhatsappBlock) {
+        navigateMessage('whatsapp_block', direction)
+      } else if (selectedEmailThread) {
+        navigateMessage('email', direction)
+      } else if (selectedWhatsappGroup) {
+        navigateMessage('whatsapp_group', direction)
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedWhatsappGroup, selectedEmailThread])
+  }, [selectedWhatsappGroup, selectedEmailThread, selectedWhatsappBlock, emailNavIndex, whatsappGroupNavIndex, whatsappBlockNavIndex])
 
   useEffect(() => {
     if (!selectedWhatsappGroup && !selectedEmailThread) return
@@ -424,14 +905,42 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
         scrollContainer.scrollTop = scrollContainer.scrollHeight
       }, 0)
     }
+    if (selectedEmailThread) {
+      const total = buildThreadTimelineEntries(selectedEmailThread).length
+      setEmailNavIndex(total ? total - 1 : 0)
+    }
+    if (selectedWhatsappGroup) {
+      const total = selectedWhatsappGroup.messages.length
+      setWhatsappGroupNavIndex(total ? total - 1 : 0)
+    }
   }, [selectedWhatsappGroup, selectedEmailThread, replyTarget?.type])
+
+  useEffect(() => {
+    if (!selectedWhatsappBlock) return
+    const total = selectedWhatsappBlock.messages.length
+    setWhatsappBlockNavIndex(total ? total - 1 : 0)
+    const scrollContainer = document.querySelector('[data-whatsapp-block-messages]')
+    if (scrollContainer) {
+      setTimeout(() => {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight
+      }, 0)
+    }
+  }, [selectedWhatsappBlock])
 
   const openWhatsappGroup = (group: WhatsappGroupItem) => {
     setSelectedWhatsappGroup(group)
+    setReplyTarget({ type: 'whatsapp', groupId: group.group_id })
   }
 
   const openEmailThread = (thread: EmailThreadItem) => {
-    setSelectedEmailThread(thread)
+    setSelectedEmailThread((current) => {
+      if (!current || current.thread_id !== thread.thread_id) {
+        setDraftResults(null)
+        setDraftError('')
+      }
+      return thread
+    })
+    setReplyTarget({ type: 'email', threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, providerAccountId: thread.provider_account_id || 0, subject: thread.subject })
   }
 
   const loadGroupedThread = async () => {
@@ -480,6 +989,48 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     await reloadWhatsappLinks()
     await loadGroupedThread()
   }
+
+  const handleEmailSyncStarted = (jobId: string, email: string) => {
+    emailSyncToastKeyRef.current += 1
+    setEmailSyncToast({ jobId, email, status: 'running' })
+  }
+
+  useEffect(() => {
+    if (!emailSyncToast || emailSyncToast.status !== 'running') return
+    let cancelled = false
+    const pollOnce = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts/sync-status/${emailSyncToast.jobId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!response.ok) return
+        const job = await response.json()
+        if (cancelled || job.status === 'running') return
+        emailSyncToastKeyRef.current += 1
+        if (job.status === 'done') {
+          setEmailSyncToast((current) => (current?.jobId === emailSyncToast.jobId ? { ...current, status: 'done', result: job.result } : current))
+          await loadGroupedThread()
+        } else {
+          setEmailSyncToast((current) => (current?.jobId === emailSyncToast.jobId ? { ...current, status: 'error', error: job.error } : current))
+        }
+      } catch {
+        // Transient poll failure -- the interval below will retry.
+      }
+    }
+    const intervalId = window.setInterval(pollOnce, 1500)
+    pollOnce()
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailSyncToast?.jobId, emailSyncToast?.status, token])
+
+  useEffect(() => {
+    if (!emailSyncToast || emailSyncToast.status === 'running') return
+    const timeoutId = window.setTimeout(() => setEmailSyncToast(null), 8000)
+    return () => window.clearTimeout(timeoutId)
+  }, [emailSyncToast])
 
   const handleSendReply = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -549,6 +1100,104 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
     }
   }
 
+  const openForwardPanel = (thread: EmailThreadItem) => {
+    openEmailThread(thread)
+    setForwardTarget({ threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, subject: thread.subject })
+    setForwardSubject(thread.subject ? (thread.subject.toLowerCase().startsWith('fwd:') ? thread.subject : `Fwd: ${thread.subject}`) : 'Fwd:')
+    setForwardBody('')
+    setSelectedTemplateId('')
+    setDraftResults(null)
+    setDraftError('')
+  }
+
+  const handleSelectTemplate = async (templateId: string) => {
+    setSelectedTemplateId(templateId)
+    if (!templateId || !tenantId) return
+    try {
+      setTemplateLoading(true)
+      const response = await fetch(`${API_BASE_URL}/api/email-templates/${templateId}/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ tenant_id: tenantId }),
+      })
+      if (!response.ok) return
+      const data = await response.json()
+      setForwardBody(data.body ?? '')
+      if (data.subject) setForwardSubject(data.subject)
+    } finally {
+      setTemplateLoading(false)
+    }
+  }
+
+  const handleSendForward = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!tenantId || !forwardTarget || !forwardBody.trim() || forwardSending) return
+
+    try {
+      setForwardSending(true)
+      setError('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/forward`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          email_thread_id: forwardTarget.threadId,
+          subject: forwardSubject.trim() || forwardTarget.subject || '',
+          body: forwardBody,
+        }),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || 'Failed to forward email')
+      }
+
+      await loadGroupedThread()
+      setForwardTarget(null)
+      setForwardBody('')
+      setForwardSubject('')
+      setSelectedTemplateId('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to forward email')
+    } finally {
+      setForwardSending(false)
+    }
+  }
+
+  const checkForAiDraft = async (thread: EmailThreadItem) => {
+    if (!tenantId) return
+    try {
+      setDraftChecking(true)
+      setDraftError('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/threads/${thread.thread_id}/draft`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail || 'Failed to check for AI draft')
+      }
+      const data = await response.json()
+      setDraftResults(Array.isArray(data) ? data : [])
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : 'Failed to check for AI draft')
+      setDraftResults(null)
+    } finally {
+      setDraftChecking(false)
+    }
+  }
+
+  const useDraftAsReply = (draft: GmailDraft, thread: EmailThreadItem) => {
+    setReplyTarget({ type: 'email', threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, providerAccountId: thread.provider_account_id || 0, subject: thread.subject })
+    setReplySubject(draft.subject || '')
+    setReplyMessage(draft.body_text || '')
+    setForwardTarget(null)
+    setDraftResults(null)
+  }
+
   return (
     <div className="flex h-full min-h-0 min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-200 px-4 py-3">
@@ -560,16 +1209,49 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
             </p>
           </div>
           {tenantId ? (
-            <button
-              type="button"
-              onClick={() => setShowLinkChatModal(true)}
-              className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
-            >
-              {whatsappLinks.some((link) => link.is_active) ? 'Manage chats' : 'Link chat'}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowLinkChatModal(true)}
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+              >
+                {whatsappLinks.some((link) => link.is_active) ? 'Manage chats' : 'Link chat'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowEmailLinkModal(true)}
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+              >
+                Manage emails
+              </button>
+            </div>
           ) : null}
         </div>
       </div>
+
+      {emailSyncToast ? (
+        <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+          <ToastCard toastKey={emailSyncToastKeyRef.current} tone={emailSyncToast.status === 'error' ? 'error' : emailSyncToast.status === 'done' ? 'success' : 'info'} durationMs={8000}>
+            {emailSyncToast.status === 'running' ? (
+              <p className="font-medium">Syncing Gmail history for {emailSyncToast.email}...</p>
+            ) : emailSyncToast.status === 'done' ? (
+              <>
+                <p className="font-semibold">Gmail sync complete</p>
+                <p className="mt-1">
+                  {emailSyncToast.result?.conversations_matched ?? 0} conversation
+                  {emailSyncToast.result?.conversations_matched === 1 ? '' : 's'} matched for {emailSyncToast.email} across{' '}
+                  {emailSyncToast.result?.accounts_checked ?? 0} account{emailSyncToast.result?.accounts_checked === 1 ? '' : 's'}.
+                </p>
+                {emailSyncToast.result?.accounts_failed ? (
+                  <p className="mt-1 text-xs text-emerald-800/80">{emailSyncToast.result.accounts_failed} account(s) failed to sync.</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="font-semibold">Gmail sync for {emailSyncToast.email} failed{emailSyncToast.error ? `: ${emailSyncToast.error}` : ''}</p>
+            )}
+          </ToastCard>
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">
         {loading ? <p className="text-sm text-gray-500">Loading tenant thread...</p> : null}
@@ -594,24 +1276,36 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                       <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
                       <p className="mt-1 truncate text-sm text-gray-600">{item.messages[0] ? extractPreviewText(item.messages[0]) : 'No preview available'}</p>
                       <p className="mt-2 text-xs font-medium text-gray-500">
-                        {item.provider_account_display_name || item.provider_account_email ? `Mailbox: ${item.provider_account_display_name || item.provider_account_email}` : 'Mailbox: unknown'}
+                        {formatMailboxAndTenantEmailLabel(item.provider_account_display_name || item.provider_account_email, item.matched_tenant_email)}
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">
                       <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm">
                         {item.messages.length} messages
                       </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openEmailThread(item)
-                          setReplyTarget({ type: 'email', threadId: item.thread_id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
-                        }}
-                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                      >
-                        Reply
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openEmailThread(item)
+                            setReplyTarget({ type: 'email', threadId: item.thread_id, providerThreadId: item.provider_thread_id, providerAccountId: item.provider_account_id || 0, subject: item.subject })
+                          }}
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                        >
+                          Reply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openForwardPanel(item)
+                          }}
+                          className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                        >
+                          AI Reply
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -663,7 +1357,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
       {selectedEmailThread ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center gap-4 bg-gray-900/45 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center gap-4 px-4"
           onClick={() => {
             setSelectedEmailThread(null)
             setSelectedWhatsappBlock(null)
@@ -673,10 +1367,14 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
             role="dialog"
             aria-modal="true"
             aria-labelledby="email-thread-modal-title"
-            className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            style={{ ...emailThreadDrag.style, ...emailThreadSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+            <div
+              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-5 py-4"
+              onPointerDown={emailThreadDrag.handlePointerDown}
+            >
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-cyan-700">Email Thread</p>
                 <h3 id="email-thread-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -688,6 +1386,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </div>
               <button
                 type="button"
+                onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedEmailThread(null)}
                 className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
@@ -695,7 +1394,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </button>
             </div>
 
-            <div className="max-h-[72vh] overflow-y-auto px-5 py-4" data-email-messages>
+            <div className="relative min-h-0 flex-1">
+            <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-email-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Messages</p>
@@ -704,24 +1404,29 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   </p>
                 </div>
                 <p className="text-xs text-gray-500">
-                  {selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email ? `Mailbox: ${selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email}` : 'Mailbox: unknown'}
+                  {formatMailboxAndTenantEmailLabel(
+                    selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email,
+                    selectedEmailThread.matched_tenant_email,
+                  )}
                 </p>
               </div>
 
               <div className="space-y-3 mb-4">
-                {buildThreadTimelineEntries(selectedEmailThread).map((entry) => {
+                {buildThreadTimelineEntries(selectedEmailThread).map((entry, entryIndex) => {
                   if (entry.kind === 'email') {
                     const messageItem = entry.message
                     const isOutbound = messageItem.direction === 'outbound'
                     return (
                       <article
                         key={`email-${messageItem.id}`}
+                        data-message-index={entryIndex}
                         className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
                           <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
                             {isOutbound ? 'Outbound' : 'Inbound'}
                           </span>
+                          {messageItem.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(messageItem.sent_at)}</span>
                         </div>
                         {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
@@ -765,9 +1470,12 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   const block = entry.block
                   const lastBlockMessage = block.messages[block.messages.length - 1]
                   return (
-                    <article key={`whatsapp-block-${block.block_id}`} className="rounded-2xl border border-emerald-200 bg-emerald-50">
+                    <article key={`whatsapp-block-${block.block_id}`} data-message-index={entryIndex} className="rounded-2xl border border-emerald-200 bg-emerald-50">
                       <div
-                        onClick={() => setSelectedWhatsappBlock({ ...block, threadId: selectedEmailThread.thread_id })}
+                        onClick={() => {
+                          setSelectedWhatsappBlock({ ...block, threadId: selectedEmailThread.thread_id })
+                          setReplyTarget({ type: 'whatsapp', groupId: block.block_id })
+                        }}
                         className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-emerald-100/70"
                       >
                         <div className="min-w-0 flex-1">
@@ -802,6 +1510,124 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 })}
               </div>
 
+              {!replyTarget && !forwardTarget ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openForwardPanel(selectedEmailThread)}
+                    className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                  >
+                    AI Reply
+                  </button>
+                  <button
+                    type="button"
+                    disabled={draftChecking}
+                    onClick={() => checkForAiDraft(selectedEmailThread)}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {draftChecking ? 'Checking...' : 'Check for AI draft'}
+                  </button>
+                </div>
+              ) : null}
+
+              {draftError ? <p className="text-sm text-rose-500">{draftError}</p> : null}
+
+              {draftResults ? (
+                draftResults.length ? (
+                  <div className="space-y-3">
+                    {draftResults.map((draft, index) => (
+                      <div key={draft.draft_id ?? index} className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">AI Draft</p>
+                        {draft.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{draft.subject}</p> : null}
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{draft.body_text}</p>
+                        <button
+                          type="button"
+                          onClick={() => useDraftAsReply(draft, selectedEmailThread)}
+                          className="mt-3 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+                        >
+                          Use this draft
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No AI draft found yet for this thread.</p>
+                )
+              ) : null}
+
+              {forwardTarget && forwardTarget.threadId === selectedEmailThread.thread_id ? (
+                <form onSubmit={handleSendForward} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                  <p className="text-xs text-gray-500">
+                    Forwards this thread to {forwardToEmail || 'the configured AI Reply address (set it in Admin Settings)'}.
+                  </p>
+                  {emailTemplates.length ? (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-forward-template">
+                        Template
+                      </label>
+                      <select
+                        id="modal-forward-template"
+                        value={selectedTemplateId}
+                        onChange={(event) => handleSelectTemplate(event.target.value)}
+                        disabled={templateLoading}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                      >
+                        <option value="">No template</option>
+                        {emailTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-forward-subject">
+                      Subject
+                    </label>
+                    <input
+                      id="modal-forward-subject"
+                      value={forwardSubject}
+                      onChange={(event) => setForwardSubject(event.target.value)}
+                      placeholder="Subject"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                    />
+                  </div>
+                  <textarea
+                    value={forwardBody}
+                    onChange={(event) => setForwardBody(event.target.value)}
+                    rows={5}
+                    placeholder="Write a note or pick a template above..."
+                    disabled={forwardSending || templateLoading}
+                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                  />
+                  <p className="text-xs text-gray-500">The full thread history is included automatically below this text when sent.</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setForwardTarget(null)}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={forwardSending || !forwardBody.trim()}
+                      className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {forwardSending ? 'Forwarding...' : 'Forward'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+            <MessageJumpNav
+              total={buildThreadTimelineEntries(selectedEmailThread).length}
+              currentIndex={emailNavIndex}
+              onPrev={() => navigateMessage('email', -1)}
+              onNext={() => navigateMessage('email', 1)}
+            />
+            </div>
+
+            <div className="shrink-0 border-t border-gray-200 px-5 py-4">
               {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
                 <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
                   <div className="space-y-2">
@@ -816,6 +1642,30 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                       className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
                     />
                   </div>
+                  {renderPendingAutoDraftBanner('email')}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      id="modal-email-ai-template"
+                      value={selectedAiTemplateId}
+                      onChange={(event) => setSelectedAiTemplateId(event.target.value)}
+                      disabled={aiDraftGenerating}
+                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    >
+                      <option value="">No AI template</option>
+                      {aiTemplateOptions.map((template) => (
+                        <option key={template.id} value={template.id}>{template.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleGenerateAiDraft}
+                      disabled={aiDraftGenerating || !selectedAiTemplateId}
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                    </button>
+                  </div>
+                  {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
@@ -841,7 +1691,26 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     </button>
                   </div>
                 </form>
-              ) : null}
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setReplyTarget({ type: 'email', threadId: selectedEmailThread.thread_id, providerThreadId: selectedEmailThread.provider_thread_id, providerAccountId: selectedEmailThread.provider_account_id || 0, subject: selectedEmailThread.subject })}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                >
+                  Reply
+                </button>
+              )}
+            </div>
+
+            <div
+              className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
+              onPointerDown={emailThreadSize.handlePointerDown}
+              onClick={(e) => e.stopPropagation()}
+              title="Drag to resize"
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M14.414 2.586a2 2 0 00-2.828 0l-9 9a2 2 0 102.828 2.828l9-9a2 2 0 000-2.828zM16.586 15.586l-1.414 1.414a2 2 0 11-2.828-2.828l1.414-1.414a2 2 0 112.828 2.828z" clipRule="evenodd" />
+              </svg>
             </div>
           </div>
 
@@ -850,10 +1719,11 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               role="dialog"
               aria-modal="true"
               aria-labelledby="whatsapp-block-panel-title"
-              className="w-full max-w-md rounded-3xl border border-gray-200 bg-white shadow-sm"
+              className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+              style={whatsappBlockSize.style}
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
                 <div className="min-w-0">
                   <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp</p>
                   <h3 id="whatsapp-block-panel-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -873,7 +1743,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 </button>
               </div>
 
-              <div className="max-h-[72vh] overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
+              <div className="relative min-h-0 flex-1">
+              <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
                 <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <div>
                     <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
@@ -884,19 +1755,27 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                 </div>
 
                 <div className="space-y-3 mb-4">
-                  {selectedWhatsappBlock.messages.map((blockMessage) => {
+                  {selectedWhatsappBlock.messages.map((blockMessage, blockMessageIndex) => {
                     const isOutbound = blockMessage.direction === 'outbound'
+                    const accountKey = getWhatsappMessageAccountKey(blockMessage)
+                    const palette = getWhatsappAccountPalette(accountKey)
                     return (
                       <article
                         key={blockMessage.id}
-                        className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                        data-message-index={blockMessageIndex}
+                        className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                          <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {isOutbound ? 'Outbound' : 'Inbound'}
+                          <span
+                            title={accountKey}
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold ${isOutbound ? palette.outboundBadge : palette.inboundBadge}`}
+                          >
+                            <span className={`h-2 w-2 rounded-full ${palette.dot}`} />
+                            {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
+                            {getWhatsappMessageChatLabel(blockMessage) ? ` · ${getWhatsappMessageChatLabel(blockMessage)}` : ''}
                           </span>
+                          {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(blockMessage.created_at)}</span>
-                          <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
                         </div>
                         {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                         <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
@@ -905,6 +1784,16 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   })}
                 </div>
 
+              </div>
+              <MessageJumpNav
+                total={selectedWhatsappBlock.messages.length}
+                currentIndex={whatsappBlockNavIndex}
+                onPrev={() => navigateMessage('whatsapp_block', -1)}
+                onNext={() => navigateMessage('whatsapp_block', 1)}
+              />
+              </div>
+
+              <div className="shrink-0 border-t border-gray-200 px-5 py-4">
                 {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappBlock.block_id ? (
                   <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
                     <div className="space-y-2">
@@ -926,6 +1815,30 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                         ))}
                       </select>
                     </div>
+                    {renderPendingAutoDraftBanner('whatsapp')}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        id="block-whatsapp-ai-template"
+                        value={selectedAiTemplateId}
+                        onChange={(event) => setSelectedAiTemplateId(event.target.value)}
+                        disabled={aiDraftGenerating}
+                        className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="">No AI template</option>
+                        {aiTemplateOptions.map((template) => (
+                          <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleGenerateAiDraft}
+                        disabled={aiDraftGenerating || !selectedAiTemplateId}
+                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                      </button>
+                    </div>
+                    {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                     <textarea
                       value={replyMessage}
                       onChange={(event) => setReplyMessage(event.target.value)}
@@ -951,7 +1864,26 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                       </button>
                     </div>
                   </form>
-                ) : null}
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setReplyTarget({ type: 'whatsapp', groupId: selectedWhatsappBlock.block_id })}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    Reply
+                  </button>
+                )}
+              </div>
+
+              <div
+                className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
+                onPointerDown={whatsappBlockSize.handlePointerDown}
+                onClick={(e) => e.stopPropagation()}
+                title="Drag to resize"
+              >
+                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M14.414 2.586a2 2 0 00-2.828 0l-9 9a2 2 0 102.828 2.828l9-9a2 2 0 000-2.828zM16.586 15.586l-1.414 1.414a2 2 0 11-2.828-2.828l1.414-1.414a2 2 0 112.828 2.828z" clipRule="evenodd" />
+                </svg>
               </div>
             </div>
           ) : null}
@@ -960,17 +1892,21 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
 
       {selectedWhatsappGroup ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
           onClick={() => setSelectedWhatsappGroup(null)}
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="whatsapp-group-modal-title"
-            className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
+            className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            style={{ ...whatsappGroupDrag.style, ...whatsappGroupSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+            <div
+              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-5 py-4"
+              onPointerDown={whatsappGroupDrag.handlePointerDown}
+            >
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp Group</p>
                 <h3 id="whatsapp-group-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
@@ -983,6 +1919,7 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </div>
               <button
                 type="button"
+                onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedWhatsappGroup(null)}
                 className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
@@ -990,7 +1927,8 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </button>
             </div>
 
-            <div className="max-h-[72vh] overflow-y-auto px-5 py-4" data-whatsapp-messages>
+            <div className="relative min-h-0 flex-1">
+            <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-whatsapp-messages>
               <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
@@ -1006,19 +1944,27 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
               </div>
 
               <div className="space-y-3 mb-4">
-                {selectedWhatsappGroup.messages.map((blockMessage) => {
+                {selectedWhatsappGroup.messages.map((blockMessage, blockMessageIndex) => {
                   const isOutbound = blockMessage.direction === 'outbound'
+                  const accountKey = getWhatsappMessageAccountKey(blockMessage)
+                  const palette = getWhatsappAccountPalette(accountKey)
                   return (
                     <article
                       key={blockMessage.id}
-                      className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                      data-message-index={blockMessageIndex}
+                      className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                     >
                       <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                        <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {isOutbound ? 'Outbound' : 'Inbound'}
+                        <span
+                          title={accountKey}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold ${isOutbound ? palette.outboundBadge : palette.inboundBadge}`}
+                        >
+                          <span className={`h-2 w-2 rounded-full ${palette.dot}`} />
+                          {isOutbound ? 'Outbound' : 'Inbound'} · {getWhatsappAccountLabel(accountKey)}
+                          {getWhatsappMessageChatLabel(blockMessage) ? ` · ${getWhatsappMessageChatLabel(blockMessage)}` : ''}
                         </span>
+                        {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                         <span>{formatTimestamp(blockMessage.created_at)}</span>
-                        <span className="normal-case tracking-normal">Account: {blockMessage.external_account_id || blockMessage.external_phone_id || blockMessage.whatsapp_chat_id || 'unknown'}</span>
                       </div>
                       {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
@@ -1026,7 +1972,16 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                   )
                 })}
               </div>
+            </div>
+            <MessageJumpNav
+              total={selectedWhatsappGroup.messages.length}
+              currentIndex={whatsappGroupNavIndex}
+              onPrev={() => navigateMessage('whatsapp_group', -1)}
+              onNext={() => navigateMessage('whatsapp_group', 1)}
+            />
+            </div>
 
+            <div className="shrink-0 border-t border-gray-200 px-5 py-4">
               {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
                 <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
                   <div className="space-y-2">
@@ -1048,6 +2003,30 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                       ))}
                     </select>
                   </div>
+                  {renderPendingAutoDraftBanner('whatsapp')}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      id="modal-whatsapp-ai-template"
+                      value={selectedAiTemplateId}
+                      onChange={(event) => setSelectedAiTemplateId(event.target.value)}
+                      disabled={aiDraftGenerating}
+                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    >
+                      <option value="">No AI template</option>
+                      {aiTemplateOptions.map((template) => (
+                        <option key={template.id} value={template.id}>{template.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleGenerateAiDraft}
+                      disabled={aiDraftGenerating || !selectedAiTemplateId}
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                    </button>
+                  </div>
+                  {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
@@ -1073,81 +2052,27 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
                     </button>
                   </div>
                 </form>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {replyTarget?.type === 'email' ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm"
-          onClick={() => setReplyTarget(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="email-reply-modal-title"
-            className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-sm"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-4 border-b border-gray-200 px-6 py-5">
-              <h3 id="email-reply-modal-title" className="text-lg font-semibold text-gray-900">
-                Reply to Email
-              </h3>
-              <button
-                type="button"
-                onClick={() => setReplyTarget(null)}
-                className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-              >
-                Close
-              </button>
-            </div>
-
-            <form onSubmit={handleSendReply} className="space-y-4 px-6 py-5">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500 mb-2">
-                  Subject
-                </label>
-                <input
-                  value={replySubject}
-                  onChange={(event) => setReplySubject(event.target.value)}
-                  placeholder={replyTarget.subject || 'Subject'}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500 mb-2">
-                  Message
-                </label>
-                <textarea
-                  value={replyMessage}
-                  onChange={(event) => setReplyMessage(event.target.value)}
-                  rows={6}
-                  placeholder="Write your reply..."
-                  disabled={replySending}
-                  className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3 border-t border-gray-200 pt-4">
+              ) : (
                 <button
                   type="button"
-                  onClick={() => setReplyTarget(null)}
-                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                  onClick={() => setReplyTarget({ type: 'whatsapp', groupId: selectedWhatsappGroup.group_id })}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
                 >
-                  Cancel
+                  Reply
                 </button>
-                <button
-                  type="submit"
-                  disabled={replySending || !replyMessage.trim()}
-                  className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {replySending ? 'Sending...' : 'Send Reply'}
-                </button>
-              </div>
-            </form>
+              )}
+            </div>
+
+            <div
+              className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
+              onPointerDown={whatsappGroupSize.handlePointerDown}
+              onClick={(e) => e.stopPropagation()}
+              title="Drag to resize"
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M14.414 2.586a2 2 0 00-2.828 0l-9 9a2 2 0 102.828 2.828l9-9a2 2 0 000-2.828zM16.586 15.586l-1.414 1.414a2 2 0 11-2.828-2.828l1.414-1.414a2 2 0 112.828 2.828z" clipRule="evenodd" />
+              </svg>
+            </div>
           </div>
         </div>
       ) : null}
@@ -1160,6 +2085,17 @@ export default function ThreadView({ tenantId, reloadSignal }: ThreadViewProps) 
           bookingId={tenant?.booking_id ?? undefined}
           onClose={() => setShowLinkChatModal(false)}
           onChanged={handleWhatsappLinksChanged}
+        />
+      ) : null}
+
+      {tenantId ? (
+        <EmailLinkModal
+          open={showEmailLinkModal}
+          tenantId={tenantId}
+          tenantName={tenant?.name}
+          bookingId={tenant?.booking_id ?? undefined}
+          onClose={() => setShowEmailLinkModal(false)}
+          onSyncStarted={handleEmailSyncStarted}
         />
       ) : null}
     </div>

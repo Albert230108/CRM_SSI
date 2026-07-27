@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.dependencies import get_db
 from app.core.phone_normalization import phone_match_candidates
@@ -15,6 +16,8 @@ from app.core.whatsapp_identity import get_canonical_whatsapp_identity
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.ai_draft_trigger_service import register_inbound_message
+from app.services.notification_service import create_notification
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
@@ -397,20 +400,6 @@ def _match_tenants_by_phone(db: Session, candidates: list[str]) -> list[Tenant]:
     return list(matched.values())
 
 
-def _endpoint_from_account_identity(db: Session, provider: str, external_account_id: str) -> TenantChannelEndpoint | None:
-    if not provider or not external_account_id:
-        return None
-    return (
-        db.query(TenantChannelEndpoint)
-        .filter(
-            TenantChannelEndpoint.provider == provider,
-            TenantChannelEndpoint.external_account_id == external_account_id,
-            TenantChannelEndpoint.is_active.is_(True),
-        )
-        .first()
-    )
-
-
 def _find_existing_inbound_whatsapp_communication(
     db: Session,
     *,
@@ -449,21 +438,23 @@ def _find_existing_inbound_whatsapp_communication(
     return duplicate_query.filter(Communication.message == message, Communication.created_at == created_at).first()
 
 
-@router.post("", response_model=WhatsAppWebhookResponse)
-async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> WhatsAppWebhookResponse | JSONResponse:
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+def _process_whatsapp_message(
+    db: Session,
+    payload: dict[str, Any],
+    request_headers: dict[str, str],
+    query_params: dict[str, str],
+) -> WhatsAppWebhookResponse:
+    """Route, dedupe, and persist a single WhatsApp webhook message payload.
 
-    secret_error = _validate_webhook_secret(request, payload)
-    if secret_error is not None:
-        return secret_error
-
+    Shared by the single-message webhook (live inbound/outbound traffic) and the batch
+    endpoint (history backfill) so both paths apply identical routing/dedup/persistence
+    logic — only the transport (one HTTP call vs. many looped in-process) differs.
+    """
     secret_valid = True
     sender = _pick_sender(payload)
     recipient = _pick_recipient(payload)
-    provider = str(payload.get("provider") or request.headers.get("X-Provider") or "whatsapp-service").strip()
-    external_account_id = str(payload.get("external_account_id") or payload.get("whatsapp_client_id") or request.headers.get("X-External-Account-Id") or "").strip()
+    provider = str(payload.get("provider") or request_headers.get("x-provider") or "whatsapp-service").strip()
+    external_account_id = str(payload.get("external_account_id") or payload.get("whatsapp_client_id") or request_headers.get("x-external-account-id") or "").strip()
     external_phone_id = str(payload.get("external_phone_id") or "").strip() or None
     external_chat_namespace = str(payload.get("external_chat_namespace") or payload.get("whatsapp_chat_id") or "").strip() or None
     direction = str(payload.get("direction") or "inbound").strip().lower()
@@ -473,22 +464,10 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     routing_matched_value = None
     source = str(payload.get("source") or "").strip().lower()
     is_history_payload = source in {"history", "backfill"}
-    account_endpoint = _endpoint_from_account_identity(db, provider, external_account_id)
-
-    print("WA DEBUG --- webhook hit ---")
-    print("WA DEBUG payload_keys=", sorted(list(payload.keys())))
-    print("WA DEBUG raw_payload=", {k: payload.get(k) for k in ('direction','from','sender','to','recipient','whatsapp_chat_id','whatsapp_message_id','external_account_id','provider')})
-    print("WA DEBUG sender=", _pick_sender(payload))
-    print("WA DEBUG recipient=", _pick_recipient(payload))
-    print("WA DEBUG direction=", direction)
-    print("WA DEBUG provider=", provider)
-    print("WA DEBUG external_account_id=", external_account_id)
-    print("WA DEBUG secret_valid=", secret_valid)
-    print("WA DEBUG account_identity endpoint_id=", getattr(account_endpoint, 'id', None), "tenant_id=", getattr(account_endpoint, 'tenant_id', None))
 
     if direction == "outbound":
         if is_history_payload:
-            tenant_resolution = resolve_tenant_for_inbound_channel(db, payload, dict(request.headers), dict(request.query_params))
+            tenant_resolution = resolve_tenant_for_inbound_channel(db, payload, request_headers, query_params)
         else:
             tenant_resolution = resolve_whatsapp_outbound_tenant(
                 db,
@@ -499,7 +478,6 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
         tenant = tenant_resolution.tenant
         routing_strategy = tenant_resolution.strategy
         routing_matched_value = tenant_resolution.matched_value
-        print("WA DEBUG routing_strategy=", routing_strategy, "matched_value=", routing_matched_value, "tenant_id=", getattr(tenant, 'id', None))
         logger.info(
             "WhatsApp webhook received sender=%s recipient=%s provider=%s external_account_id=%s routing_strategy=%s secret_valid=%s",
             sender,
@@ -529,32 +507,10 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
             message=_first_text(payload),
             created_at=_pick_timestamp(payload),
         )
-        print(
-            "WA DEBUG final_saved_tenant=",
-            getattr(tenant, 'id', None),
-            "provider_message_id=",
-            payload.get('whatsapp_message_id'),
-            "persistence_state=",
-            persistence_result.persistence_state,
-            "match_strategy=",
-            persistence_result.match_strategy,
-        )
         message = "duplicate skipped" if persistence_result.persistence_state == "deduped" else None
         return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=tenant.id, message=message)
 
-    resolved = resolve_tenant_for_inbound_channel(db, payload, dict(request.headers), dict(request.query_params))
-    print(
-        "WA DEBUG inbound routing_strategy=",
-        resolved.strategy,
-        "matched_field=",
-        resolved.matched_field,
-        "matched_value=",
-        resolved.matched_value,
-        "resolved_tenant_id=",
-        resolved.tenant.id if resolved.tenant else None,
-        "unresolved_reason=",
-        resolved.unresolved_reason,
-    )
+    resolved = resolve_tenant_for_inbound_channel(db, payload, request_headers, query_params)
     logger.info(
         "WhatsApp inbound routing decision strategy=%s matched_field=%s matched_value=%s resolved_tenant_id=%s unresolved_reason=%s sender=%s recipient=%s provider=%s external_account_id=%s secret_valid=%s",
         resolved.strategy,
@@ -594,7 +550,6 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
         created_at=ts,
     )
     if duplicate:
-        print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
         return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id, message="duplicate skipped")
 
     db.add(
@@ -615,9 +570,92 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
             created_at=ts,
         )
     )
+    create_notification(
+        db,
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        channel="whatsapp",
+        direction="inbound",
+        preview=msg_text,
+        event_at=ts,
+    )
+    if not is_history_payload:
+        register_inbound_message(db, tenant=tenant, channel="whatsapp")
     db.commit()
-    print("WA DEBUG final_saved_tenant=", getattr(tenant, 'id', None), "provider_message_id=", payload.get('whatsapp_message_id'))
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)
+
+
+@router.post("", response_model=WhatsAppWebhookResponse)
+async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> WhatsAppWebhookResponse | JSONResponse:
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+
+    secret_error = _validate_webhook_secret(request, payload)
+    if secret_error is not None:
+        return secret_error
+
+    # _process_whatsapp_message runs plain synchronous SQLAlchemy calls. Run it in the
+    # threadpool (like FastAPI does automatically for a `def` route) instead of inline in this
+    # coroutine, so its blocking DB I/O doesn't stall the single event loop for every other
+    # concurrent request (login, tenant loads, etc.) on this worker.
+    return await run_in_threadpool(_process_whatsapp_message, db, payload, dict(request.headers), dict(request.query_params))
+
+
+class WhatsAppBackfillBatchResponse(BaseModel):
+    ok: bool
+    processed: int = 0
+    failed: int = 0
+
+
+@router.post("/backfill-batch", response_model=WhatsAppBackfillBatchResponse)
+async def whatsapp_backfill_batch(request: Request, db: Session = Depends(get_db)) -> WhatsAppBackfillBatchResponse | JSONResponse:
+    """Ingest a chat's history backfill in one request instead of one per message.
+
+    A full-history resync of a single manually-linked chat can involve thousands of messages.
+    Forwarding each as its own HTTP round trip (the original design) made a resync take minutes
+    to tens of minutes. This applies the exact same per-message routing/dedup/persistence logic
+    as the single-message webhook (`_process_whatsapp_message`), just looped in-process against
+    an already-open DB session instead of over the network, which removes the dominant cost
+    (network + request-dispatch overhead per message) while leaving every existing invariant
+    (routing, dedup, commit-per-message semantics) untouched.
+    """
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+
+    secret_error = _validate_webhook_secret(request, payload)
+    if secret_error is not None:
+        return secret_error
+
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "messages must be a list"})
+
+    request_headers = dict(request.headers)
+    query_params = dict(request.query_params)
+
+    processed = 0
+    failed = 0
+    for message_payload in messages:
+        if not isinstance(message_payload, dict):
+            failed += 1
+            continue
+        try:
+            # Looping this many synchronous DB calls inline, with no `await` between them,
+            # would monopolize this worker's single event loop for the whole batch — every
+            # other concurrent request (login, tenant loads, other threads) would stall until
+            # the batch finished. Running each message in the threadpool keeps the same
+            # sequential per-message DB work but yields control back to the event loop between
+            # messages, exactly like FastAPI does automatically for a `def` route.
+            await run_in_threadpool(_process_whatsapp_message, db, message_payload, request_headers, query_params)
+            processed += 1
+        except Exception:
+            db.rollback()
+            failed += 1
+            logger.exception("whatsapp_backfill_batch_message_failed")
+
+    return WhatsAppBackfillBatchResponse(ok=True, processed=processed, failed=failed)
 
 
 @router.post("/resolve", response_model=WhatsAppResolveResponse)

@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
 from typing import Any
@@ -14,7 +15,9 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from jose import jwt
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet
 
@@ -23,12 +26,20 @@ from app.core.security import ALGORITHM, SECRET_KEY, generate_secure_token
 from app.database import SessionLocal
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_conversation_link import TenantConversationLink
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
+from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.background_jobs import get_job, start_job
+from app.services.notification_service import create_notification
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
 PROVIDER_GMAIL = "gmail"
 FRONTEND_SETTINGS_PATH = "/settings"
 logger = logging.getLogger(__name__)
@@ -132,6 +143,60 @@ def _build_service_for_account(account: GmailAccount) -> Any:
     return _build_service(_account_credentials(account))
 
 
+def _execute_gmail_request(request: Any, *, max_retries: int = 5, base_delay: float = 1.0) -> Any:
+    """Run a googleapiclient request, retrying with backoff when Gmail rate-limits us.
+
+    Gmail signals rate-limiting as 429, or (legacy) 403 with a rate-limit reason string.
+    Retry-After is honored when Gmail sends it; otherwise we back off exponentially, capped
+    at 20s to match the retry pattern already used for Beds24 (services/beds24_client.py).
+    Non-rate-limit errors (e.g. the 404 expired-history-cursor case) re-raise immediately so
+    callers' existing except HttpError handling keeps working unchanged.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return request.execute()
+        except HttpError as exc:
+            status_code = exc.resp.status if exc.resp is not None else None
+            is_rate_limited = status_code == 429 or (
+                status_code == 403 and "rate limit" in (exc.reason or "").lower()
+            )
+            if not is_rate_limited or attempt >= max_retries:
+                raise
+            retry_after = 0.0
+            if exc.resp is not None:
+                try:
+                    retry_after = float(exc.resp.get("retry-after") or 0)
+                except (TypeError, ValueError):
+                    retry_after = 0.0
+            delay = retry_after if retry_after > 0 else base_delay * (2**attempt)
+            delay = min(delay, 20.0)
+            logger.warning(
+                "Gmail API rate limited status=%s attempt=%s/%s, retrying after %.1fs",
+                status_code,
+                attempt + 1,
+                max_retries,
+                delay,
+            )
+            time.sleep(delay)
+
+
+def _start_watch(db: Session, account: GmailAccount) -> None:
+    """Register (or renew) Gmail push notifications for this account's mailbox.
+
+    Renewing re-calls watch() without disturbing last_history_id: the mailbox's history
+    stream is continuous regardless of watch registration, so only a first-ever watch
+    should seed last_history_id from the response.
+    """
+    service = _build_service_for_account(account)
+    response = _execute_gmail_request(
+        service.users().watch(userId="me", body={"topicName": _require_env("GMAIL_PUBSUB_TOPIC")})
+    )
+    account.watch_expiration = datetime.fromtimestamp(int(response["expiration"]) / 1000, tz=timezone.utc)
+    if not account.last_history_id:
+        account.last_history_id = str(response["historyId"])
+    db.commit()
+
+
 def _parse_internal_date(value: str | int | None) -> datetime:
     if value is None:
         return datetime.now(timezone.utc)
@@ -184,6 +249,23 @@ def _extract_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return attachments
 
 
+def _message_direction(message: dict[str, Any], sender_email: str | None, account_email: str | None) -> str:
+    """Classify a Gmail message as inbound/outbound.
+
+    Gmail's own SENT/INBOX labels reflect which mailbox a message actually landed in and are
+    authoritative even when the From header doesn't match the account's primary address (a
+    guest replying via an alias, a Send-As address, or a shared support inbox). Fall back to
+    comparing the From header against the account's own address only when labels are absent
+    (e.g. older cached payloads).
+    """
+    label_ids = {str(label).upper() for label in (message.get("labelIds") or [])}
+    if "SENT" in label_ids:
+        return "outbound"
+    if "INBOX" in label_ids:
+        return "inbound"
+    return "outbound" if sender_email and sender_email == account_email else "inbound"
+
+
 def _headers_map(headers: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
     for header in headers:
@@ -201,7 +283,15 @@ def _email_address(raw_value: str | None) -> str | None:
     return email.strip().lower() if email else raw_value.strip().lower()
 
 
-def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email: str) -> Tenant | None:
+def _find_tenants_for_message(db: Session, headers: dict[str, str], account_email: str) -> list[tuple[Tenant, str]]:
+    # Multiple tenants can share the same email address (e.g. duplicate bookings for the
+    # same guest). Every matching tenant must be returned so the conversation can be linked
+    # to all of them, instead of a single arbitrary match "stealing" the conversation.
+    # The matched address (which may be a tenant's primary email or a secondary linked one)
+    # is returned alongside each tenant so callers can record which address actually matched,
+    # rather than assuming it was always the tenant's primary email.
+    matches: list[tuple[Tenant, str]] = []
+    seen_ids: set[int] = set()
     for field in ("from", "to", "cc", "bcc"):
         raw_value = headers.get(field)
         if not raw_value:
@@ -209,10 +299,55 @@ def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email
         for candidate in raw_value.split(","):
             address = _email_address(candidate)
             if address and address != account_email.lower():
-                tenant = db.query(Tenant).filter(Tenant.email == address).first()
-                if tenant is not None:
-                    return tenant
-    return None
+                for tenant in db.query(Tenant).filter(Tenant.email == address).all():
+                    if tenant.id not in seen_ids:
+                        seen_ids.add(tenant.id)
+                        matches.append((tenant, address))
+                linked_tenant_ids = (
+                    db.query(TenantEmailAddress.tenant_id)
+                    .filter(TenantEmailAddress.email == address, TenantEmailAddress.is_active.is_(True))
+                    .all()
+                )
+                for (linked_tenant_id,) in linked_tenant_ids:
+                    if linked_tenant_id not in seen_ids:
+                        tenant = db.query(Tenant).filter(Tenant.id == linked_tenant_id).first()
+                        if tenant is not None:
+                            seen_ids.add(tenant.id)
+                            matches.append((tenant, address))
+    return matches
+
+
+def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email: str) -> Tenant | None:
+    matches = _find_tenants_for_message(db, headers, account_email)
+    return matches[0][0] if matches else None
+
+
+def _ensure_tenant_conversation_link(
+    db: Session, tenant_id: int, conversation_id: int, matched_email: str | None, source: str = "email_match"
+) -> None:
+    existing = (
+        db.query(TenantConversationLink)
+        .filter(TenantConversationLink.tenant_id == tenant_id)
+        .filter(TenantConversationLink.conversation_id == conversation_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
+        .first()
+    )
+    if existing is not None:
+        return
+    try:
+        # Mirrors the savepoint pattern used for ConversationMessage inserts above: a
+        # concurrent sync could create the same link between our check and this insert.
+        with db.begin_nested():
+            db.add(
+                TenantConversationLink(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    matched_email=matched_email,
+                    source=source,
+                )
+            )
+    except IntegrityError:
+        pass
 
 
 
@@ -290,14 +425,23 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
     latest_preview = conversation.preview_text
     last_message_at = conversation.last_message_at
     tenant = None
+    matched_tenants: dict[int, tuple[Tenant, str]] = {}
 
     for message in messages:
         payload = message.get("payload") or {}
         headers = _headers_map(payload.get("headers") or [])
         sender_email = _email_address(headers.get("from"))
-        tenant = tenant or _find_tenant_for_message(db, headers, account_email)
+        message_tenants = _find_tenants_for_message(db, headers, account_email)
+        for matched_tenant, matched_address in message_tenants:
+            matched_tenants.setdefault(matched_tenant.id, (matched_tenant, matched_address))
+        tenant = tenant or (message_tenants[0][0] if message_tenants else None)
         sent_at = _parse_internal_date(message.get("internalDate"))
-        if last_message_at is None or sent_at > last_message_at:
+        # SQLite drops tzinfo on round-trip, so a conversation's stored last_message_at can
+        # come back naive on a later sync while sent_at (freshly parsed) is always aware.
+        comparable_last_message_at = (
+            last_message_at.replace(tzinfo=timezone.utc) if last_message_at is not None and last_message_at.tzinfo is None else last_message_at
+        )
+        if comparable_last_message_at is None or sent_at > comparable_last_message_at:
             last_message_at = sent_at
             latest_preview = _extract_text(payload)[:500] or latest_preview
         if not subject:
@@ -317,38 +461,75 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
         body_html = _extract_html(payload)
         attachments = _extract_attachments(payload)
         recipient_email = _email_address(headers.get("to"))
-        direction = "outbound" if sender_email and sender_email == account_email else "inbound"
-        db.add(
-            ConversationMessage(
-                conversation_id=conversation.id,
-                provider=PROVIDER_GMAIL,
-                provider_message_id=provider_message_id,
-                direction=direction,
-                sender_email=sender_email,
-                recipient_email=recipient_email,
-                subject=headers.get("subject"),
-                body=body_text,
-                sent_at=sent_at,
-                raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},
-            )
-        )
+        direction = _message_direction(message, sender_email, account_email)
+        try:
+            # A concurrent sync (background poller vs. manual "sync all") can insert this
+            # same provider_message_id between our exists-check above and this insert. The
+            # savepoint confines that failure to just this message instead of rolling back
+            # every other message/conversation change staged in this account's sync.
+            with db.begin_nested():
+                db.add(
+                    ConversationMessage(
+                        conversation_id=conversation.id,
+                        provider=PROVIDER_GMAIL,
+                        provider_message_id=provider_message_id,
+                        direction=direction,
+                        sender_email=sender_email,
+                        recipient_email=recipient_email,
+                        subject=headers.get("subject"),
+                        body=body_text,
+                        sent_at=sent_at,
+                        raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},
+                    )
+                )
+            if direction == "inbound":
+                for notify_tenant, _ in message_tenants:
+                    create_notification(
+                        db,
+                        tenant_id=notify_tenant.id,
+                        tenant_name=notify_tenant.name,
+                        channel="email",
+                        direction="inbound",
+                        preview=body_text[:255] if body_text else None,
+                        event_at=sent_at,
+                    )
+                    register_inbound_message(db, tenant=notify_tenant, channel="email", email_thread_id=conversation.id)
+        except IntegrityError:
+            continue
 
-    if tenant is None and conversation.tenant_id is not None:
-        tenant = db.query(Tenant).filter(Tenant.id == conversation.tenant_id).first()
+    if not matched_tenants and conversation.tenant_id is not None:
+        existing_tenant = db.query(Tenant).filter(Tenant.id == conversation.tenant_id).first()
+        if existing_tenant is not None:
+            # No address could be matched from this sync pass (e.g. re-syncing headers that no
+            # longer resolve to any known address) -- fall back to the tenant's primary email
+            # since it's the best available guess for which address this conversation belongs to.
+            matched_tenants[existing_tenant.id] = (existing_tenant, existing_tenant.email)
+            tenant = tenant or existing_tenant
     tenant_email_candidates = _thread_email_candidates(messages, account_email)
     if tenant is not None and not tenant.email and len(tenant_email_candidates) == 1:
         tenant.email = tenant_email_candidates[0]
 
     conversation.subject = subject
-    conversation.tenant_id = tenant.id if tenant else conversation.tenant_id
+    # Never reassign an already-linked conversation away from its current tenant: the
+    # tenant_id column is only a "primary tenant" convenience value now. Actual multi-tenant
+    # visibility is granted via TenantConversationLink below.
+    if conversation.tenant_id is None and matched_tenants:
+        conversation.tenant_id = next(iter(matched_tenants.values()))[0].id
     conversation.last_message_at = last_message_at
     conversation.preview_text = latest_preview
+    db.flush()
+
+    for matched_tenant, matched_address in matched_tenants.values():
+        _ensure_tenant_conversation_link(
+            db, matched_tenant.id, conversation.id, matched_email=matched_address
+        )
+
     return conversation
 
 
 def _gmail_profile(credentials: Credentials) -> dict[str, Any]:
     service = _build_service(credentials)
-    return service.users().getProfile(userId="me").execute()
+    return _execute_gmail_request(service.users().getProfile(userId="me"))
 
 
 def _mailbox_label(account: GmailAccount) -> str:
@@ -406,6 +587,12 @@ def _upsert_account_from_credentials(
     account.google_account_id = str(profile.get("id") or account.google_account_id or email_address)
     db.commit()
     db.refresh(account)
+
+    try:
+        _start_watch(db, account)
+    except Exception:
+        logger.exception("Failed to register Gmail push watch for account_id=%s", account.id)
+
     return account
 
 
@@ -483,12 +670,26 @@ def oauth_callback(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gmail token exchange failed") from exc
     credentials = flow.credentials
 
-    account = _upsert_account_from_credentials(
-        db,
-        account_id=account_id,
-        display_name=None,
-        credentials=credentials,
-    )
+    try:
+        account = _upsert_account_from_credentials(
+            db,
+            account_id=account_id,
+            display_name=None,
+            credentials=credentials,
+        )
+    except HttpError as exc:
+        # _gmail_profile already retries transient 429s with backoff (_execute_gmail_request);
+        # if Gmail is still rate-limited after that, surface a clear, actionable error instead
+        # of an opaque 500 - the token exchange above already succeeded, so the user just needs
+        # to wait for Gmail's per-user limit to clear and retry the reconnect.
+        status_code = exc.resp.status if exc.resp is not None else None
+        logger.warning("Gmail profile lookup failed during OAuth callback status=%s", status_code)
+        if status_code == 429:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Gmail is rate-limiting this account right now. Wait a minute and try reconnecting again.",
+            ) from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gmail account lookup failed") from exc
     target = urlencode({"gmail_oauth": "connected", "account": account.email_address})
     return RedirectResponse(url=f"{FRONTEND_SETTINGS_PATH}?{target}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -574,8 +775,11 @@ def sync_all_accounts_status(job_id: str, current_user: User = Depends(get_curre
 def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     """Sync a single active Gmail account's threads. Returns count of saved conversations.
 
-    Shared by the manual sync route and the background poller in app.main, so both paths
-    stay in sync as Gmail sync logic evolves.
+    Full re-list + re-fetch of every matching thread - used by the manual sync route, the
+    admin "sync all" job, and as the bootstrap/cursor-expired fallback inside
+    _process_gmail_history_notification. The background poller in app.main goes through
+    _catch_up_gmail_account instead, which only reaches this function for those same
+    bootstrap/fallback cases rather than calling it directly every cycle.
     """
     service = _build_service_for_account(account)
     tenant_emails = {
@@ -586,10 +790,12 @@ def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     query_parts = [f'"{email}"' for email in sorted(tenant_emails)]
     query = " OR ".join(query_parts) if query_parts else None
     request = service.users().threads().list(userId="me", maxResults=100, q=query) if query else None
-    threads = request.execute().get("threads") or [] if request is not None else []
+    threads = _execute_gmail_request(request).get("threads") or [] if request is not None else []
     saved = 0
     for thread_ref in threads:
-        thread = service.users().threads().get(userId="me", id=thread_ref["id"], format="full").execute()
+        thread = _execute_gmail_request(
+            service.users().threads().get(userId="me", id=thread_ref["id"], format="full")
+        )
         conversation = _upsert_thread(db, account, thread)
         if conversation is not None and conversation.tenant_id is not None:
             saved += 1
@@ -597,6 +803,137 @@ def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     account.last_synced_at = datetime.now(timezone.utc)
     db.commit()
     return saved
+
+
+def sync_gmail_account_for_email(db: Session, account: GmailAccount, email: str) -> int:
+    """Search a single Gmail account for threads involving `email` and upsert any matches.
+
+    Used right after a tenant links a new email address: the regular full-account sync query
+    (_sync_gmail_account) is built from Tenant.email only, so a newly linked secondary address
+    might never have been searched for -- this runs a targeted, one-off query for just that
+    address so its message history surfaces in the tenant's thread without waiting for it to
+    otherwise show up. Deliberately does not touch account.last_synced_at, since this is a
+    narrow supplementary search, not a full account sync.
+    """
+    service = _build_service_for_account(account)
+    request = service.users().threads().list(userId="me", maxResults=100, q=f'"{email}"')
+    threads = _execute_gmail_request(request).get("threads") or []
+    saved = 0
+    for thread_ref in threads:
+        thread = _execute_gmail_request(
+            service.users().threads().get(userId="me", id=thread_ref["id"], format="full")
+        )
+        conversation = _upsert_thread(db, account, thread)
+        if conversation is not None and conversation.tenant_id is not None:
+            saved += 1
+    db.commit()
+    return saved
+
+
+def sync_email_across_gmail_accounts(email: str) -> dict[str, Any]:
+    """Job entry point (see start_job): run sync_gmail_account_for_email against every active
+    Gmail account and return a summary so the caller can report progress/outcome to the user.
+    Opens its own DB session since it runs in a background thread outside the triggering
+    request's session, mirroring the pattern in app.main's background pollers.
+    """
+    db = SessionLocal()
+    accounts_checked = 0
+    accounts_failed = 0
+    conversations_matched = 0
+    try:
+        accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
+        for account in accounts:
+            account_id = account.id
+            accounts_checked += 1
+            try:
+                conversations_matched += sync_gmail_account_for_email(db, account, email)
+            except Exception:
+                db.rollback()
+                accounts_failed += 1
+                logger.exception("Gmail sync for linked email failed account_id=%s email=%s", account_id, email)
+    except Exception:
+        logger.exception("Gmail sync for linked email failed to load accounts email=%s", email)
+    finally:
+        db.close()
+    return {
+        "accounts_checked": accounts_checked,
+        "accounts_failed": accounts_failed,
+        "conversations_matched": conversations_matched,
+    }
+
+
+def _process_gmail_history_notification(db: Session, account: GmailAccount, new_history_id: str) -> None:
+    """Handle a Gmail Pub/Sub push notification by fetching only what changed since last sync.
+
+    Falls back to a full _sync_gmail_account() when there's no prior history cursor, or when
+    Gmail reports the cursor has expired (history.list 404s once startHistoryId ages out).
+    """
+    if not account.last_history_id:
+        _sync_gmail_account(db, account)
+        account.last_history_id = new_history_id
+        db.commit()
+        return
+
+    service = _build_service_for_account(account)
+    thread_ids: set[str] = set()
+    page_token = None
+    try:
+        while True:
+            response = _execute_gmail_request(
+                service.users().history().list(
+                    userId="me",
+                    startHistoryId=account.last_history_id,
+                    historyTypes=["messageAdded"],
+                    pageToken=page_token,
+                )
+            )
+            for entry in response.get("history") or []:
+                for added in entry.get("messagesAdded") or []:
+                    thread_id = added.get("message", {}).get("threadId")
+                    if thread_id:
+                        thread_ids.add(thread_id)
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+    except HttpError as exc:
+        if exc.resp is not None and exc.resp.status == 404:
+            logger.info("Gmail history cursor expired for account_id=%s, falling back to full sync", account.id)
+            _sync_gmail_account(db, account)
+            account.last_history_id = new_history_id
+            db.commit()
+            return
+        raise
+
+    for thread_id in thread_ids:
+        thread = _execute_gmail_request(service.users().threads().get(userId="me", id=thread_id, format="full"))
+        _upsert_thread(db, account, thread)
+
+    account.last_history_id = new_history_id
+    account.last_synced_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def _catch_up_gmail_account(db: Session, account: GmailAccount) -> None:
+    """Incremental fallback poll: reconcile via Gmail's history API instead of a full resync.
+
+    Safety net for the background poller in case a Pub/Sub push notification never arrived.
+    Costs a single getProfile call when nothing changed; only escalates to history.list/
+    threads.get (or a full resync, via _process_gmail_history_notification) when the
+    mailbox's historyId has actually moved since our last cursor.
+    """
+    service = _build_service_for_account(account)
+    profile = _execute_gmail_request(service.users().getProfile(userId="me"))
+    current_history_id = str(profile.get("historyId") or "")
+    if not current_history_id:
+        logger.warning("Gmail getProfile returned no historyId for account_id=%s; skipping catch-up", account.id)
+        return
+
+    if account.last_history_id and current_history_id == account.last_history_id:
+        account.last_synced_at = datetime.now(timezone.utc)
+        db.commit()
+        return
+
+    _process_gmail_history_notification(db, account, current_history_id)
 
 
 @router.post("/accounts/{account_id}/sync")
@@ -714,7 +1051,9 @@ def get_tenant_conversations(tenant_id: int, db: Session = Depends(get_db), curr
 
     conversations = (
         db.query(Conversation)
-        .filter(Conversation.tenant_id == tenant_id)
+        .join(TenantConversationLink, TenantConversationLink.conversation_id == Conversation.id)
+        .filter(TenantConversationLink.tenant_id == tenant_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
         .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.id.desc())
         .all()
     )

@@ -11,6 +11,7 @@ from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.email_quote_strip import strip_quoted_reply
 
 PROVIDER_GMAIL = "gmail"
@@ -36,6 +37,7 @@ class TimelineMessageRead(BaseModel):
     body_html: str | None = None
     attachments: list[AttachmentRead] = []
     sent_at: datetime
+    ai_generated: bool = False
     model_config = ConfigDict(from_attributes=True)
 
     @computed_field  # type: ignore[misc]
@@ -61,6 +63,7 @@ class TimelineWhatsappMessageRead(BaseModel):
     subject: str | None = None
     message: str
     created_at: datetime
+    ai_generated: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -79,6 +82,7 @@ class TimelineEmailThreadRead(BaseModel):
     provider_account_id: int | None = None
     provider_account_email: str | None = None
     provider_account_display_name: str | None = None
+    matched_tenant_email: str | None = None
     subject: str | None = None
     preview_text: str | None = None
     anchor_timestamp: datetime
@@ -124,26 +128,50 @@ def _communication_sort_key(message: Communication) -> tuple[datetime, int]:
     return (_ensure_utc(message.created_at), int(message.id))
 
 
-def _load_tenant_conversations(db: Session, tenant_id: int) -> list[Conversation]:
+def _load_tenant_conversations(db: Session, tenant_id: int, tenant_email_fallback: str | None = None) -> list[Conversation]:
     conversations = (
         db.query(Conversation)
-        .filter(Conversation.tenant_id == tenant_id)
+        .join(TenantConversationLink, TenantConversationLink.conversation_id == Conversation.id)
+        .filter(TenantConversationLink.tenant_id == tenant_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
         .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.id.desc())
         .all()
     )
     account_lookup = {account.id: account for account in db.query(GmailAccount).all()}
-    result: list[Conversation] = []
-    for conversation in conversations:
-        messages = (
+
+    conversation_ids = [conversation.id for conversation in conversations]
+    messages_by_conversation_id: dict[int, list[ConversationMessage]] = {conversation_id: [] for conversation_id in conversation_ids}
+    matched_email_by_conversation_id: dict[int, str | None] = {}
+    if conversation_ids:
+        all_messages = (
             db.query(ConversationMessage)
-            .filter(ConversationMessage.conversation_id == conversation.id)
+            .filter(ConversationMessage.conversation_id.in_(conversation_ids))
             .order_by(ConversationMessage.sent_at.asc(), ConversationMessage.id.asc())
             .all()
         )
+        for message in all_messages:
+            messages_by_conversation_id[message.conversation_id].append(message)
+
+        links = (
+            db.query(TenantConversationLink)
+            .filter(
+                TenantConversationLink.tenant_id == tenant_id,
+                TenantConversationLink.conversation_id.in_(conversation_ids),
+                TenantConversationLink.unlinked_at.is_(None),
+            )
+            .all()
+        )
+        for link in links:
+            if link.matched_email:
+                matched_email_by_conversation_id[link.conversation_id] = link.matched_email
+
+    result: list[Conversation] = []
+    for conversation in conversations:
         mailbox = account_lookup.get(conversation.provider_account_id)
-        setattr(conversation, "messages", messages)
+        setattr(conversation, "messages", messages_by_conversation_id.get(conversation.id, []))
         setattr(conversation, "provider_account_email", mailbox.email_address if mailbox else None)
         setattr(conversation, "provider_account_display_name", mailbox.display_name if mailbox else None)
+        setattr(conversation, "matched_tenant_email", matched_email_by_conversation_id.get(conversation.id) or tenant_email_fallback)
         result.append(conversation)
     return result
 
@@ -353,12 +381,26 @@ def _build_whatsapp_blocks_for_thread(
     return blocks
 
 
+def _load_ai_generated_email_timestamps(db: Session, tenant_id: int) -> set[datetime]:
+    # Email has no shared id between ConversationMessage and Communication, but
+    # persist_gmail_outbound_message() stamps both rows with the exact same `now` value for an
+    # ai_generated send, so an exact created_at/sent_at match reliably identifies which
+    # ConversationMessage a given ai_generated Communication corresponds to.
+    rows = (
+        db.query(Communication.created_at)
+        .filter(Communication.tenant_id == tenant_id, Communication.channel == "email", Communication.ai_generated.is_(True))
+        .all()
+    )
+    return {_ensure_utc(row.created_at) for row in rows}
+
+
 def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRead:
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
         raise ValueError("Tenant not found")
 
-    conversations = _load_tenant_conversations(db, tenant_id)
+    ai_generated_email_timestamps = _load_ai_generated_email_timestamps(db, tenant_id)
+    conversations = _load_tenant_conversations(db, tenant_id, tenant_email_fallback=tenant.email)
     whatsapp_messages = _load_tenant_whatsapp(db, tenant_id)
     thread_windows = _build_thread_windows(conversations)
 
@@ -392,10 +434,11 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
                     provider_account_id=window.thread.provider_account_id,
                     provider_account_email=getattr(window.thread, "provider_account_email", None),
                     provider_account_display_name=getattr(window.thread, "provider_account_display_name", None),
+                    matched_tenant_email=getattr(window.thread, "matched_tenant_email", None),
                     subject=window.thread.subject,
                     preview_text=window.thread.preview_text,
                     anchor_timestamp=window.anchor_timestamp,
-                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "attachments": ((message.raw_payload or {}).get("attachments") if isinstance(message.raw_payload, dict) else None) or [], "sent_at": message.sent_at}) for message in messages],
+                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "attachments": ((message.raw_payload or {}).get("attachments") if isinstance(message.raw_payload, dict) else None) or [], "sent_at": message.sent_at, "ai_generated": _ensure_utc(message.sent_at) in ai_generated_email_timestamps}) for message in messages],
                     whatsapp_blocks=whatsapp_blocks_by_thread_id.get(window.thread.id, []),
                 ),
             )

@@ -4,7 +4,10 @@ import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
+import SessionExpiredModal from './components/SessionExpiredModal'
 import Settings from './pages/Settings'
+import AiTenantSettings from './pages/AiTenantSettings'
+import AiPendingDrafts from './pages/AiPendingDrafts'
 import AdminSettings from './pages/AdminSettings'
 import InvitationSetup from './pages/InvitationSetup'
 import PasswordReset from './pages/PasswordReset'
@@ -31,37 +34,42 @@ export default function App() {
   }, [token, setUser, logout])
 
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/invite/:token" element={<InvitationSetup />} />
-      <Route path="/invites/:token" element={<InvitationSetup />} />
-      <Route path="/reset-password/:token" element={<PasswordReset />} />
-      <Route
-        path="/*"
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
-              <Navbar />
-              <div className="min-h-0 flex-1 overflow-auto">
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/dashboard/tenant/:tenantId" element={<Dashboard />} />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route
-                    path="/admin/settings"
-                    element={
-                      <ProtectedRoute adminOnly>
-                        <AdminSettings />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
+    <>
+      <SessionExpiredModal />
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/invite/:token" element={<InvitationSetup />} />
+        <Route path="/invites/:token" element={<InvitationSetup />} />
+        <Route path="/reset-password/:token" element={<PasswordReset />} />
+        <Route
+          path="/*"
+          element={
+            <ProtectedRoute>
+              <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
+                <Navbar />
+                <div className="min-h-0 flex-1 overflow-auto">
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/dashboard/tenant/:tenantId" element={<Dashboard />} />
+                    <Route path="/settings" element={<Settings />} />
+                    <Route path="/settings/ai-tenants" element={<AiTenantSettings />} />
+                    <Route path="/ai-drafts" element={<AiPendingDrafts />} />
+                    <Route
+                      path="/admin/settings"
+                      element={
+                        <ProtectedRoute adminOnly>
+                          <AdminSettings />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </div>
               </div>
-            </div>
-          </ProtectedRoute>
-        }
-      />
-    </Routes>
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </>
   )
 }

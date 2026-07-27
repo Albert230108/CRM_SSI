@@ -9,6 +9,7 @@ import logging
 import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.gmail_integration import _sync_gmail_account
 from app.api.tenants import _extract_guest_fields
@@ -19,6 +20,7 @@ from app.models.user import User
 from app.services.beds24_client import get_bookings, get_booking_detail
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services.thread_timeline_service import build_tenant_thread_timeline
+from app.services.whatsapp_chat_directory import resync_whatsapp_chat
 
 router = APIRouter(prefix="/admin", tags=["admin-sync"])
 logger = logging.getLogger(__name__)
@@ -96,24 +98,26 @@ async def _sync_emails(db: Session, current_user: User) -> int:
     accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
     imported = 0
     for account in accounts:
-        imported += _sync_gmail_account(db, account)
+        # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
+        # per account) with no yield points of its own. Looping it inline here would monopolize
+        # this worker's event loop for every other concurrent request until all accounts finished.
+        imported += await run_in_threadpool(_sync_gmail_account, db, account)
     return imported
 
 
 async def _sync_whatsapp_linked_endpoints(db: Session) -> dict[str, Any]:
     """Sync WhatsApp history for all manually linked endpoints.
 
-    For each tenant with active manual WhatsApp links:
-    - Trigger full history resync via the WhatsApp service
-    - Aggregate results per endpoint
+    Mirrors the per-chat "Resync full history" action in Manage Chats exactly: it calls the
+    same resync_whatsapp_chat() service function (so it honors WHATSAPP_SERVICE_URL_MAP
+    per-account routing instead of a single global URL) and runs the same post-resync
+    Communication.external_chat_namespace reconciliation, just looped over every linked chat.
     """
-    import os
-
+    from app.models.communication import Communication
     from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+    from app.services.whatsapp_client import WHATSAPP_API_KEY, WHATSAPP_SERVICE_URL, WHATSAPP_SERVICE_URL_MAP
 
-    whatsapp_service_url = os.getenv("WHATSAPP_SERVICE_URL", "").strip()
-    whatsapp_api_key = os.getenv("WHATSAPP_API_KEY", "").strip()
-    if not whatsapp_service_url or not whatsapp_api_key:
+    if not WHATSAPP_API_KEY or not (WHATSAPP_SERVICE_URL or WHATSAPP_SERVICE_URL_MAP):
         return {
             "synced_endpoints": 0,
             "total_imported": 0,
@@ -138,20 +142,11 @@ async def _sync_whatsapp_linked_endpoints(db: Session) -> dict[str, Any]:
 
     for endpoint in active_links:
         try:
-            url = whatsapp_service_url.rstrip("/") + "/admin/backfill"
-            payload = {
-                "limit": 100000,
-                "chatId": endpoint.external_chat_namespace,
-                "postSyncDelayMs": 0,
-            }
             print(
-                f"[crm] whatsapp endpoint sync request endpoint_id={endpoint.id} chat_id={endpoint.external_chat_namespace} method=POST url={url}"
+                f"[crm] whatsapp endpoint sync request endpoint_id={endpoint.id} chat_id={endpoint.external_chat_namespace} external_account_id={endpoint.external_account_id}"
             )
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                response = await client.post(url, headers={"X-API-Key": whatsapp_api_key}, json=payload)
-                print(f"[crm] whatsapp endpoint sync response status={response.status_code} endpoint_id={endpoint.id}")
-                response.raise_for_status()
-                sync_result = response.json()
+            sync_result = await resync_whatsapp_chat(endpoint.external_account_id, endpoint.external_chat_namespace)
+            print(f"[crm] whatsapp endpoint sync response endpoint_id={endpoint.id} result={sync_result}")
 
             imported = _to_int(sync_result.get("imported") or sync_result.get("forwarded"))
             total_imported += imported
@@ -166,6 +161,31 @@ async def _sync_whatsapp_linked_endpoints(db: Session) -> dict[str, Any]:
                 "inbound": _to_int(sync_result.get("inbound")),
                 "outbound": _to_int(sync_result.get("outbound")),
             })
+
+            # Mirrors the reconciliation step in resync_thread_whatsapp_link: without it,
+            # messages imported here won't match the timeline filter until resynced individually.
+            if endpoint.external_account_id and endpoint.external_chat_namespace:
+                matching_messages = db.query(Communication).filter(
+                    Communication.tenant_id == endpoint.tenant_id,
+                    Communication.channel == "whatsapp",
+                    Communication.external_account_id == endpoint.external_account_id,
+                ).all()
+
+                chat_id_lower = endpoint.external_chat_namespace.strip().lower()
+                messages_updated = 0
+                for msg in matching_messages:
+                    msg_identity = (msg.whatsapp_identity_key or msg.whatsapp_chat_id or "").strip().lower()
+                    if msg_identity and msg_identity == chat_id_lower:
+                        if msg.external_chat_namespace != endpoint.external_chat_namespace:
+                            msg.external_chat_namespace = endpoint.external_chat_namespace
+                            messages_updated += 1
+
+                if messages_updated > 0:
+                    db.commit()
+                    print(
+                        f"[crm] whatsapp endpoint sync reconciled_messages endpoint_id={endpoint.id} count={messages_updated}"
+                    )
+
             print(
                 f"[crm] whatsapp endpoint sync completed endpoint_id={endpoint.id} imported={imported}"
             )
@@ -278,7 +298,10 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
     try:
         summary["tenant_threads_updated"] = 0
         for tenant in db.query(Tenant).order_by(Tenant.id.asc()).all():
-            build_tenant_thread_timeline(db, tenant.id)
+            # Rebuilding every tenant's thread timeline synchronously in this loop, with no
+            # yield points, would freeze this worker's event loop (and every other concurrent
+            # request — logins, thread loads, everything) for the whole loop's duration.
+            await run_in_threadpool(build_tenant_thread_timeline, db, tenant.id)
             summary["tenant_threads_updated"] += 1
     except Exception as exc:
         summary["partial_failures"].append({"step": "tenant_threads", "error": str(exc)})

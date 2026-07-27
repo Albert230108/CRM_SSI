@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
+import { useDraggablePosition } from '../hooks/useDraggablePosition'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -90,12 +91,14 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
   const [chatsLoading, setChatsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedChat, setSelectedChat] = useState<WhatsappChat | null>(null)
+  const [replaceTarget, setReplaceTarget] = useState<ThreadWhatsappLink | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmingUnlinkId, setConfirmingUnlinkId] = useState<number | null>(null)
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
   const [resyncingId, setResyncingId] = useState<number | null>(null)
   const [resyncResults, setResyncResults] = useState<Record<number, ResyncResult>>({})
+  const drag = useDraggablePosition()
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
   const activeLinks = existingLinks.filter((link) => link.is_active)
@@ -106,6 +109,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
     setChats([])
     setSearch('')
     setSelectedChat(null)
+    setReplaceTarget(null)
     setError('')
     setConfirmingUnlinkId(null)
     setUnlinkingId(null)
@@ -203,15 +207,16 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
     setExistingLinks(Array.isArray(data) ? data : [])
   }
 
-  const existingLinkForAccount = selectedAccount
-    ? activeLinks.find((link) => link.provider === selectedAccount.provider && link.external_account_id === selectedAccount.external_account_id)
-    : null
   const conflictsWithAnotherThread = selectedChat ? selectedChat.already_linked && selectedChat.linked_thread_id !== threadId : false
-  const willReplaceExisting = Boolean(existingLinkForAccount && selectedChat && existingLinkForAccount.chat_id !== selectedChat.chat_id)
+  // A tenant can have several active chats linked on the same account at once, so picking a new
+  // chat only replaces an existing link when the user explicitly chose "Replace" on that specific
+  // link (replaceTarget) -- otherwise it's simply added alongside whatever is already linked.
+  const willReplaceExisting = Boolean(replaceTarget && selectedChat && replaceTarget.chat_id !== selectedChat.chat_id)
 
-  const handleSelectAccount = (account: WhatsappAccount) => {
+  const handleSelectAccount = (account: WhatsappAccount, replaceTargetLink: ThreadWhatsappLink | null = null) => {
     setSelectedAccount(account)
     setSelectedChat(null)
+    setReplaceTarget(replaceTargetLink)
     setView('chat')
   }
 
@@ -231,7 +236,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
           external_account_id: selectedAccount.external_account_id,
           chat_id: selectedChat.chat_id,
           chat_display_name: selectedChat.chat_name,
-          replace_existing: willReplaceExisting,
+          replace_link_id: replaceTarget?.id ?? null,
         }),
       })
       if (!response.ok) {
@@ -241,6 +246,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
       await reloadLinks()
       setSelectedChat(null)
       setSelectedAccount(null)
+      setReplaceTarget(null)
       setView('linked')
       onChanged?.()
     } catch (err) {
@@ -317,15 +323,19 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
   const tenantSubtitle = [tenantName ? `Tenant: ${tenantName}` : null, bookingId ? `Booking #${bookingId}` : null].filter(Boolean).join(' · ')
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="link-chat-modal-title"
         className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+        style={drag.style}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
+        <div
+          className="flex cursor-move items-start justify-between gap-4 border-b border-gray-200 px-6 py-4"
+          onPointerDown={drag.handlePointerDown}
+        >
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-emerald-600">WhatsApp</p>
             <h2 id="link-chat-modal-title" className="mt-1 text-2xl font-semibold text-gray-900">
@@ -340,7 +350,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                   : `Search the ${selectedAccount?.label} chat list by phone number, name, or message text.`}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-900">
+          <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={onClose} className="text-sm text-gray-500 hover:text-gray-900">
             Close
           </button>
         </div>
@@ -386,6 +396,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                             external_account_id: link.external_account_id,
                             label: link.external_account_id,
                           },
+                          link,
                         )
                       }
                       className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900"
@@ -429,6 +440,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                 type="button"
                 onClick={() => {
                   setSelectedAccount(null)
+                  setReplaceTarget(null)
                   setView('account')
                 }}
                 className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
@@ -469,19 +481,34 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                 onClick={() => {
                   setView('account')
                   setSelectedChat(null)
+                  setReplaceTarget(null)
                 }}
                 className="mb-3 text-xs font-medium text-gray-500 hover:text-gray-900"
               >
                 &larr; Back to accounts
               </button>
 
-              <input
-                type="text"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by phone number, name, or message text"
-                className="mb-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+              <div className="relative mb-4">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search by phone number, name, or message text"
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 pr-9 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    aria-label="Clear search"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-gray-400 hover:text-gray-600"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                      <path fillRule="evenodd" d="M10 8.586 5.707 4.293a1 1 0 0 0-1.414 1.414L8.586 10l-4.293 4.293a1 1 0 1 0 1.414 1.414L10 11.414l4.293 4.293a1 1 0 0 0 1.414-1.414L11.414 10l4.293-4.293a1 1 0 0 0-1.414-1.414L10 8.586Z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                )}
+              </div>
 
               {chatsLoading ? <p className="text-sm text-gray-500">Loading chats...</p> : null}
               {!chatsLoading && chats.length === 0 ? <p className="text-sm text-gray-500">No matching chats found.</p> : null}
@@ -529,7 +556,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                     </p>
                   ) : willReplaceExisting ? (
                     <p className="mt-2 text-sm font-semibold text-amber-600">
-                      This thread already has {existingLinkForAccount?.chat_id} linked for {selectedAccount?.label}. Confirming will replace it.
+                      Confirming will replace {formatChatDisplayName(replaceTarget?.chat_display_name)} ({replaceTarget?.chat_id}) with this chat.
                     </p>
                   ) : null}
                 </div>

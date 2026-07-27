@@ -1,5 +1,6 @@
 const qrcode = require("qrcode-terminal");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const ChatFactory = require("whatsapp-web.js/src/factories/ChatFactory");
 
 const {
   crmWebhookRouteToken,
@@ -7,13 +8,19 @@ const {
   crmWebhookTimeoutMs,
   crmWebhookUrl,
   crmBackfillIdentitiesUrl,
+  crmBackfillBatchUrl,
+  crmBackfillBatchTimeoutMs,
   crmOutboundResolutionUrl,
   reconnectDelayMs,
   whatsappClientId,
+  whatsappWebVersion,
+  whatsappHistoryBackfillBatchSize,
   whatsappHistoryBackfillLimit,
   whatsappHistoryBackfillEnabled,
+  forwardedMessageCacheTtlMs,
 } = require("./config");
 const { resolveOutboundTenantOwnership } = require("./outboundResolution");
+const { createForwardedMessageCache } = require("./forwardedMessageCache");
 const { buildWhatsAppIdentityCandidates, getCanonicalWhatsAppIdentity, normalizeWhatsAppChatId, normalizeWhatsAppPhone } = require("./whatsappIdentity");
 
 let client = null;
@@ -22,7 +29,7 @@ let initializingPromise = null;
 let reconnectTimer = null;
 let shuttingDown = false;
 let startupBackfillTriggered = false;
-let forwardedMessageIds = new Set();
+const forwardedMessages = createForwardedMessageCache({ ttlMs: forwardedMessageCacheTtlMs });
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
 const pendingOutboundTenantByIdentityKey = new Map();
@@ -30,6 +37,258 @@ let outboundCaptureCount = 0;
 
 function getChatId(chat) {
   return chat?.id?._serialized || chat?.id?.serialized || chat?.id || null;
+}
+
+// whatsapp-web.js's own window.WWebJS.getChatModel() resolves a chat's last-message preview via
+// Msg.get()/Msg.getMessagesById(chat.lastReceivedKey._serialized) with no guard. For a fixed,
+// reproducible set of @lid contacts on this account, that lookup throws a DataError from
+// WhatsApp Web's own IndexedDB-backed message store ("bulkGet on Table: message" with an empty
+// key) - confirmed via /admin/debug/chat-model, which isolates getChatModel step by step. Because
+// getChatModel has no try/catch of its own, that one preview lookup fails the entire chat model,
+// which in turn fails whatsapp-web.js's own Client#getChats()/getChatById() (both build models via
+// Promise.all/getChatModel), taking every other chat down with it. Rebuild the same model
+// ourselves with that one step guarded - the preview is optional; the chat itself is not.
+async function fetchChatModelsSafe(activeClient, { targetChatId = null, wrap = false } = {}) {
+  if (!activeClient) {
+    return { chats: [], failed: [] };
+  }
+
+  if (typeof activeClient.pupPage?.evaluate === "function") {
+    const { models, failed } = await activeClient.pupPage.evaluate(async (targetChatId) => {
+      async function buildModel(chat) {
+        const model = chat.serialize();
+        model.isGroup = false;
+        model.isMuted = chat.mute?.expiration !== 0;
+        model.formattedTitle = chat.formattedTitle;
+
+        if (chat.groupMetadata) {
+          model.isGroup = true;
+          try {
+            const chatWid = window.require("WAWebWidFactory").createWid(chat.id._serialized);
+            const groupMetadata =
+              window.require("WAWebCollections").GroupMetadata ||
+              window.require("WAWebCollections").WAWebGroupMetadataCollection;
+            await groupMetadata.update(chatWid);
+            const { toPn } = window.require("WAWebLidMigrationUtils");
+            const serializedMetadata = chat.groupMetadata.serialize();
+            for (const p of serializedMetadata.participants || []) {
+              p.id = toPn(p.id) ?? p.id;
+            }
+            model.groupMetadata = serializedMetadata;
+            model.isReadOnly = chat.groupMetadata.announce;
+          } catch (ignoredError) {
+            // Group metadata occasionally can't be resolved; keep the chat usable without it.
+          }
+        }
+
+        model.lastMessage = null;
+        if (model.msgs && model.msgs.length) {
+          try {
+            const lastMessage = chat.lastReceivedKey
+              ? window.require("WAWebCollections").Msg.get(chat.lastReceivedKey._serialized) ||
+                (
+                  await window
+                    .require("WAWebCollections")
+                    .Msg.getMessagesById([chat.lastReceivedKey._serialized])
+                )?.messages?.[0]
+              : null;
+            lastMessage && (model.lastMessage = window.WWebJS.getMessageModel(lastMessage));
+          } catch (ignoredError) {
+            // The known DataError: WhatsApp Web's message store can't resolve this chat's last
+            // message. The preview is a nice-to-have - skip it rather than losing the whole chat.
+          }
+        }
+
+        delete model.msgs;
+        delete model.msgUnsyncedButtonReplyMsgs;
+        delete model.unsyncedButtonReplies;
+        return model;
+      }
+
+      const models = [];
+      const failed = [];
+
+      if (targetChatId) {
+        try {
+          const chatWid = window.require("WAWebWidFactory").createWid(targetChatId);
+          const chat =
+            window.require("WAWebCollections").Chat.get(chatWid) ||
+            (await window.require("WAWebFindChatAction").findOrCreateLatestChat(chatWid))?.chat;
+          if (chat) {
+            models.push(await buildModel(chat));
+          }
+        } catch (error) {
+          failed.push({
+            id: targetChatId,
+            message: error && error.message ? String(error.message) : String(error),
+          });
+        }
+        return { models, failed };
+      }
+
+      const rawChats = window.require("WAWebCollections").Chat.getModelsArray();
+      for (const chat of rawChats) {
+        try {
+          models.push(await buildModel(chat));
+        } catch (error) {
+          failed.push({
+            id: chat?.id?._serialized || null,
+            message: error && error.message ? String(error.message) : String(error),
+          });
+        }
+      }
+      return { models, failed };
+    }, targetChatId);
+
+    for (const failure of failed) {
+      console.warn(JSON.stringify({
+        event: "whatsapp_chat_model_build_failed",
+        chat_id: failure.id,
+        error: failure.message,
+      }));
+    }
+
+    const chats = wrap ? models.map((data) => ChatFactory.create(activeClient, data)) : models;
+    return { chats, failed };
+  }
+
+  // Test doubles don't expose a real pupPage - preserve the prior, simpler behavior exactly.
+  if (targetChatId && typeof activeClient.getChatById === "function") {
+    let targetChat = null;
+    try {
+      targetChat = await activeClient.getChatById(targetChatId);
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: "whatsapp_history_get_chat_by_id_failed",
+        chat_id: targetChatId,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+    return { chats: targetChat ? [targetChat] : [], failed: [] };
+  }
+
+  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
+  let filteredChats = Array.isArray(chats) ? chats : [];
+  if (targetChatId) {
+    filteredChats = filteredChats.filter((chat) => String(getChatId(chat) || "") === targetChatId);
+  }
+  return { chats: filteredChats, failed: [] };
+}
+
+// One-off diagnostic: window.WWebJS.getChatModel() is a single opaque call from our side, and
+// its errors serialize across the puppeteer bridge as a bare minified identifier (e.g. "r") with
+// no useful message. This reimplements it step by step so we can see exactly which sub-step
+// throws for a given chat, and with what real error name/message/stack, instead of a dead end.
+async function debugChatModelBuild(chatId) {
+  if (!client || !ready) {
+    throw new Error("WhatsApp client is not ready");
+  }
+  const targetChatId = String(chatId || "").trim();
+  if (!targetChatId) {
+    throw new Error("chatId is required");
+  }
+
+  return client.pupPage.evaluate(async (chatId) => {
+    function describeError(error) {
+      const details = {
+        name: error?.name ?? null,
+        message: error?.message ?? String(error),
+        stack: error?.stack ?? null,
+      };
+      try {
+        for (const key of Object.getOwnPropertyNames(error || {})) {
+          if (!(key in details)) details[key] = error[key];
+        }
+      } catch (ignored) {
+        // best-effort only
+      }
+      return details;
+    }
+
+    const steps = [];
+    let chatWid;
+    try {
+      chatWid = window.require("WAWebWidFactory").createWid(chatId);
+      steps.push({ step: "createWid", ok: true });
+    } catch (error) {
+      steps.push({ step: "createWid", ok: false, error: describeError(error) });
+      return { steps, chatFound: false };
+    }
+
+    let chat;
+    try {
+      chat =
+        window.require("WAWebCollections").Chat.get(chatWid) ||
+        (await window.require("WAWebFindChatAction").findOrCreateLatestChat(chatWid))?.chat;
+      steps.push({ step: "resolveChat", ok: true, found: Boolean(chat) });
+    } catch (error) {
+      steps.push({ step: "resolveChat", ok: false, error: describeError(error) });
+      return { steps, chatFound: false };
+    }
+
+    if (!chat) {
+      return { steps, chatFound: false };
+    }
+
+    try {
+      chat.serialize();
+      steps.push({ step: "serialize", ok: true });
+    } catch (error) {
+      steps.push({ step: "serialize", ok: false, error: describeError(error) });
+    }
+
+    try {
+      const formattedTitle = chat.formattedTitle;
+      steps.push({ step: "formattedTitle", ok: true, value: formattedTitle || null });
+    } catch (error) {
+      steps.push({ step: "formattedTitle", ok: false, error: describeError(error) });
+    }
+
+    const hasGroupMetadata = Boolean(chat.groupMetadata);
+    steps.push({ step: "groupMetadataPresence", ok: true, value: hasGroupMetadata });
+    if (hasGroupMetadata) {
+      try {
+        const groupChatWid = window.require("WAWebWidFactory").createWid(chat.id._serialized);
+        const groupMetadata =
+          window.require("WAWebCollections").GroupMetadata ||
+          window.require("WAWebCollections").WAWebGroupMetadataCollection;
+        await groupMetadata.update(groupChatWid);
+        steps.push({ step: "groupMetadata.update", ok: true });
+      } catch (error) {
+        steps.push({ step: "groupMetadata.update", ok: false, error: describeError(error) });
+      }
+      try {
+        const { toPn } = window.require("WAWebLidMigrationUtils");
+        const serializedMetadata = chat.groupMetadata.serialize();
+        for (const p of serializedMetadata.participants || []) {
+          toPn(p.id);
+        }
+        steps.push({ step: "groupMetadata.serialize+toPn", ok: true });
+      } catch (error) {
+        steps.push({ step: "groupMetadata.serialize+toPn", ok: false, error: describeError(error) });
+      }
+    }
+
+    const hasLastReceivedKey = Boolean(chat.lastReceivedKey);
+    steps.push({ step: "lastReceivedKeyPresence", ok: true, value: hasLastReceivedKey });
+    if (hasLastReceivedKey) {
+      try {
+        const lastMessage =
+          window.require("WAWebCollections").Msg.get(chat.lastReceivedKey._serialized) ||
+          (await window.require("WAWebCollections").Msg.getMessagesById([chat.lastReceivedKey._serialized]))?.messages?.[0];
+        steps.push({ step: "lastMessageLookup", ok: true, found: Boolean(lastMessage) });
+      } catch (error) {
+        steps.push({ step: "lastMessageLookup", ok: false, error: describeError(error) });
+      }
+    }
+
+    return {
+      steps,
+      chatFound: true,
+      chatId: chat?.id?._serialized || null,
+      isGroup: Boolean(chat?.groupMetadata),
+    };
+  }, targetChatId);
 }
 
 function getChatName(chat) {
@@ -60,7 +319,7 @@ function getMemoryTenantId({ messageId, chatId, identityKey }) {
 
 async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, externalAccountId }) {
   if (!crmOutboundResolutionUrl) {
-    return { found: false, resolution_strategy: "unconfigured" };
+    return { found: false, resolution_strategy: "unconfigured", transient: false };
   }
 
   const query = new URLSearchParams();
@@ -86,22 +345,37 @@ async function lookupDurableOutboundTenant({ messageId, chatId, identityKey, ext
   }
 
   const url = `${crmOutboundResolutionUrl}?${query.toString()}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), crmWebhookTimeoutMs);
   try {
     const response = await fetch(url, {
       method: "GET",
       headers,
+      signal: controller.signal,
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      return payload || { found: false, resolution_strategy: `http_${response.status}` };
+      // 429/5xx are genuinely transient (worth one retry); other 4xx are not - retrying a
+      // malformed/unauthorized request won't produce a different answer.
+      const transient = response.status === 429 || response.status >= 500;
+      return {
+        ...(payload || {}),
+        found: false,
+        resolution_strategy: (payload && payload.resolution_strategy) || `http_${response.status}`,
+        transient,
+      };
     }
-    return payload || { found: false, resolution_strategy: "empty_response" };
+    return payload || { found: false, resolution_strategy: "empty_response", transient: false };
   } catch (error) {
+    const isTimeout = error instanceof Error && error.name === "AbortError";
     return {
       found: false,
-      resolution_strategy: "lookup_error",
+      resolution_strategy: isTimeout ? "timeout" : "lookup_error",
+      transient: true,
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -476,18 +750,34 @@ async function forwardCrmMessage(payload, contextLabel, options = {}) {
     return false;
   }
 
-  // The in-memory forwardedMessageIds cache only tracks "did this process already send this
-  // message id", not "does the CRM still have it" - it can't see a relink or a CRM-side data
-  // reset that happened without restarting this service. History/backfill forwarding relies on
-  // the CRM's own provider_message_id dedup instead (see _find_existing_inbound_whatsapp_communication),
+  // The forwardedMessages cache only tracks "did this process already send this message id",
+  // not "does the CRM still have it" - it can't see a relink or a CRM-side data reset that
+  // happened without restarting this service. History/backfill forwarding relies on the CRM's
+  // own provider_message_id dedup instead (see _find_existing_inbound_whatsapp_communication),
   // so it opts out of this cache to make "resync full history" actually able to redeliver.
-  if (!options.skipForwardedCache && payload.whatsapp_message_id && forwardedMessageIds.has(payload.whatsapp_message_id)) {
-    console.info(
-      "Skipping duplicate %s WhatsApp message for CRM forwarding: message_id=%s",
-      contextLabel,
-      payload.whatsapp_message_id,
-    );
-    return false;
+  const messageId = payload.whatsapp_message_id || null;
+  const dedupeEnabled = !options.skipForwardedCache && Boolean(messageId);
+
+  if (dedupeEnabled) {
+    if (forwardedMessages.isForwarded(messageId)) {
+      console.info(
+        "Skipping duplicate %s WhatsApp message for CRM forwarding: message_id=%s",
+        contextLabel,
+        messageId,
+      );
+      return false;
+    }
+    // Claim synchronously (before the first await below) so the explicit sendMessage path and
+    // the message_create listener - which can both observe the same outbound message - can't
+    // both win this race and double-post to the CRM webhook.
+    if (!forwardedMessages.claimInFlight(messageId)) {
+      console.info(
+        "Skipping in-flight duplicate %s WhatsApp message for CRM forwarding: message_id=%s",
+        contextLabel,
+        messageId,
+      );
+      return false;
+    }
   }
 
   const controller = new AbortController();
@@ -518,10 +808,65 @@ async function forwardCrmMessage(payload, contextLabel, options = {}) {
       throw new Error(`CRM webhook responded with ${response.status}${responseText ? `: ${responseText}` : ""}`);
     }
 
-    if (payload.whatsapp_message_id) {
-      forwardedMessageIds.add(payload.whatsapp_message_id);
+    if (messageId) {
+      forwardedMessages.markForwarded(messageId);
     }
     return true;
+  } finally {
+    clearTimeout(timeout);
+    if (dedupeEnabled) {
+      forwardedMessages.releaseInFlight(messageId);
+    }
+  }
+}
+
+// History backfill used to forward every historical message as its own sequential
+// forwardCrmMessage() call, so a chat with a few thousand messages meant a few thousand
+// serial HTTP round trips — this is what made "resync" take minutes to tens of minutes.
+// This sends a whole chunk of history payloads in a single request to the CRM's batch
+// endpoint, which applies the exact same per-message routing/dedup/persistence logic
+// in-process instead of over the network.
+async function forwardCrmMessageBatch(payloads) {
+  if (!crmBackfillBatchUrl) {
+    console.warn("CRM WhatsApp backfill batch URL is not configured; history messages will not be forwarded.");
+    return { processed: 0, failed: 0 };
+  }
+  if (!payloads.length) {
+    return { processed: 0, failed: 0 };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), crmBackfillBatchTimeoutMs);
+
+  try {
+    console.info(
+      "Forwarding WhatsApp history batch to CRM: count=%s chat_id=%s client_id=%s",
+      payloads.length,
+      payloads[0]?.whatsapp_chat_id,
+      payloads[0]?.whatsapp_client_id,
+    );
+
+    const response = await fetch(crmBackfillBatchUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(crmWebhookRouteToken ? { "X-Webhook-Token": crmWebhookRouteToken } : {}),
+        ...(crmWebhookSecret ? { "X-Webhook-Secret": crmWebhookSecret } : {}),
+      },
+      body: JSON.stringify({ messages: payloads }),
+      signal: controller.signal,
+    });
+
+    const responseBody = await response.json().catch(() => null);
+    if (!response.ok) {
+      const responseText = responseBody ? JSON.stringify(responseBody) : "";
+      throw new Error(`CRM backfill batch webhook responded with ${response.status}${responseText ? `: ${responseText}` : ""}`);
+    }
+
+    return {
+      processed: Number(responseBody?.processed || 0),
+      failed: Number(responseBody?.failed || 0),
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -543,7 +888,6 @@ async function forwardInboundMessage(message) {
   const payload = buildCrmPayload(message, "inbound", {
     sender: message?.author || message?.from || null,
     whatsapp_chat_id: message?.from || null,
-    source: "history",
   });
   return forwardCrmMessage(payload, "inbound");
 }
@@ -685,7 +1029,19 @@ async function backfillChatHistory(chat, options = {}) {
 
   let messages = [];
   try {
-    messages = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit }) : [];
+    const fetched = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit }) : [];
+    // fetchMessages() without fromMe alone can miss messages sent from another linked device
+    // (phone, another PC) that never round-tripped through this session's local store. The
+    // fromMe: true query path retrieves them separately, so merge and dedupe both results.
+    const fromMeFetched = typeof chat.fetchMessages === "function" ? await chat.fetchMessages({ limit, fromMe: true }) : [];
+    const seenMergeIds = new Set();
+    for (const message of [...(Array.isArray(fetched) ? fetched : []), ...(Array.isArray(fromMeFetched) ? fromMeFetched : [])]) {
+      const mergeId = message?.id?._serialized || buildHistoryDedupeKey(message, chatId, message?.fromMe ? "outbound" : "inbound");
+      if (!seenMergeIds.has(mergeId)) {
+        seenMergeIds.add(mergeId);
+        messages.push(message);
+      }
+    }
   } catch (error) {
     console.error(JSON.stringify({
       event: "whatsapp_history_fetch_failure",
@@ -707,6 +1063,7 @@ async function backfillChatHistory(chat, options = {}) {
   let outbound = 0;
   const fetched = ordered.length;
   const seenIds = new Set();
+  const payloads = [];
 
   for (const message of ordered) {
     const whatsappMessageId = message?.id?._serialized || null;
@@ -737,30 +1094,36 @@ async function backfillChatHistory(chat, options = {}) {
       inbound += 1;
     }
 
-    const payload = buildCrmPayload(message, direction, {
-      to: direction === "outbound" ? normalizeRecipient(chat?.id?.user || chat?.id || message?.to || message?.from) : null,
-      sender: message?.author || message?.from || null,
-      whatsapp_chat_id: chat?.id?._serialized || chat?.id || message?.from || message?.to || null,
-      whatsapp_message_id: whatsappMessageId,
-      source: "history",
-    });
-
-    try {
-      const forwarded = await forwardCrmMessage(payload, `history-${direction}`, { skipForwardedCache: true });
-      if (forwarded) {
-        imported += 1;
-      } else {
-        // forwardCrmMessage returned false without making a request (webhook URL not
-        // configured) - it must not be counted as a fresh delivery to the CRM.
-        deduped += 1;
-      }
-    } catch (error) {
-      failed += 1;
-      console.error(JSON.stringify({
-        event: "whatsapp_history_import_failure",
-        ...logBase,
+    payloads.push(
+      buildCrmPayload(message, direction, {
+        to: direction === "outbound" ? normalizeRecipient(chat?.id?.user || chat?.id || message?.to || message?.from) : null,
+        sender: message?.author || message?.from || null,
+        whatsapp_chat_id: chat?.id?._serialized || chat?.id || message?.from || message?.to || null,
         whatsapp_message_id: whatsappMessageId,
-        direction,
+        source: "history",
+      }),
+    );
+  }
+
+  // Forwarding each historical message as its own sequential HTTP request (the original
+  // design) made a resync of a chat with thousands of messages take minutes to tens of
+  // minutes — nearly all of that time was network/request-dispatch overhead, not actual
+  // work. Sending chunks of payloads to the batch endpoint collapses that to one round
+  // trip per chunk while the CRM applies identical per-message routing/dedup logic.
+  const batchSize = Math.max(1, whatsappHistoryBackfillBatchSize);
+  for (let start = 0; start < payloads.length; start += batchSize) {
+    const chunk = payloads.slice(start, start + batchSize);
+    try {
+      const result = await forwardCrmMessageBatch(chunk);
+      imported += result.processed;
+      failed += result.failed;
+    } catch (error) {
+      failed += chunk.length;
+      console.error(JSON.stringify({
+        event: "whatsapp_history_import_batch_failure",
+        ...logBase,
+        chunk_size: chunk.length,
+        chunk_start: start,
         error: error instanceof Error ? error.message : String(error),
       }));
     }
@@ -797,15 +1160,12 @@ async function backfillAllChats({
     throw new Error("WhatsApp client is not ready");
   }
 
-  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
-  let orderedChats = Array.isArray(chats)
+  const targetChatId = chatId ? String(chatId).trim() : null;
+
+  const { chats } = await fetchChatModelsSafe(activeClient, { targetChatId, wrap: true });
+  const orderedChats = Array.isArray(chats)
     ? chats.slice().sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || "")))
     : [];
-
-  const targetChatId = chatId ? String(chatId).trim() : null;
-  if (targetChatId) {
-    orderedChats = orderedChats.filter((chat) => String(getChatId(chat) || "") === targetChatId);
-  }
 
   let resolvedEligibleIdentityIndex = eligibleIdentityIndex;
   let crmLookupFailed = null;
@@ -978,8 +1338,12 @@ function attachClientEvents(nextClient) {
       external_account_id: externalAccountId,
       tenant_id_received: null,
     };
-    const attemptForward = async (remainingAttempts = 10) => {
-      if (messageId && forwardedMessageIds.has(messageId)) {
+    // One bounded retry (not a full 10x rerun) to cover real eventual consistency - e.g. the
+    // CRM hasn't committed a durable link yet at the instant this event fires. A normal,
+    // durably-confirmed "not found" is not retried here; resolveOutboundTenantOwnership already
+    // handles per-candidate transient retries (network error/timeout/429/5xx) on its own.
+    const attemptForward = async (remainingAttempts = 1) => {
+      if (messageId && forwardedMessages.isForwarded(messageId)) {
         return;
       }
       const resolved = await resolveOutboundTenantOwnership({
@@ -992,7 +1356,7 @@ function attachClientEvents(nextClient) {
         getMemoryTenantId,
       });
       if (!resolved && remainingAttempts > 0) {
-        await sleep(100);
+        await sleep(1000);
         return attemptForward(remainingAttempts - 1);
       }
       if (!resolved) {
@@ -1046,6 +1410,11 @@ function createClient() {
     puppeteer: {
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    },
+    webVersion: whatsappWebVersion,
+    webVersionCache: {
+      type: "local",
+      strict: true,
     },
   });
 
@@ -1132,7 +1501,7 @@ async function listChats({ externalAccountId, search = "", limit = 200, offset =
     throw new Error(`WhatsApp account id mismatch: requested ${externalAccountId} but this service is configured for ${whatsappClientId}`);
   }
 
-  const chats = typeof activeClient.getChats === "function" ? await activeClient.getChats() : [];
+  const { chats } = await fetchChatModelsSafe(activeClient);
   const normalized = (Array.isArray(chats) ? chats : []).map((chat) => ({
     chat_id: String(getChatId(chat) || ""),
     chat_name: getChatName(chat) || null,
@@ -1269,7 +1638,7 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
     throw new Error("WhatsApp client is not ready");
   }
 
-  const chats = typeof client.getChats === "function" ? await client.getChats() : [];
+  const { chats } = await fetchChatModelsSafe(client, { wrap: true });
   const orderedChats = Array.isArray(chats)
     ? chats.slice().filter(isRelevantChat).sort((a, b) => String(getChatId(a) || "").localeCompare(String(getChatId(b) || ""))).slice(0, chatCount)
     : [];
@@ -1384,9 +1753,12 @@ module.exports = {
   runHistoryBackfill,
   backfillAllChats,
   runHistoryDebugSample,
+  debugChatModelBuild,
   buildHistoryDedupeKey,
   sortBackfillMessages,
   listChats,
+  forwardCrmMessage,
+  forwardInboundMessage,
 };
 
 

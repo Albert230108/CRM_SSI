@@ -25,7 +25,7 @@ class ThreadWhatsAppLinkCreate(BaseModel):
     external_account_id: str
     chat_id: str
     chat_display_name: str | None = None
-    replace_existing: bool = False
+    replace_link_id: int | None = None
 
     @field_validator("provider", "external_account_id", "chat_id")
     @classmethod

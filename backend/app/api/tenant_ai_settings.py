@@ -1,0 +1,141 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.core.dependencies import get_current_user, get_db
+from app.models.tenant import Tenant
+from app.models.tenant_ai_settings import TenantAiSettings
+from app.models.tenant_ai_template_link import TenantAiTemplateLink
+from app.models.user import User
+from app.schemas.tenant_ai_settings import (
+    BulkTenantAiTemplateAssignment,
+    BulkTenantAiTemplateAssignmentResult,
+    TenantAiSettingsRead,
+    TenantAiSettingsUpdate,
+)
+
+router = APIRouter(tags=["tenant-ai-settings"])
+
+
+def _get_or_create_settings(db: Session, tenant_id: int) -> TenantAiSettings:
+    settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    if settings is None:
+        settings = TenantAiSettings(tenant_id=tenant_id)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+def _to_read(db: Session, settings: TenantAiSettings) -> TenantAiSettingsRead:
+    available_template_ids = [
+        row.template_id
+        for row in db.query(TenantAiTemplateLink).filter(TenantAiTemplateLink.tenant_id == settings.tenant_id).all()
+    ]
+    return TenantAiSettingsRead(
+        tenant_id=settings.tenant_id,
+        available_template_ids=available_template_ids,
+        default_email_template_id=settings.default_email_template_id,
+        default_whatsapp_template_id=settings.default_whatsapp_template_id,
+        auto_draft_email=settings.auto_draft_email,
+        auto_draft_whatsapp=settings.auto_draft_whatsapp,
+        auto_send_email=settings.auto_send_email,
+        auto_send_whatsapp=settings.auto_send_whatsapp,
+    )
+
+
+@router.get("/tenants/{tenant_id}/ai-settings", response_model=TenantAiSettingsRead)
+def get_tenant_ai_settings(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantAiSettingsRead:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    settings = _get_or_create_settings(db, tenant_id)
+    return _to_read(db, settings)
+
+
+@router.put("/tenants/{tenant_id}/ai-settings", response_model=TenantAiSettingsRead)
+def update_tenant_ai_settings(
+    tenant_id: int,
+    payload: TenantAiSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantAiSettingsRead:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    settings = _get_or_create_settings(db, tenant_id)
+
+    requested_ids = set(payload.available_template_ids)
+    if payload.default_email_template_id is not None:
+        requested_ids.add(payload.default_email_template_id)
+    if payload.default_whatsapp_template_id is not None:
+        requested_ids.add(payload.default_whatsapp_template_id)
+
+    existing_links = db.query(TenantAiTemplateLink).filter(TenantAiTemplateLink.tenant_id == tenant_id).all()
+    existing_ids = {link.template_id for link in existing_links}
+    for link in existing_links:
+        if link.template_id not in requested_ids:
+            db.delete(link)
+    for template_id in requested_ids - existing_ids:
+        db.add(TenantAiTemplateLink(tenant_id=tenant_id, template_id=template_id))
+
+    settings.default_email_template_id = payload.default_email_template_id
+    settings.default_whatsapp_template_id = payload.default_whatsapp_template_id
+    settings.auto_draft_email = payload.auto_draft_email
+    settings.auto_draft_whatsapp = payload.auto_draft_whatsapp
+    # Auto-send is meaningless without auto-draft generating something to send, and the manual
+    # UI is expected to disable the auto-send toggle whenever auto-draft is off for that channel
+    # — this is the server-side guarantee behind that rule, independent of what the client sends.
+    settings.auto_send_email = payload.auto_send_email and payload.auto_draft_email
+    settings.auto_send_whatsapp = payload.auto_send_whatsapp and payload.auto_draft_whatsapp
+
+    db.commit()
+    db.refresh(settings)
+    return _to_read(db, settings)
+
+
+@router.post("/tenant-ai-settings/bulk-templates", response_model=BulkTenantAiTemplateAssignmentResult)
+def bulk_update_tenant_ai_templates(
+    payload: BulkTenantAiTemplateAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantAiTemplateAssignmentResult:
+    tenant_ids = sorted(set(payload.tenant_ids))
+    template_ids = sorted(set(payload.template_ids))
+    if not tenant_ids or not template_ids:
+        return BulkTenantAiTemplateAssignmentResult(tenants_affected=0, links_added=0, links_removed=0)
+
+    if payload.action == "add":
+        existing_pairs = {
+            (row.tenant_id, row.template_id)
+            for row in db.query(TenantAiTemplateLink)
+            .filter(TenantAiTemplateLink.tenant_id.in_(tenant_ids), TenantAiTemplateLink.template_id.in_(template_ids))
+            .all()
+        }
+        links_added = 0
+        for tenant_id in tenant_ids:
+            for template_id in template_ids:
+                if (tenant_id, template_id) not in existing_pairs:
+                    db.add(TenantAiTemplateLink(tenant_id=tenant_id, template_id=template_id))
+                    links_added += 1
+        db.commit()
+        return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=links_added, links_removed=0)
+
+    # action == "remove": also clear any default-template pointer left dangling by the removal,
+    # since this bypasses the per-tenant settings form that would otherwise keep them in sync.
+    links_removed = (
+        db.query(TenantAiTemplateLink)
+        .filter(TenantAiTemplateLink.tenant_id.in_(tenant_ids), TenantAiTemplateLink.template_id.in_(template_ids))
+        .delete(synchronize_session=False)
+    )
+    affected_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id.in_(tenant_ids)).all()
+    for settings in affected_settings:
+        if settings.default_email_template_id in template_ids:
+            settings.default_email_template_id = None
+        if settings.default_whatsapp_template_id in template_ids:
+            settings.default_whatsapp_template_id = None
+    db.commit()
+    return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=0, links_removed=links_removed)

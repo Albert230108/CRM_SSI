@@ -110,6 +110,17 @@ export default function AdminSettings() {
   const [backfillingBodies, setBackfillingBodies] = useState(false)
   const [backfillMessage, setBackfillMessage] = useState('')
 
+  const [forwardToEmail, setForwardToEmail] = useState('')
+  const [savingForwardToEmail, setSavingForwardToEmail] = useState(false)
+  const [forwardToEmailMessage, setForwardToEmailMessage] = useState('')
+  const [draftDebounceSeconds, setDraftDebounceSeconds] = useState(120)
+  const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
+  const [savingAiDraftTiming, setSavingAiDraftTiming] = useState(false)
+  const [aiDraftTimingMessage, setAiDraftTimingMessage] = useState('')
+  const [autoApplyTemplatesToNewTenants, setAutoApplyTemplatesToNewTenants] = useState(false)
+  const [savingAutoApplyTemplates, setSavingAutoApplyTemplates] = useState(false)
+  const [autoApplyTemplatesMessage, setAutoApplyTemplatesMessage] = useState('')
+
   const loadLogs = async () => {
     const params = new URLSearchParams()
     params.set('limit', '50')
@@ -132,6 +143,16 @@ export default function AdminSettings() {
       if (usersResponse.ok) setUsers(await usersResponse.json())
       if (invitesResponse.ok) setInvites(await invitesResponse.json())
       await loadLogs()
+      const adminSettingsResponse = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (adminSettingsResponse.ok) {
+        const data = await adminSettingsResponse.json()
+        setForwardToEmail(data.forward_to_email ?? '')
+        if (typeof data.ai_draft_debounce_seconds === 'number') setDraftDebounceSeconds(data.ai_draft_debounce_seconds)
+        if (typeof data.ai_auto_send_delay_seconds === 'number') setAutoSendDelaySeconds(data.ai_auto_send_delay_seconds)
+        if (typeof data.ai_auto_apply_templates_to_new_tenants === 'boolean') setAutoApplyTemplatesToNewTenants(data.ai_auto_apply_templates_to_new_tenants)
+      }
     }
     load()
   }, [token])
@@ -311,6 +332,82 @@ export default function AdminSettings() {
     }
   }
 
+  const saveForwardToEmail = async (event: FormEvent) => {
+    event.preventDefault()
+    setForwardToEmailMessage('')
+    setSavingForwardToEmail(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ forward_to_email: forwardToEmail.trim() || null }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setForwardToEmailMessage(typeof data.detail === 'string' ? data.detail : 'Failed to save forwarding address')
+        return
+      }
+      setForwardToEmail(data.forward_to_email ?? '')
+      setForwardToEmailMessage('Saved')
+    } catch {
+      setForwardToEmailMessage('Failed to save forwarding address')
+    } finally {
+      setSavingForwardToEmail(false)
+    }
+  }
+
+  const saveAiDraftTiming = async (event: FormEvent) => {
+    event.preventDefault()
+    setAiDraftTimingMessage('')
+    setSavingAiDraftTiming(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ ai_draft_debounce_seconds: draftDebounceSeconds, ai_auto_send_delay_seconds: autoSendDelaySeconds }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setAiDraftTimingMessage(typeof data.detail === 'string' ? data.detail : 'Failed to save AI draft timing')
+        return
+      }
+      setDraftDebounceSeconds(data.ai_draft_debounce_seconds)
+      setAutoSendDelaySeconds(data.ai_auto_send_delay_seconds)
+      setAiDraftTimingMessage('Saved')
+    } catch {
+      setAiDraftTimingMessage('Failed to save AI draft timing')
+    } finally {
+      setSavingAiDraftTiming(false)
+    }
+  }
+
+  const saveAutoApplyTemplates = async (nextValue: boolean) => {
+    setAutoApplyTemplatesMessage('')
+    setSavingAutoApplyTemplates(true)
+    const previousValue = autoApplyTemplatesToNewTenants
+    setAutoApplyTemplatesToNewTenants(nextValue)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ ai_auto_apply_templates_to_new_tenants: nextValue }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setAutoApplyTemplatesToNewTenants(previousValue)
+        setAutoApplyTemplatesMessage(typeof data.detail === 'string' ? data.detail : 'Failed to save')
+        return
+      }
+      setAutoApplyTemplatesToNewTenants(data.ai_auto_apply_templates_to_new_tenants)
+      setAutoApplyTemplatesMessage('Saved')
+    } catch {
+      setAutoApplyTemplatesToNewTenants(previousValue)
+      setAutoApplyTemplatesMessage('Failed to save')
+    } finally {
+      setSavingAutoApplyTemplates(false)
+    }
+  }
+
   const confirmClearInvites = async () => {
     setClearInvitesError('')
     setClearingInvites(true)
@@ -353,6 +450,93 @@ export default function AdminSettings() {
           {backfillingBodies ? 'Backfilling...' : 'Backfill email bodies'}
         </button>
         {backfillMessage ? <p className="mt-3 text-sm text-gray-600">{backfillMessage}</p> : null}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">AI Reply forwarding address</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          When a user clicks "AI Reply" on an email thread, the thread is forwarded to this address for AI drafting.
+        </p>
+        <form onSubmit={saveForwardToEmail} className="mt-4 flex max-w-lg items-center gap-3">
+          <input
+            type="email"
+            value={forwardToEmail}
+            onChange={(event) => setForwardToEmail(event.target.value)}
+            placeholder="ai-drafts@example.com"
+            className="flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          />
+          <button
+            type="submit"
+            disabled={savingForwardToEmail}
+            className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+          >
+            {savingForwardToEmail ? 'Saving...' : 'Save'}
+          </button>
+        </form>
+        {forwardToEmailMessage ? <p className="mt-3 text-sm text-gray-600">{forwardToEmailMessage}</p> : null}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-gray-900">AI Draft Timing</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Controls the "Draft with AI" auto-draft/auto-send pipeline: how long a conversation must go quiet before an
+          auto-draft is generated, and how long a scheduled auto-send waits before actually sending, giving staff a
+          window to intervene.
+        </p>
+        <form onSubmit={saveAiDraftTiming} className="mt-4 flex max-w-lg flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-draft-debounce-seconds">
+              Draft debounce (seconds)
+            </label>
+            <input
+              id="ai-draft-debounce-seconds"
+              type="number"
+              min={1}
+              value={draftDebounceSeconds}
+              onChange={(event) => setDraftDebounceSeconds(Number(event.target.value))}
+              className="mt-2 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-auto-send-delay-seconds">
+              Auto-send delay (seconds)
+            </label>
+            <input
+              id="ai-auto-send-delay-seconds"
+              type="number"
+              min={1}
+              value={autoSendDelaySeconds}
+              onChange={(event) => setAutoSendDelaySeconds(Number(event.target.value))}
+              className="mt-2 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={savingAiDraftTiming}
+            className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+          >
+            {savingAiDraftTiming ? 'Saving...' : 'Save'}
+          </button>
+        </form>
+        {aiDraftTimingMessage ? <p className="mt-3 text-sm text-gray-600">{aiDraftTimingMessage}</p> : null}
+
+        <div className="mt-5 border-t border-gray-200 pt-4">
+          <label className="flex items-center gap-3 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={autoApplyTemplatesToNewTenants}
+              disabled={savingAutoApplyTemplates}
+              onChange={(event) => saveAutoApplyTemplates(event.target.checked)}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            Automatically make every shared AI reply template available to newly created tenants
+          </label>
+          <p className="mt-1 text-xs text-gray-500">
+            When off (default), a new tenant starts with no AI templates available and must be configured manually
+            on the tenant AI settings page.
+          </p>
+          {autoApplyTemplatesMessage ? <p className="mt-2 text-sm text-gray-600">{autoApplyTemplatesMessage}</p> : null}
+        </div>
       </section>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">

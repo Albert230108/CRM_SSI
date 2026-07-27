@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
 
 from sqlalchemy.exc import IntegrityError
@@ -111,6 +111,8 @@ def _find_outbound_communication(
     whatsapp_identity_key: str | None,
     whatsapp_normalized_phone: str | None,
     external_account_id: str | None,
+    message: str | None = None,
+    created_at: datetime | None = None,
 ) -> tuple[Communication | None, str | None]:
     if provider_message_id:
         communication = (
@@ -132,17 +134,29 @@ def _find_outbound_communication(
         # message live (before WhatsApp confirms delivery with a provider_message_id) once that
         # ID arrives. It must NEVER match a row that already has its own distinct
         # provider_message_id — otherwise every subsequent outbound message in the same chat
-        # whose ID lookup finds nothing (e.g. a genuinely new historical message during backfill)
-        # falls through to here and silently overwrites the most recent already-confirmed
-        # message's text while leaving its original created_at/direction untouched, corrupting
-        # unrelated history.
+        # whose ID lookup finds nothing (e.g. a genuinely new historical message during backfill,
+        # or a live message_create capture that never got a real provider_message_id) falls
+        # through to here and silently overwrites the most recent already-confirmed message's
+        # text while leaving its original created_at/direction untouched, corrupting unrelated
+        # history. Matching on message text alone isn't enough either — two distinct messages
+        # sent moments apart with similar/identical text (e.g. from another linked device) would
+        # collide on text and still overwrite each other. A genuine "same message reported twice"
+        # (e.g. once via the CRM's own send API — persisted immediately with the backend's
+        # wall-clock time — and once via the message_create listener observing the same physical
+        # WhatsApp message a moment later) has matching text but a created_at that can differ by
+        # a few seconds due to that processing gap, not an exact match. Two truly separate sends
+        # ("no response in between") are realistically at least tens of seconds apart. A narrow
+        # time window on top of the text match distinguishes "same message, reported twice" from
+        # "two different messages that happen to say the same thing".
+        DUPLICATE_CAPTURE_WINDOW = timedelta(seconds=30)
+        normalized_message = _normalize_text(message)
         for match_field, match_value in (
             ("whatsapp_identity_key", whatsapp_identity_key),
             ("whatsapp_chat_id", whatsapp_chat_id),
         ):
             if not match_value:
                 continue
-            communication = (
+            query = (
                 db.query(Communication)
                 .filter(
                     Communication.tenant_id == tenant_id,
@@ -152,9 +166,26 @@ def _find_outbound_communication(
                     Communication.provider_message_id.is_(None),
                     getattr(Communication, match_field) == match_value,
                 )
-                .order_by(Communication.created_at.desc(), Communication.id.desc())
-                .first()
             )
+            if normalized_message is not None:
+                query = query.filter(Communication.message == normalized_message)
+            candidates = query.order_by(Communication.created_at.desc(), Communication.id.desc()).limit(5).all()
+            if created_at is not None:
+                target = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+                communication = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if abs(
+                            (candidate.created_at if candidate.created_at.tzinfo else candidate.created_at.replace(tzinfo=timezone.utc))
+                            - target
+                        )
+                        <= DUPLICATE_CAPTURE_WINDOW
+                    ),
+                    None,
+                )
+            else:
+                communication = candidates[0] if candidates else None
             if communication is not None:
                 return communication, f"{match_field}_external_account_id"
 
@@ -218,6 +249,7 @@ def persist_whatsapp_outbound_communication(
     subject: str | None,
     message: str,
     created_at: datetime,
+    ai_generated: bool = False,
 ) -> WhatsAppOutboundPersistenceResult:
     normalized_provider = _normalize_text(provider)
     normalized_external_account_id = _normalize_text(external_account_id)
@@ -253,6 +285,8 @@ def persist_whatsapp_outbound_communication(
         whatsapp_identity_key=normalized_whatsapp_identity_key,
         whatsapp_normalized_phone=normalized_whatsapp_normalized_phone,
         external_account_id=normalized_external_account_id,
+        message=normalized_message,
+        created_at=created_at,
     )
 
     persistence_state = "created"
@@ -272,6 +306,7 @@ def persist_whatsapp_outbound_communication(
             subject=normalized_subject,
             message=normalized_message,
             created_at=created_at,
+            ai_generated=ai_generated,
         )
         db.add(communication)
     else:

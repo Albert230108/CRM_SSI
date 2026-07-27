@@ -91,6 +91,27 @@ test('listChats search matches text from the last message preview', async () => 
   assert.equal(result.chats[0].chat_id, '326472368@lid');
 });
 
+test('listChats skips a chat whose model build fails instead of failing the whole request', async () => {
+  // Mirrors a real WhatsApp session: pupPage.evaluate isolates each chat's model construction,
+  // so one broken chat (e.g. an @lid group WhatsApp Web itself can't serialize) reports a
+  // per-chat failure instead of rejecting the whole call the way Client#getChats() does.
+  const clientOverride = {
+    pupPage: {
+      evaluate: async () => ({
+        models: [
+          fakeChat({ id: '111222333@c.us', name: 'Someone Else', timestamp: 1710000000, body: 'Hey' }),
+        ],
+        failed: [{ id: '326472368@lid', message: 'r' }],
+      }),
+    },
+  };
+
+  const result = await listChats({ externalAccountId: whatsappClientId, clientOverride, readyOverride: true });
+
+  assert.equal(result.total_count, 1, 'the broken chat should be skipped, not fail the whole list');
+  assert.equal(result.chats[0].chat_id, '111222333@c.us');
+});
+
 test('listChats rejects a mismatched external_account_id', async () => {
   const clientOverride = { getChats: async () => [] };
   await assert.rejects(

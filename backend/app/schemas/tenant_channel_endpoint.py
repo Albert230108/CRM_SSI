@@ -47,6 +47,7 @@ class TenantChannelEndpointRead(BaseModel):
     external_account_id: str | None = None
     external_phone_id: str | None = None
     external_chat_namespace: str | None = None
+    chat_display_name: str | None = None
     webhook_token: str | None = None
     signing_secret: str | None = None
     is_active: bool

@@ -107,6 +107,7 @@ class Beds24BookingPreview(BaseModel):
     property_name: str | None = None
     source: str | None = None
     referer: str | None = None
+    original_referer: str | None = None
     total_price: float | None = None
     commission: float | None = None
     deposit: float | None = None

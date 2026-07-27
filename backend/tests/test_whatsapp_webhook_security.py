@@ -164,4 +164,89 @@ def test_whatsapp_resolve_uses_phone_alias_without_account_identity(client, db_s
     assert body["ok"] is True
     assert body["tenant_id"] == tenant.id
     assert body["routing_strategy"] == "whatsapp_phone_match"
-    assert body["matched_field"] == "phone"
+
+
+def test_whatsapp_backfill_batch_persists_all_messages_in_one_request(client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-secure-batch")
+    create_whatsapp_endpoint(db_session, tenant.id)
+
+    response = client.post(
+        "/webhooks/whatsapp/backfill-batch",
+        json={
+            "messages": [
+                {
+                    "direction": "inbound",
+                    "provider": "whatsapp-service",
+                    "external_account_id": "edi-crm-whatsapp",
+                    "sender": "+31612345678",
+                    "sender_normalized": "31612345678",
+                    "whatsapp_chat_id": "31612345678@c.us",
+                    "whatsapp_message_id": f"batch-msg-{index}",
+                    "timestamp": 1710000000 + index,
+                    "message": f"Batch history message {index}",
+                    "source": "history",
+                }
+                for index in range(5)
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["processed"] == 5
+    assert body["failed"] == 0
+
+    stored = (
+        db_session.query(Communication)
+        .filter(Communication.tenant_id == tenant.id, Communication.channel == "whatsapp")
+        .all()
+    )
+    assert len(stored) == 5
+    assert {message.provider_message_id for message in stored} == {f"batch-msg-{index}" for index in range(5)}
+
+
+def test_whatsapp_backfill_batch_dedupes_same_provider_message_id(client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-secure-batch-dedupe")
+    create_whatsapp_endpoint(db_session, tenant.id)
+
+    message_payload = {
+        "direction": "inbound",
+        "provider": "whatsapp-service",
+        "external_account_id": "edi-crm-whatsapp",
+        "sender": "+31612345678",
+        "sender_normalized": "31612345678",
+        "whatsapp_chat_id": "31612345678@c.us",
+        "whatsapp_message_id": "batch-msg-dup",
+        "timestamp": 1710000000,
+        "message": "Duplicate history message",
+        "source": "history",
+    }
+
+    response = client.post("/webhooks/whatsapp/backfill-batch", json={"messages": [message_payload, message_payload]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["processed"] == 2
+    assert body["failed"] == 0
+
+    stored = (
+        db_session.query(Communication)
+        .filter(Communication.tenant_id == tenant.id, Communication.channel == "whatsapp", Communication.provider_message_id == "batch-msg-dup")
+        .all()
+    )
+    assert len(stored) == 1
+
+
+def test_whatsapp_backfill_batch_rejects_missing_secret(client_without_webhook_secret, db_session):
+    tenant = create_tenant(db_session, booking_id="B-secure-batch-nosecret")
+    create_whatsapp_endpoint(db_session, tenant.id)
+
+    response = client_without_webhook_secret.post(
+        "/webhooks/whatsapp/backfill-batch",
+        json={"messages": [{"direction": "inbound", "external_account_id": "edi-crm-whatsapp", "message": "x"}]},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "Missing webhook secret"

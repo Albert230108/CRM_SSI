@@ -84,6 +84,23 @@ test('backfillAllChats can be forced to sync every chat with all=true', async ()
         };
       }
 
+      if (options.body) {
+        try {
+          const parsedBody = JSON.parse(options.body);
+          if (Array.isArray(parsedBody.messages)) {
+            return {
+              ok: true,
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              json: async () => ({ ok: true, processed: parsedBody.messages.length, failed: 0 }),
+              text: async () => '',
+            };
+          }
+        } catch (error) {
+          // fall through to the generic response below
+        }
+      }
+
       return {
         ok: true,
         status: 200,
@@ -186,6 +203,23 @@ test('backfillAllChats scopes history to CRM identities when all=false', async (
         };
       }
 
+      if (options.body) {
+        try {
+          const parsedBody = JSON.parse(options.body);
+          if (Array.isArray(parsedBody.messages)) {
+            return {
+              ok: true,
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              json: async () => ({ ok: true, processed: parsedBody.messages.length, failed: 0 }),
+              text: async () => '',
+            };
+          }
+        } catch (error) {
+          // fall through to the generic response below
+        }
+      }
+
       return {
         ok: true,
         status: 200,
@@ -234,6 +268,118 @@ test('backfillAllChats scopes history to CRM identities when all=false', async (
     assert.equal(result.failed, 0);
     assert.equal(result.inbound, 1);
     assert.equal(result.crm_identity_lookup_failed, false);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalEnv.CRM_API_BASE_URL === undefined) delete process.env.CRM_API_BASE_URL; else process.env.CRM_API_BASE_URL = originalEnv.CRM_API_BASE_URL;
+    if (originalEnv.CRM_WEBHOOK_URL === undefined) delete process.env.CRM_WEBHOOK_URL; else process.env.CRM_WEBHOOK_URL = originalEnv.CRM_WEBHOOK_URL;
+    if (originalEnv.CRM_WEBHOOK_SECRET === undefined) delete process.env.CRM_WEBHOOK_SECRET; else process.env.CRM_WEBHOOK_SECRET = originalEnv.CRM_WEBHOOK_SECRET;
+    delete require.cache[modulePath];
+    delete require.cache[configPath];
+  }
+});
+
+test('backfillAllChats imports messages sent from another linked device that only surface via fetchMessages({ fromMe: true })', async () => {
+  const originalFetch = global.fetch;
+  const originalEnv = {
+    CRM_API_BASE_URL: process.env.CRM_API_BASE_URL,
+    CRM_WEBHOOK_URL: process.env.CRM_WEBHOOK_URL,
+    CRM_WEBHOOK_SECRET: process.env.CRM_WEBHOOK_SECRET,
+  };
+  const modulePath = require.resolve('../src/whatsappClient');
+  const configPath = require.resolve('../src/config');
+
+  try {
+    process.env.CRM_API_BASE_URL = 'http://crm.test';
+    process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
+    process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
+
+    global.fetch = async (url, options = {}) => {
+      if (String(url).includes('/backfill-identities')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          json: async () => ({
+            ok: true,
+            total_tenants: 1,
+            total_active_endpoints: 1,
+            total_identity_records: 1,
+            entries: [
+              {
+                tenant_id: 7,
+                tenant_name: 'Tenant Eligible',
+                booking_id: 'B-eligible',
+                phone_numbers: ['31612345678'],
+                chat_ids: ['31612345678@c.us'],
+                external_phone_ids: [],
+                external_chat_namespaces: [],
+                external_account_ids: ['edi-crm-whatsapp'],
+              },
+            ],
+          }),
+          text: async () => '',
+        };
+      }
+
+      if (options.body) {
+        try {
+          const parsedBody = JSON.parse(options.body);
+          if (Array.isArray(parsedBody.messages)) {
+            return {
+              ok: true,
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              json: async () => ({ ok: true, processed: parsedBody.messages.length, failed: 0 }),
+              text: async () => '',
+            };
+          }
+        } catch (error) {
+          // fall through to the generic response below
+        }
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        json: async () => ({ ok: true, echoed: options.method || 'GET' }),
+        text: async () => '',
+      };
+    };
+
+    delete require.cache[modulePath];
+    delete require.cache[configPath];
+    const reloaded = require('../src/whatsappClient');
+
+    const result = await reloaded.backfillAllChats({
+      clientOverride: {
+        getChats: async () => [
+          {
+            id: { _serialized: '31612345678@c.us', user: '31612345678' },
+            isGroup: false,
+            syncHistory: async () => {},
+            fetchMessages: async (searchOptions = {}) => {
+              if (searchOptions.fromMe) {
+                return [
+                  { timestamp: 1710000005, body: 'Sent from my phone', fromMe: true, from: '15550000000@c.us', to: '31612345678@c.us', id: { _serialized: 'msg-other-device-outbound' } },
+                ];
+              }
+              return [
+                { timestamp: 1710000000, body: 'Historical inbound', fromMe: false, from: '31612345678@c.us', to: '15550000000@c.us', id: { _serialized: 'msg-backfill-inbound' } },
+              ];
+            },
+          },
+        ],
+      },
+      readyOverride: true,
+      limit: 10,
+      postSyncDelayMs: 0,
+    });
+
+    assert.equal(result.imported, 2);
+    assert.equal(result.inbound, 1);
+    assert.equal(result.outbound, 1);
+    assert.equal(result.failed, 0);
   } finally {
     global.fetch = originalFetch;
     if (originalEnv.CRM_API_BASE_URL === undefined) delete process.env.CRM_API_BASE_URL; else process.env.CRM_API_BASE_URL = originalEnv.CRM_API_BASE_URL;

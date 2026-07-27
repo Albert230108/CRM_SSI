@@ -1,7 +1,13 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy.exc import IntegrityError
 
+from app.api.tenants import list_tenant_statuses, list_tenants
+from app.models.communication import Communication
+from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.tenant_conversation_link import TenantConversationLink
 
 
 def create_tenant(db_session, name='Tenant A', booking_id='B-1'):
@@ -140,3 +146,217 @@ def test_delete_imported_tenant_removes_whatsapp_endpoint_mapping(client, db_ses
     delete_response = client.delete(f"/api/tenants/{tenant.id}")
     assert delete_response.status_code == 204
     assert db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id).count() == 0
+
+
+def test_list_tenants_picks_latest_across_whatsapp_and_email_per_tenant(db_session):
+    # Regression test for the list_tenants N+1 fix: computing last_message_date/channel used to
+    # run two extra queries per tenant. This exercises the replacement bulk window-function
+    # queries against multiple tenants with a mix of WhatsApp and email activity, to confirm the
+    # per-tenant "most recent across both channels" result is unchanged.
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    tenant_whatsapp_latest = create_tenant(db_session, name="Tenant WhatsApp Latest", booking_id="LIST-A")
+    db_session.add(Communication(
+        tenant_id=tenant_whatsapp_latest.id, channel="whatsapp", direction="inbound",
+        provider="whatsapp-service", message="older whatsapp", created_at=base,
+    ))
+    db_session.add(Communication(
+        tenant_id=tenant_whatsapp_latest.id, channel="whatsapp", direction="outbound",
+        provider="whatsapp-service", message="newest whatsapp", created_at=base + timedelta(days=2),
+    ))
+    conversation_a = Conversation(provider="gmail", provider_thread_id="thread-a", tenant_id=tenant_whatsapp_latest.id, subject="s")
+    db_session.add(conversation_a)
+    db_session.commit()
+    db_session.refresh(conversation_a)
+    db_session.add(TenantConversationLink(tenant_id=tenant_whatsapp_latest.id, conversation_id=conversation_a.id))
+    db_session.commit()
+    db_session.add(ConversationMessage(
+        conversation_id=conversation_a.id, provider="gmail", provider_message_id="msg-a-1",
+        direction="inbound", body="older email", sent_at=base + timedelta(days=1),
+    ))
+
+    tenant_email_latest = create_tenant(db_session, name="Tenant Email Latest", booking_id="LIST-B")
+    db_session.add(Communication(
+        tenant_id=tenant_email_latest.id, channel="whatsapp", direction="inbound",
+        provider="whatsapp-service", message="older whatsapp", created_at=base,
+    ))
+    conversation_b = Conversation(provider="gmail", provider_thread_id="thread-b", tenant_id=tenant_email_latest.id, subject="s")
+    db_session.add(conversation_b)
+    db_session.commit()
+    db_session.refresh(conversation_b)
+    db_session.add(TenantConversationLink(tenant_id=tenant_email_latest.id, conversation_id=conversation_b.id))
+    db_session.commit()
+    db_session.add(ConversationMessage(
+        conversation_id=conversation_b.id, provider="gmail", provider_message_id="msg-b-1",
+        direction="outbound", body="newest email", sent_at=base + timedelta(days=3),
+    ))
+
+    tenant_no_activity = create_tenant(db_session, name="Tenant No Activity", booking_id="LIST-C")
+    db_session.commit()
+
+    # sort_by_message's final ordering step is untouched by this fix and separately hits a
+    # naive/aware datetime mismatch under the SQLite test DB (Postgres round-trips
+    # DateTime(timezone=True) as aware; SQLite doesn't) — out of scope here, so this exercises
+    # sort_by_message=False to isolate the per-tenant bulk-query correctness this test targets.
+    result = list_tenants(db=db_session, current_user=None, sort_by_message=False, sort_desc=True)
+    by_id = {tenant.id: tenant for tenant in result}
+
+    assert by_id[tenant_whatsapp_latest.id].last_message_channel == "whatsapp"
+    assert by_id[tenant_whatsapp_latest.id].last_message_direction == "outbound"
+    assert by_id[tenant_whatsapp_latest.id].last_message_date.replace(tzinfo=timezone.utc) == base + timedelta(days=2)
+
+    assert by_id[tenant_email_latest.id].last_message_channel == "email"
+    assert by_id[tenant_email_latest.id].last_message_direction == "outbound"
+    assert by_id[tenant_email_latest.id].last_message_date.replace(tzinfo=timezone.utc) == base + timedelta(days=3)
+
+    assert by_id[tenant_no_activity.id].last_message_date is None
+
+
+async def fake_update_booking_notes_success(booking_id, notes):
+    return None
+
+
+async def fake_update_booking_notes_failure(booking_id, notes):
+    from fastapi import HTTPException, status
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 upstream error (500)")
+
+
+def test_update_tenant_notes_syncs_to_beds24(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_success)
+    tenant = create_tenant(db_session, name="Tenant Notes A", booking_id="NOTES-A")
+
+    response = client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "Guest requested late checkout"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["notes"] == "Guest requested late checkout"
+    assert payload["beds24_synced"] is True
+    db_session.refresh(tenant)
+    assert tenant.notes == "Guest requested late checkout"
+
+
+def test_update_tenant_notes_saves_locally_when_beds24_sync_fails(client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_failure)
+    tenant = create_tenant(db_session, name="Tenant Notes B", booking_id="NOTES-B")
+
+    response = client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "Left a key with neighbor"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["notes"] == "Left a key with neighbor"
+    assert payload["beds24_synced"] is False
+    assert "beds24_error" in payload
+    db_session.refresh(tenant)
+    assert tenant.notes == "Left a key with neighbor"
+
+
+def test_update_tenant_notes_returns_404_for_missing_tenant(client, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_success)
+
+    response = client.patch("/api/tenants/999999/notes", json={"notes": "x"})
+
+    assert response.status_code == 404
+
+
+def test_webhook_extracts_notes_key_from_beds24_payload():
+    from app.api.tenants import _extract_guest_fields
+
+    fields = _extract_guest_fields({"notes": "Direct beds24 notes field", "comments": "fallback comments"})
+
+    assert fields["notes"] == "Direct beds24 notes field"
+
+
+def test_webhook_does_not_leak_guest_correspondence_into_notes():
+    from app.api.tenants import _extract_guest_fields
+
+    fields = _extract_guest_fields({
+        "comments": "quoted email from guest",
+        "comment": "another log entry",
+        "note": "yet another",
+        "message": "guest correspondence text",
+    })
+
+    assert fields["notes"] is None
+
+
+def test_list_tenants_filters_by_last_message_direction(db_session):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    tenant_inbound = create_tenant(db_session, name="Tenant Inbound", booking_id="DIR-A")
+    db_session.add(Communication(
+        tenant_id=tenant_inbound.id, channel="whatsapp", direction="inbound",
+        provider="whatsapp-service", message="hello", created_at=base,
+    ))
+
+    tenant_outbound = create_tenant(db_session, name="Tenant Outbound", booking_id="DIR-B")
+    db_session.add(Communication(
+        tenant_id=tenant_outbound.id, channel="whatsapp", direction="outbound",
+        provider="whatsapp-service", message="hi back", created_at=base,
+    ))
+
+    tenant_no_activity = create_tenant(db_session, name="Tenant No Activity", booking_id="DIR-C")
+    db_session.commit()
+
+    inbound_result = list_tenants(
+        db=db_session, current_user=None, last_message_direction="inbound",
+        sort_by_message=False, sort_desc=True,
+    )
+    inbound_ids = {tenant.id for tenant in inbound_result}
+    assert inbound_ids == {tenant_inbound.id}
+
+    outbound_result = list_tenants(
+        db=db_session, current_user=None, last_message_direction="outbound",
+        sort_by_message=False, sort_desc=True,
+    )
+    outbound_ids = {tenant.id for tenant in outbound_result}
+    assert outbound_ids == {tenant_outbound.id}
+
+    assert tenant_no_activity.id not in inbound_ids
+    assert tenant_no_activity.id not in outbound_ids
+
+
+def test_list_tenants_filters_by_multiple_statuses(db_session):
+    tenant_enquiry = create_tenant(db_session, name="Tenant Enquiry", booking_id="STATUS-A")
+    tenant_enquiry.booking_status = "Enquiry"
+
+    tenant_request = create_tenant(db_session, name="Tenant Request", booking_id="STATUS-B")
+    tenant_request.booking_status = "Request"
+
+    tenant_confirmed = create_tenant(db_session, name="Tenant Confirmed", booking_id="STATUS-C")
+    tenant_confirmed.booking_status = "Confirmed"
+    db_session.commit()
+
+    result = list_tenants(
+        db=db_session, current_user=None, status=["Enquiry", "Request"], status_filter=True,
+        sort_by_message=False, sort_desc=True,
+    )
+    result_ids = {tenant.id for tenant in result}
+    assert result_ids == {tenant_enquiry.id, tenant_request.id}
+    assert tenant_confirmed.id not in result_ids
+
+
+def test_list_tenants_empty_status_filter_shows_nothing(db_session):
+    create_tenant(db_session, name="Tenant Confirmed", booking_id="STATUS-D")
+
+    result = list_tenants(
+        db=db_session, current_user=None, status=[], status_filter=True,
+        sort_by_message=False, sort_desc=True,
+    )
+    assert result == []
+
+
+def test_list_tenant_statuses_returns_distinct_values_from_data(db_session):
+    tenant_a = create_tenant(db_session, name="Tenant A", booking_id="STATUS-E")
+    tenant_a.booking_status = "confirmed"
+
+    tenant_b = create_tenant(db_session, name="Tenant B", booking_id="STATUS-F")
+    tenant_b.booking_status = "confirmed"
+
+    tenant_c = create_tenant(db_session, name="Tenant C", booking_id="STATUS-G")
+    tenant_c.booking_status = "Custom Status"
+
+    create_tenant(db_session, name="Tenant No Status", booking_id="STATUS-H")
+    db_session.commit()
+
+    statuses = list_tenant_statuses(db=db_session, current_user=None)
+    assert statuses == ["Custom Status", "confirmed"]

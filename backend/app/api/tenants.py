@@ -5,10 +5,10 @@ import traceback
 import re
 import os
 from urllib.parse import quote
-from typing import Optional
+from typing import Annotated, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
@@ -22,8 +22,10 @@ from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
-from app.services.beds24_client import get_booking_detail, get_bookings
+from app.models.tenant_conversation_link import TenantConversationLink
+from app.services.beds24_client import get_booking_detail, get_bookings, update_booking_notes
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.tenant_ai_template_provisioning import apply_default_ai_templates_if_enabled
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
@@ -171,8 +173,9 @@ def _extract_guest_fields(item: dict) -> dict:
     departure_time = str(item.get("departureTime") or item.get("checkOutTime") or "").strip() or None
     room_details = _extract_room_details(item)
     room_name = room_details["room_name"]
-    source = str(item.get("source") or item.get("channel") or item.get("referer2") or item.get("portalId") or "").strip() or None
+    source = str(item.get("source") or item.get("channel") or item.get("portalId") or "").strip() or None
     referer = str(item.get("referer") or item.get("referralSource") or "").strip() or None
+    original_referer = str(item.get("referer2") or "").strip() or None
     try:
         total_price = Decimal(str(item.get("totalPrice") or item.get("price") or item.get("total") or 0)) or None
     except (TypeError, ValueError, ArithmeticError):
@@ -243,7 +246,10 @@ def _extract_guest_fields(item: dict) -> dict:
     booking_time = str(item.get("bookingTime") or "").strip() or None
     modified_time = str(item.get("modifiedTime") or "").strip() or None
     room_id = room_details["room_id"]
-    notes = str(item.get("comments") or item.get("comment") or item.get("note") or item.get("message") or "").strip() or None
+    # notes is a manual field on both sides (CRM and Beds24's booking "notes" property) that
+    # syncs bidirectionally; comments/comment/note/message are Beds24's separate
+    # guest-correspondence log and must not leak into it.
+    notes = str(item.get("notes") or "").strip() or None
     info_items = item.get("infoItems") or item.get("infoCodes") or []
     responsible_comm = None
     if isinstance(info_items, list):
@@ -296,6 +302,7 @@ def _extract_guest_fields(item: dict) -> dict:
         "room_name": room_name,
         "source": source,
         "referer": referer,
+        "original_referer": original_referer,
         "total_price": total_price,
         "commission": commission,
         "deposit": deposit,
@@ -342,13 +349,27 @@ def _build_one_drive_folder_path(tenant: Tenant) -> str:
     return f"/01. Rentals/02. Short-Stay Inn/Tenants/2026/{folder_name}"
 
 
+@router.get("/tenants/statuses", response_model=list[str])
+def list_tenant_statuses(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[str]:
+    rows = db.query(Tenant.booking_status).filter(Tenant.booking_status.isnot(None)).distinct().all()
+    return sorted({row[0] for row in rows if row[0]})
+
+
 @router.get("/tenants", response_model=list[TenantRead])
 def list_tenants(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     search: str | None = None,
-    status: str | None = None,
+    # Annotated + Query() (rather than a `Query()` default) so FastAPI binds repeated
+    # ?status=a&status=b query params over HTTP, while direct Python calls (e.g. tests)
+    # still see a plain `None` default instead of an unresolved Query sentinel object.
+    status: Annotated[list[str] | None, Query()] = None,
+    status_filter: bool = False,
     responsible: str | None = None,
+    last_message_direction: str | None = None,
     sort_by_message: bool = False,
     sort_desc: bool = True,
 ) -> list[TenantRead]:
@@ -368,8 +389,12 @@ def list_tenants(
             )
         )
 
-    if status:
-        query = query.filter(Tenant.booking_status == status)
+    if status_filter:
+        # Explicit multi-status checkbox filter: an empty selection intentionally means
+        # "show nothing" rather than "no filter", matching Excel-style checkbox behavior.
+        query = query.filter(Tenant.booking_status.in_(status or []))
+    elif status:
+        query = query.filter(Tenant.booking_status.in_(status))
 
     if responsible:
         if responsible == "unassigned":
@@ -379,29 +404,63 @@ def list_tenants(
 
     query = query.order_by(desc(Tenant.id) if sort_desc else Tenant.id)
     tenants = query.all()
+    tenant_ids = [tenant.id for tenant in tenants]
+
+    # Querying the latest Communication/email per tenant one tenant at a time (2 queries x N
+    # tenants) meant every tenant-list load did hundreds of sequential DB round trips as the
+    # tenant count grew. A window-function query ranks rows per tenant_id in a single pass, so
+    # this is 2 queries total regardless of how many tenants there are.
+    last_comm_by_tenant_id: dict[int, tuple[datetime, str, str]] = {}
+    last_email_by_tenant_id: dict[int, tuple[datetime, str]] = {}
+    if tenant_ids:
+        from sqlalchemy import func
+
+        comm_ranked = (
+            db.query(
+                Communication.tenant_id.label("tenant_id"),
+                Communication.created_at.label("created_at"),
+                Communication.channel.label("channel"),
+                Communication.direction.label("direction"),
+                func.row_number()
+                .over(partition_by=Communication.tenant_id, order_by=Communication.created_at.desc())
+                .label("rn"),
+            )
+            .filter(Communication.tenant_id.in_(tenant_ids))
+            .subquery()
+        )
+        for row in db.query(comm_ranked).filter(comm_ranked.c.rn == 1).all():
+            last_comm_by_tenant_id[row.tenant_id] = (row.created_at, row.channel, row.direction)
+
+        email_ranked = (
+            db.query(
+                TenantConversationLink.tenant_id.label("tenant_id"),
+                ConversationMessage.sent_at.label("sent_at"),
+                ConversationMessage.direction.label("direction"),
+                func.row_number()
+                .over(partition_by=TenantConversationLink.tenant_id, order_by=ConversationMessage.sent_at.desc())
+                .label("rn"),
+            )
+            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+            .join(
+                TenantConversationLink,
+                (TenantConversationLink.conversation_id == Conversation.id)
+                & (TenantConversationLink.unlinked_at.is_(None)),
+            )
+            .filter(TenantConversationLink.tenant_id.in_(tenant_ids))
+            .subquery()
+        )
+        for row in db.query(email_ranked).filter(email_ranked.c.rn == 1).all():
+            last_email_by_tenant_id[row.tenant_id] = (row.sent_at, row.direction)
 
     result = []
     for tenant in tenants:
-        last_comm = db.query(Communication).filter(
-            Communication.tenant_id == tenant.id
-        ).order_by(desc(Communication.created_at)).first()
-
-        # Email conversations live in a separate table (Conversation/ConversationMessage)
-        # from WhatsApp Communication rows, so the most recent activity must be picked
-        # across both sources rather than only Communication.
-        last_email = (
-            db.query(ConversationMessage)
-            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-            .filter(Conversation.tenant_id == tenant.id)
-            .order_by(desc(ConversationMessage.sent_at))
-            .first()
-        )
-
         candidates: list[tuple[datetime, str, str]] = []
+        last_comm = last_comm_by_tenant_id.get(tenant.id)
         if last_comm:
-            candidates.append((last_comm.created_at, last_comm.channel, last_comm.direction))
+            candidates.append(last_comm)
+        last_email = last_email_by_tenant_id.get(tenant.id)
         if last_email:
-            candidates.append((last_email.sent_at, "email", last_email.direction))
+            candidates.append((last_email[0], "email", last_email[1]))
 
         tenant_dict = TenantRead.from_orm(tenant).model_dump()
         if candidates:
@@ -411,6 +470,9 @@ def list_tenants(
             tenant_dict["last_message_direction"] = last_direction
 
         result.append(TenantRead(**tenant_dict))
+
+    if last_message_direction:
+        result = [t for t in result if t.last_message_direction == last_message_direction]
 
     if sort_by_message:
         epoch = datetime.min.replace(tzinfo=timezone.utc)
@@ -427,6 +489,7 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     tenant = Tenant(**payload.model_dump())
     db.add(tenant)
     db.flush()
+    apply_default_ai_templates_if_enabled(db, tenant.id)
     db.commit()
     db.refresh(tenant)
     return tenant
@@ -438,6 +501,34 @@ def get_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: User
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     return tenant
+
+
+class TenantNotesUpdate(BaseModel):
+    notes: Optional[str] = None
+
+
+@router.patch("/tenants/{tenant_id}/notes")
+async def update_tenant_notes(
+    tenant_id: int,
+    payload: TenantNotesUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    tenant.notes = payload.notes
+    db.commit()
+    db.refresh(tenant)
+
+    try:
+        await update_booking_notes(tenant.booking_id, tenant.notes)
+    except HTTPException as exc:
+        logger.warning("Beds24 notes sync failed tenant_id=%s booking_id=%s detail=%s", tenant_id, tenant.booking_id, exc.detail)
+        return {"notes": tenant.notes, "beds24_synced": False, "beds24_error": str(exc.detail)}
+
+    return {"notes": tenant.notes, "beds24_synced": True}
 
 
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -756,6 +847,7 @@ async def _import_tenant(
         )
         db.add(tenant)
         db.flush()
+        apply_default_ai_templates_if_enabled(db, tenant.id)
     else:
         tenant = existing
         tenant.first_name = first_name

@@ -15,7 +15,9 @@ async function resolveOutboundTenantOwnership({
   externalAccountId,
   lookupDurableTenant,
   getMemoryTenantId,
-  retryDelaysMs = [0, 100, 250],
+  // Only consulted again on a *transient* result (see the loop below) - a normal "not
+  // found" exhausts in one call. Modest single retry after 1s, not aggressive 100ms bursts.
+  retryDelaysMs = [0, 1000],
 }) {
   const normalizedMessageId = normalizeCorrelationValue(messageId);
   const normalizedChatId = normalizeCorrelationValue(chatId);
@@ -65,6 +67,12 @@ async function resolveOutboundTenantOwnership({
           matchedValue: candidate.strategy === "provider_message_id" ? normalizedMessageId : candidate.strategy === "identity_key_external_account_id" ? normalizedIdentityKey : normalizedChatId,
           durableResolution: resolution,
         };
+      }
+      // A genuine "not found" (or a non-retryable error) is not a reason to hammer the CRM
+      // again with the same query - move on to the next durable candidate immediately.
+      // Only network errors/timeouts/429/5xx (resolution.transient === true) get a retry.
+      if (!resolution || !resolution.transient) {
+        break;
       }
     }
   }

@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import FinanceBox from '../components/FinanceBox'
 import ImportModal from '../components/ImportModal'
+import NotesBox from '../components/NotesBox'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
+import SyncProgressOverlay from '../components/SyncProgressOverlay'
 import ThreadView from '../components/ThreadView'
+import ToastCard from '../components/ToastCard'
+import TileLoadingOverlay from '../components/TileLoadingOverlay'
 import {
   clampMiddleColumnWidth,
   clampTenantSidebarWidth,
@@ -22,8 +26,14 @@ import {
 import { useAuthStore } from '../store/authStore'
 
 const DESKTOP_BREAKPOINT = '(min-width: 768px)'
+const MESSAGE_TOAST_DURATION_MS = 6000
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+type MessageToast = {
+  id: number
+  text: string
+}
 
 type SyncSummary = {
   started_at: string
@@ -55,6 +65,43 @@ export default function Dashboard() {
     return Number.isFinite(parsed) ? parsed : undefined
   }, [tenantId])
 
+  // Tracks whether each of the finance/OneDrive/thread tiles has finished loading data for
+  // the currently selected tenant, so all three can stay blurred together until every tile
+  // is ready (rather than un-blurring independently as each fetch resolves).
+  const [financeReady, setFinanceReady] = useState(false)
+  const [oneDriveReady, setOneDriveReady] = useState(false)
+  const [notesReady, setNotesReady] = useState(false)
+  const [threadReady, setThreadReady] = useState(false)
+  const selectedTenantIdRef = useRef(selectedTenantId)
+
+  useEffect(() => {
+    selectedTenantIdRef.current = selectedTenantId
+  }, [selectedTenantId])
+
+  useEffect(() => {
+    setFinanceReady(false)
+    setOneDriveReady(false)
+    setNotesReady(false)
+    setThreadReady(false)
+  }, [selectedTenantId])
+
+  // Stable callback identities (empty deps) so passing them down doesn't retrigger the
+  // tiles' own data-fetching effects; staleness is avoided via selectedTenantIdRef.
+  const handleFinanceReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setFinanceReady(true)
+  }, [])
+  const handleOneDriveReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setOneDriveReady(true)
+  }, [])
+  const handleNotesReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setNotesReady(true)
+  }, [])
+  const handleThreadReady = useCallback((readyTenantId: number) => {
+    if (readyTenantId === selectedTenantIdRef.current) setThreadReady(true)
+  }, [])
+
+  const isSwitchingTenant = selectedTenantId !== undefined && !(financeReady && oneDriveReady && notesReady && threadReady)
+
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
   const [middleColumnCollapsed, setMiddleColumnCollapsed] = useState(false)
@@ -64,6 +111,17 @@ export default function Dashboard() {
   const [syncError, setSyncError] = useState('')
   const [syncToken, setSyncToken] = useState(0)
   const [toastVisible, setToastVisible] = useState(false)
+  const [messageToasts, setMessageToasts] = useState<MessageToast[]>([])
+  const messageToastIdRef = useRef(0)
+
+  const handleNewMessage = useCallback(({ tenantName, channel }: { tenantName: string; channel: string; direction: string }) => {
+    const id = ++messageToastIdRef.current
+    const channelLabel = channel.toLowerCase() === 'whatsapp' ? 'WhatsApp message' : channel.toLowerCase() === 'email' ? 'email' : channel
+    setMessageToasts((current) => [...current, { id, text: `New ${channelLabel} from ${tenantName}` }])
+    window.setTimeout(() => {
+      setMessageToasts((current) => current.filter((toast) => toast.id !== id))
+    }, MESSAGE_TOAST_DURATION_MS)
+  }, [])
 
   const columnsContainerRef = useRef<HTMLDivElement | null>(null)
   const [containerWidth, setContainerWidth] = useState(1200)
@@ -137,8 +195,30 @@ export default function Dashboard() {
     })
   }
 
+  const middleColumnMaxWidth = Math.max(
+    MIDDLE_COLUMN_MIN_WIDTH,
+    containerWidth - DIVIDER_WIDTH * 2 - tenantSidebarWidth - RIGHT_PANEL_MIN_WIDTH,
+  )
+  // Tracks whether the user's last explicit drag pinned the middle column to its
+  // max available width, so it keeps growing to fill the space on later resizes
+  // instead of staying stuck at the pixel value captured at drag time.
+  const middleColumnPinnedToMaxRef = useRef(false)
+
   const effectiveMiddleWidth =
     middleColumnWidth ?? Math.max(MIDDLE_COLUMN_MIN_WIDTH, (containerWidth - DIVIDER_WIDTH * 2 - tenantSidebarWidth) / 2)
+
+  // Re-clamp (or, if the user previously maximized it, re-grow) an explicitly-set
+  // middle width whenever the available space changes (window resize, sidebar
+  // collapse/expand, other divider drag).
+  useEffect(() => {
+    setMiddleColumnWidth((current) => {
+      if (current === null) return current
+      if (middleColumnPinnedToMaxRef.current) return middleColumnMaxWidth
+      const clamped = clampMiddleColumnWidth(current, containerWidth, tenantSidebarWidth)
+      return clamped === current ? current : clamped
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerWidth, tenantSidebarWidth, middleColumnMaxWidth])
 
   const handleTenantDividerStart = () => {
     dragBaseWidthRef.current = tenantSidebarWidth
@@ -161,6 +241,7 @@ export default function Dashboard() {
   }
   const handleMiddleDividerEnd = () => {
     setMiddleColumnWidth((current) => {
+      middleColumnPinnedToMaxRef.current = current !== null && current >= middleColumnMaxWidth
       persistLayout(tenantSidebarWidth, current)
       return current
     })
@@ -236,8 +317,9 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="flex h-full w-full flex-col overflow-hidden px-4 py-4">
-      <div className="mb-3 flex w-full items-center justify-between gap-4">
+    <main className="flex h-full w-full flex-col overflow-hidden px-3 py-3">
+      <SyncProgressOverlay active={syncRunning} />
+      <div className="mb-2 flex w-full items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold text-gray-900">Dashboard</h1>
         </div>
@@ -260,14 +342,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {toastVisible && (syncSummary || syncError) ? (
-        <div
-          className={[
-            'fixed right-4 top-4 z-50 w-80 overflow-hidden rounded-2xl border shadow-lg',
-            syncError ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900',
-          ].join(' ')}
-        >
-          <div className="px-4 py-3 text-sm">
+      <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+        {toastVisible && (syncSummary || syncError) ? (
+          <ToastCard toastKey={syncToken} tone={syncError ? 'error' : 'success'} durationMs={8000}>
             {syncError ? (
               <p className="font-semibold">{syncError}</p>
             ) : syncSummary ? (
@@ -284,15 +361,15 @@ export default function Dashboard() {
                 ) : null}
               </>
             ) : null}
-          </div>
-          <div className={['h-1 w-full', syncError ? 'bg-rose-200' : 'bg-emerald-200'].join(' ')}>
-            <div
-              key={syncToken}
-              className={['h-full animate-toast-countdown', syncError ? 'bg-rose-500' : 'bg-emerald-500'].join(' ')}
-            />
-          </div>
-        </div>
-      ) : null}
+          </ToastCard>
+        ) : null}
+
+        {messageToasts.map((toast) => (
+          <ToastCard key={toast.id} toastKey={toast.id} tone="info" durationMs={MESSAGE_TOAST_DURATION_MS}>
+            <p className="font-medium">{toast.text}</p>
+          </ToastCard>
+        ))}
+      </div>
 
       <div ref={columnsContainerRef} className="flex flex-row flex-1 min-h-0 overflow-hidden">
         <section
@@ -312,13 +389,14 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-3 transition-all duration-300',
+              'h-full w-full min-w-0 overflow-hidden p-2 transition-all duration-300',
               tenantsCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
             <TenantList
               selectedTenantId={selectedTenantId}
               reloadSignal={tenantReloadSignal}
+              onNewMessage={handleNewMessage}
             />
           </div>
         </section>
@@ -351,21 +429,32 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full min-w-0 overflow-hidden p-3 transition-all duration-300 flex flex-col gap-3',
+              'h-full w-full min-w-0 overflow-hidden p-2 transition-all duration-300 flex flex-col gap-2',
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-              <div className="flex h-full min-h-0 flex-1 overflow-auto">
-                <FinanceBox tenantId={selectedTenantId} />
+            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+              <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
+                <FinanceBox tenantId={selectedTenantId} onReady={handleFinanceReady} />
               </div>
+              <TileLoadingOverlay active={isSwitchingTenant} />
             </section>
 
-            <section className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-              <div className="flex h-full min-h-0 flex-1 overflow-auto">
-                <OneDriveBox tenantId={selectedTenantId} />
-              </div>
-            </section>
+            <div className="flex min-h-0 flex-1 flex-col gap-2">
+              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+                <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
+                  <NotesBox tenantId={selectedTenantId} onReady={handleNotesReady} />
+                </div>
+                <TileLoadingOverlay active={isSwitchingTenant} />
+              </section>
+
+              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+                <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
+                  <OneDriveBox tenantId={selectedTenantId} onReady={handleOneDriveReady} />
+                </div>
+                <TileLoadingOverlay active={isSwitchingTenant} />
+              </section>
+            </div>
           </div>
         </section>
 
@@ -384,12 +473,13 @@ export default function Dashboard() {
         />
 
         <section
-          className="flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition-all duration-300"
+          className="relative flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm transition-all duration-300"
           style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
         >
           <div className="h-full w-full min-h-0 overflow-hidden">
-            <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} />
+            <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} onReady={handleThreadReady} />
           </div>
+          <TileLoadingOverlay active={isSwitchingTenant} />
         </section>
       </div>
 

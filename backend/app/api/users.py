@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin_user, get_db
+from app.core.dependencies import get_current_admin_user, get_current_user, get_db
 from app.core.security import generate_secure_token, get_password_hash, hash_token
 from app.core.public_urls import get_public_frontend_base_url
 from app.models.admin_invite import AdminInvite
@@ -12,6 +12,8 @@ from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
 from app.schemas.user import (
     AdminUserCreate,
+    TenantStatusFilterRead,
+    TenantStatusFilterUpdate,
     UserDeleteResult,
     UserRead,
     UserUpdate,
@@ -24,6 +26,23 @@ RESET_HOURS = 24
 
 def _public_base_url() -> str:
     return get_public_frontend_base_url()
+
+
+@router.get("/me/tenant-status-filter", response_model=TenantStatusFilterRead)
+def get_tenant_status_filter(current_user: User = Depends(get_current_user)) -> TenantStatusFilterRead:
+    return TenantStatusFilterRead(statuses=current_user.tenant_status_filter)
+
+
+@router.put("/me/tenant-status-filter", response_model=TenantStatusFilterRead)
+def update_tenant_status_filter(
+    payload: TenantStatusFilterUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantStatusFilterRead:
+    current_user.tenant_status_filter = payload.statuses
+    db.commit()
+    db.refresh(current_user)
+    return TenantStatusFilterRead(statuses=current_user.tenant_status_filter)
 
 
 @router.get("", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])

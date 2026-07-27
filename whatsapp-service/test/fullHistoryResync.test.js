@@ -34,13 +34,32 @@ async function withMockedForward(t, run) {
   process.env.CRM_WEBHOOK_URL = 'http://crm.test/webhooks/whatsapp';
   process.env.CRM_WEBHOOK_SECRET = 'test-webhook-secret';
 
-  global.fetch = async () => ({
-    ok: true,
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-    json: async () => ({ ok: true }),
-    text: async () => '',
-  });
+  global.fetch = async (url, options = {}) => {
+    if (options.body) {
+      try {
+        const parsedBody = JSON.parse(options.body);
+        if (Array.isArray(parsedBody.messages)) {
+          return {
+            ok: true,
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            json: async () => ({ ok: true, processed: parsedBody.messages.length, failed: 0 }),
+            text: async () => '',
+          };
+        }
+      } catch (error) {
+        // fall through to the generic response below
+      }
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      json: async () => ({ ok: true }),
+      text: async () => '',
+    };
+  };
 
   // config.js reads process.env once at require time, so whatsappClient must be
   // reloaded after the env vars above are set (see historyBackfill.test.js for the
@@ -110,6 +129,34 @@ test('backfillAllChats with chatId targets exactly one chat and forces full hist
       all: false,
       chatId: '326472368@lid',
       clientOverride: { getChats: async () => [target, other] },
+      readyOverride: true,
+      limit: 100,
+      postSyncDelayMs: 0,
+    });
+
+    assert.equal(result.total_chats_in_whatsapp, 1, 'only the targeted chat should be considered');
+    assert.equal(result.fetched, 250);
+    assert.equal(result.imported, 250);
+  });
+});
+
+test('backfillAllChats with chatId uses getChatById so an unrelated broken chat cannot fail the whole request', async (t) => {
+  await withMockedForward(t, async (backfillAllChats) => {
+    const target = makeChat('326472368@lid', 250);
+
+    const result = await backfillAllChats({
+      all: false,
+      chatId: '326472368@lid',
+      clientOverride: {
+        // A real WhatsApp session's getChats() walks every chat in one Promise.all; if any
+        // single chat's model construction throws (seen with @lid groups mid-migration to LID
+        // addressing), the whole call rejects. A targeted single-chat backfill must not depend
+        // on that bulk call succeeding.
+        getChats: async () => {
+          throw new Error('r: r');
+        },
+        getChatById: async (chatId) => (chatId === '326472368@lid' ? target : undefined),
+      },
       readyOverride: true,
       limit: 100,
       postSyncDelayMs: 0,

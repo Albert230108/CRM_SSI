@@ -4,24 +4,34 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
+from app.models.admin_settings import AdminSettings
+from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
-from app.services.gmail_client import send_gmail_reply
+from app.services import ai_reply_service
+from app.services.email_outbound_persistence import persist_gmail_outbound_message
+from app.services.gemini_client import GeminiClientError
+from app.services.gmail_client import GMAIL_SCOPES, build_gmail_credentials, list_thread_drafts, send_gmail_forward, send_gmail_reply
+from app.services.tenant_channel_resolver import (
+    _lookup_whatsapp_endpoint_by_exact_chat_identity,
+    _lookup_whatsapp_endpoint_by_normalized_chat_identity,
+)
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
 from app.services.whatsapp_client import WhatsAppBridgeError, send_whatsapp_message
-from cryptography.fernet import Fernet
 from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request as GoogleAuthRequest
 import os
 
 router = APIRouter(prefix="/communications", tags=["communications"])
@@ -29,38 +39,8 @@ logger = logging.getLogger(__name__)
 PROVIDER_GMAIL = "gmail"
 
 
-def _decrypt_refresh_token(encrypted_refresh_token: str | None) -> str | None:
-    if not encrypted_refresh_token:
-        return None
-    try:
-        key = os.getenv("GMAIL_TOKEN_ENCRYPTION_KEY")
-        if not key:
-            return None
-        cipher = Fernet(key.encode("utf-8"))
-        return cipher.decrypt(encrypted_refresh_token.encode("utf-8")).decode("utf-8")
-    except Exception:
-        return None
-
-
 def _build_gmail_credentials(account: GmailAccount) -> Credentials | None:
-    refresh_token = _decrypt_refresh_token(account.refresh_token_encrypted)
-    if not refresh_token:
-        return None
-    try:
-        credentials = Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri=account.token_uri or "https://oauth2.googleapis.com/token",
-            client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
-            client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
-            scopes=account.scopes_json or ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
-        )
-        # Refresh the token to get a valid access token
-        credentials.refresh(GoogleAuthRequest())
-        return credentials
-    except Exception as exc:
-        logger.exception("Failed to build Gmail credentials")
-        return None
+    return build_gmail_credentials(account)
 
 
 class WhatsAppOutboundResolutionRead(BaseModel):
@@ -73,6 +53,52 @@ class WhatsAppOutboundResolutionRead(BaseModel):
     whatsapp_normalized_phone: str | None = None
     external_account_id: str | None = None
     resolution_strategy: str | None = None
+
+
+class EmailForwardRequest(BaseModel):
+    email_thread_id: int
+    subject: str | None = None
+    body: str
+
+
+class GmailDraftRead(BaseModel):
+    draft_id: str | None = None
+    subject: str
+    body_text: str
+
+
+class AiDraftGenerateRequest(BaseModel):
+    channel: str
+    template_id: int | None = None
+    rough_draft: str | None = None
+
+
+class AiDraftGenerateResponse(BaseModel):
+    generated_text: str
+    template_id: int
+
+
+def _resolve_tenant_conversation(db: Session, tenant: Tenant, email_thread_id: int) -> tuple[Conversation, GmailAccount]:
+    conversation = (
+        db.query(Conversation)
+        .join(
+            TenantConversationLink,
+            (TenantConversationLink.conversation_id == Conversation.id)
+            & (TenantConversationLink.unlinked_at.is_(None)),
+        )
+        .filter(Conversation.id == email_thread_id, TenantConversationLink.tenant_id == tenant.id)
+        .first()
+    )
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email thread not found")
+
+    account = db.query(GmailAccount).filter(GmailAccount.id == conversation.provider_account_id).first()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account for this thread is not found")
+    if not account.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account is inactive")
+
+    return conversation, account
 
 
 def _mask_endpoint_value(value: str | None) -> str | None:
@@ -92,6 +118,7 @@ def _to_endpoint_read(endpoint: TenantChannelEndpoint) -> TenantChannelEndpointR
         external_account_id=endpoint.external_account_id,
         external_phone_id=endpoint.external_phone_id,
         external_chat_namespace=endpoint.external_chat_namespace,
+        chat_display_name=endpoint.chat_display_name,
         webhook_token=_mask_endpoint_value(endpoint.webhook_token),
         signing_secret=_mask_endpoint_value(endpoint.signing_secret),
         is_active=endpoint.is_active,
@@ -163,11 +190,12 @@ def get_tenant_thread_version(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str | None]:
-    """Cheap marker the frontend polls to detect new inbound messages for a tenant's thread.
+    """Cheap marker the frontend polls to detect changes for a tenant's thread.
 
-    Returns the latest of the WhatsApp (`communications`) and email
-    (`conversation_messages`) timestamps for this tenant. The frontend re-fetches the full
-    grouped thread only when this value changes, instead of polling the heavier endpoint.
+    Returns the latest of the WhatsApp (`communications`), email (`conversation_messages`),
+    and tenant-record (e.g. Beds24-driven booking_status) timestamps for this tenant. The
+    frontend re-fetches the full grouped thread only when this value changes, instead of
+    polling the heavier endpoint.
     """
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
@@ -183,15 +211,86 @@ def get_tenant_thread_version(
     latest_email_at = (
         db.query(ConversationMessage.sent_at)
         .join(Conversation, ConversationMessage.conversation_id == Conversation.id)
-        .filter(Conversation.tenant_id == tenant_id)
+        .join(
+            TenantConversationLink,
+            (TenantConversationLink.conversation_id == Conversation.id)
+            & (TenantConversationLink.unlinked_at.is_(None)),
+        )
+        .filter(TenantConversationLink.tenant_id == tenant_id)
         .order_by(ConversationMessage.sent_at.desc())
         .limit(1)
         .scalar()
     )
 
-    candidates = [value for value in (latest_communication_at, latest_email_at) if value is not None]
+    candidates = [value for value in (latest_communication_at, latest_email_at, tenant.updated_at) if value is not None]
     latest_at = max(candidates) if candidates else None
     return {"latest_at": latest_at.isoformat() if latest_at else None}
+
+
+class ThreadVersionRead(BaseModel):
+    latest_at: str | None
+    tenant_id: int | None = None
+    tenant_name: str | None = None
+    channel: str | None = None
+    direction: str | None = None
+
+
+@router.get("/thread-version", response_model=ThreadVersionRead)
+def get_global_thread_version(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ThreadVersionRead:
+    """Cheap marker the tenant list polls to detect changes across any tenant.
+
+    Same idea as `get_tenant_thread_version` but with no tenant filter, so the sidebar can
+    re-sort/re-fetch the tenant list (e.g. to surface a new WhatsApp message, or recolor a
+    tenant whose booking_status just changed via the Beds24 webhook) without the currently
+    open tenant's thread being the only thing kept live.
+
+    Also carries the tenant/channel/direction of whichever event produced `latest_at`, so the
+    frontend can show a "new message" toast without a second request. When the latest event is
+    a plain tenant-record update (e.g. Beds24 status change, no new message), those fields stay
+    null. This only reflects the single most-recent event per poll tick, not a full event log.
+    """
+    latest_communication = (
+        db.query(Communication).order_by(Communication.created_at.desc()).limit(1).first()
+    )
+    latest_email = (
+        db.query(ConversationMessage, Conversation.tenant_id)
+        .join(Conversation, ConversationMessage.conversation_id == Conversation.id)
+        .order_by(ConversationMessage.sent_at.desc())
+        .limit(1)
+        .first()
+    )
+    latest_tenant_update_at = db.query(func.max(Tenant.updated_at)).scalar()
+
+    candidates: list[tuple[Any, int | None, str | None, str | None]] = []
+    if latest_communication is not None:
+        candidates.append(
+            (latest_communication.created_at, latest_communication.tenant_id, latest_communication.channel, latest_communication.direction)
+        )
+    if latest_email is not None:
+        email_message, email_tenant_id = latest_email
+        candidates.append((email_message.sent_at, email_tenant_id, "email", email_message.direction))
+    if latest_tenant_update_at is not None:
+        candidates.append((latest_tenant_update_at, None, None, None))
+
+    if not candidates:
+        return ThreadVersionRead(latest_at=None)
+
+    latest_at, tenant_id, channel, direction = max(candidates, key=lambda item: item[0])
+
+    tenant_name = None
+    if tenant_id is not None:
+        tenant_name = db.query(Tenant.name).filter(Tenant.id == tenant_id).scalar()
+
+    return ThreadVersionRead(
+        latest_at=latest_at.isoformat() if latest_at else None,
+        tenant_id=tenant_id,
+        tenant_name=tenant_name,
+        channel=channel,
+        direction=direction,
+    )
 
 
 @router.get("/whatsapp/outbound-resolution", response_model=WhatsAppOutboundResolutionRead)
@@ -262,6 +361,38 @@ def resolve_whatsapp_outbound_communication(
                     resolution_strategy=("chat_id_external_account_id" if match_field == "whatsapp_chat_id" else f"{match_field}_external_account_id"),
                 )
 
+    # No prior outbound Communication exists for this chat yet (e.g. the very first message,
+    # or one sent from another linked device before this session ever observed the chat). Fall
+    # back to the manual TenantChannelEndpoint link, which is authoritative for outbound routing
+    # regardless of whether any Communication has been persisted yet.
+    if external_account_id:
+        default_provider = "whatsapp-service"
+        for chat_identity in (whatsapp_identity_key, whatsapp_chat_id):
+            if not chat_identity:
+                continue
+            endpoint = _lookup_whatsapp_endpoint_by_exact_chat_identity(
+                db,
+                provider=default_provider,
+                external_account_id=external_account_id,
+                chat_identity=chat_identity,
+            ) or _lookup_whatsapp_endpoint_by_normalized_chat_identity(
+                db,
+                provider=default_provider,
+                external_account_id=external_account_id,
+                chat_identity=chat_identity,
+            )
+            if endpoint is not None:
+                return WhatsAppOutboundResolutionRead(
+                    found=True,
+                    tenant_id=endpoint.tenant_id,
+                    provider_message_id=provider_message_id,
+                    whatsapp_chat_id=whatsapp_chat_id,
+                    whatsapp_identity_key=whatsapp_identity_key,
+                    whatsapp_normalized_phone=whatsapp_normalized_phone,
+                    external_account_id=external_account_id,
+                    resolution_strategy="manual_channel_endpoint",
+                )
+
     return WhatsAppOutboundResolutionRead(
         found=False,
         resolution_strategy="unresolved",
@@ -293,9 +424,6 @@ async def send_tenant_communication(
 
     selected_endpoint = None
     if channel == "whatsapp":
-        whatsapp_to = get_tenant_primary_phone_raw(db, tenant)
-        if not whatsapp_to:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant phone is required for WhatsApp")
         if payload.whatsapp_endpoint_id is not None:
             selected_endpoint = (
                 db.query(TenantChannelEndpoint)
@@ -306,14 +434,24 @@ async def send_tenant_communication(
                 .first()
             )
         elif payload.external_account_id:
-            selected_endpoint = (
+            # A tenant can have multiple active chats linked on the same account, so this
+            # fallback (no specific whatsapp_endpoint_id given) is only safe when there's
+            # exactly one match — otherwise we'd silently pick an arbitrary chat to send to.
+            matching_endpoints = (
                 db.query(TenantChannelEndpoint)
                 .filter(
                     TenantChannelEndpoint.tenant_id == tenant.id,
                     TenantChannelEndpoint.external_account_id == payload.external_account_id.strip(),
+                    TenantChannelEndpoint.is_active.is_(True),
                 )
-                .first()
+                .all()
             )
+            if len(matching_endpoints) > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Tenant has multiple chats linked on this account; select a specific WhatsApp chat to send from",
+                )
+            selected_endpoint = matching_endpoints[0] if matching_endpoints else None
         if selected_endpoint is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select a WhatsApp account to send from")
         if not selected_endpoint.is_active:
@@ -327,6 +465,12 @@ async def send_tenant_communication(
         selected_external_account_id = (selected_endpoint.external_account_id or "").strip()
         if not selected_external_account_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected WhatsApp account is missing an external account id")
+        # Prefer the specific chat this endpoint is manually linked to, so a reply targets the
+        # right chat when a tenant has multiple linked on the same account. Only a bare/unlinked
+        # endpoint (no manual chat link) falls back to the tenant's generic primary phone.
+        whatsapp_to = selected_endpoint.external_chat_namespace or get_tenant_primary_phone_raw(db, tenant)
+        if not whatsapp_to:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant phone is required for WhatsApp")
         whatsapp_payload = {
             "to": whatsapp_to,
             "message": message,
@@ -356,7 +500,12 @@ async def send_tenant_communication(
 
         conversation = (
             db.query(Conversation)
-            .filter(Conversation.id == payload.email_thread_id, Conversation.tenant_id == tenant.id)
+            .join(
+                TenantConversationLink,
+                (TenantConversationLink.conversation_id == Conversation.id)
+                & (TenantConversationLink.unlinked_at.is_(None)),
+            )
+            .filter(Conversation.id == payload.email_thread_id, TenantConversationLink.tenant_id == tenant.id)
             .first()
         )
         if conversation is None:
@@ -421,39 +570,16 @@ async def send_tenant_communication(
             logger.exception("Failed to send Gmail reply")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send email: {str(exc)}") from exc
 
-        # Persist the sent message immediately so it shows up in the timeline
-        provider_message_id = gmail_result.get("id")
-        db.add(
-            ConversationMessage(
-                conversation_id=conversation.id,
-                provider=PROVIDER_GMAIL,
-                provider_message_id=provider_message_id or "",
-                direction="outbound",
-                sender_email=account.email_address,
-                recipient_email=to_email,
-                subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
-                body=message,
-                sent_at=datetime.now(timezone.utc),
-                raw_payload={"gmail": gmail_result},
-            )
-        )
-        db.commit()
-
-        # Also add to Communication table for compatibility
-        communication = Communication(
+        return persist_gmail_outbound_message(
+            db,
             tenant_id=tenant.id,
-            channel=channel,
-            direction="outbound",
-            provider=PROVIDER_GMAIL,
-            external_account_id=account.email_address,
+            conversation=conversation,
+            account=account,
+            to_email=to_email,
             subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
             message=message,
-            created_at=datetime.now(timezone.utc),
+            gmail_result=gmail_result,
         )
-        db.add(communication)
-        db.commit()
-        db.refresh(communication)
-        return communication
 
     if channel == "whatsapp":
         # Immediately persist the outbound message to ensure UI visibility
@@ -487,3 +613,177 @@ async def send_tenant_communication(
             communication.external_chat_namespace,
         )
         return communication
+
+
+@router.post("/tenants/{tenant_id}/forward", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)
+async def forward_tenant_email_thread(
+    tenant_id: int,
+    payload: EmailForwardRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Communication:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
+
+    conversation, account = _resolve_tenant_conversation(db, tenant, payload.email_thread_id)
+
+    admin_settings = db.query(AdminSettings).first()
+    forward_to_email = (admin_settings.forward_to_email if admin_settings else None) or None
+    if not forward_to_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Forwarding address is not configured in Admin Settings")
+
+    # Extract In-Reply-To/References from the latest message, and quote the full thread
+    # history, so the forward stays within the same Gmail thread — this lets draft
+    # retrieval later filter by threadId to find the AI-authored reply for this tenant.
+    thread_messages = (
+        db.query(ConversationMessage)
+        .filter(ConversationMessage.conversation_id == conversation.id)
+        .order_by(ConversationMessage.sent_at.asc())
+        .all()
+    )
+    latest_message = thread_messages[-1] if thread_messages else None
+    in_reply_to_message_id = None
+    references = None
+    if latest_message and latest_message.raw_payload and isinstance(latest_message.raw_payload, dict):
+        headers = (latest_message.raw_payload.get("gmail", {}).get("payload") or {}).get("headers") or []
+        for header in headers:
+            if str(header.get("name", "")).lower() == "message-id":
+                in_reply_to_message_id = str(header.get("value", "")).strip()
+            elif str(header.get("name", "")).lower() == "references":
+                references = str(header.get("value", "")).strip()
+
+    quote_lines = ["", "---------- Forwarded message ----------"]
+    for thread_message in thread_messages:
+        sender = thread_message.sender_email or (account.email_address if thread_message.direction == "outbound" else "Unknown")
+        quote_lines.append(f"\nOn {thread_message.sent_at.isoformat()}, {sender} wrote:")
+        quote_lines.append(thread_message.body or "")
+    full_body = body + "\n".join(quote_lines)
+
+    subject = payload.subject.strip() if payload.subject else (conversation.subject or "")
+
+    credentials = _build_gmail_credentials(account)
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing or could not be decrypted")
+
+    try:
+        gmail_result = send_gmail_forward(
+            credentials,
+            thread_id=conversation.provider_thread_id,
+            to_email=forward_to_email,
+            subject=subject,
+            body_text=full_body,
+            from_email=account.email_address,
+            in_reply_to_message_id=in_reply_to_message_id,
+            references=references,
+        )
+    except Exception as exc:
+        logger.exception("Failed to forward Gmail thread")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to forward email: {str(exc)}") from exc
+
+    provider_message_id = gmail_result.get("id")
+    db.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider=PROVIDER_GMAIL,
+            provider_message_id=provider_message_id or "",
+            direction="outbound",
+            sender_email=account.email_address,
+            recipient_email=forward_to_email,
+            subject=subject,
+            body=body,
+            sent_at=datetime.now(timezone.utc),
+            raw_payload={"gmail": gmail_result},
+        )
+    )
+    db.commit()
+
+    communication = Communication(
+        tenant_id=tenant.id,
+        channel="email",
+        direction="outbound",
+        provider=PROVIDER_GMAIL,
+        external_account_id=account.email_address,
+        subject=subject,
+        message=body,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(communication)
+    db.commit()
+    db.refresh(communication)
+    return communication
+
+
+@router.get("/tenants/{tenant_id}/threads/{conversation_id}/draft", response_model=list[GmailDraftRead])
+async def get_tenant_thread_draft(
+    tenant_id: int,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    conversation, account = _resolve_tenant_conversation(db, tenant, conversation_id)
+
+    credentials = _build_gmail_credentials(account)
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing or could not be decrypted")
+
+    try:
+        return list_thread_drafts(credentials, conversation.provider_thread_id)
+    except Exception as exc:
+        logger.exception("Failed to list Gmail drafts for thread")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve drafts: {str(exc)}") from exc
+
+
+@router.post("/tenants/{tenant_id}/ai-draft", response_model=AiDraftGenerateResponse)
+def generate_tenant_ai_draft(
+    tenant_id: int,
+    payload: AiDraftGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiDraftGenerateResponse:
+    """Stateless "Draft with AI" generation for the reply box - the caller pastes the result
+    into the reply textarea for proofreading before sending; nothing is persisted here."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    channel = payload.channel.strip().lower()
+    if channel not in {"email", "whatsapp"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported channel")
+
+    template_id = payload.template_id
+    if template_id is None:
+        ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+        if ai_settings is not None:
+            template_id = ai_settings.default_email_template_id if channel == "email" else ai_settings.default_whatsapp_template_id
+    if template_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No AI template selected and no default template is configured for this tenant and channel",
+        )
+
+    template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == template_id).first()
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    try:
+        generated_text = ai_reply_service.build_prompt_and_generate(
+            db,
+            tenant=tenant,
+            template=template,
+            channel=channel,
+            rough_draft=payload.rough_draft,
+        )
+    except GeminiClientError as exc:
+        logger.exception("AI draft generation failed")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return AiDraftGenerateResponse(generated_text=generated_text, template_id=template.id)
