@@ -1705,6 +1705,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             <div
               className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
               onPointerDown={emailThreadSize.handlePointerDown}
+              onClick={(e) => e.stopPropagation()}
               title="Drag to resize"
             >
               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
@@ -1877,6 +1878,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               <div
                 className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
                 onPointerDown={whatsappBlockSize.handlePointerDown}
+                onClick={(e) => e.stopPropagation()}
                 title="Drag to resize"
               >
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
@@ -2064,6 +2066,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             <div
               className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
               onPointerDown={whatsappGroupSize.handlePointerDown}
+              onClick={(e) => e.stopPropagation()}
               title="Drag to resize"
             >
               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
