@@ -34,3 +34,9 @@ class TenantEmailLinkRead(BaseModel):
 class TenantEmailLinkCreateRead(BaseModel):
     link: TenantEmailLinkRead
     gmail_sync_job_id: str | None = None
+
+
+class TenantEmailLinkDeleteRead(BaseModel):
+    link: TenantEmailLinkRead
+    deleted_conversations: int = 0
+    shared_conversations_unlinked: int = 0

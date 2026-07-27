@@ -161,6 +161,18 @@ def test_tenant_matched_via_secondary_linked_email():
         db.commit()
         conversation_id = conversation.id
         assert conversation.tenant_id == tenant_id
+
+        # Regression test: the link's matched_email must record the secondary address that
+        # actually matched, not the tenant's primary email -- otherwise unlinking the secondary
+        # email later can never find (and delete) this conversation, and the UI misreports which
+        # address the conversation belongs to.
+        link = (
+            db.query(TenantConversationLink)
+            .filter(TenantConversationLink.tenant_id == tenant_id, TenantConversationLink.conversation_id == conversation_id)
+            .first()
+        )
+        assert link is not None
+        assert link.matched_email == secondary_email
     finally:
         db.close()
 

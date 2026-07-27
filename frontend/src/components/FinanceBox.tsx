@@ -74,6 +74,11 @@ type FinanceResponse = {
 
 type TenantSummary = FinanceResponse['tenant']
 
+type GmailAccountOption = {
+  id: number
+  email_address: string
+}
+
 type WhatsappEndpointOption = {
   id: number
   tenant_id: number
@@ -137,8 +142,11 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const [tenant, setTenant] = useState<TenantSummary | null>(null)
   const [whatsappEndpoints, setWhatsappEndpoints] = useState<WhatsappEndpointOption[]>([])
   const [showWhatsappMenu, setShowWhatsappMenu] = useState(false)
+  const [gmailAccounts, setGmailAccounts] = useState<GmailAccountOption[]>([])
+  const [showGmailMenu, setShowGmailMenu] = useState(false)
   const [showQuoteNotice, setShowQuoteNotice] = useState(false)
   const whatsappMenuRef = useRef<HTMLDivElement>(null)
+  const gmailMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!showWhatsappMenu) return
@@ -150,6 +158,37 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showWhatsappMenu])
+
+  useEffect(() => {
+    if (!showGmailMenu) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (gmailMenuRef.current && !gmailMenuRef.current.contains(event.target as Node)) {
+        setShowGmailMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showGmailMenu])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const loadGmailAccounts = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          signal: controller.signal,
+        })
+        if (response.ok) {
+          const accounts: GmailAccountOption[] = await response.json()
+          setGmailAccounts(accounts)
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+      }
+    }
+    loadGmailAccounts()
+    return () => controller.abort()
+  }, [token])
 
   useEffect(() => {
     if (!tenantId) {
@@ -306,9 +345,29 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
 
   const hasTenantPhoneFallback = Boolean(digitsOnly(tenant?.phone) || digitsOnly(tenant?.mobile))
   const whatsappAvailable = whatsappEndpoints.length > 0 || hasTenantPhoneFallback
-  const gmailUrl = tenant?.email
-    ? `https://mail.google.com/mail/u/0/#search/from:(${encodeURIComponent(tenant.email)})`
-    : 'https://mail.google.com/mail/u/0/'
+  const buildGmailUrl = (accountEmail?: string) => {
+    const accountSegment = accountEmail ? encodeURIComponent(accountEmail) : '0'
+    return tenant?.email
+      ? `https://mail.google.com/mail/u/${accountSegment}/#search/from:(${encodeURIComponent(tenant.email)})`
+      : `https://mail.google.com/mail/u/${accountSegment}/`
+  }
+
+  const openGmailTarget = (accountEmail?: string) => {
+    window.open(buildGmailUrl(accountEmail), '_blank', 'noopener,noreferrer')
+    setShowGmailMenu(false)
+  }
+
+  const handleGmailClick = () => {
+    if (gmailAccounts.length > 1) {
+      setShowGmailMenu((prev) => !prev)
+      return
+    }
+    if (gmailAccounts.length === 1) {
+      openGmailTarget(gmailAccounts[0].email_address)
+      return
+    }
+    openGmailTarget()
+  }
 
   const openWhatsappTarget = (endpoint: WhatsappEndpointOption | null) => {
     const { url } = resolveWhatsappTarget(endpoint, tenant)
@@ -384,18 +443,33 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
               </div>
             ) : null}
           </div>
-          <a
-            href={gmailUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open Gmail"
-            className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-rose-500">
-              <path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 2-8 5-8-5h16zM4 18V7.4l8 5 8-5V18H4z" />
-            </svg>
-            Gmail
-          </a>
+          <div className="relative" ref={gmailMenuRef}>
+            <button
+              type="button"
+              onClick={handleGmailClick}
+              title={gmailAccounts.length > 1 ? 'Choose Gmail account' : 'Open Gmail'}
+              className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-rose-500">
+                <path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 2-8 5-8-5h16zM4 18V7.4l8 5 8-5V18H4z" />
+              </svg>
+              Gmail
+            </button>
+            {showGmailMenu && gmailAccounts.length > 1 ? (
+              <div className="absolute right-0 z-10 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                {gmailAccounts.map((account) => (
+                  <button
+                    key={account.id}
+                    type="button"
+                    onClick={() => openGmailTarget(account.email_address)}
+                    className="block w-full truncate px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                  >
+                    {account.email_address}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <div className="relative">
             <button
               type="button"

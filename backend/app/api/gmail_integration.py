@@ -283,11 +283,14 @@ def _email_address(raw_value: str | None) -> str | None:
     return email.strip().lower() if email else raw_value.strip().lower()
 
 
-def _find_tenants_for_message(db: Session, headers: dict[str, str], account_email: str) -> list[Tenant]:
+def _find_tenants_for_message(db: Session, headers: dict[str, str], account_email: str) -> list[tuple[Tenant, str]]:
     # Multiple tenants can share the same email address (e.g. duplicate bookings for the
     # same guest). Every matching tenant must be returned so the conversation can be linked
     # to all of them, instead of a single arbitrary match "stealing" the conversation.
-    tenants: list[Tenant] = []
+    # The matched address (which may be a tenant's primary email or a secondary linked one)
+    # is returned alongside each tenant so callers can record which address actually matched,
+    # rather than assuming it was always the tenant's primary email.
+    matches: list[tuple[Tenant, str]] = []
     seen_ids: set[int] = set()
     for field in ("from", "to", "cc", "bcc"):
         raw_value = headers.get(field)
@@ -299,7 +302,7 @@ def _find_tenants_for_message(db: Session, headers: dict[str, str], account_emai
                 for tenant in db.query(Tenant).filter(Tenant.email == address).all():
                     if tenant.id not in seen_ids:
                         seen_ids.add(tenant.id)
-                        tenants.append(tenant)
+                        matches.append((tenant, address))
                 linked_tenant_ids = (
                     db.query(TenantEmailAddress.tenant_id)
                     .filter(TenantEmailAddress.email == address, TenantEmailAddress.is_active.is_(True))
@@ -310,13 +313,13 @@ def _find_tenants_for_message(db: Session, headers: dict[str, str], account_emai
                         tenant = db.query(Tenant).filter(Tenant.id == linked_tenant_id).first()
                         if tenant is not None:
                             seen_ids.add(tenant.id)
-                            tenants.append(tenant)
-    return tenants
+                            matches.append((tenant, address))
+    return matches
 
 
 def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email: str) -> Tenant | None:
     matches = _find_tenants_for_message(db, headers, account_email)
-    return matches[0] if matches else None
+    return matches[0][0] if matches else None
 
 
 def _ensure_tenant_conversation_link(
@@ -422,16 +425,16 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
     latest_preview = conversation.preview_text
     last_message_at = conversation.last_message_at
     tenant = None
-    matched_tenants: dict[int, Tenant] = {}
+    matched_tenants: dict[int, tuple[Tenant, str]] = {}
 
     for message in messages:
         payload = message.get("payload") or {}
         headers = _headers_map(payload.get("headers") or [])
         sender_email = _email_address(headers.get("from"))
         message_tenants = _find_tenants_for_message(db, headers, account_email)
-        for matched_tenant in message_tenants:
-            matched_tenants.setdefault(matched_tenant.id, matched_tenant)
-        tenant = tenant or (message_tenants[0] if message_tenants else None)
+        for matched_tenant, matched_address in message_tenants:
+            matched_tenants.setdefault(matched_tenant.id, (matched_tenant, matched_address))
+        tenant = tenant or (message_tenants[0][0] if message_tenants else None)
         sent_at = _parse_internal_date(message.get("internalDate"))
         # SQLite drops tzinfo on round-trip, so a conversation's stored last_message_at can
         # come back naive on a later sync while sent_at (freshly parsed) is always aware.
@@ -480,7 +483,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                     )
                 )
             if direction == "inbound":
-                for notify_tenant in message_tenants:
+                for notify_tenant, _ in message_tenants:
                     create_notification(
                         db,
                         tenant_id=notify_tenant.id,
@@ -497,7 +500,10 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
     if not matched_tenants and conversation.tenant_id is not None:
         existing_tenant = db.query(Tenant).filter(Tenant.id == conversation.tenant_id).first()
         if existing_tenant is not None:
-            matched_tenants[existing_tenant.id] = existing_tenant
+            # No address could be matched from this sync pass (e.g. re-syncing headers that no
+            # longer resolve to any known address) -- fall back to the tenant's primary email
+            # since it's the best available guess for which address this conversation belongs to.
+            matched_tenants[existing_tenant.id] = (existing_tenant, existing_tenant.email)
             tenant = tenant or existing_tenant
     tenant_email_candidates = _thread_email_candidates(messages, account_email)
     if tenant is not None and not tenant.email and len(tenant_email_candidates) == 1:
@@ -508,14 +514,14 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
     # tenant_id column is only a "primary tenant" convenience value now. Actual multi-tenant
     # visibility is granted via TenantConversationLink below.
     if conversation.tenant_id is None and matched_tenants:
-        conversation.tenant_id = next(iter(matched_tenants.values())).id
+        conversation.tenant_id = next(iter(matched_tenants.values()))[0].id
     conversation.last_message_at = last_message_at
     conversation.preview_text = latest_preview
     db.flush()
 
-    for matched_tenant in matched_tenants.values():
+    for matched_tenant, matched_address in matched_tenants.values():
         _ensure_tenant_conversation_link(
-            db, matched_tenant.id, conversation.id, matched_email=matched_tenant.email
+            db, matched_tenant.id, conversation.id, matched_email=matched_address
         )
 
     return conversation

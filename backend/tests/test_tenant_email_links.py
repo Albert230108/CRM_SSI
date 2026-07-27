@@ -136,11 +136,103 @@ def test_unlink_email_link_removes_beds24_info_item(user_client, db_session):
         delete_response = user_client.delete(f"/api/tenants/{tenant.id}/email-links/{created['id']}")
 
     assert delete_response.status_code == 200
-    assert delete_response.json()["is_active"] is False
+    body = delete_response.json()
+    assert body["link"]["is_active"] is False
+    assert body["deleted_conversations"] == 0
+    assert body["shared_conversations_unlinked"] == 0
     mocked_delete.assert_awaited_once_with("B-unlink-email", "555")
 
     active_links = user_client.get(f"/api/tenants/{tenant.id}/email-links").json()
     assert active_links == []
+
+
+def _make_conversation_matched_to_email(db_session, tenant_id, email, provider_thread_id):
+    from datetime import datetime, timezone
+
+    from app.models.gmail_integration import Conversation, ConversationMessage
+    from app.models.tenant_conversation_link import TenantConversationLink
+
+    conversation = Conversation(provider="gmail", provider_thread_id=provider_thread_id, tenant_id=tenant_id, subject="Re: Booking")
+    db_session.add(conversation)
+    db_session.commit()
+    db_session.refresh(conversation)
+    db_session.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider="gmail",
+            provider_message_id=f"msg-{provider_thread_id}",
+            direction="inbound",
+            sender_email=email,
+            recipient_email="info@shortstayinn.com",
+            subject="Re: Booking",
+            body="Hi",
+            sent_at=datetime.now(timezone.utc),
+        )
+    )
+    db_session.add(TenantConversationLink(tenant_id=tenant_id, conversation_id=conversation.id, matched_email=email))
+    db_session.commit()
+    return conversation.id
+
+
+def test_unlink_email_deletes_matched_conversations(user_client, db_session):
+    from app.models.gmail_integration import Conversation, ConversationMessage
+
+    tenant = create_tenant(db_session, booking_id="B-unlink-conv")
+    with patch("app.api.tenant_email_links.add_booking_info_item", new=AsyncMock(return_value={"id": "1"})):
+        created = user_client.post(f"/api/tenants/{tenant.id}/email-links", json={"email": "guest@example.com"}).json()["link"]
+
+    conversation_id = _make_conversation_matched_to_email(db_session, tenant.id, "guest@example.com", "thread-unlink-1")
+
+    with patch("app.api.tenant_email_links.delete_booking_info_item", new=AsyncMock(return_value=None)):
+        delete_response = user_client.delete(f"/api/tenants/{tenant.id}/email-links/{created['id']}")
+
+    assert delete_response.status_code == 200
+    body = delete_response.json()
+    assert body["deleted_conversations"] == 1
+    assert body["shared_conversations_unlinked"] == 0
+
+    assert db_session.query(Conversation).filter(Conversation.id == conversation_id).first() is None
+    assert db_session.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count() == 0
+
+
+def test_unlink_email_keeps_conversation_shared_with_another_tenant(user_client, db_session):
+    from app.models.gmail_integration import Conversation, ConversationMessage
+    from app.models.tenant_conversation_link import TenantConversationLink
+
+    tenant_a = create_tenant(db_session, name="Tenant A", booking_id="B-unlink-shared-a")
+    tenant_b = create_tenant(db_session, name="Tenant B", booking_id="B-unlink-shared-b")
+
+    with patch("app.api.tenant_email_links.add_booking_info_item", new=AsyncMock(return_value={"id": "1"})):
+        created = user_client.post(f"/api/tenants/{tenant_a.id}/email-links", json={"email": "shared@example.com"}).json()["link"]
+
+    conversation_id = _make_conversation_matched_to_email(db_session, tenant_a.id, "shared@example.com", "thread-shared-1")
+    db_session.add(TenantConversationLink(tenant_id=tenant_b.id, conversation_id=conversation_id, matched_email="shared@example.com"))
+    db_session.commit()
+
+    with patch("app.api.tenant_email_links.delete_booking_info_item", new=AsyncMock(return_value=None)):
+        delete_response = user_client.delete(f"/api/tenants/{tenant_a.id}/email-links/{created['id']}")
+
+    assert delete_response.status_code == 200
+    body = delete_response.json()
+    assert body["deleted_conversations"] == 0
+    assert body["shared_conversations_unlinked"] == 1
+
+    # Conversation/messages survive since tenant B is still actively linked to it.
+    assert db_session.query(Conversation).filter(Conversation.id == conversation_id).first() is not None
+    assert db_session.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count() == 1
+
+    tenant_a_link = (
+        db_session.query(TenantConversationLink)
+        .filter(TenantConversationLink.tenant_id == tenant_a.id, TenantConversationLink.conversation_id == conversation_id)
+        .first()
+    )
+    tenant_b_link = (
+        db_session.query(TenantConversationLink)
+        .filter(TenantConversationLink.tenant_id == tenant_b.id, TenantConversationLink.conversation_id == conversation_id)
+        .first()
+    )
+    assert tenant_a_link.unlinked_at is not None
+    assert tenant_b_link.unlinked_at is None
 
 
 def test_relink_same_email_same_tenant_is_idempotent(user_client, db_session):
