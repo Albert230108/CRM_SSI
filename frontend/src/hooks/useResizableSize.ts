@@ -42,8 +42,15 @@ export function useResizableSize(config: ResizableBoxConfig) {
   } | null>(null)
 
   const handlePointerDown = useCallback(
-    (event: React.PointerEvent) => {
+    (event: React.PointerEvent<HTMLElement>) => {
       event.stopPropagation()
+
+      // Capture the pointer on the handle itself so every subsequent pointer event
+      // (and the trailing synthetic click) keeps targeting the handle, even once the
+      // cursor is dragged outside the dialog/backdrop. This is what stops an
+      // outward resize from ever being read as "clicked outside the dialog".
+      const handleElement = event.currentTarget
+      handleElement.setPointerCapture(event.pointerId)
 
       resizeStateRef.current = {
         startX: event.clientX,
@@ -72,7 +79,7 @@ export function useResizableSize(config: ResizableBoxConfig) {
         setSize({ width: newWidth, height: newHeight })
       }
 
-      const handlePointerUp = () => {
+      const handlePointerUp = (upEvent: PointerEvent) => {
         if (resizeStateRef.current) {
           const finalSize: FloatingBoxSize = {
             version: 1,
@@ -82,12 +89,15 @@ export function useResizableSize(config: ResizableBoxConfig) {
           saveFloatingBoxSize(boxType, userKey, finalSize)
         }
         resizeStateRef.current = null
-        window.removeEventListener('pointermove', handlePointerMove)
-        window.removeEventListener('pointerup', handlePointerUp)
+        if (handleElement.hasPointerCapture(upEvent.pointerId)) {
+          handleElement.releasePointerCapture(upEvent.pointerId)
+        }
+        handleElement.removeEventListener('pointermove', handlePointerMove)
+        handleElement.removeEventListener('pointerup', handlePointerUp)
       }
 
-      window.addEventListener('pointermove', handlePointerMove)
-      window.addEventListener('pointerup', handlePointerUp)
+      handleElement.addEventListener('pointermove', handlePointerMove)
+      handleElement.addEventListener('pointerup', handlePointerUp)
     },
     [size, minWidth, minHeight, maxWidth, maxHeight, boxType, userKey],
   )
