@@ -76,14 +76,18 @@ def test_sections_are_concatenated_in_order(db_session, monkeypatch):
     assert "Let them know check-in is at 3pm." in captured["prompt"]
 
 
-def test_no_rough_draft_uses_generic_instruction(db_session, monkeypatch):
+def test_no_rough_draft_sends_empty_instruction_block(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     template = _template()
     captured = _capture_gemini_call(monkeypatch)
 
     ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="whatsapp", rough_draft=None)
 
-    assert "Draft a reply" in captured["prompt"]
+    assert "Your Instruction" not in captured["prompt"]
+
+    captured2 = _capture_gemini_call(monkeypatch)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="whatsapp", rough_draft="   ")
+    assert "Your Instruction" not in captured2["prompt"]
 
 
 def test_beds24_and_payments_blocks_only_appear_when_checked(db_session, monkeypatch):
@@ -256,6 +260,35 @@ def test_fixed_block_order_guidelines_sections_history_beds24_instruction(db_ses
         prompt.index("Typed reply text goes last."),
     ]
     assert positions == sorted(positions)
+
+
+def test_group_headers_are_numbered_in_the_payload(db_session, monkeypatch):
+    tenant = _create_tenant(db_session, notes="Prefers late checkout.")
+    template = _template(
+        guidelines="Follow the numbering below.",
+        sections=[{"label": "Persona", "content": "You are a helpful host."}],
+        include_history=True,
+        history_message_limit=10,
+        include_beds24=True,
+        include_payments=True,
+        include_notes=True,
+    )
+    captured = _capture_gemini_call(monkeypatch)
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="Typed reply."
+    )
+
+    prompt = captured["prompt"]
+    assert "0. Goal & Guidelines" in prompt
+    assert "1. Template Text" in prompt
+    assert "2. Message History" in prompt
+    assert "3. Beds24 Info" in prompt
+    assert "4. Your Instruction" in prompt
+    # Sub-headers stay nested under their numbered group.
+    assert "## Booking Information (Beds24)" in prompt
+    assert "## Payments & Charges" in prompt
+    assert "## Internal Notes" in prompt
 
 
 def test_placeholders_are_resolved_in_guidelines_and_sections(db_session, monkeypatch):

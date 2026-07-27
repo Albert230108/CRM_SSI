@@ -14,11 +14,8 @@ from app.services.email_template_service import resolve_template_text
 _DEFAULT_HISTORY_LIMIT = 20
 
 
-def _build_guidelines_block(template: AiReplyTemplate, tenant: Tenant) -> str:
-    guidelines = resolve_template_text((template.guidelines or "").strip(), tenant)
-    if not guidelines:
-        return ""
-    return f"## Goal & Guidelines\n{guidelines}"
+def _build_guidelines_content(template: AiReplyTemplate, tenant: Tenant) -> str:
+    return resolve_template_text((template.guidelines or "").strip(), tenant)
 
 
 def _build_sections_prompt(template: AiReplyTemplate, tenant: Tenant) -> str:
@@ -113,23 +110,27 @@ def assemble_prompt(
     """Build the exact, single flat prompt string sent to Gemini.
 
     Fixed order: 0. guidelines, 1. template text/subprompts, 2. message history,
-    3. Beds24 info (booking + payments + notes), 4. the user's typed text. This is the
+    3. Beds24 info (booking + payments + notes), 4. the user's typed text. Each present
+    group is prefixed with its position number so the numbering is visible directly in
+    the payload, not just in the template editor UI. Group 4 is included only if the
+    user actually typed something - there is no default filler instruction. This is the
     single source of truth reused by both the "Draft with AI" generation endpoint and the
     payload preview endpoint, so what the user previews is guaranteed to be what is sent.
     """
     blocks: list[str] = []
 
-    guidelines_block = _build_guidelines_block(template, tenant)
-    if guidelines_block:
-        blocks.append(guidelines_block)
+    guidelines_content = _build_guidelines_content(template, tenant)
+    if guidelines_content:
+        blocks.append(f"0. Goal & Guidelines\n{guidelines_content}")
 
-    sections_block = _build_sections_prompt(template, tenant)
-    if sections_block:
-        blocks.append(sections_block)
+    sections_content = _build_sections_prompt(template, tenant)
+    if sections_content:
+        blocks.append(f"1. Template Text\n{sections_content}")
 
     if template.include_history:
         limit = template.history_message_limit or _DEFAULT_HISTORY_LIMIT
-        blocks.append(_build_history_context(db, tenant, channel, limit))
+        history_content = _build_history_context(db, tenant, channel, limit)
+        blocks.append(f"2. Message History\n{history_content}")
 
     beds24_group: list[str] = []
     if template.include_beds24:
@@ -139,14 +140,11 @@ def assemble_prompt(
     if template.include_notes:
         beds24_group.append(_build_notes_context(tenant))
     if beds24_group:
-        blocks.append("\n\n".join(beds24_group))
+        blocks.append("3. Beds24 Info\n" + "\n\n".join(beds24_group))
 
-    user_message = (
-        rough_draft.strip()
-        if rough_draft and rough_draft.strip()
-        else "Draft a reply to the tenant's most recent message using the instructions and context above."
-    )
-    blocks.append(f"## Your Instruction\n{user_message}")
+    user_message = (rough_draft or "").strip()
+    if user_message:
+        blocks.append(f"4. Your Instruction\n{user_message}")
 
     return "\n\n".join(block for block in blocks if block.strip())
 
