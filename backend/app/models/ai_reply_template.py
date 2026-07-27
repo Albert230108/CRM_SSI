@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, func
 
 from app.database import Base
 
@@ -8,6 +8,8 @@ class AiReplyTemplate(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    # Goal/explanation of this template's purpose, sent to Gemini as the first block of the prompt.
+    guidelines = Column(Text, nullable=True)
     # Ordered list of {"label": str, "content": str} blocks, concatenated in array order to
     # form the background/system prompt sent to Gemini.
     sections = Column(JSON, nullable=False, default=list)

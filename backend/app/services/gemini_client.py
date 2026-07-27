@@ -2,7 +2,6 @@ import os
 from typing import Any
 
 from google import genai
-from google.genai import types
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -23,14 +22,15 @@ def _get_client() -> Any:
     return _client
 
 
-def generate_text(system_prompt: str, user_message: str) -> str:
+def generate_text_flat(prompt: str) -> str:
+    """Send a single flat prompt string with no system/user split.
+
+    Used so the payload actually sent to Gemini is byte-identical to what the
+    "preview payload" feature shows the user before they click "Draft with AI".
+    """
     client = _get_client()
     try:
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=user_message,
-            config=types.GenerateContentConfig(system_instruction=system_prompt),
-        )
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
     except Exception as exc:
         raise GeminiClientError(f"Gemini generation failed: {exc}") from exc
 

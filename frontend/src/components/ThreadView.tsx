@@ -774,6 +774,21 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
     }
   }
 
+  const handlePreviewAiPayload = () => {
+    if (!tenantId || !replyTarget) return
+    const previewId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    window.localStorage.setItem(
+      `ai-payload-preview:${previewId}`,
+      JSON.stringify({
+        tenantId,
+        channel: replyTarget.type,
+        templateId: selectedAiTemplateId ? Number(selectedAiTemplateId) : null,
+        roughDraft: replyMessage.trim() || null,
+      }),
+    )
+    window.open(`/ai-payload-preview?id=${previewId}`, '_blank')
+  }
+
   useEffect(() => {
     if (!tenantId) {
       setTenant(null)
@@ -1664,6 +1679,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                     >
                       {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
                     </button>
+                    <button
+                      type="button"
+                      onClick={handlePreviewAiPayload}
+                      disabled={!selectedAiTemplateId}
+                      title="Preview exact AI payload in a new tab"
+                      className="rounded-lg border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H18a1 1 0 0 1 1 1v4.5M18 6l-7 7M12 6H7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-5" />
+                      </svg>
+                    </button>
                   </div>
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   <textarea
@@ -1836,6 +1862,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                         className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePreviewAiPayload}
+                        disabled={!selectedAiTemplateId}
+                        title="Preview exact AI payload in a new tab"
+                        className="rounded-lg border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H18a1 1 0 0 1 1 1v4.5M18 6l-7 7M12 6H7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-5" />
+                        </svg>
                       </button>
                     </div>
                     {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
@@ -2024,6 +2061,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePreviewAiPayload}
+                      disabled={!selectedAiTemplateId}
+                      title="Preview exact AI payload in a new tab"
+                      className="rounded-lg border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H18a1 1 0 0 1 1 1v4.5M18 6l-7 7M12 6H7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-5" />
+                      </svg>
                     </button>
                   </div>
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}

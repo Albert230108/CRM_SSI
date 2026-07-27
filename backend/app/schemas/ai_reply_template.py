@@ -10,6 +10,7 @@ class AiReplyTemplateSection(BaseModel):
 
 class AiReplyTemplateCreate(BaseModel):
     name: str
+    guidelines: str | None = None
     sections: list[AiReplyTemplateSection] = []
     include_history: bool = False
     history_message_limit: int | None = None
@@ -20,6 +21,7 @@ class AiReplyTemplateCreate(BaseModel):
 
 class AiReplyTemplateUpdate(BaseModel):
     name: str
+    guidelines: str | None = None
     sections: list[AiReplyTemplateSection] = []
     include_history: bool = False
     history_message_limit: int | None = None
@@ -31,6 +33,7 @@ class AiReplyTemplateUpdate(BaseModel):
 class AiReplyTemplateRead(BaseModel):
     id: int
     name: str
+    guidelines: str | None = None
     sections: list[AiReplyTemplateSection]
     include_history: bool
     history_message_limit: int | None = None

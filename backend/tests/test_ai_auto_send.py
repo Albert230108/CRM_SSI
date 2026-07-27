@@ -47,7 +47,7 @@ def test_generate_draft_schedules_auto_send_when_enabled(db_session, monkeypatch
     db_session.add(TenantAiSettings(tenant_id=tenant.id, default_email_template_id=template.id, auto_draft_email=True, auto_send_email=True))
     db_session.commit()
 
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text", lambda system_prompt, user_message: "Auto reply")
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt: "Auto reply")
 
     trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
     draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
@@ -70,7 +70,7 @@ def test_generate_draft_stays_pending_when_auto_send_disabled(db_session, monkey
     db_session.add(TenantAiSettings(tenant_id=tenant.id, default_email_template_id=template.id, auto_draft_email=True, auto_send_email=False))
     db_session.commit()
 
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text", lambda system_prompt, user_message: "Auto reply")
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt: "Auto reply")
 
     trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
     draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)

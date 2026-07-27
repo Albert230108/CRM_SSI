@@ -62,7 +62,7 @@ def _teardown(db, tenant, template):
 
 
 def test_due_trigger_generates_draft_and_is_removed(monkeypatch):
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text", lambda system_prompt, user_message: "Auto-generated reply")
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt: "Auto-generated reply")
 
     db = SessionLocal()
     tenant = template = None
@@ -86,7 +86,7 @@ def test_due_trigger_generates_draft_and_is_removed(monkeypatch):
 
 
 def test_trigger_not_yet_due_is_left_alone(monkeypatch):
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text", lambda system_prompt, user_message: "should not be called")
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt: "should not be called")
 
     db = SessionLocal()
     tenant = template = None
@@ -106,7 +106,7 @@ def test_trigger_not_yet_due_is_left_alone(monkeypatch):
 
 
 def test_trigger_without_default_template_is_skipped_and_removed(monkeypatch):
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text", lambda system_prompt, user_message: "should not be called")
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt: "should not be called")
 
     db = SessionLocal()
     tenant = template = None

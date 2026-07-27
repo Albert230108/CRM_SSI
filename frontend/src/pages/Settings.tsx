@@ -36,6 +36,7 @@ type AiTemplateSection = { label: string; content: string }
 type AiReplyTemplate = {
   id: number
   name: string
+  guidelines: string | null
   sections: AiTemplateSection[]
   include_history: boolean
   history_message_limit: number | null
@@ -47,6 +48,7 @@ type AiReplyTemplate = {
 const emptyAiTemplateForm = {
   id: null as number | null,
   name: '',
+  guidelines: '',
   sections: [{ label: '', content: '' }] as AiTemplateSection[],
   include_history: false,
   history_message_limit: 20 as number | null,
@@ -330,6 +332,7 @@ export default function Settings() {
     setAiTemplateForm({
       id: template.id,
       name: template.name,
+      guidelines: template.guidelines ?? '',
       sections: template.sections.length ? template.sections : [{ label: '', content: '' }],
       include_history: template.include_history,
       history_message_limit: template.history_message_limit ?? 20,
@@ -383,6 +386,7 @@ export default function Settings() {
           headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
           body: JSON.stringify({
             name: aiTemplateForm.name.trim(),
+            guidelines: aiTemplateForm.guidelines.trim() || null,
             sections: aiTemplateForm.sections.filter((section) => section.label.trim() || section.content.trim()),
             include_history: aiTemplateForm.include_history,
             history_message_limit: aiTemplateForm.include_history ? aiTemplateForm.history_message_limit : null,
@@ -621,9 +625,15 @@ export default function Settings() {
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Shared AI Reply Templates</h2>
             <p className="mt-2 text-sm text-gray-500">
-              Templates used by "Draft with AI" in the reply box, shared across all users. Each template is built from
-              ordered sections that get combined into the background prompt sent to Gemini, plus optional context to
-              include (conversation history, Beds24 booking info, payments/charges).
+              Templates used by "Draft with AI" in the reply box, shared across all users. The payload sent to Gemini
+              always follows this fixed order:
+            </p>
+            <p className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-gray-600">
+              <span className="rounded-full bg-gray-100 px-2 py-0.5">0. Goal &amp; Guidelines</span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5">1. Template text</span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5">2. Message history</span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5">3. Beds24 info (booking + payments + notes)</span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5">4. Your typed reply</span>
             </p>
           </div>
           <Link to="/settings/ai-tenants" className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
@@ -637,6 +647,9 @@ export default function Settings() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">{template.name}</p>
+                  {template.guidelines ? (
+                    <p className="mt-1 truncate text-xs italic text-gray-500">0. {template.guidelines}</p>
+                  ) : null}
                   <p className="mt-1 text-xs text-gray-500">{template.sections.length} section{template.sections.length === 1 ? '' : 's'}</p>
                   <p className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
                     {template.include_history ? <span className="rounded-full bg-gray-100 px-2 py-0.5">History ({template.history_message_limit ?? '-'} msgs)</span> : null}
@@ -666,8 +679,22 @@ export default function Settings() {
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
           />
 
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">0. Goal &amp; Guidelines</p>
+            <textarea
+              value={aiTemplateForm.guidelines}
+              onChange={(event) => setAiTemplateForm((current) => ({ ...current, guidelines: event.target.value }))}
+              placeholder="Describe this template's goal, e.g. Used for late check-in requests; keep replies under 3 sentences."
+              rows={2}
+              className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+            />
+            <p className="text-xs text-gray-500">
+              Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
+            </p>
+          </div>
+
           <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt sections</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1. Template text (subprompts)</p>
             {aiTemplateForm.sections.map((section, index) => (
               <div key={index} className="rounded-lg border border-gray-200 bg-white p-3">
                 <div className="flex items-center gap-2">
@@ -692,10 +719,13 @@ export default function Settings() {
               </div>
             ))}
             <button type="button" onClick={addAiTemplateSection} className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100">+ Add section</button>
+            <p className="text-xs text-gray-500">
+              Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
+            </p>
           </div>
 
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Extra context to send Gemini</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">2. Message history</p>
             <label className="flex items-center gap-3 text-sm text-gray-700">
               <input
                 type="checkbox"
@@ -714,6 +744,10 @@ export default function Settings() {
               />
               messages
             </label>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">3. Beds24 info (booking + payments + notes)</p>
             <label className="flex items-center gap-3 text-sm text-gray-700">
               <input
                 type="checkbox"
@@ -742,6 +776,8 @@ export default function Settings() {
               Include tenant notes
             </label>
           </div>
+
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">4. Your typed reply (sent automatically when you use "Draft with AI")</p>
 
           <div className="flex items-center gap-2">
             <button type="submit" disabled={savingAiTemplate} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">

@@ -29,6 +29,7 @@ def create_ai_reply_template(
 ) -> AiReplyTemplate:
     template = AiReplyTemplate(
         name=payload.name.strip(),
+        guidelines=(payload.guidelines or "").strip() or None,
         sections=[section.model_dump() for section in payload.sections],
         include_history=payload.include_history,
         history_message_limit=payload.history_message_limit,
@@ -52,6 +53,7 @@ def update_ai_reply_template(
 ) -> AiReplyTemplate:
     template = _get_template(db, template_id)
     template.name = payload.name.strip()
+    template.guidelines = (payload.guidelines or "").strip() or None
     template.sections = [section.model_dump() for section in payload.sections]
     template.include_history = payload.include_history
     template.history_message_limit = payload.history_message_limit

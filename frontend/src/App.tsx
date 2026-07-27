@@ -8,6 +8,7 @@ import SessionExpiredModal from './components/SessionExpiredModal'
 import Settings from './pages/Settings'
 import AiTenantSettings from './pages/AiTenantSettings'
 import AiPendingDrafts from './pages/AiPendingDrafts'
+import AiPayloadPreview from './pages/AiPayloadPreview'
 import AdminSettings from './pages/AdminSettings'
 import InvitationSetup from './pages/InvitationSetup'
 import PasswordReset from './pages/PasswordReset'
@@ -54,6 +55,7 @@ export default function App() {
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/settings/ai-tenants" element={<AiTenantSettings />} />
                     <Route path="/ai-drafts" element={<AiPendingDrafts />} />
+                    <Route path="/ai-payload-preview" element={<AiPayloadPreview />} />
                     <Route
                       path="/admin/settings"
                       element={

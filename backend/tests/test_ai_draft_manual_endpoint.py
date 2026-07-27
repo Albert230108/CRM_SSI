@@ -32,7 +32,7 @@ def _create_template(non_admin_client, name="Template"):
 
 
 def _mock_generate_text(monkeypatch, text="Generated reply"):
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text", lambda system_prompt, user_message: text)
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt: text)
 
 
 def test_generate_with_explicit_template_id(non_admin_client, db_session, monkeypatch):
@@ -97,13 +97,54 @@ def test_gemini_failure_returns_502(non_admin_client, db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     template_id = _create_template(non_admin_client)
 
-    def failing_generate_text(system_prompt: str, user_message: str) -> str:
+    def failing_generate_text(prompt: str) -> str:
         raise GeminiClientError("boom")
 
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text", failing_generate_text)
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", failing_generate_text)
 
     response = non_admin_client.post(
         f"/api/communications/tenants/{tenant.id}/ai-draft",
         json={"channel": "email", "template_id": template_id, "rough_draft": "hi"},
     )
     assert response.status_code == 502
+
+
+def test_preview_returns_exact_payload_without_calling_gemini(non_admin_client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template_id = _create_template(non_admin_client)
+
+    def unexpected_call(prompt: str) -> str:
+        raise AssertionError("preview must not call Gemini")
+
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", unexpected_call)
+
+    response = non_admin_client.post(
+        f"/api/communications/tenants/{tenant.id}/ai-draft/preview",
+        json={"channel": "email", "template_id": template_id, "rough_draft": "let them know check-in is 3pm"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["template_id"] == template_id
+    assert "Be helpful." in data["payload"]
+    assert "let them know check-in is 3pm" in data["payload"]
+    assert data["char_count"] == len(data["payload"])
+    assert data["approx_token_count"] == len(data["payload"]) // 4
+
+
+def test_preview_payload_matches_generated_call_exactly(non_admin_client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template_id = _create_template(non_admin_client)
+    captured = {}
+
+    def capturing_generate(prompt: str) -> str:
+        captured["prompt"] = prompt
+        return "Generated reply"
+
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", capturing_generate)
+
+    body = {"channel": "email", "template_id": template_id, "rough_draft": "hi there"}
+    preview_response = non_admin_client.post(f"/api/communications/tenants/{tenant.id}/ai-draft/preview", json=body)
+    generate_response = non_admin_client.post(f"/api/communications/tenants/{tenant.id}/ai-draft", json=body)
+
+    assert preview_response.json()["payload"] == captured["prompt"]
+    assert generate_response.status_code == 200

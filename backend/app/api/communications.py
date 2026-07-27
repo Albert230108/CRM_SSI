@@ -78,6 +78,13 @@ class AiDraftGenerateResponse(BaseModel):
     template_id: int
 
 
+class AiDraftPreviewResponse(BaseModel):
+    payload: str
+    char_count: int
+    approx_token_count: int
+    template_id: int
+
+
 def _resolve_tenant_conversation(db: Session, tenant: Tenant, email_thread_id: int) -> tuple[Conversation, GmailAccount]:
     conversation = (
         db.query(Conversation)
@@ -742,6 +749,37 @@ async def get_tenant_thread_draft(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve drafts: {str(exc)}") from exc
 
 
+def _resolve_ai_draft_tenant_template(
+    db: Session, tenant_id: int, channel: str, template_id: int | None
+) -> tuple[Tenant, str, AiReplyTemplate]:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    normalized_channel = channel.strip().lower()
+    if normalized_channel not in {"email", "whatsapp"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported channel")
+
+    resolved_template_id = template_id
+    if resolved_template_id is None:
+        ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+        if ai_settings is not None:
+            resolved_template_id = (
+                ai_settings.default_email_template_id if normalized_channel == "email" else ai_settings.default_whatsapp_template_id
+            )
+    if resolved_template_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No AI template selected and no default template is configured for this tenant and channel",
+        )
+
+    template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == resolved_template_id).first()
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    return tenant, normalized_channel, template
+
+
 @router.post("/tenants/{tenant_id}/ai-draft", response_model=AiDraftGenerateResponse)
 def generate_tenant_ai_draft(
     tenant_id: int,
@@ -751,28 +789,7 @@ def generate_tenant_ai_draft(
 ) -> AiDraftGenerateResponse:
     """Stateless "Draft with AI" generation for the reply box - the caller pastes the result
     into the reply textarea for proofreading before sending; nothing is persisted here."""
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-
-    channel = payload.channel.strip().lower()
-    if channel not in {"email", "whatsapp"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported channel")
-
-    template_id = payload.template_id
-    if template_id is None:
-        ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
-        if ai_settings is not None:
-            template_id = ai_settings.default_email_template_id if channel == "email" else ai_settings.default_whatsapp_template_id
-    if template_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No AI template selected and no default template is configured for this tenant and channel",
-        )
-
-    template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == template_id).first()
-    if template is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    tenant, channel, template = _resolve_ai_draft_tenant_template(db, tenant_id, payload.channel, payload.template_id)
 
     try:
         generated_text = ai_reply_service.build_prompt_and_generate(
@@ -787,3 +804,32 @@ def generate_tenant_ai_draft(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return AiDraftGenerateResponse(generated_text=generated_text, template_id=template.id)
+
+
+@router.post("/tenants/{tenant_id}/ai-draft/preview", response_model=AiDraftPreviewResponse)
+def preview_tenant_ai_draft(
+    tenant_id: int,
+    payload: AiDraftGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiDraftPreviewResponse:
+    """Returns the exact flat prompt string that "Draft with AI" would send to Gemini, with a
+    character count and an approximate (heuristic) token count, without calling Gemini. Reuses
+    the same ai_reply_service.assemble_prompt() builder as generate_tenant_ai_draft so the
+    preview is guaranteed to match what gets sent."""
+    tenant, channel, template = _resolve_ai_draft_tenant_template(db, tenant_id, payload.channel, payload.template_id)
+
+    prompt = ai_reply_service.assemble_prompt(
+        db,
+        tenant=tenant,
+        template=template,
+        channel=channel,
+        rough_draft=payload.rough_draft,
+    )
+
+    return AiDraftPreviewResponse(
+        payload=prompt,
+        char_count=len(prompt),
+        approx_token_count=len(prompt) // 4,
+        template_id=template.id,
+    )
