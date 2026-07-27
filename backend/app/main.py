@@ -19,6 +19,7 @@ from app.api.gmail_integration import _catch_up_gmail_account, _start_watch
 from app.api.gmail_integration import router as gmail_integration_router
 from app.api.invites import router as invites_router
 from app.api.notifications import router as notifications_router
+from app.api.quotation import router as quotation_router
 from app.api.tenants import router as tenants_router
 from app.api.tenant_ai_settings import router as tenant_ai_settings_router
 from app.api.tenant_channel_endpoints import router as tenant_channel_endpoints_router
@@ -198,6 +199,7 @@ app.include_router(ai_auto_drafts_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(gmail_integration_router)
 app.include_router(tenants_router, prefix="/api")
+app.include_router(quotation_router, prefix="/api")
 app.include_router(tenant_channel_endpoints_router, prefix="/api")
 app.include_router(whatsapp_thread_links_router, prefix="/api")
 app.include_router(tenant_email_links_router, prefix="/api")

@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/chargestable.tsx","./src/components/paymentstable.tsx","./src/lib/apiclient.ts","./src/lib/types.ts","./src/pages/bookingsearchpage.tsx","./src/pages/quotationeditorpage.tsx"],"version":"5.9.3"}

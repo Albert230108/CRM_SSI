@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-07-21",
+  "properties": {
+    "Central-Day Inn": {
+      "admin_costs_enabled": true,
+      "admin_percentage": 8.0,
+      "admin_min": 95.04132,
+      "admin_max": 219.00826,
+      "description": "Administration costs (12% max €265,-)"
+    },
+    "Ensche-Day Inn": {
+      "admin_costs_enabled": true,
+      "admin_percentage": 8.0,
+      "admin_min": 95.04132,
+      "admin_max": 219.00826,
+      "description": "Administration costs (12% max €265,-)"
+    },
+    "Blekerstraat": {
+      "admin_costs_enabled": true,
+      "admin_percentage": 8.0,
+      "admin_min": 95.04132,
+      "admin_max": 219.00826,
+      "description": "Administration costs (12% max €265,-)"
+    },
+    "Atjehstraat": {
+      "admin_costs_enabled": true,
+      "admin_percentage": 8.0,
+      "admin_min": 95.04132,
+      "admin_max": 219.00826,
+      "description": "Administration costs (12% max €265,-)"
+    },
+    "Hoogstraat 69": {
+      "admin_costs_enabled": true,
+      "admin_percentage": 8.0,
+      "admin_min": 95.04132,
+      "admin_max": 219.00826,
+      "description": "Administration costs (12% max €265,-)"
+    },
+    "Guest information": {
+      "admin_costs_enabled": true,
+      "admin_percentage": 8.0,
+      "admin_min": 95.04132,
+      "admin_max": 219.00826,
+      "description": "Administration costs (12% max €265,-)"
+    }
+  }
+}

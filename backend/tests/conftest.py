@@ -6,6 +6,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("WHATSAPP_SERVICE_URL", "http://example.invalid")
 os.environ.setdefault("WHATSAPP_API_KEY", "test-key")
 os.environ.setdefault("CRM_WEBHOOK_SECRET", "test-webhook-secret")
+os.environ.setdefault("QUOTATION_TOKEN_SECRET", "test-quotation-secret")
 
 import pytest
 from fastapi.testclient import TestClient

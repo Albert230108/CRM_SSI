@@ -44,6 +44,35 @@ services:
       - backend
     restart: unless-stopped
 
+  quotation-backend:
+    build:
+      context: .
+      dockerfile: quotation-manager/backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      CRM_BACKEND_URL: http://backend:8000
+      TENANT_FILES_ROOT: /app/tenant_files
+    volumes:
+      - ${TENANT_FILES_HOST_PATH}:/app/tenant_files
+    depends_on:
+      - backend
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  quotation-frontend:
+    build:
+      context: .
+      dockerfile: quotation-manager/frontend/Dockerfile
+      args:
+        VITE_QUOTATION_API_BASE_URL: ${VITE_QUOTATION_API_BASE_URL}
+    expose:
+      - "80"
+    depends_on:
+      - quotation-backend
+    restart: unless-stopped
+
   nginx:
     image: nginx:alpine
     build:
@@ -51,6 +80,8 @@ services:
     depends_on:
       - backend
       - frontend
+      - quotation-backend
+      - quotation-frontend
     ports:
       - "80:80"
       - "443:443"

@@ -1,0 +1,406 @@
+{
+  "2025": {
+    "Ensche-Day Inn": {
+      "Room 1": {
+        "price_tiers": {
+          "7": 62.38532,
+          "14": 56.14679,
+          "30": 49.54128,
+          "60": 40.36697,
+          "90": 37.13761
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 0.0
+      },
+      "Room 2": {
+        "price_tiers": {
+          "7": 62.38532,
+          "14": 56.14679,
+          "30": 52.29358,
+          "60": 43.11927,
+          "90": 39.66973
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "Room 3": {
+        "price_tiers": {
+          "7": 59.63303,
+          "14": 53.66973,
+          "30": 50.45872,
+          "60": 41.2844,
+          "90": 37.98165
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "Room 4": {
+        "price_tiers": {
+          "7": 62.38532,
+          "14": 56.14679,
+          "30": 53.21101,
+          "60": 44.0367,
+          "90": 40.51376
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "Room 5": {
+        "price_tiers": {
+          "7": 65.13761,
+          "14": 58.62385,
+          "30": 56.88073,
+          "60": 51.37615,
+          "90": 47.26606
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "extra_services": {
+        "city_tax": 2.95,
+        "municipality_cost": 2.0,
+        "deposit": 400.0
+      }
+    },
+    "Central-Day Inn": {
+      "Studio 1": {
+        "price_tiers": {
+          "7": 65.13761,
+          "14": 58.62385,
+          "30": 55.9633,
+          "60": 46.78899,
+          "90": 43.04587
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "Studio 2": {
+        "price_tiers": {
+          "7": 62.38532,
+          "14": 56.14679,
+          "30": 53.21101,
+          "60": 44.0367,
+          "90": 40.51376
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 0.0
+      },
+      "Studio 3": {
+        "price_tiers": {
+          "7": 72.47706,
+          "14": 65.22935,
+          "30": 62.38532,
+          "60": 53.21101,
+          "90": 48.95413
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "Studio 4": {
+        "price_tiers": {
+          "7": 72.47706,
+          "14": 65.22935,
+          "30": 62.38532,
+          "60": 53.21101,
+          "90": 48.95413
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "Studio 5": {
+        "price_tiers": {
+          "7": 71.55963,
+          "14": 64.40367,
+          "30": 62.38532,
+          "60": 50.45872,
+          "90": 46.42202
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 5.50459
+      },
+      "Studio 6": {
+        "price_tiers": {
+          "7": 66.05505,
+          "14": 59.44954,
+          "30": 56.88073,
+          "60": 46.78899,
+          "90": 43.04587
+        },
+        "end_cleaning": 91.74312,
+        "extra_person_cost": 0.0
+      },
+      "extra_services": {
+        "city_tax": 2.95,
+        "municipality_cost": 2.0,
+        "deposit": 400.0
+      }
+    },
+    "Hoogstraat 69": {
+      "Ground floor": {
+        "price_tiers": {
+          "7": 90.82569,
+          "14": 81.74312,
+          "30": 80.73394,
+          "60": 63.30275,
+          "90": 58.23853
+        },
+        "end_cleaning": 160.55046,
+        "extra_person_cost": 9.17431
+      },
+      "Upper floor": {
+        "price_tiers": {
+          "7": 87.15596,
+          "14": 78.44036,
+          "30": 73.3945,
+          "60": 59.63303,
+          "90": 54.86239
+        },
+        "end_cleaning": 160.55046,
+        "extra_person_cost": 9.17431
+      },
+      "extra_services": {
+        "city_tax": 2.95,
+        "municipality_cost": 0.0,
+        "deposit": 1000.0
+      }
+    },
+    "Blekerstraat": {
+      "House": {
+        "price_tiers": {
+          "7": 137.61468,
+          "14": 123.85321,
+          "30": 85.3211,
+          "60": 82.56881,
+          "90": 75.96331
+        },
+        "end_cleaning": 321.10092,
+        "extra_person_cost": 9.17431
+      },
+      "extra_services": {
+        "city_tax": 2.95,
+        "municipality_cost": 0.0,
+        "deposit": 1000.0
+      }
+    },
+    "Atjehstraat": {
+      "Duplex Apartment": {
+        "price_tiers": {
+          "7": 114,
+          "14": 102.6,
+          "30": 99,
+          "60": 87,
+          "90": 80.04
+        },
+        "end_cleaning": 350.0,
+        "extra_person_cost": 10.0
+      },
+      "extra_services": {
+        "city_tax": 2.95,
+        "municipality_cost": 0.0,
+        "deposit": 1000.0
+      }
+    }
+  },
+  "2026": {
+    "Ensche-Day Inn": {
+      "Room 1": {
+        "price_tiers": {
+          "7": 57.02479,
+          "14": 52.89256,
+          "30": 48.76033,
+          "60": 44.6281,
+          "90": 40.49587
+        },
+        "end_cleaning": 73.55372,
+        "extra_person_cost": 3.71901
+      },
+      "Room 2": {
+        "price_tiers": {
+          "7": 65.28926,
+          "14": 61.15702,
+          "30": 57.02479,
+          "60": 52.89256,
+          "90": 48.76033
+        },
+        "end_cleaning": 73.55372,
+        "extra_person_cost": 3.71901
+      },
+      "Room 3": {
+        "price_tiers": {
+          "7": 53.71901,
+          "14": 49.58678,
+          "30": 45.45455,
+          "60": 43.38843,
+          "90": 39.66942
+        },
+        "end_cleaning": 96.69421,
+        "extra_person_cost": 3.71901
+      },
+      "Room 4": {
+        "price_tiers": {
+          "7": 65.28926,
+          "14": 61.15702,
+          "30": 57.02479,
+          "60": 52.89256,
+          "90": 48.76033
+        },
+        "end_cleaning": 96.69421,
+        "extra_person_cost": 3.71901
+      },
+      "Room 5": {
+        "price_tiers": {
+          "7": 68.59504,
+          "14": 64.46281,
+          "30": 60.33058,
+          "60": 56.19835,
+          "90": 52.06612
+        },
+        "end_cleaning": 96.69421,
+        "extra_person_cost": 3.71901
+      },
+      "extra_services": {
+        "city_tax": 3.39,
+        "municipality_cost": 2.0,
+        "deposit": 400.0
+      }
+    },
+    "Central-Day Inn": {
+      "Studio 1": {
+        "price_tiers": {
+          "7": 58.67769,
+          "14": 54.54545,
+          "30": 50.41322,
+          "60": 46.28099,
+          "90": 42.57851
+        },
+        "end_cleaning": 96.69421,
+        "extra_person_cost": 3.71901
+      },
+      "Studio 2": {
+        "price_tiers": {
+          "7": 54.54545,
+          "14": 50.41322,
+          "30": 46.28099,
+          "60": 42.14876,
+          "90": 38.01653
+        },
+        "end_cleaning": 76.8595,
+        "extra_person_cost": 0.0
+      },
+      "Studio 3": {
+        "price_tiers": {
+          "7": 66.94215,
+          "14": 62.80992,
+          "30": 58.67769,
+          "60": 54.54545,
+          "90": 50.41322
+        },
+        "end_cleaning": 96.69421,
+        "extra_person_cost": 3.71901
+      },
+      "Studio 4": {
+        "price_tiers": {
+          "7": 65.28926,
+          "14": 61.15702,
+          "30": 57.02479,
+          "60": 52.89256,
+          "90": 48.76033
+        },
+        "end_cleaning": 96.69421,
+        "extra_person_cost": 3.71901
+      },
+      "Studio 5": {
+        "price_tiers": {
+          "7": 61.98347,
+          "14": 57.85124,
+          "30": 53.71901,
+          "60": 49.58678,
+          "90": 45.45455
+        },
+        "end_cleaning": 96.69421,
+        "extra_person_cost": 3.71901
+      },
+      "Studio 6": {
+        "price_tiers": {
+          "7": 58.67769,
+          "14": 54.54545,
+          "30": 50.41322,
+          "60": 46.28099,
+          "90": 42.14876
+        },
+        "end_cleaning": 76.8595,
+        "extra_person_cost": 0.0
+      },
+      "extra_services": {
+        "city_tax": 3.39,
+        "municipality_cost": 2.0,
+        "deposit": 400.0
+      }
+    },
+    "Hoogstraat 69": {
+      "Ground floor": {
+        "price_tiers": {
+          "7": 94.21488,
+          "14": 84.79339,
+          "30": 85.12397,
+          "60": 69.42149,
+          "90": 63.86777
+        },
+        "end_cleaning": 144.6281,
+        "extra_person_cost": 9.91736
+      },
+      "Upper floor": {
+        "price_tiers": {
+          "7": 85.95041,
+          "14": 77.35537,
+          "30": 76.03306,
+          "60": 65.28926,
+          "90": 60.06612
+        },
+        "end_cleaning": 144.6281,
+        "extra_person_cost": 9.91736
+      },
+      "extra_services": {
+        "city_tax": 3.39,
+        "municipality_cost": 2.0,
+        "deposit": 1000.0
+      }
+    },
+    "Blekerstraat": {
+      "House": {
+        "price_tiers": {
+          "7": 86.77686,
+          "14": 78.09917,
+          "30": 76.8595,
+          "60": 74.38017,
+          "90": 68.42976
+        },
+        "end_cleaning": 289.2562,
+        "extra_person_cost": 9.91736
+      },
+      "extra_services": {
+        "city_tax": 3.39,
+        "municipality_cost": 0.0,
+        "deposit": 1000.0
+      }
+    },
+    "Atjehstraat": {
+      "Duplex Apartment": {
+        "price_tiers": {
+          "7": 150.0,
+          "14": 135.0,
+          "30": 124.0,
+          "60": 104.0,
+          "90": 95.68
+        },
+        "end_cleaning": 400.0,
+        "extra_person_cost": 10.0
+      },
+      "extra_services": {
+        "city_tax": 3.39,
+        "municipality_cost": 2.0,
+        "deposit": 1000.0
+      }
+    }
+  }
+}

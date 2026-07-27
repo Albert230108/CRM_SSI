@@ -5,4 +5,9 @@
 
 node_modules/
 frontend/dist/
+quotation-manager/frontend/dist/
 .env.crm-whatsapp-2
+backend/.venv-win/
+backend/backend_test.db
+quotation-manager/backend/.venv-win/
+quotation-manager/backend/backend_test.db

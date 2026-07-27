@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "last_updated": "2025-12-17",
+  "description": "Base prices for discount calculations. Discount Manager uses these as foundation for all discount rules. Prices match 7-night tiers from Price Manager.",
+  "properties": {
+    "Central-Day Inn": {
+      "Studio 1": {
+        "base_price": 58.67769,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Studio 2": {
+        "base_price": 54.54545,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Studio 3": {
+        "base_price": 66.94215,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Studio 4": {
+        "base_price": 65.28926,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Studio 5": {
+        "base_price": 61.98347,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Studio 6": {
+        "base_price": 58.67769,
+        "notes": "Base rate from 7-night tier"
+      }
+    },
+    "Ensche-Day Inn": {
+      "Room 1": {
+        "base_price": 57.02479,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Room 2": {
+        "base_price": 65.28926,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Room 3": {
+        "base_price": 53.72,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Room 4": {
+        "base_price": 65.28926,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Room 5": {
+        "base_price": 68.59504,
+        "notes": "Base rate from 7-night tier"
+      }
+    },
+    "Hoogstraat 69": {
+      "Ground floor": {
+        "base_price": 90.83,
+        "notes": "Base rate from 7-night tier"
+      },
+      "Upper floor": {
+        "base_price": 87.16,
+        "notes": "Base rate from 7-night tier"
+      }
+    },
+    "Blekerstraat": {
+      "House": {
+        "base_price": 137.61,
+        "notes": "Base rate from 7-night tier"
+      }
+    },
+    "Atjehstraat": {
+      "Duplex Apartment": {
+        "base_price": 114.0,
+        "notes": "Base rate from 7-night tier"
+      }
+    }
+  }
+}

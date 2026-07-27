@@ -1,0 +1,175 @@
+{
+  "version": "1.0.0",
+  "last_modified": "2025-12-17",
+  "global_settings": {
+    "enabled": false,
+    "priority_mode": "best_price",
+    "fallback_to_tiers": true,
+    "allow_multiple_discounts": false
+  },
+  "active_preset": "test",
+  "presets": {
+    "percentage_discount": {
+      "name": "Percentage-Based Discounts",
+      "description": "Fixed percentage discounts for different stay lengths",
+      "active": false,
+      "enabled": false,
+      "rules": [
+        {
+          "id": "percentage_long_stay",
+          "type": "percentage",
+          "name": "Progressive Percentage Discount",
+          "description": "Percentage off base price based on nights",
+          "active": true,
+          "priority": 2,
+          "applies_to": {
+            "properties": [
+              "Central-Day Inn",
+              "Ensche-Day Inn",
+              "Guest information",
+              "Hoogstraat 69",
+              "Blekerstraat",
+              "Atjehstraat"
+            ],
+            "rooms": [
+              "all"
+            ],
+            "date_ranges": []
+          },
+          "conditions": {
+            "min_nights": 7,
+            "max_nights": null
+          },
+          "config": {
+            "percentage_tiers": [
+              {
+                "min_nights": 7,
+                "percentage": 15.0,
+                "description": "15.0% off for 7+ nights"
+              }
+            ]
+          }
+        },
+        {
+          "name": "",
+          "description": "",
+          "type": "custom_tier_pricing",
+          "active": true,
+          "priority": 10,
+          "applies_to": {
+            "properties": [
+              "Central-Day Inn",
+              "Ensche-Day Inn",
+              "Guest information",
+              "Hoogstraat 69",
+              "Blekerstraat",
+              "Atjehstraat"
+            ],
+            "rooms": [
+              "all"
+            ],
+            "date_ranges": []
+          },
+          "conditions": {
+            "min_nights": 1,
+            "max_nights": null
+          },
+          "config": {
+            "price_tiers": [
+              {
+                "nights": 56,
+                "price": 45.0
+              },
+              {
+                "nights": 28,
+                "price": 55.0
+              },
+              {
+                "nights": 7,
+                "price": 65.0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "test": {
+      "name": "test",
+      "description": "No description",
+      "enabled": true,
+      "rules": [
+        {
+          "name": "std",
+          "description": "",
+          "type": "custom_tier_pricing",
+          "active": true,
+          "priority": 10,
+          "applies_to": {
+            "properties": [
+              "Central-Day Inn",
+              "Ensche-Day Inn",
+              "Guest information",
+              "Hoogstraat 69",
+              "Blekerstraat",
+              "Atjehstraat"
+            ],
+            "rooms": [
+              "all"
+            ],
+            "date_ranges": []
+          },
+          "conditions": {
+            "min_nights": 1,
+            "max_nights": null
+          },
+          "config": {
+            "price_tiers": [
+              {
+                "nights": 56,
+                "price": 45.0
+              },
+              {
+                "nights": 28,
+                "price": 55.0
+              },
+              {
+                "nights": 7,
+                "price": 65.0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "priority_strategies": {
+    "best_price": {
+      "name": "Best Price for Guest",
+      "description": "Always applies the discount that gives the lowest final price",
+      "enabled": true
+    },
+    "highest_priority": {
+      "name": "Highest Priority Rule Wins",
+      "description": "Apply only the rule with the highest priority number",
+      "enabled": false
+    },
+    "first_match": {
+      "name": "First Matching Rule",
+      "description": "Apply the first rule that matches conditions",
+      "enabled": false
+    },
+    "stack_discounts": {
+      "name": "Stack Multiple Discounts",
+      "description": "Apply multiple discounts cumulatively (be careful!)",
+      "enabled": false,
+      "max_combined_discount": 30.0
+    }
+  },
+  "metadata": {
+    "created_by": "system",
+    "created_at": "2025-12-17T00:00:00Z",
+    "modified_by": "user",
+    "modification_history": [],
+    "last_modified": "2025-12-17T12:59:35.551822"
+  }
+}
