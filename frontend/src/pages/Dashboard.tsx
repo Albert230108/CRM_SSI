@@ -73,6 +73,11 @@ export default function Dashboard() {
   const [notesReady, setNotesReady] = useState(false)
   const [threadReady, setThreadReady] = useState(false)
   const selectedTenantIdRef = useRef(selectedTenantId)
+  // Populated by TenantList with whatever tenant ids are currently visible under its active
+  // search/status/responsible/direction filters, so Sync can scope to just that filtered set.
+  // Stays null until TenantList's first load settles, so a Sync click that races the initial
+  // fetch falls back to an unscoped sync instead of scoping to a false-empty list.
+  const visibleTenantIdsRef = useRef<number[] | null>(null)
 
   useEffect(() => {
     selectedTenantIdRef.current = selectedTenantId
@@ -96,6 +101,10 @@ export default function Dashboard() {
   const handleNotesReady = useCallback((readyTenantId: number) => {
     if (readyTenantId === selectedTenantIdRef.current) setNotesReady(true)
   }, [])
+  const handleTenantsChange = useCallback((tenantIds: number[]) => {
+    visibleTenantIdsRef.current = tenantIds
+  }, [])
+
   const handleThreadReady = useCallback((readyTenantId: number) => {
     if (readyTenantId === selectedTenantIdRef.current) setThreadReady(true)
   }, [])
@@ -297,10 +306,15 @@ export default function Dashboard() {
       setSyncError('')
       setSyncSummary(null)
       const syncUrl = `${API_BASE_URL}/api/admin/sync-all`
-      console.info('[frontend] Sync button clicked', { syncUrl })
+      const tenantIds = visibleTenantIdsRef.current
+      console.info('[frontend] Sync button clicked', { syncUrl, tenantCount: tenantIds?.length ?? 'all' })
       const response = await fetch(syncUrl, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ tenant_ids: tenantIds ?? null }),
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok) {
@@ -397,6 +411,7 @@ export default function Dashboard() {
               selectedTenantId={selectedTenantId}
               reloadSignal={tenantReloadSignal}
               onNewMessage={handleNewMessage}
+              onTenantsChange={handleTenantsChange}
             />
           </div>
         </section>

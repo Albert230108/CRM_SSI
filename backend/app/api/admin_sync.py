@@ -8,6 +8,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -71,7 +72,7 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
 
 
-async def _sync_beds24(db: Session, current_user: User) -> int:
+async def _sync_beds24(db: Session, current_user: User, tenant_ids: list[int] | None = None) -> int:
     updated = 0
     bookings = await get_bookings()
     for booking in bookings:
@@ -79,7 +80,10 @@ async def _sync_beds24(db: Session, current_user: User) -> int:
         if not booking_id:
             continue
 
-        tenant = db.query(Tenant).filter(Tenant.booking_id == booking_id).first()
+        tenant_query = db.query(Tenant).filter(Tenant.booking_id == booking_id)
+        if tenant_ids is not None:
+            tenant_query = tenant_query.filter(Tenant.id.in_(tenant_ids))
+        tenant = tenant_query.first()
         if tenant is None:
             continue
 
@@ -94,18 +98,18 @@ async def _sync_beds24(db: Session, current_user: User) -> int:
     return updated
 
 
-async def _sync_emails(db: Session, current_user: User) -> int:
+async def _sync_emails(db: Session, current_user: User, tenant_ids: list[int] | None = None) -> int:
     accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
     imported = 0
     for account in accounts:
         # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
         # per account) with no yield points of its own. Looping it inline here would monopolize
         # this worker's event loop for every other concurrent request until all accounts finished.
-        imported += await run_in_threadpool(_sync_gmail_account, db, account)
+        imported += await run_in_threadpool(_sync_gmail_account, db, account, tenant_ids)
     return imported
 
 
-async def _sync_whatsapp_linked_endpoints(db: Session) -> dict[str, Any]:
+async def _sync_whatsapp_linked_endpoints(db: Session, tenant_ids: list[int] | None = None) -> dict[str, Any]:
     """Sync WhatsApp history for all manually linked endpoints.
 
     Mirrors the per-chat "Resync full history" action in Manage Chats exactly: it calls the
@@ -126,15 +130,14 @@ async def _sync_whatsapp_linked_endpoints(db: Session) -> dict[str, Any]:
         }
 
     # Find all active WhatsApp endpoints with manual links (external_chat_namespace set)
-    active_links = (
-        db.query(TenantChannelEndpoint)
-        .filter(
-            TenantChannelEndpoint.channel_type == "whatsapp",
-            TenantChannelEndpoint.is_active.is_(True),
-            TenantChannelEndpoint.external_chat_namespace.isnot(None),
-        )
-        .all()
+    endpoint_query = db.query(TenantChannelEndpoint).filter(
+        TenantChannelEndpoint.channel_type == "whatsapp",
+        TenantChannelEndpoint.is_active.is_(True),
+        TenantChannelEndpoint.external_chat_namespace.isnot(None),
     )
+    if tenant_ids is not None:
+        endpoint_query = endpoint_query.filter(TenantChannelEndpoint.tenant_id.in_(tenant_ids))
+    active_links = endpoint_query.all()
 
     results = []
     errors = []
@@ -258,8 +261,20 @@ async def _debug_whatsapp_history_sync() -> dict[str, Any]:
         return response.json()
 
 
+class SyncAllRequest(BaseModel):
+    # Tenant ids currently visible in the requesting user's filtered tenant list. When
+    # omitted/empty, sync-all falls back to its historical unscoped, all-tenants behavior.
+    tenant_ids: list[int] | None = None
+
+
 @router.post("/sync-all")
-async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+async def sync_all(
+    payload: SyncAllRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    tenant_ids = payload.tenant_ids if payload else None
+
     summary: dict[str, Any] = {
         "started_at": datetime.now(timezone.utc),
         "completed_at": None,
@@ -273,17 +288,17 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
     }
 
     try:
-        summary["bookings_updated"] = await _sync_beds24(db, current_user)
+        summary["bookings_updated"] = await _sync_beds24(db, current_user, tenant_ids)
     except Exception as exc:
         summary["partial_failures"].append({"step": "beds24", "error": str(exc)})
 
     try:
-        summary["emails_imported"] = await _sync_emails(db, current_user)
+        summary["emails_imported"] = await _sync_emails(db, current_user, tenant_ids)
     except Exception as exc:
         summary["partial_failures"].append({"step": "email", "error": str(exc)})
 
     try:
-        whatsapp_result = await _sync_whatsapp_linked_endpoints(db)
+        whatsapp_result = await _sync_whatsapp_linked_endpoints(db, tenant_ids)
         summary["whatsapp_messages_imported"] = whatsapp_result.get("total_imported", 0)
         summary["whatsapp_endpoints_synced"] = whatsapp_result.get("synced_endpoints", 0)
         summary["whatsapp_endpoint_sync_details"] = whatsapp_result.get("results", [])
@@ -297,7 +312,10 @@ async def sync_all(db: Session = Depends(get_db), current_user: User = Depends(g
 
     try:
         summary["tenant_threads_updated"] = 0
-        for tenant in db.query(Tenant).order_by(Tenant.id.asc()).all():
+        thread_tenant_query = db.query(Tenant)
+        if tenant_ids is not None:
+            thread_tenant_query = thread_tenant_query.filter(Tenant.id.in_(tenant_ids))
+        for tenant in thread_tenant_query.order_by(Tenant.id.asc()).all():
             # Rebuilding every tenant's thread timeline synchronously in this loop, with no
             # yield points, would freeze this worker's event loop (and every other concurrent
             # request — logins, thread loads, everything) for the whole loop's duration.

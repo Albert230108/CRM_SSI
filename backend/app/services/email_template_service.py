@@ -20,6 +20,7 @@ PLACEHOLDER_FIELDS: dict[str, Callable[[Tenant], object]] = {
     "room_name": lambda t: t.room_name,
     "property_name": lambda t: t.property_name,
     "booking_id": lambda t: t.booking_id,
+    "booking_status": lambda t: t.booking_status,
     "language": lambda t: t.language,
     "arrival_time": lambda t: t.arrival_time,
     "departure_time": lambda t: t.departure_time,

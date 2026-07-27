@@ -32,9 +32,10 @@ type TenantListProps = {
   selectedTenantId?: number
   reloadSignal?: number
   onNewMessage?: (info: { tenantName: string; channel: string; direction: string }) => void
+  onTenantsChange?: (tenantIds: number[]) => void
 }
 
-export default function TenantList({ selectedTenantId, reloadSignal, onNewMessage }: TenantListProps) {
+export default function TenantList({ selectedTenantId, reloadSignal, onNewMessage, onTenantsChange }: TenantListProps) {
   const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -53,10 +54,22 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [sortDesc, setSortDesc] = useState(true)
   const [livePollSignal, setLivePollSignal] = useState(0)
   const onNewMessageRef = useRef(onNewMessage)
+  const onTenantsChangeRef = useRef(onTenantsChange)
 
   useEffect(() => {
     onNewMessageRef.current = onNewMessage
   }, [onNewMessage])
+
+  useEffect(() => {
+    onTenantsChangeRef.current = onTenantsChange
+  }, [onTenantsChange])
+
+  useEffect(() => {
+    // Skip while the initial (or a re-triggered) fetch is still in flight, so callers don't
+    // see a transient empty list before the real filtered result has loaded.
+    if (loading) return
+    onTenantsChangeRef.current?.(tenants.map((tenant) => tenant.id))
+  }, [tenants, loading])
 
   useEffect(() => {
     let cancelled = false

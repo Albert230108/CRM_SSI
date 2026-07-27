@@ -772,7 +772,7 @@ def sync_all_accounts_status(job_id: str, current_user: User = Depends(get_curre
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
     return job
 
-def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
+def _sync_gmail_account(db: Session, account: GmailAccount, tenant_ids: list[int] | None = None) -> int:
     """Sync a single active Gmail account's threads. Returns count of saved conversations.
 
     Full re-list + re-fetch of every matching thread - used by the manual sync route, the
@@ -780,11 +780,17 @@ def _sync_gmail_account(db: Session, account: GmailAccount) -> int:
     _process_gmail_history_notification. The background poller in app.main goes through
     _catch_up_gmail_account instead, which only reaches this function for those same
     bootstrap/fallback cases rather than calling it directly every cycle.
+
+    tenant_ids, when provided, narrows the Gmail search query to only those tenants' emails
+    (used by the admin sync-all job when the triggering user has an active tenant filter).
     """
     service = _build_service_for_account(account)
+    tenant_query = db.query(Tenant).filter(Tenant.email.isnot(None))
+    if tenant_ids is not None:
+        tenant_query = tenant_query.filter(Tenant.id.in_(tenant_ids))
     tenant_emails = {
         tenant.email.strip().lower()
-        for tenant in db.query(Tenant).filter(Tenant.email.isnot(None)).all()
+        for tenant in tenant_query.all()
         if tenant.email
     }
     query_parts = [f'"{email}"' for email in sorted(tenant_emails)]

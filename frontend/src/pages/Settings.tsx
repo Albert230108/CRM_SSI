@@ -26,7 +26,7 @@ type EmailTemplate = {
 const EMAIL_TEMPLATE_PLACEHOLDERS = [
   'tenant_name', 'first_name', 'last_name', 'email', 'phone', 'check_in', 'check_out',
   'num_nights', 'num_adults', 'num_children', 'room_name', 'property_name', 'booking_id',
-  'language', 'arrival_time', 'departure_time', 'city', 'country',
+  'booking_status', 'language', 'arrival_time', 'departure_time', 'city', 'country',
 ]
 
 const emptyTemplateForm = { id: null as number | null, name: '', subject: '', body: '' }
