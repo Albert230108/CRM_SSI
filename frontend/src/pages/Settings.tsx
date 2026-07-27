@@ -686,7 +686,7 @@ export default function Settings() {
               onChange={(event) => setAiTemplateForm((current) => ({ ...current, guidelines: event.target.value }))}
               placeholder="Describe this template's goal, e.g. Used for late check-in requests; keep replies under 3 sentences."
               rows={2}
-              className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+              className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
             />
             <p className="text-xs text-gray-500">
               Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
@@ -714,7 +714,7 @@ export default function Settings() {
                   onChange={(event) => updateAiTemplateSection(index, 'content', event.target.value)}
                   placeholder="Section content, e.g. You are a friendly host responding on behalf of..."
                   rows={3}
-                  className="mt-2 w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                  className="mt-2 w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
                 />
               </div>
             ))}
