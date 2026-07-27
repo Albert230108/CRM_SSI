@@ -72,12 +72,12 @@ export default function AiPendingDrafts() {
         {drafts.map((draft) => (
           <div key={draft.id} className="rounded-2xl border border-indigo-200 bg-white p-5">
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
                   {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{draft.generated_text}</p>
+                <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">

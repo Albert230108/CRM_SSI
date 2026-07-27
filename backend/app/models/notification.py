@@ -12,6 +12,12 @@ class Notification(Base):
     channel = Column(String(50), nullable=False)
     direction = Column(String(20), nullable=False, server_default="inbound")
     preview = Column(String(255), nullable=True)
+    # Points to the specific thread this notification is about, so clicking it can open that
+    # thread directly instead of just landing on the tenant page. Interpretation depends on
+    # channel: for "email" it's the Conversation.id; for "whatsapp" it's the Communication.id
+    # of the inbound message (grouped-thread WhatsApp groups are recomputed on every load and
+    # have no stable id of their own, so the frontend locates the group containing this message).
+    thread_ref = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, index=True, server_default=func.now())
     # The message's actual send/receive time (Gmail internalDate, WhatsApp timestamp), as
     # opposed to created_at which is when this row was written. A delayed sync can insert a

@@ -492,6 +492,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         direction="inbound",
                         preview=body_text[:255] if body_text else None,
                         event_at=sent_at,
+                        thread_ref=str(conversation.id),
                     )
                     register_inbound_message(db, tenant=notify_tenant, channel="email", email_thread_id=conversation.id)
         except IntegrityError:

@@ -10,6 +10,7 @@ class NotificationRead(BaseModel):
     channel: str
     direction: str
     preview: str | None = None
+    thread_ref: str | None = None
     created_at: datetime
     event_at: datetime
     is_read: bool

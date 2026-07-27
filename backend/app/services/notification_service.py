@@ -14,6 +14,7 @@ def create_notification(
     direction: str,
     preview: str | None,
     event_at: datetime,
+    thread_ref: str | None = None,
 ) -> Notification:
     """Persist a notification at message-ingestion time.
 
@@ -31,6 +32,7 @@ def create_notification(
         direction=direction,
         preview=preview[:255] if preview else None,
         event_at=event_at,
+        thread_ref=thread_ref,
     )
     db.add(notification)
     return notification

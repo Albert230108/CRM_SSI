@@ -151,17 +151,6 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const gmailMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!showWhatsappMenu) return
-    const handleClickOutside = (event: MouseEvent) => {
-      if (whatsappMenuRef.current && !whatsappMenuRef.current.contains(event.target as Node)) {
-        setShowWhatsappMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showWhatsappMenu])
-
-  useEffect(() => {
     if (!showGmailMenu) return
     const handleClickOutside = (event: MouseEvent) => {
       if (gmailMenuRef.current && !gmailMenuRef.current.contains(event.target as Node)) {
@@ -191,6 +180,17 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
     loadGmailAccounts()
     return () => controller.abort()
   }, [token])
+
+  useEffect(() => {
+    if (!showWhatsappMenu) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (whatsappMenuRef.current && !whatsappMenuRef.current.contains(event.target as Node)) {
+        setShowWhatsappMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showWhatsappMenu])
 
   useEffect(() => {
     if (!tenantId) {
@@ -348,10 +348,14 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const hasTenantPhoneFallback = Boolean(digitsOnly(tenant?.phone) || digitsOnly(tenant?.mobile))
   const whatsappAvailable = whatsappEndpoints.length > 0 || hasTenantPhoneFallback
   const buildGmailUrl = (accountEmail?: string) => {
-    const accountSegment = accountEmail ? encodeURIComponent(accountEmail) : '0'
-    return tenant?.email
-      ? `https://mail.google.com/mail/u/${accountSegment}/#search/from:(${encodeURIComponent(tenant.email)})`
-      : `https://mail.google.com/mail/u/${accountSegment}/`
+    const target = tenant?.email
+      ? `https://mail.google.com/mail/#search/from:(${encodeURIComponent(tenant.email)})`
+      : `https://mail.google.com/mail/`
+    if (!accountEmail) return target
+    // Gmail's /mail/u/{N}/ path needs a numeric browser-session slot that we can't
+    // determine from an account's email. AccountChooser switches to the requested
+    // account (or prompts sign-in) and then redirects to `continue`.
+    return `https://accounts.google.com/AccountChooser?Email=${encodeURIComponent(accountEmail)}&continue=${encodeURIComponent(target)}`
   }
 
   const openGmailTarget = (accountEmail?: string) => {

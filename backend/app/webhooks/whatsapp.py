@@ -552,24 +552,26 @@ def _process_whatsapp_message(
     if duplicate:
         return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id, message="duplicate skipped")
 
-    db.add(
-        Communication(
-            tenant_id=tenant.id,
-            channel="whatsapp",
-            direction="inbound",
-            provider=provider,
-            external_account_id=external_account_id or None,
-            external_phone_id=external_phone_id,
-            external_chat_namespace=external_chat_namespace,
-            whatsapp_chat_id=whatsapp_identity.raw_chat_id,
-            whatsapp_identity_key=whatsapp_identity.canonical_chat_id,
-            whatsapp_normalized_phone=whatsapp_identity.normalized_phone,
-            provider_message_id=provider_message_id,
-            subject=payload.get("subject"),
-            message=msg_text,
-            created_at=ts,
-        )
+    inbound_communication = Communication(
+        tenant_id=tenant.id,
+        channel="whatsapp",
+        direction="inbound",
+        provider=provider,
+        external_account_id=external_account_id or None,
+        external_phone_id=external_phone_id,
+        external_chat_namespace=external_chat_namespace,
+        whatsapp_chat_id=whatsapp_identity.raw_chat_id,
+        whatsapp_identity_key=whatsapp_identity.canonical_chat_id,
+        whatsapp_normalized_phone=whatsapp_identity.normalized_phone,
+        provider_message_id=provider_message_id,
+        subject=payload.get("subject"),
+        message=msg_text,
+        created_at=ts,
     )
+    db.add(inbound_communication)
+    # Flush to get the communication's id -- the frontend uses it to locate which (dynamically
+    # windowed) WhatsApp group to auto-open when a notification is clicked.
+    db.flush()
     create_notification(
         db,
         tenant_id=tenant.id,
@@ -578,6 +580,7 @@ def _process_whatsapp_message(
         direction="inbound",
         preview=msg_text,
         event_at=ts,
+        thread_ref=str(inbound_communication.id),
     )
     if not is_history_payload:
         register_inbound_message(db, tenant=tenant, channel="whatsapp")

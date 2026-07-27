@@ -15,6 +15,7 @@ type NotificationItem = {
   created_at: string
   event_at: string
   is_read: boolean
+  thread_ref: string | null
 }
 
 export default function NotificationBell() {
@@ -103,7 +104,12 @@ export default function NotificationBell() {
     }
     setOpen(false)
     if (notification.tenant_id != null) {
-      navigate(`/dashboard/tenant/${notification.tenant_id}`)
+      if (notification.thread_ref) {
+        const params = new URLSearchParams({ channel: notification.channel, thread_ref: notification.thread_ref })
+        navigate(`/dashboard/tenant/${notification.tenant_id}?${params}`)
+      } else {
+        navigate(`/dashboard/tenant/${notification.tenant_id}`)
+      }
     }
   }
 

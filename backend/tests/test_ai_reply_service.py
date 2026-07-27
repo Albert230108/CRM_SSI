@@ -317,3 +317,13 @@ def test_placeholders_are_resolved_in_guidelines_and_sections(db_session, monkey
 
     assert "Write to Jamie." in captured["prompt"]
     assert "Their room is Studio 1." in captured["prompt"]
+
+
+def test_booking_status_placeholder_is_resolved(db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_status="confirmed")
+    template = _template(guidelines="Current status: {{booking_status}}.")
+    captured = _capture_gemini_call(monkeypatch)
+
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
+
+    assert "Current status: confirmed." in captured["prompt"]

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import FinanceBox from '../components/FinanceBox'
 import ImportModal from '../components/ImportModal'
@@ -64,6 +64,27 @@ export default function Dashboard() {
     const parsed = Number(tenantId)
     return Number.isFinite(parsed) ? parsed : undefined
   }, [tenantId])
+
+  // Populated from the notification-click URL (?channel=&thread_ref=), then stripped from the
+  // URL so switching tenants and coming back doesn't keep re-opening the same thread. Dashboard
+  // stays mounted across notification-driven navigation (only the tenantId route param and these
+  // search params change), so this has to react to searchParams changing -- a one-time lazy
+  // useState initializer would only fire on Dashboard's first-ever mount and miss every
+  // subsequent notification click.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [initialThreadTarget, setInitialThreadTarget] = useState<{ channel: string; threadRef: string } | null>(null)
+  useEffect(() => {
+    const channel = searchParams.get('channel')
+    const threadRef = searchParams.get('thread_ref')
+    if (!channel || !threadRef) return
+    setInitialThreadTarget({ channel, threadRef })
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      next.delete('channel')
+      next.delete('thread_ref')
+      return next
+    }, { replace: true })
+  }, [searchParams, setSearchParams])
 
   // Tracks whether each of the finance/OneDrive/thread tiles has finished loading data for
   // the currently selected tenant, so all three can stay blurred together until every tile
@@ -492,7 +513,13 @@ export default function Dashboard() {
           style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
         >
           <div className="h-full w-full min-h-0 overflow-hidden">
-            <ThreadView tenantId={selectedTenantId} reloadSignal={tenantReloadSignal} onReady={handleThreadReady} />
+            <ThreadView
+              tenantId={selectedTenantId}
+              reloadSignal={tenantReloadSignal}
+              onReady={handleThreadReady}
+              initialThreadTarget={initialThreadTarget}
+              onInitialThreadTargetConsumed={() => setInitialThreadTarget(null)}
+            />
           </div>
           <TileLoadingOverlay active={isSwitchingTenant} />
         </section>

@@ -106,7 +106,7 @@ export default function AiPayloadPreview() {
               {copied ? 'Copied!' : 'Copy to clipboard'}
             </button>
           </div>
-          <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-900">
+          <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-900">
             {preview.payload}
           </pre>
         </div>

@@ -375,6 +375,10 @@ type ThreadViewProps = {
   tenantId?: number
   reloadSignal?: number
   onReady?: (tenantId: number) => void
+  // Set when the panel was opened from a notification click, so the specific email thread or
+  // WhatsApp group that notification was about gets auto-selected once threads finish loading.
+  initialThreadTarget?: { channel: string; threadRef: string } | null
+  onInitialThreadTargetConsumed?: () => void
 }
 
 type ReplyTarget =
@@ -423,7 +427,7 @@ type AiAutoDraftItem = {
   created_at: string
 }
 
-export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadViewProps) {
+export default function ThreadView({ tenantId, reloadSignal, onReady, initialThreadTarget, onInitialThreadTargetConsumed }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const user = useAuthStore((state) => state.user)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
@@ -476,6 +480,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [aiDraftError, setAiDraftError] = useState('')
   const [pendingAutoDrafts, setPendingAutoDrafts] = useState<AiAutoDraftItem[]>([])
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
+  const [threadTargetNotFound, setThreadTargetNotFound] = useState(false)
   const [emailNavIndex, setEmailNavIndex] = useState(0)
   const [whatsappGroupNavIndex, setWhatsappGroupNavIndex] = useState(0)
   const [whatsappBlockNavIndex, setWhatsappBlockNavIndex] = useState(0)
@@ -709,7 +714,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
           {draft.status === 'pending_auto_send' ? 'AI draft - sending automatically soon' : 'Pending AI draft'}
         </p>
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{draft.generated_text}</p>
+        <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
         <div className="mt-2 flex flex-wrap gap-2">
           <button
             type="button"
@@ -837,6 +842,25 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
         setTenant(tenantData)
         setItems(groupedThreadData.items)
         setWhatsappEndpoints(endpointData)
+
+        if (initialThreadTarget) {
+          setThreadTargetNotFound(false)
+          if (initialThreadTarget.channel === 'email') {
+            const target = groupedThreadData.items.find(
+              (item): item is EmailThreadItem => item.type === 'email_thread' && String(item.thread_id) === initialThreadTarget.threadRef,
+            )
+            if (target) openEmailThread(target)
+            else setThreadTargetNotFound(true)
+          } else if (initialThreadTarget.channel === 'whatsapp') {
+            const target = groupedThreadData.items.find(
+              (item): item is WhatsappGroupItem =>
+                item.type === 'whatsapp_group' && item.messages.some((message) => String(message.id) === initialThreadTarget.threadRef),
+            )
+            if (target) openWhatsappGroup(target)
+            else setThreadTargetNotFound(true)
+          }
+          onInitialThreadTargetConsumed?.()
+        }
         setSelectedWhatsappEndpointId((current) => {
           if (current && endpointData.some((endpoint) => String(endpoint.id) === current)) {
             return current
@@ -858,7 +882,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
 
     loadThread()
     return () => controller.abort()
-  }, [tenantId, token, reloadSignal, livePollSignal])
+    // openEmailThread/openWhatsappGroup/onInitialThreadTargetConsumed are stable-enough per
+    // render and intentionally excluded to avoid re-running this fetch on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, token, reloadSignal, livePollSignal, initialThreadTarget])
 
   const navigateMessage = (kind: 'email' | 'whatsapp_group' | 'whatsapp_block', direction: 1 | -1) => {
     if (kind === 'email' && selectedEmailThread) {
@@ -1272,6 +1299,19 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
         {loading ? <p className="text-sm text-gray-500">Loading tenant thread...</p> : null}
         {replySending ? <p className="mt-1 text-sm text-gray-500">Sending message...</p> : null}
         {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
+        {threadTargetNotFound ? (
+          <div className="mb-4 flex items-start justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <span>The original thread for that notification is no longer available. Showing the tenant's full timeline instead.</span>
+            <button
+              type="button"
+              onClick={() => setThreadTargetNotFound(false)}
+              className="shrink-0 text-amber-600 transition hover:text-amber-900"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        ) : null}
 
         <div className="space-y-4">
           {items.map((item) => {
@@ -1554,7 +1594,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                       <div key={draft.draft_id ?? index} className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">AI Draft</p>
                         {draft.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{draft.subject}</p> : null}
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{draft.body_text}</p>
+                        <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.body_text}</p>
                         <button
                           type="button"
                           onClick={() => useDraftAsReply(draft, selectedEmailThread)}

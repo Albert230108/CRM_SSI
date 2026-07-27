@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
 import StatusFilterDropdown from './StatusFilterDropdown'
+import TenantContextMenu from './TenantContextMenu'
+import TenantAiTemplatesModal from './TenantAiTemplatesModal'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -55,6 +57,8 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [livePollSignal, setLivePollSignal] = useState(0)
   const onNewMessageRef = useRef(onNewMessage)
   const onTenantsChangeRef = useRef(onTenantsChange)
+  const [contextMenu, setContextMenu] = useState<{ tenantId: number; tenantName: string; x: number; y: number } | null>(null)
+  const [aiTemplatesTenant, setAiTemplatesTenant] = useState<{ id: number; name: string } | null>(null)
 
   useEffect(() => {
     onNewMessageRef.current = onNewMessage
@@ -355,6 +359,10 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
               <button
                 key={tenant.id}
                 onClick={() => navigate(`/dashboard/tenant/${tenant.id}`)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setContextMenu({ tenantId: tenant.id, tenantName: tenant.name, x: e.clientX, y: e.clientY })
+                }}
                 className={[
                   'w-full rounded-xl border p-2.5 text-left transition',
                   active ? `border-cyan-500 ${colors.bg} shadow-sm` : `${colors.border} ${colors.bg} hover:opacity-75`,
@@ -395,6 +403,23 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           })
         )}
       </div>
+
+      {contextMenu ? (
+        <TenantContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onEditAiTemplates={() => setAiTemplatesTenant({ id: contextMenu.tenantId, name: contextMenu.tenantName })}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+
+      {aiTemplatesTenant ? (
+        <TenantAiTemplatesModal
+          tenantId={aiTemplatesTenant.id}
+          tenantName={aiTemplatesTenant.name}
+          onClose={() => setAiTemplatesTenant(null)}
+        />
+      ) : null}
     </div>
   )
 }
