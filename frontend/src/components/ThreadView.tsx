@@ -3,6 +3,7 @@ import { useAuthStore } from '../store/authStore'
 import { formatCombinedDateTime } from '../lib/date'
 import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
 import { useDraggablePosition } from '../hooks/useDraggablePosition'
+import { useResizableSize } from '../hooks/useResizableSize'
 import LinkChatModal from './LinkChatModal'
 import EmailLinkModal from './EmailLinkModal'
 import ToastCard from './ToastCard'
@@ -424,6 +425,7 @@ type AiAutoDraftItem = {
 
 export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
+  const user = useAuthStore((state) => state.user)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const downloadAttachment = useCallback(
     async (messageId: number, attachmentId: string, filename: string) => {
@@ -490,6 +492,40 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
   const [draftError, setDraftError] = useState('')
   const emailThreadDrag = useDraggablePosition()
   const whatsappGroupDrag = useDraggablePosition()
+
+  const emailThreadSize = useResizableSize({
+    boxType: 'email-thread',
+    defaultWidth: 800,
+    defaultHeight: window.innerHeight * 0.85,
+    minWidth: 320,
+    minHeight: 400,
+    maxWidth: window.innerWidth * 0.95,
+    maxHeight: window.innerHeight * 0.95,
+    user,
+  })
+
+  const whatsappGroupSize = useResizableSize({
+    boxType: 'whatsapp-group',
+    defaultWidth: 800,
+    defaultHeight: window.innerHeight * 0.85,
+    minWidth: 320,
+    minHeight: 400,
+    maxWidth: window.innerWidth * 0.95,
+    maxHeight: window.innerHeight * 0.95,
+    user,
+  })
+
+  const whatsappBlockSize = useResizableSize({
+    boxType: 'whatsapp-block',
+    defaultWidth: 500,
+    defaultHeight: window.innerHeight * 0.85,
+    minWidth: 320,
+    minHeight: 400,
+    maxWidth: window.innerWidth * 0.95,
+    maxHeight: window.innerHeight * 0.95,
+    user,
+  })
+
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
   const [livePollSignal, setLivePollSignal] = useState(0)
@@ -1331,8 +1367,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             role="dialog"
             aria-modal="true"
             aria-labelledby="email-thread-modal-title"
-            className="flex h-[85vh] max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
-            style={emailThreadDrag.style}
+            className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            style={{ ...emailThreadDrag.style, ...emailThreadSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
             <div
@@ -1665,6 +1701,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                 </button>
               )}
             </div>
+
+            <div
+              className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
+              onPointerDown={emailThreadSize.handlePointerDown}
+              title="Drag to resize"
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M14.414 2.586a2 2 0 00-2.828 0l-9 9a2 2 0 102.828 2.828l9-9a2 2 0 000-2.828zM16.586 15.586l-1.414 1.414a2 2 0 11-2.828-2.828l1.414-1.414a2 2 0 112.828 2.828z" clipRule="evenodd" />
+              </svg>
+            </div>
           </div>
 
           {selectedWhatsappBlock && selectedWhatsappBlock.threadId === selectedEmailThread.thread_id ? (
@@ -1672,7 +1718,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
               role="dialog"
               aria-modal="true"
               aria-labelledby="whatsapp-block-panel-title"
-              className="flex h-[85vh] max-h-[85vh] w-full max-w-md flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+              className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+              style={whatsappBlockSize.style}
               onClick={(event) => event.stopPropagation()}
             >
               <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
@@ -1826,6 +1873,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                   </button>
                 )}
               </div>
+
+              <div
+                className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
+                onPointerDown={whatsappBlockSize.handlePointerDown}
+                title="Drag to resize"
+              >
+                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M14.414 2.586a2 2 0 00-2.828 0l-9 9a2 2 0 102.828 2.828l9-9a2 2 0 000-2.828zM16.586 15.586l-1.414 1.414a2 2 0 11-2.828-2.828l1.414-1.414a2 2 0 112.828 2.828z" clipRule="evenodd" />
+                </svg>
+              </div>
             </div>
           ) : null}
         </div>
@@ -1840,8 +1897,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
             role="dialog"
             aria-modal="true"
             aria-labelledby="whatsapp-group-modal-title"
-            className="flex h-[85vh] max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
-            style={whatsappGroupDrag.style}
+            className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            style={{ ...whatsappGroupDrag.style, ...whatsappGroupSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
             <div
@@ -2002,6 +2059,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady }: ThreadVi
                   Reply
                 </button>
               )}
+            </div>
+
+            <div
+              className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-gray-400 hover:text-gray-600"
+              onPointerDown={whatsappGroupSize.handlePointerDown}
+              title="Drag to resize"
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M14.414 2.586a2 2 0 00-2.828 0l-9 9a2 2 0 102.828 2.828l9-9a2 2 0 000-2.828zM16.586 15.586l-1.414 1.414a2 2 0 11-2.828-2.828l1.414-1.414a2 2 0 112.828 2.828z" clipRule="evenodd" />
+              </svg>
             </div>
           </div>
         </div>
