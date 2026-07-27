@@ -33,6 +33,10 @@ def _build_sections_prompt(template: AiReplyTemplate, tenant: Tenant) -> str:
 def _build_beds24_context(tenant: Tenant) -> str:
     lines = [
         f"Booking ID: {tenant.booking_id}",
+        f"Guest name: {tenant.name or 'Unknown'}",
+        f"Email: {tenant.email or 'Unknown'}",
+        f"Phone: {tenant.phone or 'Unknown'}",
+        f"Mobile: {tenant.mobile or 'Unknown'}",
         f"Property: {tenant.property_name or tenant.room_name or 'Unknown'}",
         f"Room: {tenant.room_name or 'Unknown'}",
         f"Check-in: {tenant.check_in or 'Unknown'}",

@@ -110,6 +110,20 @@ def test_beds24_and_payments_blocks_only_appear_when_checked(db_session, monkeyp
     assert "City tax" in captured["prompt"]
 
 
+def test_beds24_context_includes_contact_details(db_session, monkeypatch):
+    tenant = _create_tenant(db_session, email="guest@example.com", phone="+31600000000", mobile="+31611111111")
+    captured = _capture_gemini_call(monkeypatch)
+    template = _template(include_beds24=True)
+
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
+
+    prompt = captured["prompt"]
+    assert f"Guest name: {tenant.name}" in prompt
+    assert "Email: guest@example.com" in prompt
+    assert "Phone: +31600000000" in prompt
+    assert "Mobile: +31611111111" in prompt
+
+
 def test_notes_block_only_appears_when_checked(db_session, monkeypatch):
     tenant = _create_tenant(db_session, notes="VIP guest, prefers late checkout.")
 
