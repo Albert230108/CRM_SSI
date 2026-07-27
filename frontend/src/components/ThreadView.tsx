@@ -710,16 +710,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
     const draft = pendingAutoDraftForChannel(channel)
     if (!draft) return null
     return (
-      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-2">
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
           {draft.status === 'pending_auto_send' ? 'AI draft - sending automatically soon' : 'Pending AI draft'}
         </p>
-        <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
-        <div className="mt-2 flex flex-wrap gap-2">
+        <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draft.generated_text}</p>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
           <button
             type="button"
             onClick={() => useAutoDraft(draft)}
-            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+            className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
           >
             Use this draft
           </button>
@@ -727,7 +727,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             <button
               type="button"
               onClick={() => cancelAutoSend(draft)}
-              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+              className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
             >
               Cancel auto-send
             </button>
@@ -735,7 +735,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           <button
             type="button"
             onClick={() => dismissAutoDraft(draft)}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
           >
             Dismiss
           </button>
@@ -1427,15 +1427,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             onClick={(event) => event.stopPropagation()}
           >
             <div
-              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-5 py-4"
+              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-4 py-2.5"
               onPointerDown={emailThreadDrag.handlePointerDown}
             >
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-cyan-700">Email Thread</p>
-                <h3 id="email-thread-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
+                <h3 id="email-thread-modal-title" className="mt-0.5 truncate text-lg font-semibold text-gray-900">
                   {selectedEmailThread.subject || 'Untitled conversation'}
                 </h3>
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-0.5 text-xs text-gray-500">
                   {formatTimestamp(selectedEmailThread.anchor_timestamp || selectedEmailThread.messages[0]?.sent_at || selectedEmailThread.messages[selectedEmailThread.messages.length - 1]?.sent_at || new Date().toISOString())}
                 </p>
               </div>
@@ -1443,15 +1443,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedEmailThread(null)}
-                className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
                 Close
               </button>
             </div>
 
             <div className="relative min-h-0 flex-1">
-            <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-email-messages>
-              <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
+            <div className="absolute inset-0 overflow-y-auto px-4 py-3" data-email-messages>
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-2">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Messages</p>
                   <p className="mt-1 text-sm font-semibold text-gray-900">
@@ -1466,7 +1466,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 </p>
               </div>
 
-              <div className="space-y-3 mb-4">
+              <div className="space-y-2 mb-2">
                 {buildThreadTimelineEntries(selectedEmailThread).map((entry, entryIndex) => {
                   if (entry.kind === 'email') {
                     const messageItem = entry.message
@@ -1475,7 +1475,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       <article
                         key={`email-${messageItem.id}`}
                         data-message-index={entryIndex}
-                        className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                        className={`max-w-[92%] rounded-2xl border px-3 py-2 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
                           <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -1484,17 +1484,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                           {messageItem.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(messageItem.sent_at)}</span>
                         </div>
-                        {messageItem.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
+                        {messageItem.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
                         {renderMessageBody(messageItem) ? (
                           <div
-                            className="prose prose-sm max-w-none mt-2 overflow-x-auto text-sm leading-6 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
+                            className="prose prose-sm max-w-none mt-1.5 overflow-x-auto text-sm leading-5 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
                             dangerouslySetInnerHTML={renderMessageBody(messageItem)}
                           />
                         ) : (
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{messageItem.body_text || messageItem.body_display || messageItem.body}</p>
+                          <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{messageItem.body_text || messageItem.body_display || messageItem.body}</p>
                         )}
                         {messageItem.attachments && messageItem.attachments.length > 0 ? (
-                          <div className="mt-2 flex flex-wrap gap-2">
+                          <div className="mt-1.5 flex flex-wrap gap-2">
                             {messageItem.attachments.map((attachment) => {
                               const isDownloading = downloadingAttachmentId === attachment.attachment_id
                               return (
@@ -1531,19 +1531,19 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                           setSelectedWhatsappBlock({ ...block, threadId: selectedEmailThread.thread_id })
                           setReplyTarget({ type: 'whatsapp', groupId: block.block_id })
                         }}
-                        className="flex w-full cursor-pointer items-start justify-between gap-4 px-4 py-3 text-left transition hover:bg-emerald-100/70"
+                        className="flex w-full cursor-pointer items-start justify-between gap-4 px-3 py-2 text-left transition hover:bg-emerald-100/70"
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-emerald-700">
                             <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-800">WhatsApp</span>
                             <span>{formatTimestamp(block.end_at || lastBlockMessage?.created_at || new Date().toISOString())}</span>
                           </div>
-                          <p className="mt-2 truncate text-sm font-semibold text-gray-900">
+                          <p className="mt-1.5 truncate text-sm font-semibold text-gray-900">
                             {block.message_count === 1 ? 'WhatsApp message' : `WhatsApp messages (${block.message_count})`}
                           </p>
-                          <p className="mt-1 truncate text-sm text-gray-600">{lastBlockMessage ? extractWhatsappPreviewText(lastBlockMessage) : 'No preview available'}</p>
+                          <p className="mt-0.5 truncate text-sm text-gray-600">{lastBlockMessage ? extractWhatsappPreviewText(lastBlockMessage) : 'No preview available'}</p>
                         </div>
-                        <div className="flex shrink-0 flex-col items-end gap-2">
+                        <div className="flex shrink-0 flex-col items-end gap-1.5">
                           <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
                             {block.message_count} messages
                           </span>
@@ -1554,7 +1554,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                               setSelectedWhatsappBlock({ ...block, threadId: selectedEmailThread.thread_id })
                               setReplyTarget({ type: 'whatsapp', groupId: block.block_id })
                             }}
-                            className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                            className="rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
                           >
                             Reply
                           </button>
@@ -1589,16 +1589,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
 
               {draftResults ? (
                 draftResults.length ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {draftResults.map((draft, index) => (
-                      <div key={draft.draft_id ?? index} className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <div key={draft.draft_id ?? index} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
                         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">AI Draft</p>
-                        {draft.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{draft.subject}</p> : null}
-                        <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.body_text}</p>
+                        {draft.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{draft.subject}</p> : null}
+                        <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draft.body_text}</p>
                         <button
                           type="button"
                           onClick={() => useDraftAsReply(draft, selectedEmailThread)}
-                          className="mt-3 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+                          className="mt-2 rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700"
                         >
                           Use this draft
                         </button>
@@ -1682,10 +1682,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             />
             </div>
 
-            <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+            <div className="shrink-0 border-t border-gray-200 px-4 py-3">
               {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
-                <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
-                  <div className="space-y-2">
+                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+                  <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-email-subject">
                       Subject
                     </label>
@@ -1694,7 +1694,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       value={replySubject}
                       onChange={(event) => setReplySubject(event.target.value)}
                       placeholder={replyTarget.subject || 'Subject'}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
                     />
                   </div>
                   {renderPendingAutoDraftBanner('email')}
@@ -1704,7 +1704,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       value={selectedAiTemplateId}
                       onChange={(event) => setSelectedAiTemplateId(event.target.value)}
                       disabled={aiDraftGenerating}
-                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                     >
                       <option value="">No AI template</option>
                       {aiTemplateOptions.map((template) => (
@@ -1715,7 +1715,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       type="button"
                       onClick={handleGenerateAiDraft}
                       disabled={aiDraftGenerating || !selectedAiTemplateId}
-                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
                     </button>
@@ -1738,20 +1738,20 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     rows={4}
                     placeholder="Write your reply..."
                     disabled={replySending}
-                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
                       onClick={() => setReplyTarget(null)}
-                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={replySending || !replyMessage.trim()}
-                      className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
                     </button>
@@ -1789,13 +1789,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
               style={whatsappBlockSize.style}
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-4 py-2.5">
                 <div className="min-w-0">
                   <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp</p>
-                  <h3 id="whatsapp-block-panel-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
+                  <h3 id="whatsapp-block-panel-title" className="mt-0.5 truncate text-lg font-semibold text-gray-900">
                     {tenant?.name || 'WhatsApp conversation'}
                   </h3>
-                  <p className="mt-1 text-sm text-gray-500">
+                  <p className="mt-0.5 text-xs text-gray-500">
                     {formatTimestamp(selectedWhatsappBlock.start_at || selectedWhatsappBlock.messages[0]?.created_at || new Date().toISOString())}
                     {selectedWhatsappBlock.end_at ? ` - ${formatTimestamp(selectedWhatsappBlock.end_at)}` : ''}
                   </p>
@@ -1803,15 +1803,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 <button
                   type="button"
                   onClick={() => setSelectedWhatsappBlock(null)}
-                  className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                  className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
                 >
                   Close
                 </button>
               </div>
 
               <div className="relative min-h-0 flex-1">
-              <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-whatsapp-block-messages>
-                <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <div className="absolute inset-0 overflow-y-auto px-4 py-3" data-whatsapp-block-messages>
+                <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2">
                   <div>
                     <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
                     <p className="mt-1 text-sm font-semibold text-gray-900">
@@ -1820,7 +1820,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                   </div>
                 </div>
 
-                <div className="space-y-3 mb-4">
+                <div className="space-y-2 mb-2">
                   {selectedWhatsappBlock.messages.map((blockMessage, blockMessageIndex) => {
                     const isOutbound = blockMessage.direction === 'outbound'
                     const accountKey = getWhatsappMessageAccountKey(blockMessage)
@@ -1829,7 +1829,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       <article
                         key={blockMessage.id}
                         data-message-index={blockMessageIndex}
-                        className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
+                        className={`max-w-[92%] rounded-2xl border px-3 py-2 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
                           <span
@@ -1843,8 +1843,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                           {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(blockMessage.created_at)}</span>
                         </div>
-                        {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
+                        {blockMessage.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
+                        <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
                       </article>
                     )
                   })}
@@ -1859,10 +1859,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
               />
               </div>
 
-              <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+              <div className="shrink-0 border-t border-gray-200 px-4 py-3">
                 {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappBlock.block_id ? (
-                  <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
-                    <div className="space-y-2">
+                  <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+                    <div className="space-y-1">
                       <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="block-whatsapp-endpoint">
                         WhatsApp account
                       </label>
@@ -1871,7 +1871,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         value={selectedWhatsappEndpointId}
                         onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
                         disabled={replySending || !hasWhatsappEndpoints}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                       >
                         <option value="">{hasWhatsappEndpoints ? 'Choose an account' : 'No active WhatsApp accounts'}</option>
                         {whatsappEndpoints.map((endpoint) => (
@@ -1888,7 +1888,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         value={selectedAiTemplateId}
                         onChange={(event) => setSelectedAiTemplateId(event.target.value)}
                         disabled={aiDraftGenerating}
-                        className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                       >
                         <option value="">No AI template</option>
                         {aiTemplateOptions.map((template) => (
@@ -1899,7 +1899,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         type="button"
                         onClick={handleGenerateAiDraft}
                         disabled={aiDraftGenerating || !selectedAiTemplateId}
-                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
                       </button>
@@ -1919,23 +1919,23 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     <textarea
                       value={replyMessage}
                       onChange={(event) => setReplyMessage(event.target.value)}
-                      rows={3}
+                      rows={4}
                       placeholder="Write your reply..."
                       disabled={replySending}
-                      className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                     />
                     <div className="flex items-center justify-between gap-2">
                       <button
                         type="button"
                         onClick={() => setReplyTarget(null)}
-                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                        className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
                         disabled={replySending || !replyMessage.trim() || !selectedWhatsappEndpointId}
-                        className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {replySending ? 'Sending...' : 'Send'}
                       </button>
@@ -1981,15 +1981,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             onClick={(event) => event.stopPropagation()}
           >
             <div
-              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-5 py-4"
+              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-4 py-2.5"
               onPointerDown={whatsappGroupDrag.handlePointerDown}
             >
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp Group</p>
-                <h3 id="whatsapp-group-modal-title" className="mt-1 truncate text-2xl font-semibold text-gray-900">
+                <h3 id="whatsapp-group-modal-title" className="mt-0.5 truncate text-lg font-semibold text-gray-900">
                   {tenant?.name || 'WhatsApp conversation'}
                 </h3>
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-0.5 text-xs text-gray-500">
                   {formatTimestamp(selectedWhatsappGroup.start_timestamp || selectedWhatsappGroup.messages[0]?.created_at || selectedWhatsappGroup.messages[selectedWhatsappGroup.messages.length - 1]?.created_at || new Date().toISOString())}
                   {selectedWhatsappGroup.end_timestamp ? ` ? ${formatTimestamp(selectedWhatsappGroup.end_timestamp)}` : ''}
                 </p>
@@ -1998,15 +1998,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedWhatsappGroup(null)}
-                className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
                 Close
               </button>
             </div>
 
             <div className="relative min-h-0 flex-1">
-            <div className="absolute inset-0 overflow-y-auto px-5 py-4" data-whatsapp-messages>
-              <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <div className="absolute inset-0 overflow-y-auto px-4 py-3" data-whatsapp-messages>
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2">
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
                   <p className="mt-1 text-sm font-semibold text-gray-900">
@@ -2020,7 +2020,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 </p>
               </div>
 
-              <div className="space-y-3 mb-4">
+              <div className="space-y-2 mb-2">
                 {selectedWhatsappGroup.messages.map((blockMessage, blockMessageIndex) => {
                   const isOutbound = blockMessage.direction === 'outbound'
                   const accountKey = getWhatsappMessageAccountKey(blockMessage)
@@ -2029,7 +2029,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     <article
                       key={blockMessage.id}
                       data-message-index={blockMessageIndex}
-                      className={`max-w-[92%] rounded-2xl border px-4 py-3 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
+                      className={`max-w-[92%] rounded-2xl border px-3 py-2 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                     >
                       <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
                         <span
@@ -2043,8 +2043,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                         <span>{formatTimestamp(blockMessage.created_at)}</span>
                       </div>
-                      {blockMessage.subject ? <p className="mt-2 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{blockMessage.message}</p>
+                      {blockMessage.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
+                      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
                     </article>
                   )
                 })}
@@ -2058,10 +2058,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             />
             </div>
 
-            <div className="shrink-0 border-t border-gray-200 px-5 py-4">
+            <div className="shrink-0 border-t border-gray-200 px-4 py-3">
               {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
-                <form onSubmit={handleSendReply} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
-                  <div className="space-y-2">
+                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+                  <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-whatsapp-endpoint">
                       WhatsApp account
                     </label>
@@ -2070,7 +2070,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       value={selectedWhatsappEndpointId}
                       onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
                       disabled={replySending || !hasWhatsappEndpoints}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                     >
                       <option value="">{hasWhatsappEndpoints ? 'Choose an account' : 'No active WhatsApp accounts'}</option>
                       {whatsappEndpoints.map((endpoint) => (
@@ -2087,7 +2087,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       value={selectedAiTemplateId}
                       onChange={(event) => setSelectedAiTemplateId(event.target.value)}
                       disabled={aiDraftGenerating}
-                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                     >
                       <option value="">No AI template</option>
                       {aiTemplateOptions.map((template) => (
@@ -2098,7 +2098,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       type="button"
                       onClick={handleGenerateAiDraft}
                       disabled={aiDraftGenerating || !selectedAiTemplateId}
-                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
                     </button>
@@ -2118,23 +2118,23 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
-                    rows={3}
+                    rows={4}
                     placeholder="Write your reply..."
                     disabled={replySending}
-                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
                       onClick={() => setReplyTarget(null)}
-                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={replySending || !replyMessage.trim() || !selectedWhatsappEndpointId}
-                      className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
                     </button>
