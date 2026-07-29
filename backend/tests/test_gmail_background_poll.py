@@ -100,3 +100,96 @@ def test_poll_continues_to_next_account_after_duplicate_key_error(monkeypatch):
             cleanup_db.commit()
         finally:
             cleanup_db.close()
+
+
+def test_poll_deactivates_account_after_consecutive_failure_threshold(monkeypatch):
+    """Regression test: a Gmail account with a persistently failing catch-up (e.g. a revoked
+    refresh token) used to fail identically forever with is_active never auto-flipped, giving
+    no signal anywhere that the whole mailbox had silently stopped syncing. After enough
+    consecutive failures it should deactivate instead of retrying forever.
+    """
+    monkeypatch.setattr(main_module, "GMAIL_ACCOUNT_FAILURE_THRESHOLD", 2)
+
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(email_address="flaky-account@example.com", is_active=True)
+        setup_db.add(account)
+        setup_db.commit()
+        account_id = account.id
+    finally:
+        setup_db.close()
+
+    def always_fails(db, account):
+        raise RuntimeError("simulated auth failure")
+
+    monkeypatch.setattr(main_module, "_catch_up_gmail_account", always_fails)
+
+    try:
+        main_module._poll_gmail_accounts_once()
+        verify_db = SessionLocal()
+        try:
+            refreshed = verify_db.get(GmailAccount, account_id)
+            assert refreshed.consecutive_failure_count == 1
+            assert refreshed.is_active is True
+            assert refreshed.last_error_message is not None
+        finally:
+            verify_db.close()
+
+        main_module._poll_gmail_accounts_once()
+        verify_db = SessionLocal()
+        try:
+            refreshed = verify_db.get(GmailAccount, account_id)
+            assert refreshed.consecutive_failure_count == 2
+            assert refreshed.is_active is False
+        finally:
+            verify_db.close()
+    finally:
+        cleanup_db = SessionLocal()
+        try:
+            cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+            cleanup_db.commit()
+        finally:
+            cleanup_db.close()
+
+
+def test_poll_resets_failure_count_after_a_successful_cycle(monkeypatch):
+    """A prior run of consecutive failures must not permanently taint an account once it
+    starts succeeding again - otherwise a transient outage would eventually deactivate an
+    account that has already recovered."""
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(
+            email_address="recovering-account@example.com",
+            is_active=True,
+            consecutive_failure_count=3,
+            last_error_message="previous failure",
+        )
+        setup_db.add(account)
+        setup_db.commit()
+        account_id = account.id
+    finally:
+        setup_db.close()
+
+    def succeeds(db, account):
+        account.last_synced_at = datetime.now(timezone.utc)
+        db.commit()
+
+    monkeypatch.setattr(main_module, "_catch_up_gmail_account", succeeds)
+
+    try:
+        main_module._poll_gmail_accounts_once()
+        verify_db = SessionLocal()
+        try:
+            refreshed = verify_db.get(GmailAccount, account_id)
+            assert refreshed.consecutive_failure_count == 0
+            assert refreshed.last_error_message is None
+            assert refreshed.is_active is True
+        finally:
+            verify_db.close()
+    finally:
+        cleanup_db = SessionLocal()
+        try:
+            cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+            cleanup_db.commit()
+        finally:
+            cleanup_db.close()

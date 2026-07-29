@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 EMAIL_POLL_INTERVAL_SECONDS = int(os.getenv("EMAIL_POLL_INTERVAL_SECONDS", "14400"))  # 4 hours
 GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS = int(os.getenv("GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS", str(6 * 60 * 60)))
 GMAIL_WATCH_RENEWAL_MARGIN = timedelta(hours=24)
+# A mailbox with a revoked/expired refresh token fails identically on every catch-up cycle
+# forever, with is_active never auto-flipped, so it never surfaces to anyone. After this many
+# *consecutive* catch-up failures (~40 hours at the default 4h poll interval - long enough to
+# ride out a transient outage) deactivate it so it stops silently burning retries; reconnecting
+# is the same manual flow used after an explicit /disconnect.
+GMAIL_ACCOUNT_FAILURE_THRESHOLD = int(os.getenv("GMAIL_ACCOUNT_FAILURE_THRESHOLD", "10"))
 # Internal poll granularity for the AI auto-draft scheduler - independent of the user-facing
 # debounce/auto-send-delay settings (which are typically minutes), just frequent enough that
 # those settings feel responsive.
@@ -53,13 +59,28 @@ def _poll_gmail_accounts_once() -> None:
             account_id = account.id
             try:
                 _catch_up_gmail_account(db, account)
-            except Exception:
+                if account.consecutive_failure_count:
+                    account.consecutive_failure_count = 0
+                    account.last_error_message = None
+                    db.commit()
+            except Exception as exc:
                 # A failed flush/commit leaves the session needing a rollback before any
                 # further use, including lazy-loading account.id for this log line — so
                 # capture the id above and roll back here, or logging the error itself
                 # raises PendingRollbackError and aborts the remaining accounts this cycle.
                 db.rollback()
                 logger.exception("Background Gmail catch-up failed account_id=%s", account_id)
+                account.consecutive_failure_count = (account.consecutive_failure_count or 0) + 1
+                account.last_error_message = str(exc)[:1000]
+                account.last_failure_at = datetime.now(timezone.utc)
+                if account.consecutive_failure_count >= GMAIL_ACCOUNT_FAILURE_THRESHOLD:
+                    account.is_active = False
+                    logger.error(
+                        "Deactivating Gmail account_id=%s after %s consecutive catch-up failures",
+                        account_id,
+                        account.consecutive_failure_count,
+                    )
+                db.commit()
     except Exception:
         logger.exception("Background Gmail sync loop failed to load accounts")
     finally:

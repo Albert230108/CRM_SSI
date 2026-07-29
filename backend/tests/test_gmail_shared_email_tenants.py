@@ -188,3 +188,56 @@ def test_tenant_matched_via_secondary_linked_email():
         cleanup_db.commit()
     finally:
         cleanup_db.close()
+
+
+def test_tenant_matched_when_primary_email_has_different_case():
+    """Regression test: Tenant.email is stored exactly as Beds24/manual entry provided it
+    (no lowercasing), but Gmail header addresses are always lowercased before matching. A
+    tenant whose primary email happens to contain uppercase characters must still be matched
+    and linked, instead of silently never getting a TenantConversationLink.
+    """
+    mixed_case_email = "John.Doe@Example.com"
+    incoming_header_address = "john.doe@example.com"
+
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(email_address="case-account@example.com", is_active=True)
+        tenant = Tenant(name="Case Tenant", email=mixed_case_email, booking_id="booking-case-tenant")
+        setup_db.add_all([account, tenant])
+        setup_db.commit()
+        account_id = account.id
+        tenant_id = tenant.id
+    finally:
+        setup_db.close()
+
+    thread = {"id": "thread-case-email", "messages": [_message("case-msg-1", incoming_header_address)]}
+    db = SessionLocal()
+    try:
+        account_obj = db.get(GmailAccount, account_id)
+        conversation = gmail_integration._upsert_thread(db, account_obj, thread)
+        assert conversation is not None
+        db.commit()
+        conversation_id = conversation.id
+        assert conversation.tenant_id == tenant_id
+
+        link = (
+            db.query(TenantConversationLink)
+            .filter(TenantConversationLink.tenant_id == tenant_id, TenantConversationLink.conversation_id == conversation_id)
+            .filter(TenantConversationLink.unlinked_at.is_(None))
+            .first()
+        )
+        assert link is not None
+    finally:
+        db.close()
+
+    cleanup_db = SessionLocal()
+    try:
+        cleanup_db.query(Notification).filter(Notification.tenant_id == tenant_id).delete(synchronize_session=False)
+        cleanup_db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete()
+        cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
+        cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(Tenant).filter(Tenant.id == tenant_id).delete()
+        cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+        cleanup_db.commit()
+    finally:
+        cleanup_db.close()

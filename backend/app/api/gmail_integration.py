@@ -17,6 +17,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from jose import jwt
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from cryptography.fernet import Fernet
@@ -180,6 +181,23 @@ def _execute_gmail_request(request: Any, *, max_retries: int = 5, base_delay: fl
             time.sleep(delay)
 
 
+def _list_all_matching_threads(service: Any, query: str) -> list[dict[str, Any]]:
+    """Page through users().threads().list() fully instead of stopping at the first 100
+    results - a full/backfill sync used to silently drop any matching thread past the first
+    page, unlike the incremental history.list() path which already paginates."""
+    threads: list[dict[str, Any]] = []
+    page_token = None
+    while True:
+        response = _execute_gmail_request(
+            service.users().threads().list(userId="me", maxResults=100, q=query, pageToken=page_token)
+        )
+        threads.extend(response.get("threads") or [])
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    return threads
+
+
 def _start_watch(db: Session, account: GmailAccount) -> None:
     """Register (or renew) Gmail push notifications for this account's mailbox.
 
@@ -299,7 +317,10 @@ def _find_tenants_for_message(db: Session, headers: dict[str, str], account_emai
         for candidate in raw_value.split(","):
             address = _email_address(candidate)
             if address and address != account_email.lower():
-                for tenant in db.query(Tenant).filter(Tenant.email == address).all():
+                # address is always lowercased by _email_address above, but Tenant.email is
+                # stored as-received from Beds24/manual entry (no case normalization) - compare
+                # case-insensitively so a mixed-case guest email still matches incoming headers.
+                for tenant in db.query(Tenant).filter(func.lower(Tenant.email) == address).all():
                     if tenant.id not in seen_ids:
                         seen_ids.add(tenant.id)
                         matches.append((tenant, address))
@@ -794,10 +815,15 @@ def _sync_gmail_account(db: Session, account: GmailAccount, tenant_ids: list[int
         for tenant in tenant_query.all()
         if tenant.email
     }
+    # Also search for tenants' secondary/alias emails - a full sync built from Tenant.email
+    # alone would never pick up history that only involves a linked TenantEmailAddress.
+    alias_query = db.query(TenantEmailAddress.email).filter(TenantEmailAddress.is_active.is_(True))
+    if tenant_ids is not None:
+        alias_query = alias_query.filter(TenantEmailAddress.tenant_id.in_(tenant_ids))
+    tenant_emails |= {email.strip().lower() for (email,) in alias_query.all() if email}
     query_parts = [f'"{email}"' for email in sorted(tenant_emails)]
     query = " OR ".join(query_parts) if query_parts else None
-    request = service.users().threads().list(userId="me", maxResults=100, q=query) if query else None
-    threads = _execute_gmail_request(request).get("threads") or [] if request is not None else []
+    threads = _list_all_matching_threads(service, query) if query else []
     saved = 0
     for thread_ref in threads:
         thread = _execute_gmail_request(
@@ -823,8 +849,7 @@ def sync_gmail_account_for_email(db: Session, account: GmailAccount, email: str)
     narrow supplementary search, not a full account sync.
     """
     service = _build_service_for_account(account)
-    request = service.users().threads().list(userId="me", maxResults=100, q=f'"{email}"')
-    threads = _execute_gmail_request(request).get("threads") or []
+    threads = _list_all_matching_threads(service, f'"{email}"')
     saved = 0
     for thread_ref in threads:
         thread = _execute_gmail_request(
@@ -912,8 +937,25 @@ def _process_gmail_history_notification(db: Session, account: GmailAccount, new_
         raise
 
     for thread_id in thread_ids:
-        thread = _execute_gmail_request(service.users().threads().get(userId="me", id=thread_id, format="full"))
-        _upsert_thread(db, account, thread)
+        try:
+            # Mirrors the begin_nested savepoint pattern _upsert_thread uses internally for
+            # message inserts: isolating each thread's work in its own savepoint means one
+            # thread failing (e.g. deleted/inaccessible thread, unexpected upsert error) rolls
+            # back only that thread, not the other threads already staged in this transaction.
+            # Without this isolation, last_history_id below never advances after any failure,
+            # so every *other* thread in this batch gets silently retried forever right along
+            # with the one actually failing.
+            with db.begin_nested():
+                thread = _execute_gmail_request(
+                    service.users().threads().get(userId="me", id=thread_id, format="full")
+                )
+                _upsert_thread(db, account, thread)
+        except Exception:
+            logger.exception(
+                "Gmail history sync failed to process thread_id=%s account_id=%s, skipping",
+                thread_id,
+                account.id,
+            )
 
     account.last_history_id = new_history_id
     account.last_synced_at = datetime.now(timezone.utc)

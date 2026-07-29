@@ -18,6 +18,9 @@ class GmailAccount(Base):
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
     last_history_id = Column(String(100), nullable=True)
     watch_expiration = Column(DateTime(timezone=True), nullable=True)
+    consecutive_failure_count = Column(Integer, nullable=False, default=0, server_default="0")
+    last_error_message = Column(Text, nullable=True)
+    last_failure_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
