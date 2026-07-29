@@ -432,7 +432,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   }, [charges, payments])
 
   return (
-    <div className="min-w-0 space-y-3">
+    <div className="min-w-0 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-xl font-semibold text-gray-900">Tenant Info</h2>
         <div className="flex items-center gap-2">
@@ -517,8 +517,8 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
       {!tenantId ? null : (
-        <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+        <div className="space-y-2">
+          <div className="rounded-lg bg-gray-50 p-2.5">
             <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Summary</p>
               {tenant?.booking_id ? (
@@ -532,7 +532,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                 </a>
               ) : null}
             </div>
-            <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-2 md:grid-cols-2">
+            <div className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-1.5 md:grid-cols-2">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Booking ID</p>
                 <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryBookingId}</p>
@@ -584,7 +584,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
             <p className="text-sm font-semibold text-cyan-700">Balance {totals.total.toFixed(2)}</p>
           </div>
 
-          <div className="mt-3 overflow-hidden rounded-xl border border-gray-200">
+          <div className="mt-2 overflow-hidden rounded-xl border border-gray-200">
             <table className="w-full border-collapse text-left text-sm">
               <thead className="bg-gray-50 text-xs uppercase tracking-[0.2em] text-gray-500">
                 <tr>

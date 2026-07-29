@@ -13,7 +13,6 @@ vi.mock('../../components/TenantList', () => ({ default: () => <div>tenant-list<
 vi.mock('../../components/FinanceBox', () => ({ default: () => <div>finance-box</div> }))
 vi.mock('../../components/OneDriveBox', () => ({ default: () => <div>onedrive-box</div> }))
 vi.mock('../../components/ThreadView', () => ({ default: () => <div>thread-view</div> }))
-vi.mock('../../components/ImportModal', () => ({ default: () => null }))
 
 function renderDashboard() {
   return render(

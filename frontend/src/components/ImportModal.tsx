@@ -342,7 +342,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
       <div className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>

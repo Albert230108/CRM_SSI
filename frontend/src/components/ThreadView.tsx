@@ -1241,7 +1241,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   }
 
   return (
-    <div className="flex h-full min-h-0 min-h-[680px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm">
+    <div className="flex h-full min-h-0 min-h-[680px] flex-col">
       <div className="border-b border-gray-200 px-4 py-3">
         <div className="flex items-start justify-between gap-4">
           <div>

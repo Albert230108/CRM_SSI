@@ -2,11 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import FinanceBox from '../components/FinanceBox'
-import ImportModal from '../components/ImportModal'
 import NotesBox from '../components/NotesBox'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
-import SyncProgressOverlay from '../components/SyncProgressOverlay'
 import ThreadView from '../components/ThreadView'
 import ToastCard from '../components/ToastCard'
 import TileLoadingOverlay from '../components/TileLoadingOverlay'
@@ -24,40 +22,17 @@ import {
   TENANT_SIDEBAR_MIN_WIDTH,
 } from '../lib/dashboardLayoutPreferences'
 import { useAuthStore } from '../store/authStore'
+import { useSyncStore } from '../store/syncStore'
 
 const DESKTOP_BREAKPOINT = '(min-width: 768px)'
 const MESSAGE_TOAST_DURATION_MS = 6000
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type MessageToast = {
   id: number
   text: string
 }
 
-type SyncSummary = {
-  started_at: string
-  completed_at: string | null
-  bookings_updated: number
-  emails_imported: number
-  whatsapp_messages_imported: number
-  whatsapp_sync_queued?: boolean
-  tenant_threads_updated: number
-  partial_failures: { step: string; error: string }[]
-}
-
-function formatSyncSummary(summary: SyncSummary | null) {
-  if (!summary) return ''
-  return [
-    `Bookings updated: ${summary.bookings_updated}`,
-    `Emails imported: ${summary.emails_imported}`,
-    summary.whatsapp_sync_queued ? 'WhatsApp sync queued in background' : `WhatsApp messages imported: ${summary.whatsapp_messages_imported}`,
-    `Tenant threads updated: ${summary.tenant_threads_updated}`,
-  ].join(' � ')
-}
-
 export default function Dashboard() {
-  const token = useAuthStore((state) => state.token)
   const user = useAuthStore((state) => state.user)
   const { tenantId } = useParams()
   const selectedTenantId = useMemo(() => {
@@ -94,11 +69,6 @@ export default function Dashboard() {
   const [notesReady, setNotesReady] = useState(false)
   const [threadReady, setThreadReady] = useState(false)
   const selectedTenantIdRef = useRef(selectedTenantId)
-  // Populated by TenantList with whatever tenant ids are currently visible under its active
-  // search/status/responsible/direction filters, so Sync can scope to just that filtered set.
-  // Stays null until TenantList's first load settles, so a Sync click that races the initial
-  // fetch falls back to an unscoped sync instead of scoping to a false-empty list.
-  const visibleTenantIdsRef = useRef<number[] | null>(null)
 
   useEffect(() => {
     selectedTenantIdRef.current = selectedTenantId
@@ -122,9 +92,6 @@ export default function Dashboard() {
   const handleNotesReady = useCallback((readyTenantId: number) => {
     if (readyTenantId === selectedTenantIdRef.current) setNotesReady(true)
   }, [])
-  const handleTenantsChange = useCallback((tenantIds: number[]) => {
-    visibleTenantIdsRef.current = tenantIds
-  }, [])
 
   const handleThreadReady = useCallback((readyTenantId: number) => {
     if (readyTenantId === selectedTenantIdRef.current) setThreadReady(true)
@@ -132,17 +99,21 @@ export default function Dashboard() {
 
   const isSwitchingTenant = selectedTenantId !== undefined && !(financeReady && oneDriveReady && notesReady && threadReady)
 
-  const [importModalOpen, setImportModalOpen] = useState(false)
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
   const [middleColumnCollapsed, setMiddleColumnCollapsed] = useState(false)
   const [tenantReloadSignal, setTenantReloadSignal] = useState(0)
-  const [syncRunning, setSyncRunning] = useState(false)
-  const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null)
-  const [syncError, setSyncError] = useState('')
-  const [syncToken, setSyncToken] = useState(0)
-  const [toastVisible, setToastVisible] = useState(false)
   const [messageToasts, setMessageToasts] = useState<MessageToast[]>([])
   const messageToastIdRef = useRef(0)
+
+  const syncCompletedAt = useSyncStore((state) => state.syncCompletedAt)
+  const importCompletedAt = useSyncStore((state) => state.importCompletedAt)
+  const reloadWatermarkRef = useRef({ sync: syncCompletedAt, import: importCompletedAt })
+  useEffect(() => {
+    const watermark = reloadWatermarkRef.current
+    if (syncCompletedAt === watermark.sync && importCompletedAt === watermark.import) return
+    reloadWatermarkRef.current = { sync: syncCompletedAt, import: importCompletedAt }
+    setTenantReloadSignal((current) => current + 1)
+  }, [syncCompletedAt, importCompletedAt])
 
   const handleNewMessage = useCallback(({ tenantName, channel }: { tenantName: string; channel: string; direction: string }) => {
     const id = ++messageToastIdRef.current
@@ -277,128 +248,9 @@ export default function Dashboard() {
     })
   }
 
-  useEffect(() => {
-    if (!syncSummary?.whatsapp_sync_queued) {
-      return
-    }
-
-    let cancelled = false
-
-    const refreshSyncStatus = async () => {
-      try {
-        const statusResponse = await fetch(`${API_BASE_URL}/api/admin/sync-status`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        })
-        const statusPayload = await statusResponse.json().catch(() => null)
-        if (!statusResponse.ok || cancelled) {
-          return
-        }
-        if (!statusPayload?.whatsapp_sync_running) {
-          setSyncSummary((current) => (current ? { ...current, whatsapp_sync_queued: false } : current))
-          setTenantReloadSignal((current) => current + 1)
-        }
-      } catch {
-        // Keep the banner in queued state until the next poll succeeds.
-      }
-    }
-
-    void refreshSyncStatus()
-    const intervalId = window.setInterval(refreshSyncStatus, 5000)
-    return () => {
-      cancelled = true
-      window.clearInterval(intervalId)
-    }
-  }, [syncSummary?.whatsapp_sync_queued, token])
-
-  // Show the sync toast for exactly 8s per completed attempt. Keyed on syncToken
-  // (not syncSummary) so the later background queued-status poll, which quietly
-  // mutates syncSummary, doesn't re-trigger or extend the toast.
-  useEffect(() => {
-    if (syncToken === 0) return
-    setToastVisible(true)
-    const timeoutId = window.setTimeout(() => setToastVisible(false), 8000)
-    return () => window.clearTimeout(timeoutId)
-  }, [syncToken])
-
-  const handleSyncAll = async () => {
-    if (syncRunning) return
-    try {
-      setSyncRunning(true)
-      setSyncError('')
-      setSyncSummary(null)
-      const syncUrl = `${API_BASE_URL}/api/admin/sync-all`
-      const tenantIds = visibleTenantIdsRef.current
-      console.info('[frontend] Sync button clicked', { syncUrl, tenantCount: tenantIds?.length ?? 'all' })
-      const response = await fetch(syncUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ tenant_ids: tenantIds ?? null }),
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(payload?.detail || 'Sync failed')
-      }
-      setSyncSummary(payload as SyncSummary)
-      setTenantReloadSignal((current) => current + 1)
-    } catch (error) {
-      setSyncError(error instanceof Error ? error.message : 'Sync failed')
-    } finally {
-      setSyncRunning(false)
-      setSyncToken((current) => current + 1)
-    }
-  }
-
   return (
-    <main className="flex h-full w-full flex-col overflow-hidden px-3 py-3">
-      <SyncProgressOverlay active={syncRunning} />
-      <div className="mb-2 flex w-full items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-semibold text-gray-900">Dashboard</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleSyncAll}
-            disabled={syncRunning}
-            className="rounded-xl border border-cyan-500/40 bg-white px-4 py-2 text-sm font-semibold text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {syncRunning ? 'Syncing...' : 'Sync'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setImportModalOpen(true)}
-            className="rounded-xl border border-cyan-500/40 bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700"
-          >
-            Import Beds24 bookings
-          </button>
-        </div>
-      </div>
-
+    <main className="flex h-full w-full flex-col overflow-hidden px-3 py-2">
       <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
-        {toastVisible && (syncSummary || syncError) ? (
-          <ToastCard toastKey={syncToken} tone={syncError ? 'error' : 'success'} durationMs={8000}>
-            {syncError ? (
-              <p className="font-semibold">{syncError}</p>
-            ) : syncSummary ? (
-              <>
-                <p className="font-semibold">{syncSummary.whatsapp_sync_queued ? 'Sync started' : 'Sync complete'}</p>
-                <p className="mt-1">{formatSyncSummary(syncSummary)}</p>
-                {syncSummary.whatsapp_sync_queued ? (
-                  <p className="mt-2 text-xs text-emerald-800/80">WhatsApp history sync continues in the background.</p>
-                ) : null}
-                {syncSummary.partial_failures.length ? (
-                  <p className="mt-2 text-xs text-emerald-800/80">
-                    Partial failures: {syncSummary.partial_failures.map((item) => `${item.step}: ${item.error}`).join(' | ')}
-                  </p>
-                ) : null}
-              </>
-            ) : null}
-          </ToastCard>
-        ) : null}
-
         {messageToasts.map((toast) => (
           <ToastCard key={toast.id} toastKey={toast.id} tone="info" durationMs={MESSAGE_TOAST_DURATION_MS}>
             <p className="font-medium">{toast.text}</p>
@@ -424,7 +276,7 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full w-full min-w-0 overflow-hidden p-2 transition-all duration-300',
+              'h-full w-full min-w-0 overflow-hidden p-1.5 transition-all duration-300',
               tenantsCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
@@ -432,7 +284,6 @@ export default function Dashboard() {
               selectedTenantId={selectedTenantId}
               reloadSignal={tenantReloadSignal}
               onNewMessage={handleNewMessage}
-              onTenantsChange={handleTenantsChange}
             />
           </div>
         </section>
@@ -465,26 +316,26 @@ export default function Dashboard() {
           </button>
           <div
             className={[
-              'h-full w-full min-w-0 overflow-hidden p-2 transition-all duration-300 flex flex-col gap-2',
+              'h-full w-full min-w-0 overflow-hidden p-1.5 transition-all duration-300 flex flex-col gap-1.5',
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-sm">
               <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
                 <FinanceBox tenantId={selectedTenantId} onReady={handleFinanceReady} />
               </div>
               <TileLoadingOverlay active={isSwitchingTenant} />
             </section>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-2">
-              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+            <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-sm">
                 <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
                   <NotesBox tenantId={selectedTenantId} onReady={handleNotesReady} />
                 </div>
                 <TileLoadingOverlay active={isSwitchingTenant} />
               </section>
 
-              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
+              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-sm">
                 <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
                   <OneDriveBox tenantId={selectedTenantId} onReady={handleOneDriveReady} />
                 </div>
@@ -509,7 +360,7 @@ export default function Dashboard() {
         />
 
         <section
-          className="relative flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-sm transition-all duration-300"
+          className="relative flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300"
           style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
         >
           <div className="h-full w-full min-h-0 overflow-hidden">
@@ -524,12 +375,6 @@ export default function Dashboard() {
           <TileLoadingOverlay active={isSwitchingTenant} />
         </section>
       </div>
-
-      <ImportModal
-        open={importModalOpen}
-        onClose={() => setImportModalOpen(false)}
-        onImported={() => setTenantReloadSignal((current) => current + 1)}
-      />
     </main>
   )
 }

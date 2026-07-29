@@ -34,10 +34,9 @@ type TenantListProps = {
   selectedTenantId?: number
   reloadSignal?: number
   onNewMessage?: (info: { tenantName: string; channel: string; direction: string }) => void
-  onTenantsChange?: (tenantIds: number[]) => void
 }
 
-export default function TenantList({ selectedTenantId, reloadSignal, onNewMessage, onTenantsChange }: TenantListProps) {
+export default function TenantList({ selectedTenantId, reloadSignal, onNewMessage }: TenantListProps) {
   const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -56,24 +55,12 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [sortDesc, setSortDesc] = useState(true)
   const [livePollSignal, setLivePollSignal] = useState(0)
   const onNewMessageRef = useRef(onNewMessage)
-  const onTenantsChangeRef = useRef(onTenantsChange)
   const [contextMenu, setContextMenu] = useState<{ tenantId: number; tenantName: string; x: number; y: number } | null>(null)
   const [aiTemplatesTenant, setAiTemplatesTenant] = useState<{ id: number; name: string } | null>(null)
 
   useEffect(() => {
     onNewMessageRef.current = onNewMessage
   }, [onNewMessage])
-
-  useEffect(() => {
-    onTenantsChangeRef.current = onTenantsChange
-  }, [onTenantsChange])
-
-  useEffect(() => {
-    // Skip while the initial (or a re-triggered) fetch is still in flight, so callers don't
-    // see a transient empty list before the real filtered result has loaded.
-    if (loading) return
-    onTenantsChangeRef.current?.(tenants.map((tenant) => tenant.id))
-  }, [tenants, loading])
 
   useEffect(() => {
     let cancelled = false
@@ -275,7 +262,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col space-y-3">
+    <div className="flex h-full min-h-0 flex-col space-y-2">
       <div>
         <h2 className="text-lg font-semibold text-gray-900">Tenants</h2>
       </div>

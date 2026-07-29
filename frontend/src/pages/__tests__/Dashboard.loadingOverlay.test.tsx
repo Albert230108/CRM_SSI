@@ -23,7 +23,6 @@ function mockTile(key: TileKey, label: string) {
 }
 
 vi.mock('../../components/TenantList', () => ({ default: () => <div>tenant-list</div> }))
-vi.mock('../../components/ImportModal', () => ({ default: () => null }))
 vi.mock('../../components/FinanceBox', () => mockTile('finance', 'finance-box'))
 vi.mock('../../components/OneDriveBox', () => mockTile('onedrive', 'onedrive-box'))
 vi.mock('../../components/ThreadView', () => mockTile('thread', 'thread-view'))

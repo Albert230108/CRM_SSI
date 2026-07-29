@@ -97,7 +97,7 @@ export default function NotesBox({ tenantId, onReady }: NotesBoxProps) {
   const subtitleMessage = !tenantId ? 'No tenant selected' : loading ? 'Loading...' : ''
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col gap-2">
+    <div className="flex h-full w-full min-w-0 flex-col gap-1.5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Notes</h2>
