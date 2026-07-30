@@ -521,6 +521,8 @@ async def update_tenant_notes(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
     set_tenant_notes(db, tenant, payload.notes, source=SOURCE_MANUAL, changed_by_user_id=getattr(current_user, "id", None))
+    # A committed save supersedes any in-progress draft, so the draft indicator clears too.
+    tenant.draft_notes = None
     db.commit()
     db.refresh(tenant)
 
@@ -531,6 +533,48 @@ async def update_tenant_notes(
         return {"notes": tenant.notes, "beds24_synced": False, "beds24_error": str(exc.detail)}
 
     return {"notes": tenant.notes, "beds24_synced": True}
+
+
+class TenantDraftNotesUpdate(BaseModel):
+    draft_notes: Optional[str] = None
+
+
+@router.patch("/tenants/{tenant_id}/notes/draft")
+def update_tenant_draft_notes(
+    tenant_id: int,
+    payload: TenantDraftNotesUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Persist an in-progress, uncommitted notes edit.
+
+    Unlike update_tenant_notes, this never touches tenant.notes or Beds24 -
+    it only tracks unsaved edits so they survive navigation/reload and can
+    surface as a warning elsewhere in the UI (e.g. the tenant list).
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    tenant.draft_notes = payload.draft_notes
+    db.commit()
+    db.refresh(tenant)
+    return {"draft_notes": tenant.draft_notes}
+
+
+@router.delete("/tenants/{tenant_id}/notes/draft")
+def delete_tenant_draft_notes(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    tenant.draft_notes = None
+    db.commit()
+    return {"draft_notes": None}
 
 
 class TenantNotesHistoryEntry(BaseModel):

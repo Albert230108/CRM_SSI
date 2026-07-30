@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { useEffect, useState, type MouseEvent } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import ImportModal from './ImportModal'
 import NotificationBell from './NotificationBell'
 import SyncProgressOverlay from './SyncProgressOverlay'
 import ToastCard from './ToastCard'
 import { useAuthStore } from '../store/authStore'
+import { useNotesDraftStore } from '../store/notesDraftStore'
 import { useSyncStore } from '../store/syncStore'
 import crmLogo from '../assets/logo.jpg'
 
@@ -33,6 +34,7 @@ function formatSyncSummary(summary: SyncSummary | null) {
 
 export default function Navbar() {
   const location = useLocation()
+  const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
   const token = useAuthStore((state) => state.token)
   const logout = useAuthStore((state) => state.logout)
@@ -76,6 +78,17 @@ export default function Navbar() {
   }, [token])
 
   const aiDraftsBadgeLabel = pendingAiDraftsCount > 9 ? '9+' : String(pendingAiDraftsCount)
+
+  // Intercepts in-app link clicks so leaving with unsaved notes prompts the
+  // unsaved-notes modal instead of silently discarding the edit.
+  const guardedNavigate = (event: MouseEvent<HTMLAnchorElement>, to: string) => {
+    event.preventDefault()
+    useNotesDraftStore.getState().guardNavigation(() => navigate(to))
+  }
+
+  const guardedLogout = () => {
+    useNotesDraftStore.getState().guardNavigation(logout)
+  }
 
   useEffect(() => {
     if (!syncSummary?.whatsapp_sync_queued) {
@@ -154,7 +167,7 @@ export default function Navbar() {
     <>
       <header className="relative z-50 w-full border-b border-gray-200 bg-white backdrop-blur">
         <div className="flex w-full items-center justify-between px-6 py-4">
-          <Link to="/" className="flex items-center gap-3">
+          <Link to="/" onClick={(event) => guardedNavigate(event, '/')} className="flex items-center gap-3">
             <img src={crmLogo} alt="CRM logo" className="h-8 w-auto" />
             <h1 className="text-base font-semibold text-gray-900 transition hover:text-gray-700">CRM SSI</h1>
           </Link>
@@ -164,6 +177,7 @@ export default function Navbar() {
             {user?.is_admin ? (
               <Link
                 to="/admin/settings"
+                onClick={(event) => guardedNavigate(event, '/admin/settings')}
                 className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${adminActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
               >
                 <span>Admin Settings</span>
@@ -171,6 +185,7 @@ export default function Navbar() {
             ) : null}
             <Link
               to="/ai-drafts"
+              onClick={(event) => guardedNavigate(event, '/ai-drafts')}
               className={`relative inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${aiDraftsActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
             >
               <span>AI Drafts</span>
@@ -182,6 +197,7 @@ export default function Navbar() {
             </Link>
             <Link
               to="/settings"
+              onClick={(event) => guardedNavigate(event, '/settings')}
               className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${settingsActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
             >
               <span>Settings</span>
@@ -202,7 +218,7 @@ export default function Navbar() {
               Import Beds24 bookings
             </button>
             <button
-              onClick={logout}
+              onClick={guardedLogout}
               className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50"
             >
               Logout

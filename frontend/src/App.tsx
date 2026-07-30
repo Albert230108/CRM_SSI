@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
 import SessionExpiredModal from './components/SessionExpiredModal'
+import UnsavedNotesModal from './components/UnsavedNotesModal'
 import Settings from './pages/Settings'
 import AiTenantSettings from './pages/AiTenantSettings'
 import AiPendingDrafts from './pages/AiPendingDrafts'
@@ -37,6 +38,7 @@ export default function App() {
   return (
     <>
       <SessionExpiredModal />
+      <UnsavedNotesModal />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/invite/:token" element={<InvitationSetup />} />

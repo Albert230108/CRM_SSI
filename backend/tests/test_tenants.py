@@ -259,6 +259,60 @@ def test_update_tenant_notes_returns_404_for_missing_tenant(client, monkeypatch)
     assert response.status_code == 404
 
 
+def test_update_tenant_draft_notes_persists_without_touching_beds24(non_admin_client, db_session):
+    tenant = create_tenant(db_session, name="Tenant Draft A", booking_id="DRAFT-A")
+
+    response = non_admin_client.patch(f"/api/tenants/{tenant.id}/notes/draft", json={"draft_notes": "typing a note..."})
+
+    assert response.status_code == 200
+    assert response.json()["draft_notes"] == "typing a note..."
+    db_session.refresh(tenant)
+    assert tenant.draft_notes == "typing a note..."
+    assert tenant.notes is None
+
+
+def test_delete_tenant_draft_notes_clears_draft(non_admin_client, db_session):
+    tenant = create_tenant(db_session, name="Tenant Draft B", booking_id="DRAFT-B")
+    non_admin_client.patch(f"/api/tenants/{tenant.id}/notes/draft", json={"draft_notes": "abandoned edit"})
+
+    response = non_admin_client.delete(f"/api/tenants/{tenant.id}/notes/draft")
+
+    assert response.status_code == 200
+    assert response.json()["draft_notes"] is None
+    db_session.refresh(tenant)
+    assert tenant.draft_notes is None
+
+
+def test_update_tenant_draft_notes_returns_404_for_missing_tenant(non_admin_client):
+    response = non_admin_client.patch("/api/tenants/999999/notes/draft", json={"draft_notes": "x"})
+
+    assert response.status_code == 404
+
+
+def test_saving_notes_clears_existing_draft(non_admin_client, db_session, monkeypatch):
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_success)
+    tenant = create_tenant(db_session, name="Tenant Draft C", booking_id="DRAFT-C")
+    non_admin_client.patch(f"/api/tenants/{tenant.id}/notes/draft", json={"draft_notes": "half-typed note"})
+
+    response = non_admin_client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "Final committed note"})
+
+    assert response.status_code == 200
+    db_session.refresh(tenant)
+    assert tenant.notes == "Final committed note"
+    assert tenant.draft_notes is None
+
+
+def test_list_tenants_includes_draft_notes_for_warning_badge(db_session):
+    tenant = create_tenant(db_session, name="Tenant Draft D", booking_id="DRAFT-D")
+    tenant.draft_notes = "unsaved elsewhere"
+    db_session.commit()
+
+    results = list_tenants(db=db_session, current_user=None, sort_by_message=False, sort_desc=True)
+
+    by_id = {t.id: t for t in results}
+    assert by_id[tenant.id].draft_notes == "unsaved elsewhere"
+
+
 def test_webhook_extracts_notes_key_from_beds24_payload():
     from app.api.tenants import _extract_guest_fields
 
@@ -350,6 +404,68 @@ def test_beds24_webhook_notes_sync_records_history_with_beds24_source(client, db
     assert response_again.status_code == 200
     history_after = db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).all()
     assert len(history_after) == 1
+
+
+def test_import_tenant_leaves_notes_empty_when_not_provided(non_admin_client, db_session, monkeypatch):
+    """The import request payload is the sole source of notes on import - even if the
+    underlying Beds24 booking has a populated notes property (e.g. staff pasted email
+    text into it), the import must not silently pull that in behind the user's back."""
+    from app.models.tenant_notes_history import TenantNotesHistory
+
+    async def fake_booking_with_notes(booking_id):
+        return {
+            "id": booking_id,
+            "roomName": "Studio 1",
+            "arrival": "2026-07-01",
+            "departure": "2026-07-02",
+            "notes": "Booking notes on the Beds24 side that were never confirmed by the importer",
+            "invoiceItems": [],
+        }
+
+    monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_booking_with_notes)
+
+    response = non_admin_client.post("/api/tenants/import", json={
+        "booking_id": "IMPORT-NOTES-EMPTY",
+        "name": "Tenant Import Notes",
+        "first_name": "Import",
+        "last_name": "Notes",
+        "check_in": "2026-07-01",
+        "check_out": "2026-07-02",
+    })
+
+    assert response.status_code == 200
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-NOTES-EMPTY").first()
+    assert tenant is not None
+    assert tenant.notes is None
+    assert db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).count() == 0
+
+
+def test_import_tenant_saves_explicitly_confirmed_notes(non_admin_client, db_session, monkeypatch):
+    from conftest import NON_ADMIN_USER
+    from app.models.tenant_notes_history import TenantNotesHistory
+
+    monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_whatsapp_booking)
+
+    response = non_admin_client.post("/api/tenants/import", json={
+        "booking_id": "IMPORT-NOTES-CONFIRMED",
+        "name": "Tenant Import Confirmed",
+        "first_name": "Import",
+        "last_name": "Confirmed",
+        "check_in": "2026-07-01",
+        "check_out": "2026-07-02",
+        "notes": "Reviewed and confirmed by staff during import",
+    })
+
+    assert response.status_code == 200
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "IMPORT-NOTES-CONFIRMED").first()
+    assert tenant is not None
+    assert tenant.notes == "Reviewed and confirmed by staff during import"
+    history = db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).all()
+    assert len(history) == 1
+    assert history[0].old_value is None
+    assert history[0].new_value == "Reviewed and confirmed by staff during import"
+    assert history[0].source == "beds24_import"
+    assert history[0].changed_by_user_id == NON_ADMIN_USER.id
 
 
 def test_notes_history_endpoint_returns_entries_newest_first(non_admin_client, db_session, monkeypatch):

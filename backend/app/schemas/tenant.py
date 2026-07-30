@@ -71,6 +71,7 @@ class TenantRead(BaseModel):
     beds24_raw: dict | None = None
     room_id: int | None = None
     notes: str | None = None
+    draft_notes: str | None = None
     booking_status: str | None = None
     name: str
     responsible_comm: str | None = None

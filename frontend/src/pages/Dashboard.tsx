@@ -22,6 +22,7 @@ import {
   TENANT_SIDEBAR_MIN_WIDTH,
 } from '../lib/dashboardLayoutPreferences'
 import { useAuthStore } from '../store/authStore'
+import { useNotesDraftStore } from '../store/notesDraftStore'
 import { useSyncStore } from '../store/syncStore'
 
 const DESKTOP_BREAKPOINT = '(min-width: 768px)'
@@ -73,6 +74,21 @@ export default function Dashboard() {
   useEffect(() => {
     selectedTenantIdRef.current = selectedTenantId
   }, [selectedTenantId])
+
+  // Native browsers can't show custom confirm text on tab close/refresh, so this best-effort
+  // flushes the in-progress notes edit as a draft (so it survives) and still shows the
+  // browser's own "leave site" prompt.
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      const { isDirty, handlers } = useNotesDraftStore.getState()
+      if (!isDirty) return
+      handlers?.flushDraft()
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [])
 
   useEffect(() => {
     setFinanceReady(false)

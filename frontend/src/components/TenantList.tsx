@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
+import { useNotesDraftStore } from '../store/notesDraftStore'
 import StatusFilterDropdown from './StatusFilterDropdown'
 import TenantContextMenu from './TenantContextMenu'
 import TenantAiTemplatesModal from './TenantAiTemplatesModal'
@@ -20,6 +21,7 @@ type Tenant = {
   last_message_date: string | null
   last_message_channel: string | null
   last_message_direction: string | null
+  draft_notes: string | null
 }
 
 type ThreadVersion = {
@@ -345,7 +347,10 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
             return (
               <button
                 key={tenant.id}
-                onClick={() => navigate(`/dashboard/tenant/${tenant.id}`)}
+                onClick={() => {
+                  if (tenant.id === selectedTenantId) return
+                  useNotesDraftStore.getState().guardNavigation(() => navigate(`/dashboard/tenant/${tenant.id}`))
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setContextMenu({ tenantId: tenant.id, tenantName: tenant.name, x: e.clientX, y: e.clientY })
@@ -357,7 +362,18 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className={`text-sm font-semibold ${colors.text}`}>{tenant.name}</p>
+                    <p className={`flex items-center gap-1 text-sm font-semibold ${colors.text}`}>
+                      <span className="truncate">{tenant.name}</span>
+                      {tenant.draft_notes ? (
+                        <span
+                          title="Unsaved draft notes"
+                          aria-label="Unsaved draft notes"
+                          className="shrink-0 text-amber-500"
+                        >
+                          ⚠
+                        </span>
+                      ) : null}
+                    </p>
                     <p className="truncate text-xs text-gray-600 mt-0.5">{contact}</p>
                     {msgTime && (
                       <p className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">

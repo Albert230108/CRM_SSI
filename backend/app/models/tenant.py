@@ -36,6 +36,7 @@ class Tenant(Base):
     beds24_raw = Column(JSON, nullable=True)
     room_id = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
+    draft_notes = Column(Text, nullable=True)
     booking_status = Column(String(100), nullable=True)
     name = Column(String(255), nullable=False, index=True)
     responsible_comm = Column(Text, nullable=True)
