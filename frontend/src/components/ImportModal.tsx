@@ -343,8 +343,8 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">Beds24</p>
             <h2 className="mt-1 text-2xl font-semibold text-gray-900">Import bookings</h2>
@@ -354,12 +354,13 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
           </button>
         </div>
 
-        {loading ? <p className="mt-6 text-sm text-gray-500">Loading bookings...</p> : null}
-        {error ? <p className="mt-6 text-sm text-rose-400">{error}</p> : null}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        {loading ? <p className="text-sm text-gray-500">Loading bookings...</p> : null}
+        {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
         {!loading && bookings.length > 0 && (
           <>
-            <div className="mt-6 space-y-3">
+            <div className="space-y-3">
               <div className="relative">
                 <input
                   type="text"
@@ -563,7 +564,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
           </>
         )}
 
-        <div className="mt-6 max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+        <div className="mt-4 space-y-3">
           {filteredBookings.map((booking) => (
             <div key={booking.booking_id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -645,6 +646,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
               </div>
             </div>
           ))}
+        </div>
         </div>
 
         {confirmBooking && (

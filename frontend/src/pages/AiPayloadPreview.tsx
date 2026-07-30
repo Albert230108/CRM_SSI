@@ -83,18 +83,18 @@ export default function AiPayloadPreview() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
+    <main className="mx-auto max-w-4xl px-4 py-4">
       <h1 className="text-lg font-semibold text-gray-900">Exact AI Payload Preview</h1>
       <p className="mt-1 text-sm text-gray-500">
         This is exactly the text that will be sent to Gemini if you click "Draft with AI" now, in the fixed order:
         0. Goal &amp; Guidelines, 1. Template text, 2. Message history, 3. Beds24 info, 4. Your typed reply.
       </p>
 
-      {status === 'loading' ? <p className="mt-6 text-sm text-gray-500">Loading...</p> : null}
-      {status === 'error' ? <p className="mt-6 text-sm text-rose-600">{error}</p> : null}
+      {status === 'loading' ? <p className="mt-4 text-sm text-gray-500">Loading...</p> : null}
+      {status === 'error' ? <p className="mt-4 text-sm text-rose-600">{error}</p> : null}
 
       {status === 'ready' && preview ? (
-        <div className="mt-4 space-y-3">
+        <div className="mt-3 space-y-2">
           <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-gray-600">
             <span className="rounded-full bg-gray-100 px-2 py-0.5">{preview.char_count} characters</span>
             <span className="rounded-full bg-gray-100 px-2 py-0.5">~{preview.approx_token_count} tokens (approx.)</span>
@@ -106,7 +106,7 @@ export default function AiPayloadPreview() {
               {copied ? 'Copied!' : 'Copy to clipboard'}
             </button>
           </div>
-          <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-900">
+          <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900">
             {preview.payload}
           </pre>
         </div>

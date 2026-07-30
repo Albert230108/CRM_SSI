@@ -5,7 +5,13 @@ Ported near-verbatim from the desktop Quotation Manager
 (Python-EmailQuotation-1/src/discount_engine.py). Only the config-file lookup
 paths changed, to point at this service's bundled app/data/ directory instead
 of a sibling-of-this-file layout. Behavior, caching, and the public API
-(calculate_discount_for_booking) are unchanged.
+(calculate_discount_for_booking) are unchanged, except for two desktop bugs
+fixed here: the 'dynamic' rule type is now dispatched (it was defined but
+never wired into the rule-type dispatch chain), and Price Manager tier
+selection now uses whichever tier keys the data actually defines (7/14/30/
+60/90) instead of a hardcoded 56/28/7 that never matched any real tier key,
+which previously made every 14+ night stay silently price off the 7-night
+tier.
 
 Key Features:
 - Multiple discount strategies (tier-based, percentage, seasonal, dynamic)
@@ -272,6 +278,43 @@ def rule_applies_to_booking(rule: Dict, property_name: str, room_name: str,
     return True
 
 
+def available_tier_keys(price_tiers: Dict) -> List[str]:
+    """Numeric tier keys actually present in price_tiers, sorted descending.
+
+    The Price Manager's real key set is 7/14/30/60/90, not the 56/28/7 the
+    desktop code hardcoded elsewhere - that mismatch meant a 56 or 28 key
+    was never found, so any stay of 14+ nights silently fell through to the
+    7-night price regardless of actual length.
+    """
+    keys = []
+    for key in price_tiers.keys():
+        try:
+            int(str(key))
+        except (TypeError, ValueError):
+            continue
+        keys.append(str(key))
+    return sorted(keys, key=lambda k: int(k), reverse=True)
+
+
+def select_tier_key_for_nights(nights: int, price_tiers: Dict) -> Optional[str]:
+    """Longest tier key the stay qualifies for.
+
+    Falls back to the shortest defined tier if the stay doesn't reach any
+    tier's minimum night count (preserving the desktop behavior where a
+    short stay is still priced off the shortest available tier).
+    Returns None when price_tiers has no numeric keys at all.
+    """
+    keys = available_tier_keys(price_tiers)
+    if not keys:
+        return None
+
+    for key in keys:
+        if nights >= int(key):
+            return key
+
+    return keys[-1]
+
+
 def calculate_tier_based_percentage_discount(nights: int, base_price: float,
                                                tier_config: Dict) -> Tuple[float, str]:
     """
@@ -312,20 +355,19 @@ def calculate_tier_based_price_discount(nights: int, base_price: float, price_ti
     Args:
         nights: Number of nights
         base_price: Base price per night from base_prices.json
-        price_tiers: Dictionary of price tiers from Price Manager {"7": price, "28": price, "56": price}
+        price_tiers: Dictionary of price tiers from Price Manager {"7": price, "14": price, "30": price, ...}
         tier_config: Optional configuration with 'tier_keys' to specify which tiers to check
 
     Returns:
         Tuple of (discounted_price_per_night, description)
     """
-    # Get tier keys from config, or use defaults
+    # Get tier keys from config, or use whichever tiers this room actually defines
     if tier_config and 'tier_keys' in tier_config:
         tier_keys = [str(k) for k in tier_config['tier_keys']]
         # Sort by night count descending
         tier_keys = sorted(tier_keys, key=lambda x: int(x), reverse=True)
     else:
-        # Default tiers: 56, 28, 7
-        tier_keys = ['56', '28', '7']
+        tier_keys = available_tier_keys(price_tiers)
 
     for tier_key in tier_keys:
         tier_nights = int(tier_key)
@@ -491,14 +533,12 @@ def calculate_discount_for_booking(
     room_data = property_data.get(room_name, {})
     price_tiers = room_data.get('price_tiers', {})
 
-    # Determine which tier to use based on nights
+    # Determine which tier to use based on nights (longest tier the stay
+    # qualifies for, out of whatever tiers this room actually defines)
     tier_price = base_price_from_file  # Default fallback
-    if nights >= 56 and '56' in price_tiers:
-        tier_price = price_tiers['56']
-    elif nights >= 28 and '28' in price_tiers:
-        tier_price = price_tiers['28']
-    elif '7' in price_tiers:
-        tier_price = price_tiers['7']
+    selected_tier_key = select_tier_key_for_nights(nights, price_tiers)
+    if selected_tier_key is not None:
+        tier_price = price_tiers[selected_tier_key]
 
     # Check if discount system is enabled
     if not discount_rules.get('global_settings', {}).get('enabled', True):
@@ -585,6 +625,10 @@ def calculate_discount_for_booking(
             elif rule_type == 'seasonal':
                 discounted_price, description = calculate_seasonal_discount(
                     base_price_from_file, rule_config
+                )
+            elif rule_type == 'dynamic':
+                discounted_price, description = calculate_dynamic_discount(
+                    base_price_from_file, price_tiers, rule_config
                 )
             else:
                 print(f"Unknown rule type: {rule_type}")

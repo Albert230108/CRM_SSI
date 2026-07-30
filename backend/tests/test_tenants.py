@@ -8,6 +8,7 @@ from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
+from app.models.user import User
 
 
 def create_tenant(db_session, name='Tenant A', booking_id='B-1'):
@@ -277,6 +278,102 @@ def test_webhook_does_not_leak_guest_correspondence_into_notes():
     })
 
     assert fields["notes"] is None
+
+
+def test_manual_notes_edit_records_history_with_actor(non_admin_client, db_session, monkeypatch):
+    from conftest import NON_ADMIN_USER
+    from app.models.tenant_notes_history import TenantNotesHistory
+
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_success)
+    tenant = create_tenant(db_session, name="Tenant Notes History A", booking_id="NOTES-HIST-A")
+
+    response = non_admin_client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "Guest wants extra towels"})
+
+    assert response.status_code == 200
+    history = db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).all()
+    assert len(history) == 1
+    assert history[0].old_value is None
+    assert history[0].new_value == "Guest wants extra towels"
+    assert history[0].source == "manual"
+    assert history[0].changed_by_user_id == NON_ADMIN_USER.id
+
+
+def test_set_tenant_notes_skips_history_row_when_value_unchanged(db_session):
+    from app.models.tenant_notes_history import TenantNotesHistory
+    from app.services.tenant_notes_history import set_tenant_notes
+
+    tenant = create_tenant(db_session, name="Tenant Notes History B", booking_id="NOTES-HIST-B")
+    set_tenant_notes(db_session, tenant, "Beds24 sourced note", source="beds24_webhook")
+    db_session.commit()
+
+    set_tenant_notes(db_session, tenant, "Beds24 sourced note", source="beds24_webhook")
+    db_session.commit()
+
+    history = db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).all()
+    assert len(history) == 1
+    assert tenant.notes == "Beds24 sourced note"
+
+
+def test_beds24_webhook_notes_sync_records_history_with_beds24_source(client, db_session, monkeypatch):
+    from app.models.tenant_notes_history import TenantNotesHistory
+
+    async def fake_booking_fetch(booking_id):
+        return {
+            "id": booking_id,
+            "roomName": "Studio 1",
+            "firstName": "Hist",
+            "lastName": "Ory",
+            "arrival": "2026-08-01",
+            "departure": "2026-08-05",
+            "notes": "Pasted from a guest email by reception",
+            "invoiceItems": [],
+        }
+
+    monkeypatch.setattr("app.api.beds24_webhooks.fetch_booking_with_invoice", fake_booking_fetch)
+
+    response = client.get("/api/webhooks/beds24", params={"bookid": "NOTES-HIST-WEBHOOK", "status": "modify"})
+    assert response.status_code == 200
+
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "NOTES-HIST-WEBHOOK").first()
+    assert tenant is not None
+    assert tenant.notes == "Pasted from a guest email by reception"
+
+    history = db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).all()
+    assert len(history) == 1
+    assert history[0].old_value is None
+    assert history[0].new_value == "Pasted from a guest email by reception"
+    assert history[0].source == "beds24_webhook"
+    assert history[0].changed_by_user_id is None
+
+    # A repeated webhook ping with the same Beds24 notes value must not add a duplicate row.
+    response_again = client.get("/api/webhooks/beds24", params={"bookid": "NOTES-HIST-WEBHOOK", "status": "modify"})
+    assert response_again.status_code == 200
+    history_after = db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).all()
+    assert len(history_after) == 1
+
+
+def test_notes_history_endpoint_returns_entries_newest_first(non_admin_client, db_session, monkeypatch):
+    from conftest import NON_ADMIN_USER
+
+    monkeypatch.setattr("app.api.tenants.update_booking_notes", fake_update_booking_notes_success)
+    tenant = create_tenant(db_session, name="Tenant Notes History C", booking_id="NOTES-HIST-C")
+    if db_session.query(User).filter(User.id == NON_ADMIN_USER.id).first() is None:
+        db_session.add(User(id=NON_ADMIN_USER.id, email=NON_ADMIN_USER.email, password_hash="x", is_active=True, is_admin=False))
+        db_session.commit()
+
+    non_admin_client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "First note"})
+    non_admin_client.patch(f"/api/tenants/{tenant.id}/notes", json={"notes": "Second note"})
+
+    response = non_admin_client.get(f"/api/tenants/{tenant.id}/notes/history")
+
+    assert response.status_code == 200
+    entries = response.json()
+    assert len(entries) == 2
+    assert entries[0]["new_value"] == "Second note"
+    assert entries[0]["old_value"] == "First note"
+    assert entries[0]["source"] == "manual"
+    assert entries[0]["changed_by_email"] == "member@example.com"
+    assert entries[1]["new_value"] == "First note"
 
 
 def test_list_tenants_filters_by_last_message_direction(db_session):

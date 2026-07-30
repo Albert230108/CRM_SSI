@@ -59,28 +59,28 @@ export default function AiPendingDrafts() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-6">
+    <main className="mx-auto max-w-4xl px-6 py-4">
       <h1 className="text-2xl font-semibold text-gray-900">Pending AI Drafts</h1>
-      <p className="mt-2 text-sm text-gray-500">
+      <p className="mt-1.5 text-sm text-gray-500">
         AI-generated replies waiting for review across every tenant with auto-drafting enabled.
       </p>
 
-      {loading && !drafts.length ? <p className="mt-6 text-sm text-gray-500">Loading...</p> : null}
-      {!loading && !drafts.length ? <p className="mt-6 text-sm text-gray-500">No pending AI drafts.</p> : null}
+      {loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">Loading...</p> : null}
+      {!loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">No pending AI drafts.</p> : null}
 
-      <div className="mt-6 space-y-4">
+      <div className="mt-4 space-y-3">
         {drafts.map((draft) => (
-          <div key={draft.id} className="rounded-2xl border border-indigo-200 bg-white p-5">
+          <div key={draft.id} className="rounded-2xl border border-indigo-200 bg-white p-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
                   {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
-                <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
+                <p className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
               </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => openTenant(draft)}

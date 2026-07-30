@@ -532,7 +532,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                 </a>
               ) : null}
             </div>
-            <div className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-1.5 md:grid-cols-2">
+            <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1.5">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Booking ID</p>
                 <p className="mt-0.5 break-words text-sm font-medium text-gray-900">{summaryBookingId}</p>

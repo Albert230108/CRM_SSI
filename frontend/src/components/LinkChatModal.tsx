@@ -333,7 +333,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
         onClick={(event) => event.stopPropagation()}
       >
         <div
-          className="flex cursor-move items-start justify-between gap-4 border-b border-gray-200 px-6 py-4"
+          className="flex cursor-move items-start justify-between gap-4 border-b border-gray-200 px-5 py-3"
           onPointerDown={drag.handlePointerDown}
         >
           <div>
@@ -355,17 +355,17 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          {error ? <p className="mb-4 text-sm text-rose-500">{error}</p> : null}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+          {error ? <p className="mb-3 text-sm text-rose-500">{error}</p> : null}
 
           {view === 'linked' ? (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {linksLoading ? <p className="text-sm text-gray-500">Loading linked chats...</p> : null}
               {!linksLoading && activeLinks.length === 0 ? (
                 <p className="text-sm text-gray-500">No WhatsApp chats are linked to this tenant yet.</p>
               ) : null}
               {activeLinks.map((link) => (
-                <div key={link.id} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div key={link.id} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
                   <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-700">
                     {link.provider} · {link.external_account_id}
                   </p>
@@ -376,7 +376,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                     {link.linked_by_user_id ? ` by user #${link.linked_by_user_id}` : ''}
                   </p>
 
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       disabled={resyncingId === link.id}
@@ -449,7 +449,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
               </button>
             </div>
           ) : view === 'account' ? (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {activeLinks.length > 0 ? (
                 <button type="button" onClick={() => setView('linked')} className="mb-1 text-xs font-medium text-gray-500 hover:text-gray-900">
                   &larr; Back to linked chats
@@ -464,7 +464,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                   key={account.external_account_id}
                   type="button"
                   onClick={() => handleSelectAccount(account)}
-                  className="flex w-full items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
+                  className="flex w-full items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
                 >
                   <div>
                     <p className="text-sm font-semibold text-gray-900">{account.label}</p>
@@ -488,7 +488,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                 &larr; Back to accounts
               </button>
 
-              <div className="relative mb-4">
+              <div className="relative mb-3">
                 <input
                   type="text"
                   value={search}
@@ -513,7 +513,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
               {chatsLoading ? <p className="text-sm text-gray-500">Loading chats...</p> : null}
               {!chatsLoading && chats.length === 0 ? <p className="text-sm text-gray-500">No matching chats found.</p> : null}
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {chats.map((chat) => {
                   const isSelected = selectedChat?.chat_id === chat.chat_id
                   const isConflict = chat.already_linked && chat.linked_thread_id !== threadId
@@ -522,7 +522,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                       key={chat.chat_id}
                       type="button"
                       onClick={() => setSelectedChat(chat)}
-                      className={`flex w-full flex-col gap-1 rounded-2xl border px-4 py-3 text-left transition ${
+                      className={`flex w-full flex-col gap-1 rounded-2xl border px-3 py-2.5 text-left transition ${
                         isSelected ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200 bg-gray-50 hover:border-emerald-200'
                       }`}
                     >
@@ -544,7 +544,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
               </div>
 
               {selectedChat ? (
-                <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
                   <p className="text-xs uppercase tracking-[0.24em] text-emerald-700">Confirm link</p>
                   {tenantSubtitle ? <p className="mt-1 text-xs text-gray-500">{tenantSubtitle}</p> : null}
                   <p className="mt-1 text-xs text-gray-500">Account: {selectedAccount?.label}</p>
@@ -566,7 +566,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
         </div>
 
         {view === 'chat' ? (
-          <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
+          <div className="flex justify-end gap-3 border-t border-gray-200 px-5 py-3">
             <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
               Cancel
             </button>

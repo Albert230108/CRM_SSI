@@ -66,20 +66,20 @@ export default function InvitationSetup() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
-      <form className="w-full max-w-lg space-y-4 rounded-3xl border bg-white p-8" onSubmit={submit}>
+      <form className="w-full max-w-lg space-y-3 rounded-3xl border bg-white p-5" onSubmit={submit}>
         <h1 className="text-2xl font-semibold">Complete invitation</h1>
         {invite ? <p className="text-sm text-gray-500">Role: {invite.role}</p> : null}
         <div className="grid gap-3 md:grid-cols-2">
-          <input className="w-full rounded-xl border px-4 py-3" placeholder="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-          <input className="w-full rounded-xl border px-4 py-3" placeholder="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+          <input className="w-full rounded-xl border px-4 py-2.5" placeholder="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+          <input className="w-full rounded-xl border px-4 py-2.5" placeholder="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
         </div>
-        <input className="w-full rounded-xl border px-4 py-3" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <input className="w-full rounded-xl border px-4 py-3" placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        <input className="w-full rounded-xl border px-4 py-3" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        <input className="w-full rounded-xl border px-4 py-3" placeholder="Confirm password" type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} required />
+        <input className="w-full rounded-xl border px-4 py-2.5" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <input className="w-full rounded-xl border px-4 py-2.5" placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <input className="w-full rounded-xl border px-4 py-2.5" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <input className="w-full rounded-xl border px-4 py-2.5" placeholder="Confirm password" type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} required />
         {error ? <p className="text-sm text-rose-500">{error}</p> : null}
         {success ? <p className="text-sm text-emerald-600">{success}</p> : null}
-        <button className="w-full rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white">Finish setup</button>
+        <button className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white">Finish setup</button>
       </form>
     </main>
   )

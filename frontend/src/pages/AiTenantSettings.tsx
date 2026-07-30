@@ -210,19 +210,19 @@ export default function AiTenantSettings() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-6">
+    <main className="mx-auto max-w-4xl px-6 py-4">
       <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
-      <h1 className="mt-2 text-2xl font-semibold text-gray-900">AI Reply - Tenant Configuration</h1>
-      <p className="mt-2 text-sm text-gray-500">
+      <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">AI Reply - Tenant Configuration</h1>
+      <p className="mt-1.5 text-sm text-gray-500">
         Choose which shared AI templates are available for a tenant, set the default template per channel, and control
         automatic drafting/sending for that tenant.
       </p>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-tenant-search">
           Search tenants
         </label>
-        <div className="relative mt-2 w-full max-w-md">
+        <div className="relative mt-1.5 w-full max-w-md">
           <input
             id="ai-tenant-search"
             type="text"
@@ -245,11 +245,11 @@ export default function AiTenantSettings() {
           )}
         </div>
 
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="w-8 py-2">
+                <th className="w-8 py-1.5">
                   <input
                     type="checkbox"
                     aria-label="Select all shown tenants for bulk actions"
@@ -265,7 +265,7 @@ export default function AiTenantSettings() {
                     className="h-4 w-4 rounded border-gray-300"
                   />
                 </th>
-                <th className="py-2">Tenant</th>
+                <th className="py-1.5">Tenant</th>
                 <th>Booking</th>
                 <th></th>
               </tr>
@@ -273,7 +273,7 @@ export default function AiTenantSettings() {
             <tbody>
               {tenants.map((tenant) => (
                 <tr key={tenant.id} className="border-t border-gray-100">
-                  <td className="py-2">
+                  <td className="py-1.5">
                     <input
                       type="checkbox"
                       aria-label={`Select ${tenant.name} for bulk actions`}
@@ -282,9 +282,9 @@ export default function AiTenantSettings() {
                       className="h-4 w-4 rounded border-gray-300"
                     />
                   </td>
-                  <td className="py-2">{tenant.name}</td>
+                  <td className="py-1.5">{tenant.name}</td>
                   <td>{tenant.booking_id}</td>
-                  <td className="py-2 text-right">
+                  <td className="py-1.5 text-right">
                     <button
                       type="button"
                       onClick={() => selectTenant(tenant)}
@@ -297,14 +297,14 @@ export default function AiTenantSettings() {
               ))}
               {!tenants.length ? (
                 <tr>
-                  <td colSpan={4} className="py-3 text-sm text-gray-500">No tenants found.</td>
+                  <td colSpan={4} className="py-2 text-sm text-gray-500">No tenants found.</td>
                 </tr>
               ) : null}
             </tbody>
           </table>
         </div>
 
-        <div className="mt-5 border-t border-gray-200 pt-4">
+        <div className="mt-3 border-t border-gray-200 pt-3">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">
             Bulk actions ({bulkTenantIds.size} tenant{bulkTenantIds.size === 1 ? '' : 's'} selected)
           </p>
@@ -312,7 +312,7 @@ export default function AiTenantSettings() {
             Select tenants above, pick templates below, and add or remove them from all selected tenants at once.
           </p>
 
-          <div className="mt-3 flex flex-wrap gap-3">
+          <div className="mt-2 flex flex-wrap gap-3">
             {templates.map((template) => (
               <label key={template.id} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700">
                 <input
@@ -327,7 +327,7 @@ export default function AiTenantSettings() {
             {!templates.length ? <p className="text-sm text-gray-500">No shared templates yet - add one in Settings.</p> : null}
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-3">
+          <div className="mt-2 flex flex-wrap items-center gap-3">
             <select
               value={bulkAction}
               onChange={(event) => setBulkAction(event.target.value as 'add' | 'remove')}
@@ -350,16 +350,16 @@ export default function AiTenantSettings() {
       </section>
 
       {selectedTenant ? (
-        <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
           <h2 className="text-lg font-semibold text-gray-900">{selectedTenant.name}</h2>
 
           {loadingSettings || !settings ? (
-            <p className="mt-3 text-sm text-gray-500">Loading...</p>
+            <p className="mt-2 text-sm text-gray-500">Loading...</p>
           ) : (
-            <div className="mt-4 space-y-6">
+            <div className="mt-3 space-y-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Available templates</p>
-                <div className="mt-2 space-y-2">
+                <div className="mt-1.5 space-y-1.5">
                   {templates.map((template) => (
                     <label key={template.id} className="flex items-center gap-3 text-sm text-gray-700">
                       <input
@@ -375,7 +375,7 @@ export default function AiTenantSettings() {
                 </div>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="default-email-template">
                     Default template - Email
@@ -384,7 +384,7 @@ export default function AiTenantSettings() {
                     id="default-email-template"
                     value={settings.default_email_template_id ?? ''}
                     onChange={(event) => setSettings((current) => current && { ...current, default_email_template_id: event.target.value ? Number(event.target.value) : null })}
-                    className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                   >
                     <option value="">No default</option>
                     {templates.filter((template) => settings.available_template_ids.includes(template.id)).map((template) => (
@@ -400,7 +400,7 @@ export default function AiTenantSettings() {
                     id="default-whatsapp-template"
                     value={settings.default_whatsapp_template_id ?? ''}
                     onChange={(event) => setSettings((current) => current && { ...current, default_whatsapp_template_id: event.target.value ? Number(event.target.value) : null })}
-                    className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                   >
                     <option value="">No default</option>
                     {templates.filter((template) => settings.available_template_ids.includes(template.id)).map((template) => (
@@ -410,14 +410,14 @@ export default function AiTenantSettings() {
                 </div>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-xl border border-gray-200 p-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-gray-200 p-2.5">
                   <p className="text-sm font-semibold text-gray-900">Email automation</p>
-                  <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                     <input type="checkbox" checked={settings.auto_draft_email} onChange={(event) => setAutoDraft('email', event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
                     Auto-draft on new email
                   </label>
-                  <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                     <input
                       type="checkbox"
                       checked={settings.auto_send_email}
@@ -428,13 +428,13 @@ export default function AiTenantSettings() {
                     Auto-send (requires auto-draft)
                   </label>
                 </div>
-                <div className="rounded-xl border border-gray-200 p-3">
+                <div className="rounded-xl border border-gray-200 p-2.5">
                   <p className="text-sm font-semibold text-gray-900">WhatsApp automation</p>
-                  <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                     <input type="checkbox" checked={settings.auto_draft_whatsapp} onChange={(event) => setAutoDraft('whatsapp', event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
                     Auto-draft on new WhatsApp message
                   </label>
-                  <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                     <input
                       type="checkbox"
                       checked={settings.auto_send_whatsapp}

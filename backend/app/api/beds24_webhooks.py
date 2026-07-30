@@ -22,6 +22,7 @@ from app.schemas.beds24_webhook_log import Beds24WebhookLogRead
 from app.services.beds24_client import get_booking_info_items
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_email_sync import sync_tenant_email_addresses_from_beds24
+from app.services.tenant_notes_history import SOURCE_BEDS24_WEBHOOK, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 router = APIRouter(prefix="/webhooks/beds24", tags=["beds24-webhooks"])
@@ -189,7 +190,7 @@ async def _process_beds24_booking_event(
         tenant.check_in = fields.get("check_in")
         tenant.check_out = fields.get("check_out")
         tenant.booking_status = fields.get("booking_status")
-        tenant.notes = fields.get("notes")
+        set_tenant_notes(db, tenant, fields.get("notes"), source=SOURCE_BEDS24_WEBHOOK)
         tenant.responsible_comm = fields.get("responsible_comm")
         tenant.room_id = room_id
         if hasattr(tenant, "room_name"):

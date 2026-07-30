@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.quotation_token import get_raw_token, verify_quotation_token
 from app.schemas.quotation import (
     AdminCostsRequest,
     AdminCostsResponse,
+    BuildChargesRequest,
+    BuildChargesResponse,
     DiscountRequest,
     DiscountResponse,
     GeneratePdfRequest,
@@ -13,6 +15,7 @@ from app.schemas.quotation import (
     VatSplitSegment,
 )
 from app.services import admin_costs as admin_costs_service
+from app.services import charge_builder
 from app.services import crm_client
 from app.services import discount_engine
 from app.services import pdf_service
@@ -112,6 +115,28 @@ def generate_pdf(
     )
 
     return GeneratePdfResponse(file_path=str(output_path), quotation_number=next_output.quotation_number)
+
+
+@router.post("/build-charges", response_model=BuildChargesResponse)
+def build_charges(
+    request: BuildChargesRequest,
+    _token=Depends(verify_quotation_token),
+) -> BuildChargesResponse:
+    pricing_data = discount_engine.load_pricing_data()
+    try:
+        result = charge_builder.build_standard_charges(
+            property_name=request.property_name,
+            room_name=request.room_name,
+            checkin_date=request.check_in,
+            checkout_date=request.check_out,
+            adults=request.adults,
+            children=request.children,
+            quotation_flag=request.quotation_flag,
+            pricing_data=pricing_data,
+        )
+    except charge_builder.ChargeBuilderError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return BuildChargesResponse(**result)
 
 
 @router.post("/{booking_id}/send-to-beds24")

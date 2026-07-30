@@ -433,15 +433,15 @@ export default function Settings() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-6">
+    <main className="mx-auto max-w-4xl px-6 py-4">
       <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
       <p className="text-sm text-gray-500">{userEmail ?? 'Signed in'}</p>
 
-      <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">Display</h2>
-        <p className="mt-2 text-sm text-gray-500">Choose the order timestamps are shown in the thread view.</p>
+        <p className="mt-1.5 text-sm text-gray-500">Choose the order timestamps are shown in the thread view.</p>
 
-        <label className="mt-4 flex items-center gap-3 text-sm text-gray-700">
+        <label className="mt-3 flex items-center gap-3 text-sm text-gray-700">
           <input
             type="checkbox"
             checked={relativeTimestampsFirst}
@@ -452,43 +452,43 @@ export default function Settings() {
         </label>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">Shared Gmail setup</h2>
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="mt-1.5 text-sm text-gray-500">
           Connect Gmail accounts once for the organization. All users use the same synced mailbox list.
         </p>
 
-        <div className="mt-4 flex flex-wrap gap-3">
-          <button type="button" className="rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white" onClick={() => startGmailOAuth()}>
+        <div className="mt-3 flex flex-wrap gap-3">
+          <button type="button" className="rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white" onClick={() => startGmailOAuth()}>
             Connect Gmail account
           </button>
-          <button type="button" className="rounded-xl border border-gray-300 px-4 py-3 font-semibold text-gray-900" onClick={loadGmailAccounts}>
+          <button type="button" className="rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-900" onClick={loadGmailAccounts}>
             Refresh list
           </button>
-          <button type="button" className="rounded-xl border border-gray-300 px-4 py-3 font-semibold text-gray-900" onClick={syncAllGmailAccounts}>
+          <button type="button" className="rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-900" onClick={syncAllGmailAccounts}>
             Sync all active
           </button>
         </div>
 
-        {gmailMessage ? <p className="mt-3 text-sm text-gray-600">{gmailMessage}</p> : null}
+        {gmailMessage ? <p className="mt-2 text-sm text-gray-600">{gmailMessage}</p> : null}
 
-        <div className="mt-5 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="py-2">Email</th><th>Display</th><th>Status</th><th>Last sync</th><th>Actions</th>
+                <th className="py-1.5">Email</th><th>Display</th><th>Status</th><th>Last sync</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {gmailAccounts.map((account) => (
                 <tr key={account.id} className="border-t border-gray-100">
-                  <td className="py-3">{account.email_address}</td>
+                  <td className="py-2">{account.email_address}</td>
                   <td>{account.display_name ?? '-'}</td>
                   <td>
                     <div className="flex items-center gap-2">{account.is_active ? statusDot('green') : statusDot('gray')}<span>{account.is_active ? 'Active' : 'Disconnected'}</span></div>
                   </td>
                   <td>{account.last_synced_at ? new Date(account.last_synced_at).toLocaleString() : '-'}</td>
-                  <td className="space-x-2 py-3">
+                  <td className="space-x-2 py-2">
                     <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => syncGmailAccount(account.id)} disabled={!account.is_active}>Sync</button>
                     <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => reconnectGmailAccount(account.id)}>Reconnect</button>
                     <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => disconnectGmailAccount(account.id)} disabled={!account.is_active}>Disconnect</button>
@@ -500,16 +500,16 @@ export default function Settings() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">Local Folder</h2>
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="mt-1.5 text-sm text-gray-500">
           Select the root folder on your computer where tenant files are stored. This setting is saved per user and restored on each visit.
         </p>
 
         {unsupported ? (
-          <p className="mt-4 text-sm text-gray-600">Local folder access is not supported in this browser.</p>
+          <p className="mt-3 text-sm text-gray-600">Local folder access is not supported in this browser.</p>
         ) : (
-          <div className="mt-4 space-y-4">
+          <div className="mt-3 space-y-3">
             <div className="flex items-center gap-2 text-sm text-gray-700">
               {savedHandle && permissionState === 'granted' ? statusDot('green') : null}
               {savedHandle && permissionState === 'prompt' ? statusDot('yellow') : null}
@@ -550,23 +550,23 @@ export default function Settings() {
                 value={localFolderRootPath}
                 onChange={(event) => setLocalFolderRootPath(event.target.value)}
                 placeholder="C:\Users\you\Tenants"
-                className="mt-2 w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className="mt-1.5 w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
               />
             </div>
           </div>
         )}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">Email Templates</h2>
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="mt-1.5 text-sm text-gray-500">
           Personal templates you can select as a starting body when using "AI Reply" to forward an email thread.
           Use placeholders below and they'll be filled in with the tenant's info: {EMAIL_TEMPLATE_PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}
         </p>
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-3 space-y-2">
           {emailTemplates.map((template) => (
-            <div key={template.id} className="rounded-xl border border-gray-200 p-3">
+            <div key={template.id} className="rounded-xl border border-gray-200 p-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">{template.name}</p>
@@ -583,7 +583,7 @@ export default function Settings() {
           {!emailTemplates.length ? <p className="text-sm text-gray-500">No templates yet.</p> : null}
         </div>
 
-        <form onSubmit={saveEmailTemplate} className="mt-5 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <form onSubmit={saveEmailTemplate} className="mt-3 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
           <p className="text-sm font-semibold text-gray-900">{templateForm.id !== null ? 'Edit template' : 'Add template'}</p>
           <input
             type="text"
@@ -620,15 +620,15 @@ export default function Settings() {
         </form>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Shared AI Reply Templates</h2>
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="mt-1.5 text-sm text-gray-500">
               Templates used by "Draft with AI" in the reply box, shared across all users. The payload sent to Gemini
               always follows this fixed order:
             </p>
-            <p className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-gray-600">
+            <p className="mt-1.5 flex flex-wrap gap-2 text-xs font-semibold text-gray-600">
               <span className="rounded-full bg-gray-100 px-2 py-0.5">0. Goal &amp; Guidelines</span>
               <span className="rounded-full bg-gray-100 px-2 py-0.5">1. Template text</span>
               <span className="rounded-full bg-gray-100 px-2 py-0.5">2. Message history</span>
@@ -641,9 +641,9 @@ export default function Settings() {
           </Link>
         </div>
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-3 space-y-2">
           {aiTemplates.map((template) => (
-            <div key={template.id} className="rounded-xl border border-gray-200 p-3">
+            <div key={template.id} className="rounded-xl border border-gray-200 p-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">{template.name}</p>
@@ -668,7 +668,7 @@ export default function Settings() {
           {!aiTemplates.length ? <p className="text-sm text-gray-500">No AI templates yet.</p> : null}
         </div>
 
-        <form onSubmit={saveAiTemplate} className="mt-5 space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <form onSubmit={saveAiTemplate} className="mt-3 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
           <p className="text-sm font-semibold text-gray-900">{aiTemplateForm.id !== null ? 'Edit template' : 'Add template'}</p>
           <input
             type="text"
@@ -679,7 +679,7 @@ export default function Settings() {
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
           />
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">0. Goal &amp; Guidelines</p>
             <textarea
               value={aiTemplateForm.guidelines}
@@ -693,10 +693,10 @@ export default function Settings() {
             </p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1. Template text (subprompts)</p>
             {aiTemplateForm.sections.map((section, index) => (
-              <div key={index} className="rounded-lg border border-gray-200 bg-white p-3">
+              <div key={index} className="rounded-lg border border-gray-200 bg-white p-2.5">
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -714,7 +714,7 @@ export default function Settings() {
                   onChange={(event) => updateAiTemplateSection(index, 'content', event.target.value)}
                   placeholder="Section content, e.g. You are a friendly host responding on behalf of..."
                   rows={3}
-                  className="mt-2 w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                  className="mt-1.5 w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
                 />
               </div>
             ))}
@@ -724,7 +724,7 @@ export default function Settings() {
             </p>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">2. Message history</p>
             <label className="flex items-center gap-3 text-sm text-gray-700">
               <input
@@ -746,7 +746,7 @@ export default function Settings() {
             </label>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">3. Beds24 info (booking + payments + notes)</p>
             <label className="flex items-center gap-3 text-sm text-gray-700">
               <input

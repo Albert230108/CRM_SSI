@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DiscountRequest(BaseModel):
@@ -89,3 +89,29 @@ class VatSplitSegment(BaseModel):
 class GeneratePdfResponse(BaseModel):
     file_path: str
     quotation_number: int
+
+
+class BuildChargesRequest(BaseModel):
+    property_name: str
+    room_name: str
+    check_in: date
+    check_out: date
+    adults: int = Field(1, ge=0)
+    children: int = Field(0, ge=0)
+    quotation_flag: str | None = None  # "(SSI)" -> Municipality Cost instead of Citytax
+
+
+class GeneratedCharge(BaseModel):
+    kind: str
+    description: str
+    qty: float
+    amount: float
+    vat_rate: float
+    detail: str | None = None
+
+
+class BuildChargesResponse(BaseModel):
+    nights: int
+    total_guests: int
+    charges: list[GeneratedCharge]
+    notes: list[str] = []

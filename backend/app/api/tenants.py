@@ -27,6 +27,8 @@ from app.services.beds24_client import get_booking_detail, get_bookings, update_
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_ai_template_provisioning import apply_default_ai_templates_if_enabled
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
+from app.services.tenant_notes_history import SOURCE_BEDS24_IMPORT, SOURCE_MANUAL, set_tenant_notes
+from app.models.tenant_notes_history import TenantNotesHistory
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 router = APIRouter(tags=["tenants"])
@@ -518,7 +520,7 @@ async def update_tenant_notes(
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
-    tenant.notes = payload.notes
+    set_tenant_notes(db, tenant, payload.notes, source=SOURCE_MANUAL, changed_by_user_id=getattr(current_user, "id", None))
     db.commit()
     db.refresh(tenant)
 
@@ -529,6 +531,47 @@ async def update_tenant_notes(
         return {"notes": tenant.notes, "beds24_synced": False, "beds24_error": str(exc.detail)}
 
     return {"notes": tenant.notes, "beds24_synced": True}
+
+
+class TenantNotesHistoryEntry(BaseModel):
+    id: int
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    source: str
+    changed_by_user_id: Optional[int] = None
+    changed_by_email: Optional[str] = None
+    changed_at: datetime
+
+
+@router.get("/tenants/{tenant_id}/notes/history", response_model=list[TenantNotesHistoryEntry])
+def get_tenant_notes_history(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    rows = (
+        db.query(TenantNotesHistory, User.email)
+        .outerjoin(User, User.id == TenantNotesHistory.changed_by_user_id)
+        .filter(TenantNotesHistory.tenant_id == tenant_id)
+        .order_by(TenantNotesHistory.changed_at.desc(), TenantNotesHistory.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": entry.id,
+            "old_value": entry.old_value,
+            "new_value": entry.new_value,
+            "source": entry.source,
+            "changed_by_user_id": entry.changed_by_user_id,
+            "changed_by_email": email,
+            "changed_at": entry.changed_at,
+        }
+        for entry, email in rows
+    ]
 
 
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -847,6 +890,14 @@ async def _import_tenant(
         )
         db.add(tenant)
         db.flush()
+        if notes:
+            db.add(TenantNotesHistory(
+                tenant_id=tenant.id,
+                old_value=None,
+                new_value=notes,
+                source=SOURCE_BEDS24_IMPORT,
+                changed_by_user_id=getattr(current_user, "id", None),
+            ))
         apply_default_ai_templates_if_enabled(db, tenant.id)
     else:
         tenant = existing
@@ -857,7 +908,7 @@ async def _import_tenant(
         tenant.mobile = mobile
         tenant.check_in = check_in
         tenant.check_out = check_out
-        tenant.notes = notes
+        set_tenant_notes(db, tenant, notes, source=SOURCE_BEDS24_IMPORT, changed_by_user_id=getattr(current_user, "id", None))
         tenant.booking_status = booking_status
         tenant.name = name
         tenant.responsible_comm = responsible_comm

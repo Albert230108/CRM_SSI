@@ -430,11 +430,11 @@ export default function AdminSettings() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-6">
+    <main className="mx-auto max-w-6xl px-6 py-4">
       <h1 className="text-2xl font-semibold text-gray-900">Admin Settings</h1>
       <p className="mt-1 text-sm text-gray-500">User management, invite onboarding, password resets, and Beds24 webhook logs.</p>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">Email sync maintenance</h2>
         <p className="mt-1 text-sm text-gray-500">
           Re-extract the body and formatted HTML for already-synced Gmail messages from their stored raw payload
@@ -445,19 +445,19 @@ export default function AdminSettings() {
           type="button"
           disabled={backfillingBodies}
           onClick={backfillEmailBodies}
-          className="mt-4 rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+          className="mt-3 rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
         >
           {backfillingBodies ? 'Backfilling...' : 'Backfill email bodies'}
         </button>
-        {backfillMessage ? <p className="mt-3 text-sm text-gray-600">{backfillMessage}</p> : null}
+        {backfillMessage ? <p className="mt-2 text-sm text-gray-600">{backfillMessage}</p> : null}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">AI Reply forwarding address</h2>
         <p className="mt-1 text-sm text-gray-500">
           When a user clicks "AI Reply" on an email thread, the thread is forwarded to this address for AI drafting.
         </p>
-        <form onSubmit={saveForwardToEmail} className="mt-4 flex max-w-lg items-center gap-3">
+        <form onSubmit={saveForwardToEmail} className="mt-3 flex max-w-lg items-center gap-3">
           <input
             type="email"
             value={forwardToEmail}
@@ -473,17 +473,17 @@ export default function AdminSettings() {
             {savingForwardToEmail ? 'Saving...' : 'Save'}
           </button>
         </form>
-        {forwardToEmailMessage ? <p className="mt-3 text-sm text-gray-600">{forwardToEmailMessage}</p> : null}
+        {forwardToEmailMessage ? <p className="mt-2 text-sm text-gray-600">{forwardToEmailMessage}</p> : null}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">AI Draft Timing</h2>
         <p className="mt-1 text-sm text-gray-500">
           Controls the "Draft with AI" auto-draft/auto-send pipeline: how long a conversation must go quiet before an
           auto-draft is generated, and how long a scheduled auto-send waits before actually sending, giving staff a
           window to intervene.
         </p>
-        <form onSubmit={saveAiDraftTiming} className="mt-4 flex max-w-lg flex-wrap items-end gap-4">
+        <form onSubmit={saveAiDraftTiming} className="mt-3 flex max-w-lg flex-wrap items-end gap-4">
           <div>
             <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-draft-debounce-seconds">
               Draft debounce (seconds)
@@ -494,7 +494,7 @@ export default function AdminSettings() {
               min={1}
               value={draftDebounceSeconds}
               onChange={(event) => setDraftDebounceSeconds(Number(event.target.value))}
-              className="mt-2 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+              className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
             />
           </div>
           <div>
@@ -507,7 +507,7 @@ export default function AdminSettings() {
               min={1}
               value={autoSendDelaySeconds}
               onChange={(event) => setAutoSendDelaySeconds(Number(event.target.value))}
-              className="mt-2 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+              className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
             />
           </div>
           <button
@@ -518,9 +518,9 @@ export default function AdminSettings() {
             {savingAiDraftTiming ? 'Saving...' : 'Save'}
           </button>
         </form>
-        {aiDraftTimingMessage ? <p className="mt-3 text-sm text-gray-600">{aiDraftTimingMessage}</p> : null}
+        {aiDraftTimingMessage ? <p className="mt-2 text-sm text-gray-600">{aiDraftTimingMessage}</p> : null}
 
-        <div className="mt-5 border-t border-gray-200 pt-4">
+        <div className="mt-3 border-t border-gray-200 pt-3">
           <label className="flex items-center gap-3 text-sm text-gray-700">
             <input
               type="checkbox"
@@ -535,26 +535,26 @@ export default function AdminSettings() {
             When off (default), a new tenant starts with no AI templates available and must be configured manually
             on the tenant AI settings page.
           </p>
-          {autoApplyTemplatesMessage ? <p className="mt-2 text-sm text-gray-600">{autoApplyTemplatesMessage}</p> : null}
+          {autoApplyTemplatesMessage ? <p className="mt-1.5 text-sm text-gray-600">{autoApplyTemplatesMessage}</p> : null}
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">Generate invite link</h2>
-        <form className="mt-4 grid gap-3 md:grid-cols-5" onSubmit={createInvite}>
-          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Email (optional)" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
-          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Full name" value={inviteName} onChange={(e) => setInviteName(e.target.value)} />
-          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Phone" value={invitePhone} onChange={(e) => setInvitePhone(e.target.value)} />
-          <select className="rounded-xl border border-gray-300 px-4 py-3" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'admin' | 'non-admin')}>
+        <form className="mt-3 grid gap-3 md:grid-cols-5" onSubmit={createInvite}>
+          <input className="rounded-xl border border-gray-300 px-4 py-2.5" placeholder="Email (optional)" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+          <input className="rounded-xl border border-gray-300 px-4 py-2.5" placeholder="Full name" value={inviteName} onChange={(e) => setInviteName(e.target.value)} />
+          <input className="rounded-xl border border-gray-300 px-4 py-2.5" placeholder="Phone" value={invitePhone} onChange={(e) => setInvitePhone(e.target.value)} />
+          <select className="rounded-xl border border-gray-300 px-4 py-2.5" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'admin' | 'non-admin')}>
             <option value="non-admin">Non-admin</option>
             <option value="admin">Admin</option>
           </select>
-          <button className="rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white">Generate invite link</button>
+          <button className="rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white">Generate invite link</button>
         </form>
-        {message ? <p className="mt-3 text-sm text-gray-600">{message}</p> : null}
+        {message ? <p className="mt-2 text-sm text-gray-600">{message}</p> : null}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">Invite management</h2>
           <button
@@ -568,23 +568,23 @@ export default function AdminSettings() {
             Clear all pending invite links
           </button>
         </div>
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="py-2">Email</th><th>Name</th><th>Phone</th><th>Role</th><th>Status</th><th>Expires</th><th>Actions</th>
+                <th className="py-1.5">Email</th><th>Name</th><th>Phone</th><th>Role</th><th>Status</th><th>Expires</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {invites.map((invite) => (
                 <tr key={invite.id} className="border-t border-gray-100">
-                  <td className="py-3">{invite.email ?? '-'}</td>
+                  <td className="py-2">{invite.email ?? '-'}</td>
                   <td>{invite.full_name ?? '-'}</td>
                   <td>{invite.phone ?? '-'}</td>
                   <td>{invite.role}</td>
                   <td>{invite.status}</td>
                   <td>{new Date(invite.expires_at).toLocaleString()}</td>
-                  <td className="space-x-2 py-3">
+                  <td className="space-x-2 py-2">
                     <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => copyInvite(invite)} type="button" disabled={!invite.invite_url}>Copy link</button>
                     <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => revokeInvite(invite.id)} type="button" disabled={invite.status === 'revoked' || invite.status === 'completed'}>Revoke</button>
                     <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => regenerateInvite(invite.id)} type="button" disabled={invite.status === 'completed'}>Regenerate</button>
@@ -596,30 +596,30 @@ export default function AdminSettings() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <h2 className="text-lg font-semibold text-gray-900">Beds24 Webhook Logs</h2>
-        <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={applyLogFilters}>
-          <select className="rounded-xl border border-gray-300 px-4 py-3" value={logStatus} onChange={(e) => setLogStatus(e.target.value)}>
+        <form className="mt-3 grid gap-3 md:grid-cols-4" onSubmit={applyLogFilters}>
+          <select className="rounded-xl border border-gray-300 px-4 py-2.5" value={logStatus} onChange={(e) => setLogStatus(e.target.value)}>
             {logStatuses.map((status) => (
               <option key={status || 'all'} value={status}>{status || 'All statuses'}</option>
             ))}
           </select>
-          <input className="rounded-xl border border-gray-300 px-4 py-3" placeholder="Event type" value={logEventType} onChange={(e) => setLogEventType(e.target.value)} />
-          <input className="rounded-xl border border-gray-300 px-4 py-3" type="datetime-local" value={logStart} onChange={(e) => setLogStart(e.target.value)} />
-          <input className="rounded-xl border border-gray-300 px-4 py-3" type="datetime-local" value={logEnd} onChange={(e) => setLogEnd(e.target.value)} />
-          <button className="rounded-xl bg-gray-900 px-4 py-3 font-semibold text-white md:col-span-4">Apply filters</button>
+          <input className="rounded-xl border border-gray-300 px-4 py-2.5" placeholder="Event type" value={logEventType} onChange={(e) => setLogEventType(e.target.value)} />
+          <input className="rounded-xl border border-gray-300 px-4 py-2.5" type="datetime-local" value={logStart} onChange={(e) => setLogStart(e.target.value)} />
+          <input className="rounded-xl border border-gray-300 px-4 py-2.5" type="datetime-local" value={logEnd} onChange={(e) => setLogEnd(e.target.value)} />
+          <button className="rounded-xl bg-gray-900 px-4 py-2.5 font-semibold text-white md:col-span-4">Apply filters</button>
         </form>
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="py-2">Received</th><th>Processed</th><th>Provider</th><th>Event</th><th>Booking</th><th>Tenant</th><th>Status</th><th>HTTP</th><th>Action</th>
+                <th className="py-1.5">Received</th><th>Processed</th><th>Provider</th><th>Event</th><th>Booking</th><th>Tenant</th><th>Status</th><th>HTTP</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {webhookLogs.map((log) => (
                 <tr key={log.id} className="border-t border-gray-100 align-top">
-                  <td className="py-3">{new Date(log.received_at).toLocaleString()}</td>
+                  <td className="py-2">{new Date(log.received_at).toLocaleString()}</td>
                   <td>{log.processed_at ? new Date(log.processed_at).toLocaleString() : '-'}</td>
                   <td>{log.provider}</td>
                   <td>
@@ -635,7 +635,7 @@ export default function AdminSettings() {
                       View details
                     </button>
                     {expandedLogId === log.id ? (
-                      <div className="mt-3 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+                      <div className="mt-2 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-2.5 text-xs text-gray-700">
                         <div>
                           <div className="font-semibold text-gray-900">Summary</div>
                           <pre className="mt-1 overflow-x-auto whitespace-pre-wrap">{formatJson(log.parsed_fields)}</pre>
@@ -676,7 +676,7 @@ export default function AdminSettings() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">Users</h2>
           <button
@@ -691,28 +691,28 @@ export default function AdminSettings() {
             Create user
           </button>
         </div>
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="py-2">Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Role</th><th>Created</th><th>Actions</th>
+                <th className="py-1.5">Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Role</th><th>Created</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-4 text-center text-gray-400">No users yet</td>
+                  <td colSpan={7} className="py-3 text-center text-gray-400">No users yet</td>
                 </tr>
               ) : (
                 users.map((user) => (
                   <tr key={user.id} className="border-t border-gray-100">
-                    <td className="py-3">{user.full_name ?? '-'}</td>
+                    <td className="py-2">{user.full_name ?? '-'}</td>
                     <td>{user.email}</td>
                     <td>{user.phone ?? '-'}</td>
                     <td>{user.is_active ? 'Active' : 'Inactive'}</td>
                     <td>{user.is_admin ? 'Admin' : 'User'}</td>
                     <td>{new Date(user.created_at).toLocaleString()}</td>
-                    <td className="space-x-2 py-3">
+                    <td className="space-x-2 py-2">
                       <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => toggleActive(user.id)} type="button">Toggle active</button>
                       <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => sendReset(user.id)} type="button">Send password reset</button>
                       <button
@@ -736,12 +736,12 @@ export default function AdminSettings() {
 
       {showCreateUserModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-4">
               <h2 className="text-xl font-semibold text-gray-900">Create user</h2>
               <button type="button" onClick={() => setShowCreateUserModal(false)} className="text-sm text-gray-500 hover:text-gray-900">Close</button>
             </div>
-            <form className="mt-4 space-y-3" onSubmit={createUser}>
+            <form className="mt-3 space-y-2" onSubmit={createUser}>
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Full name</label>
                 <input
@@ -802,7 +802,7 @@ export default function AdminSettings() {
                 />
               </div>
               {createUserError ? <p className="text-sm text-rose-600">{createUserError}</p> : null}
-              <div className="mt-4 flex justify-end gap-3">
+              <div className="mt-3 flex justify-end gap-3">
                 <button type="button" onClick={() => setShowCreateUserModal(false)} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
                   Cancel
                 </button>
@@ -821,13 +821,13 @@ export default function AdminSettings() {
 
       {deleteTarget ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
             <h2 className="text-xl font-semibold text-gray-900">Delete {deleteTarget.full_name || deleteTarget.email}?</h2>
-            <p className="mt-3 text-sm text-gray-600">
+            <p className="mt-2 text-sm text-gray-600">
               This permanently removes this user's ability to sign in. This action cannot be undone.
             </p>
-            {deleteUserError ? <p className="mt-3 text-sm text-rose-600">{deleteUserError}</p> : null}
-            <div className="mt-6 flex justify-end gap-3">
+            {deleteUserError ? <p className="mt-2 text-sm text-rose-600">{deleteUserError}</p> : null}
+            <div className="mt-4 flex justify-end gap-3">
               <button type="button" onClick={() => setDeleteTarget(null)} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
                 Cancel
               </button>
@@ -846,14 +846,14 @@ export default function AdminSettings() {
 
       {showClearInvitesModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
             <h2 className="text-xl font-semibold text-gray-900">Clear all pending invite links?</h2>
-            <p className="mt-3 text-sm text-gray-600">
+            <p className="mt-2 text-sm text-gray-600">
               This will invalidate all pending invite links. People who already received an invite link will no
               longer be able to use it. Existing users are not affected.
             </p>
-            {clearInvitesError ? <p className="mt-3 text-sm text-rose-600">{clearInvitesError}</p> : null}
-            <div className="mt-6 flex justify-end gap-3">
+            {clearInvitesError ? <p className="mt-2 text-sm text-rose-600">{clearInvitesError}</p> : null}
+            <div className="mt-4 flex justify-end gap-3">
               <button type="button" onClick={() => setShowClearInvitesModal(false)} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
                 Cancel
               </button>

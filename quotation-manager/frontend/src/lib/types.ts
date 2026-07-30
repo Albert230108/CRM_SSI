@@ -20,6 +20,8 @@ export interface Beds24Booking {
   lastName?: string
   arrival?: string
   departure?: string
+  numAdult?: number
+  numChild?: number
   invoiceItems?: Beds24InvoiceItem[]
   [key: string]: unknown
 }
@@ -58,4 +60,20 @@ export interface DiscountResult {
   base_price_source: string
   tier_price: number
   using_tier_price: boolean
+}
+
+export interface GeneratedCharge {
+  kind: string
+  description: string
+  qty: number
+  amount: number
+  vat_rate: number
+  detail: string | null
+}
+
+export interface BuildChargesResult {
+  nights: number
+  total_guests: number
+  charges: GeneratedCharge[]
+  notes: string[]
 }

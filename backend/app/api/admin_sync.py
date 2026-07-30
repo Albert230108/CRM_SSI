@@ -19,6 +19,7 @@ from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.beds24_client import get_bookings, get_booking_detail
+from app.services.tenant_notes_history import SOURCE_BEDS24_SYNC_ALL, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 from app.services.whatsapp_chat_directory import resync_whatsapp_chat
@@ -35,7 +36,7 @@ def _to_int(value: Any) -> int:
         return 0
 
 
-def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, Any]) -> None:
+def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, Any], changed_by_user_id: int | None = None) -> None:
     fields = _extract_guest_fields(booking)
     tenant.first_name = fields.get("first_name")
     tenant.last_name = fields.get("last_name")
@@ -62,7 +63,7 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     tenant.commission = fields.get("commission")
     tenant.deposit = fields.get("deposit")
     tenant.currency = fields.get("currency")
-    tenant.notes = fields.get("notes")
+    set_tenant_notes(db, tenant, fields.get("notes"), source=SOURCE_BEDS24_SYNC_ALL, changed_by_user_id=changed_by_user_id)
     tenant.booking_status = fields.get("booking_status")
     tenant.responsible_comm = fields.get("responsible_comm")
     tenant.name = fields.get("name") or tenant.name
@@ -92,7 +93,12 @@ async def _sync_beds24(db: Session, current_user: User, tenant_ids: list[int] | 
         except Exception:
             booking_detail = booking
 
-        _update_tenant_from_beds24(db, tenant, booking_detail if isinstance(booking_detail, dict) else booking)
+        _update_tenant_from_beds24(
+            db,
+            tenant,
+            booking_detail if isinstance(booking_detail, dict) else booking,
+            changed_by_user_id=getattr(current_user, "id", None),
+        )
         updated += 1
     db.commit()
     return updated

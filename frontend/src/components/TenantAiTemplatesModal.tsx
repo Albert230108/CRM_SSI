@@ -143,7 +143,7 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-xl"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-gray-200 bg-white p-3.5 shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
@@ -161,12 +161,12 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
         </div>
 
         {loading || !settings ? (
-          <p className="mt-3 text-sm text-gray-500">Loading...</p>
+          <p className="mt-2 text-sm text-gray-500">Loading...</p>
         ) : (
-          <div className="mt-4 space-y-6">
+          <div className="mt-3 space-y-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Available templates</p>
-              <div className="mt-2 space-y-2">
+              <div className="mt-1.5 space-y-1.5">
                 {templates.map((template) => (
                   <label key={template.id} className="flex items-center gap-3 text-sm text-gray-700">
                     <input
@@ -182,7 +182,7 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-default-email-template">
                   Default template - Email
@@ -191,7 +191,7 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
                   id="modal-default-email-template"
                   value={settings.default_email_template_id ?? ''}
                   onChange={(event) => setSettings((current) => current && { ...current, default_email_template_id: event.target.value ? Number(event.target.value) : null })}
-                  className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                 >
                   <option value="">No default</option>
                   {templates.filter((template) => settings.available_template_ids.includes(template.id)).map((template) => (
@@ -207,7 +207,7 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
                   id="modal-default-whatsapp-template"
                   value={settings.default_whatsapp_template_id ?? ''}
                   onChange={(event) => setSettings((current) => current && { ...current, default_whatsapp_template_id: event.target.value ? Number(event.target.value) : null })}
-                  className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                 >
                   <option value="">No default</option>
                   {templates.filter((template) => settings.available_template_ids.includes(template.id)).map((template) => (
@@ -217,14 +217,14 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl border border-gray-200 p-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-gray-200 p-2.5">
                 <p className="text-sm font-semibold text-gray-900">Email automation</p>
-                <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                   <input type="checkbox" checked={settings.auto_draft_email} onChange={(event) => setAutoDraft('email', event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
                   Auto-draft on new email
                 </label>
-                <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                   <input
                     type="checkbox"
                     checked={settings.auto_send_email}
@@ -235,13 +235,13 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
                   Auto-send (requires auto-draft)
                 </label>
               </div>
-              <div className="rounded-xl border border-gray-200 p-3">
+              <div className="rounded-xl border border-gray-200 p-2.5">
                 <p className="text-sm font-semibold text-gray-900">WhatsApp automation</p>
-                <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                   <input type="checkbox" checked={settings.auto_draft_whatsapp} onChange={(event) => setAutoDraft('whatsapp', event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
                   Auto-draft on new WhatsApp message
                 </label>
-                <label className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                   <input
                     type="checkbox"
                     checked={settings.auto_send_whatsapp}

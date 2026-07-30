@@ -159,9 +159,9 @@ export default function NotificationBell() {
           </div>
 
           <div className="max-h-72 overflow-y-auto">
-            {loading ? <p className="px-4 py-4 text-xs text-gray-500">Loading...</p> : null}
+            {loading ? <p className="px-3 py-2 text-xs text-gray-500">Loading...</p> : null}
             {!loading && notifications.length === 0 ? (
-              <p className="px-4 py-4 text-xs text-gray-400">No notifications yet.</p>
+              <p className="px-3 py-2 text-xs text-gray-400">No notifications yet.</p>
             ) : null}
             {notifications.map((notification) => (
               <button
@@ -169,7 +169,7 @@ export default function NotificationBell() {
                 type="button"
                 onClick={() => handleNotificationClick(notification)}
                 className={[
-                  'block w-full border-b border-gray-50 px-4 py-3 text-left transition last:border-0 hover:bg-gray-50',
+                  'block w-full border-b border-gray-50 px-3 py-2 text-left transition last:border-0 hover:bg-gray-50',
                   notification.is_read ? 'bg-white' : 'bg-cyan-50/40',
                 ].join(' ')}
               >

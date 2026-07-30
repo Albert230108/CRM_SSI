@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import ChargesTable from '../components/ChargesTable'
 import PaymentsTable from '../components/PaymentsTable'
 import { ApiError, apiGet, apiPost } from '../lib/apiClient'
-import type { Beds24Booking, Beds24InvoiceItem, DiscountResult, EditableInvoiceItem } from '../lib/types'
+import type { Beds24Booking, Beds24InvoiceItem, BuildChargesResult, DiscountResult, EditableInvoiceItem } from '../lib/types'
 
 let nextLocalId = 1
 function makeLocalId(): string {
@@ -45,6 +45,9 @@ export default function QuotationEditorPage() {
   const [checkIn, setCheckIn] = useState('')
   const [checkOut, setCheckOut] = useState('')
   const [securityDeposit, setSecurityDeposit] = useState(0)
+  const [adults, setAdults] = useState(1)
+  const [children, setChildren] = useState(0)
+  const [ssiFlag, setSsiFlag] = useState(false)
 
   const [charges, setCharges] = useState<EditableInvoiceItem[]>([])
   const [payments, setPayments] = useState<EditableInvoiceItem[]>([])
@@ -54,6 +57,7 @@ export default function QuotationEditorPage() {
   const [checkingDiscount, setCheckingDiscount] = useState(false)
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [sending, setSending] = useState(false)
+  const [buildingCharges, setBuildingCharges] = useState(false)
 
   useEffect(() => {
     if (!bookingId) return
@@ -67,6 +71,8 @@ export default function QuotationEditorPage() {
         setPropertyName(firstString(booking.propertyName))
         setCheckIn(firstString((booking as Record<string, unknown>).arrival))
         setCheckOut(firstString((booking as Record<string, unknown>).departure))
+        setAdults(Number(booking.numAdult ?? 1) || 1)
+        setChildren(Number(booking.numChild ?? 0) || 0)
 
         const items = booking.invoiceItems ?? []
         setOriginalItemIds(items.map((item) => item.id).filter((id): id is string => Boolean(id)))
@@ -122,6 +128,46 @@ export default function QuotationEditorPage() {
       setError(err instanceof ApiError ? err.message : 'Failed to calculate discount')
     } finally {
       setCheckingDiscount(false)
+    }
+  }
+
+  const handleGenerateCharges = async () => {
+    if (!roomName || !propertyName || !checkIn || !checkOut) {
+      setError('Room, property, and valid check-in/check-out dates are needed to generate charges.')
+      return
+    }
+    if (charges.length > 0 && !window.confirm('Replace the current charge lines with the standard generated set?')) {
+      return
+    }
+    setBuildingCharges(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await apiPost<BuildChargesResult>('/api/quotation/build-charges', {
+        property_name: propertyName,
+        room_name: roomName,
+        check_in: checkIn,
+        check_out: checkOut,
+        adults,
+        children,
+        quotation_flag: ssiFlag ? '(SSI)' : null,
+      })
+      setCharges(
+        result.charges.map((c) => ({
+          localId: makeLocalId(),
+          type: 'charge' as const,
+          description: c.description,
+          qty: c.qty,
+          amount: c.amount,
+          vat_rate: c.vat_rate,
+          currency: 'EUR',
+        })),
+      )
+      setNotice(result.notes.length ? result.notes.join(' ') : `Generated ${result.charges.length} charge lines.`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to generate charges')
+    } finally {
+      setBuildingCharges(false)
     }
   }
 
@@ -241,20 +287,54 @@ export default function QuotationEditorPage() {
             Nights
             <p className="mt-1 py-1 text-sm text-gray-900">{nights ?? '—'}</p>
           </div>
+          <label className="text-xs text-gray-500">
+            Adults
+            <input
+              type="number"
+              min={0}
+              value={adults}
+              onChange={(e) => setAdults(Number(e.target.value))}
+              className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-gray-500">
+            Children
+            <input
+              type="number"
+              min={0}
+              value={children}
+              onChange={(e) => setChildren(Number(e.target.value))}
+              className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            <input type="checkbox" checked={ssiFlag} onChange={(e) => setSsiFlag(e.target.checked)} />
+            SSI registration (municipality cost)
+          </label>
         </div>
       </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-gray-500">Discount check</h2>
-          <button
-            type="button"
-            onClick={handleCheckDiscount}
-            disabled={checkingDiscount}
-            className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {checkingDiscount ? 'Checking...' : 'Check price/discount'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCheckDiscount}
+              disabled={checkingDiscount}
+              className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {checkingDiscount ? 'Checking...' : 'Check price/discount'}
+            </button>
+            <button
+              type="button"
+              onClick={handleGenerateCharges}
+              disabled={buildingCharges}
+              className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {buildingCharges ? 'Generating...' : 'Generate standard charges'}
+            </button>
+          </div>
         </div>
         {discountResult ? (
           <div className="mt-2 text-sm text-gray-700">

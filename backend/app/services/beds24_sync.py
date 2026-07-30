@@ -10,6 +10,7 @@ from app.api.tenants import ROOM_ID_MAPPING, _extract_guest_fields
 from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.tenant_notes_history import SOURCE_BEDS24_SYNC_SERVICE, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ async def sync_tenant_from_beds24_booking(
     tenant.check_in = fields.get("check_in")
     tenant.check_out = fields.get("check_out")
     tenant.booking_status = fields.get("booking_status")
-    tenant.notes = fields.get("notes")
+    set_tenant_notes(db, tenant, fields.get("notes"), source=SOURCE_BEDS24_SYNC_SERVICE)
     tenant.responsible_comm = fields.get("responsible_comm")
     tenant.room_id = room_id
 
