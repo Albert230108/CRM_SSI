@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { computeNights } from '../lib/date'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
@@ -22,6 +23,9 @@ type Tenant = {
   last_message_channel: string | null
   last_message_direction: string | null
   draft_notes: string | null
+  check_in: string | null
+  check_out: string | null
+  num_nights: number | null
 }
 
 type ThreadVersion = {
@@ -343,6 +347,9 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
             const msgTime = formatRelativeTime(tenant.last_message_date)
             const channelIcon = getChannelIcon(tenant.last_message_channel)
             const directionIcon = getDirectionIcon(tenant.last_message_direction)
+            // Beds24 sends the authoritative night count; only derive it from the
+            // stay dates when the booking payload did not carry one.
+            const nights = tenant.num_nights ?? computeNights(tenant.check_in, tenant.check_out)
 
             return (
               <button
@@ -373,6 +380,12 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
                           ⚠
                         </span>
                       ) : null}
+                      <span
+                        title={nights != null ? `${nights} night${nights === 1 ? '' : 's'}` : 'No stay dates'}
+                        className="ml-auto shrink-0 rounded-full border border-gray-200 bg-white/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-600"
+                      >
+                        {nights != null ? `${nights}n` : '—'}
+                      </span>
                     </p>
                     <p className="truncate text-xs text-gray-600 mt-0.5">{contact}</p>
                     {msgTime && (

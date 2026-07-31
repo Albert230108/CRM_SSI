@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-import asyncio
 import logging
+import uuid
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -15,10 +15,12 @@ from starlette.concurrency import run_in_threadpool
 from app.api.gmail_integration import _sync_gmail_account
 from app.api.tenants import _extract_guest_fields
 from app.core.dependencies import get_current_admin_user, get_current_user, get_db
+from app.database import SessionLocal
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.services.beds24_client import get_bookings, get_booking_detail
+from app.services.background_jobs import find_running_job, get_job, start_job, update_job_progress
+from app.services.beds24_client import get_bookings
 from app.services.tenant_notes_history import SOURCE_BEDS24_SYNC_ALL, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services.thread_timeline_service import build_tenant_thread_timeline
@@ -26,7 +28,6 @@ from app.services.whatsapp_chat_directory import resync_whatsapp_chat
 
 router = APIRouter(prefix="/admin", tags=["admin-sync"])
 logger = logging.getLogger(__name__)
-_whatsapp_sync_tasks: set[asyncio.Task[Any]] = set()
 
 
 def _to_int(value: Any) -> int:
@@ -73,7 +74,7 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
 
 
-async def _sync_beds24(db: Session, current_user: User, tenant_ids: list[int] | None = None) -> int:
+async def _sync_beds24(db: Session, changed_by_user_id: int | None = None, tenant_ids: list[int] | None = None) -> int:
     updated = 0
     bookings = await get_bookings()
     for booking in bookings:
@@ -88,23 +89,21 @@ async def _sync_beds24(db: Session, current_user: User, tenant_ids: list[int] | 
         if tenant is None:
             continue
 
-        try:
-            booking_detail = await get_booking_detail(booking_id)
-        except Exception:
-            booking_detail = booking
-
+        # No per-booking detail re-fetch: get_bookings() already requested includeInfoItems=true,
+        # so each list item carries the same fields the single-booking endpoint would return.
+        # Re-fetching cost one sequential HTTPS round-trip per tenant for identical data.
         _update_tenant_from_beds24(
             db,
             tenant,
-            booking_detail if isinstance(booking_detail, dict) else booking,
-            changed_by_user_id=getattr(current_user, "id", None),
+            booking,
+            changed_by_user_id=changed_by_user_id,
         )
         updated += 1
     db.commit()
     return updated
 
 
-async def _sync_emails(db: Session, current_user: User, tenant_ids: list[int] | None = None) -> int:
+async def _sync_emails(db: Session, tenant_ids: list[int] | None = None) -> int:
     accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
     imported = 0
     for account in accounts:
@@ -214,41 +213,6 @@ async def _sync_whatsapp_linked_endpoints(db: Session, tenant_ids: list[int] | N
     }
 
 
-async def _sync_whatsapp() -> int:
-    """Legacy: Full account-level sync (kept for compatibility).
-
-    New behavior: Delegates to per-endpoint sync for manually linked chats.
-    """
-    # This is now handled by _sync_whatsapp_linked_endpoints in main sync
-    return 0
-
-
-
-
-def _queue_whatsapp_sync() -> None:
-    task = asyncio.create_task(_sync_whatsapp())
-    _whatsapp_sync_tasks.add(task)
-
-    def _log_completion(completed: asyncio.Task[Any]) -> None:
-        _whatsapp_sync_tasks.discard(completed)
-        try:
-            imported = completed.result()
-            logger.info("Queued WhatsApp sync finished imported=%s", imported)
-        except Exception:
-            logger.exception("Queued WhatsApp sync failed")
-
-    task.add_done_callback(_log_completion)
-
-
-@router.get("/sync-status")
-async def sync_status(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
-    running_tasks = [task for task in _whatsapp_sync_tasks if not task.done()]
-    return {
-        "whatsapp_sync_running": bool(running_tasks),
-        "whatsapp_sync_task_count": len(running_tasks),
-    }
-
-
 async def _debug_whatsapp_history_sync() -> dict[str, Any]:
     import os
 
@@ -273,14 +237,17 @@ class SyncAllRequest(BaseModel):
     tenant_ids: list[int] | None = None
 
 
-@router.post("/sync-all")
-async def sync_all(
-    payload: SyncAllRequest | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict[str, Any]:
-    tenant_ids = payload.tenant_ids if payload else None
+SYNC_ALL_JOB_KIND = "admin_sync_all"
+_SYNC_ALL_PHASES = ("beds24", "email", "whatsapp", "threads")
 
+
+async def _run_sync_all(job_id: str, user_id: int | None, tenant_ids: list[int] | None) -> dict[str, Any]:
+    """Job body for sync-all. See sync_all() for why this can't run inside the request.
+
+    Owns its own Session: the request-scoped session from get_db is closed as soon as the 202
+    is returned, so reusing it here would fail on the first query. Mirrors the session handling
+    in app.main's background Gmail pollers.
+    """
     summary: dict[str, Any] = {
         "started_at": datetime.now(timezone.utc),
         "completed_at": None,
@@ -293,45 +260,112 @@ async def sync_all(
         "partial_failures": [],
     }
 
-    try:
-        summary["bookings_updated"] = await _sync_beds24(db, current_user, tenant_ids)
-    except Exception as exc:
-        summary["partial_failures"].append({"step": "beds24", "error": str(exc)})
+    def _phase(name: str, current: int = 0, total: int = 0) -> None:
+        update_job_progress(
+            job_id,
+            phase=name,
+            phase_index=_SYNC_ALL_PHASES.index(name) + 1,
+            phases_total=len(_SYNC_ALL_PHASES),
+            current=current,
+            total=total,
+        )
 
+    db = SessionLocal()
     try:
-        summary["emails_imported"] = await _sync_emails(db, current_user, tenant_ids)
-    except Exception as exc:
-        summary["partial_failures"].append({"step": "email", "error": str(exc)})
+        _phase("beds24")
+        try:
+            summary["bookings_updated"] = await _sync_beds24(db, user_id, tenant_ids)
+        except Exception as exc:
+            db.rollback()
+            logger.exception("sync-all beds24 phase failed job_id=%s", job_id)
+            summary["partial_failures"].append({"step": "beds24", "error": str(exc)})
 
-    try:
-        whatsapp_result = await _sync_whatsapp_linked_endpoints(db, tenant_ids)
-        summary["whatsapp_messages_imported"] = whatsapp_result.get("total_imported", 0)
-        summary["whatsapp_endpoints_synced"] = whatsapp_result.get("synced_endpoints", 0)
-        summary["whatsapp_endpoint_sync_details"] = whatsapp_result.get("results", [])
-        if whatsapp_result.get("errors"):
-            summary["partial_failures"].append({
-                "step": "whatsapp_endpoints",
-                "errors": whatsapp_result.get("errors", []),
-            })
-    except Exception as exc:
-        summary["partial_failures"].append({"step": "whatsapp", "error": str(exc)})
+        _phase("email")
+        try:
+            summary["emails_imported"] = await _sync_emails(db, tenant_ids)
+        except Exception as exc:
+            db.rollback()
+            logger.exception("sync-all email phase failed job_id=%s", job_id)
+            summary["partial_failures"].append({"step": "email", "error": str(exc)})
 
-    try:
-        summary["tenant_threads_updated"] = 0
-        thread_tenant_query = db.query(Tenant)
-        if tenant_ids is not None:
-            thread_tenant_query = thread_tenant_query.filter(Tenant.id.in_(tenant_ids))
-        for tenant in thread_tenant_query.order_by(Tenant.id.asc()).all():
-            # Rebuilding every tenant's thread timeline synchronously in this loop, with no
-            # yield points, would freeze this worker's event loop (and every other concurrent
-            # request — logins, thread loads, everything) for the whole loop's duration.
-            await run_in_threadpool(build_tenant_thread_timeline, db, tenant.id)
-            summary["tenant_threads_updated"] += 1
-    except Exception as exc:
-        summary["partial_failures"].append({"step": "tenant_threads", "error": str(exc)})
+        _phase("whatsapp")
+        try:
+            whatsapp_result = await _sync_whatsapp_linked_endpoints(db, tenant_ids)
+            summary["whatsapp_messages_imported"] = whatsapp_result.get("total_imported", 0)
+            summary["whatsapp_endpoints_synced"] = whatsapp_result.get("synced_endpoints", 0)
+            summary["whatsapp_endpoint_sync_details"] = whatsapp_result.get("results", [])
+            if whatsapp_result.get("errors"):
+                summary["partial_failures"].append({
+                    "step": "whatsapp_endpoints",
+                    "errors": whatsapp_result.get("errors", []),
+                })
+        except Exception as exc:
+            db.rollback()
+            logger.exception("sync-all whatsapp phase failed job_id=%s", job_id)
+            summary["partial_failures"].append({"step": "whatsapp", "error": str(exc)})
+
+        try:
+            summary["tenant_threads_updated"] = 0
+            thread_tenant_query = db.query(Tenant)
+            if tenant_ids is not None:
+                thread_tenant_query = thread_tenant_query.filter(Tenant.id.in_(tenant_ids))
+            tenants = thread_tenant_query.order_by(Tenant.id.asc()).all()
+            _phase("threads", current=0, total=len(tenants))
+            for tenant in tenants:
+                # Rebuilding every tenant's thread timeline synchronously in this loop, with no
+                # yield points, would freeze this worker's event loop (and every other concurrent
+                # request — logins, thread loads, everything) for the whole loop's duration.
+                await run_in_threadpool(build_tenant_thread_timeline, db, tenant.id)
+                summary["tenant_threads_updated"] += 1
+                _phase("threads", current=summary["tenant_threads_updated"], total=len(tenants))
+        except Exception as exc:
+            db.rollback()
+            logger.exception("sync-all tenant_threads phase failed job_id=%s", job_id)
+            summary["partial_failures"].append({"step": "tenant_threads", "error": str(exc)})
+    finally:
+        db.close()
 
     summary["completed_at"] = datetime.now(timezone.utc)
     return summary
+
+
+@router.post("/sync-all", status_code=status.HTTP_202_ACCEPTED)
+async def sync_all(
+    payload: SyncAllRequest | None = None,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Start a sync-all run in the background and return a job id to poll.
+
+    This used to await all four phases inline and return the summary. A full run takes ~2
+    minutes (the Gmail phase alone dominates), so nginx's proxy_read_timeout closed the
+    connection and the caller got a 504 even though the sync itself completed. Returning
+    immediately decouples the response from however long the work takes.
+    """
+    tenant_ids = payload.tenant_ids if payload else None
+
+    # Single-flight: a double-click used to start a second concurrent run, doubling the load
+    # on the Gmail and WhatsApp upstreams for no benefit.
+    running_job_id = find_running_job(SYNC_ALL_JOB_KIND)
+    if running_job_id is not None:
+        return {"job_id": running_job_id, "status": "running", "already_running": True}
+
+    # The id is generated up front so the runner can report progress against the same id the
+    # caller is about to poll.
+    job_id = uuid.uuid4().hex
+    start_job(
+        SYNC_ALL_JOB_KIND,
+        _run_sync_all(job_id, getattr(current_user, "id", None), tenant_ids),
+        job_id=job_id,
+    )
+    return {"job_id": job_id, "status": "running", "already_running": False}
+
+
+@router.get("/sync-all/{job_id}")
+async def sync_all_status(job_id: str, current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
+    return job
 
 
 @router.post("/debug/whatsapp-history-sync")

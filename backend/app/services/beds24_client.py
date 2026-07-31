@@ -244,10 +244,13 @@ async def get_bookings() -> list[dict[str, Any]]:
 
 
 async def get_booking_detail(booking_id: str) -> dict[str, Any]:
+    # Beds24 v2 has no path-parameter form for a single booking: GET /bookings/{id} answers
+    # 500 "Could not process request" for every id. The collection endpoint filtered by `id`
+    # is the supported shape and returns a one-element list.
     headers = await _async_headers()
-    params = {"includeInfoItems": "true"}
+    params = {"id": booking_id, "includeInfoItems": "true"}
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-        response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings/{booking_id}", params)
+        response = await _get_with_retry(client, f"{READ_BASE_URL}/bookings", params)
     try:
         payload = response.json()
     except ValueError as exc:
@@ -258,6 +261,13 @@ async def get_booking_detail(booking_id: str) -> dict[str, Any]:
         data = data[0] if data else {}
     if not isinstance(data, dict):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 booking response shape was unexpected")
+    # An unrecognised filter name is silently ignored by Beds24 and answers 200 with the whole
+    # unfiltered booking list, so confirm we got the booking we asked for rather than someone
+    # else's data.
+    returned_id = str(data.get("id") or "").strip()
+    if returned_id and returned_id != str(booking_id).strip():
+        logger.warning("Beds24 booking detail id mismatch requested=%s returned=%s", booking_id, returned_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 returned a different booking than requested")
     return data
 
 

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from app.core.dependencies import get_current_user, get_db
 from app.models.admin_settings import AdminSettings
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
+from app.models.communication_reply_draft import CommunicationReplyDraft
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
@@ -833,3 +834,197 @@ def preview_tenant_ai_draft(
         approx_token_count=len(prompt) // 4,
         template_id=template.id,
     )
+
+
+class ReplyDraftRead(BaseModel):
+    id: int
+    tenant_id: int
+    channel: str
+    email_thread_id: int | None = None
+    whatsapp_endpoint_id: int | None = None
+    subject: str | None = None
+    body: str
+    updated_at: datetime | None = None
+
+
+class ReplyDraftUpsertRequest(BaseModel):
+    channel: str
+    email_thread_id: int | None = None
+    whatsapp_endpoint_id: int | None = None
+    subject: str | None = None
+    body: str | None = None
+
+
+def _resolve_reply_draft_scope(
+    db: Session,
+    tenant_id: int,
+    channel: str,
+    email_thread_id: int | None,
+    whatsapp_endpoint_id: int | None,
+) -> tuple[str, int | None, int | None]:
+    """Validates that the requested draft scope really belongs to this tenant.
+
+    This is what keeps a draft from leaking between tenants: a thread id or endpoint id that
+    is not linked to `tenant_id` is rejected outright rather than silently creating a row
+    that a different tenant's timeline would later read back.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    normalized_channel = (channel or "").strip().lower()
+    if normalized_channel not in {"email", "whatsapp"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported channel")
+
+    if normalized_channel == "email":
+        if email_thread_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="email_thread_id is required for email drafts")
+        # Deliberately not reusing _resolve_tenant_conversation: that also requires a live,
+        # active Gmail account, and a draft must stay editable while an account is down.
+        link_exists = (
+            db.query(TenantConversationLink.id)
+            .join(Conversation, Conversation.id == TenantConversationLink.conversation_id)
+            .filter(
+                TenantConversationLink.tenant_id == tenant_id,
+                TenantConversationLink.conversation_id == email_thread_id,
+                TenantConversationLink.unlinked_at.is_(None),
+            )
+            .first()
+        )
+        if link_exists is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email thread is not linked to this tenant")
+        return normalized_channel, email_thread_id, None
+
+    if whatsapp_endpoint_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="whatsapp_endpoint_id is required for WhatsApp drafts"
+        )
+    endpoint = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.id == whatsapp_endpoint_id,
+            TenantChannelEndpoint.tenant_id == tenant_id,
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.is_active.is_(True),
+            TenantChannelEndpoint.unlinked_at.is_(None),
+        )
+        .first()
+    )
+    if endpoint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="WhatsApp chat is not linked to this tenant"
+        )
+    return normalized_channel, None, whatsapp_endpoint_id
+
+
+def _find_reply_draft(
+    db: Session, tenant_id: int, channel: str, email_thread_id: int | None, whatsapp_endpoint_id: int | None
+) -> CommunicationReplyDraft | None:
+    query = db.query(CommunicationReplyDraft).filter(
+        CommunicationReplyDraft.tenant_id == tenant_id,
+        CommunicationReplyDraft.channel == channel,
+    )
+    if channel == "email":
+        query = query.filter(CommunicationReplyDraft.email_thread_id == email_thread_id)
+    else:
+        query = query.filter(CommunicationReplyDraft.whatsapp_endpoint_id == whatsapp_endpoint_id)
+    return query.first()
+
+
+def _to_reply_draft_read(draft: CommunicationReplyDraft) -> ReplyDraftRead:
+    return ReplyDraftRead(
+        id=draft.id,
+        tenant_id=draft.tenant_id,
+        channel=draft.channel,
+        email_thread_id=draft.email_thread_id,
+        whatsapp_endpoint_id=draft.whatsapp_endpoint_id,
+        subject=draft.subject,
+        body=draft.body or "",
+        updated_at=draft.updated_at,
+    )
+
+
+@router.get("/tenants/{tenant_id}/reply-drafts", response_model=list[ReplyDraftRead])
+def list_tenant_reply_drafts(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ReplyDraftRead]:
+    """Every unsent reply draft for this tenant, one per thread/chat scope.
+
+    Returned as a batch so the timeline can hydrate all of its reply boxes on tenant load
+    instead of firing a request each time a thread is opened.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    drafts = (
+        db.query(CommunicationReplyDraft)
+        .filter(CommunicationReplyDraft.tenant_id == tenant_id)
+        .order_by(CommunicationReplyDraft.updated_at.desc())
+        .all()
+    )
+    return [_to_reply_draft_read(draft) for draft in drafts]
+
+
+@router.put("/tenants/{tenant_id}/reply-drafts", response_model=ReplyDraftRead | None)
+def upsert_tenant_reply_draft(
+    tenant_id: int,
+    payload: ReplyDraftUpsertRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ReplyDraftRead | None:
+    """Saves the in-progress reply for one thread/chat, replacing any previous draft for it.
+
+    An empty body clears the draft instead of storing a blank row, so the table stays free of
+    rows for threads the user merely opened and closed.
+    """
+    channel, email_thread_id, whatsapp_endpoint_id = _resolve_reply_draft_scope(
+        db, tenant_id, payload.channel, payload.email_thread_id, payload.whatsapp_endpoint_id
+    )
+
+    existing = _find_reply_draft(db, tenant_id, channel, email_thread_id, whatsapp_endpoint_id)
+    body = payload.body or ""
+    subject = payload.subject
+
+    if not body.strip() and not (subject or "").strip():
+        if existing is not None:
+            db.delete(existing)
+            db.commit()
+        return None
+
+    if existing is None:
+        existing = CommunicationReplyDraft(
+            tenant_id=tenant_id,
+            channel=channel,
+            email_thread_id=email_thread_id,
+            whatsapp_endpoint_id=whatsapp_endpoint_id,
+        )
+        db.add(existing)
+
+    existing.subject = subject
+    existing.body = body
+    existing.updated_by_user_id = current_user.id
+    db.commit()
+    db.refresh(existing)
+    return _to_reply_draft_read(existing)
+
+
+@router.delete("/tenants/{tenant_id}/reply-drafts", status_code=status.HTTP_204_NO_CONTENT)
+def delete_tenant_reply_draft(
+    tenant_id: int,
+    channel: str = Query(...),
+    email_thread_id: int | None = Query(None),
+    whatsapp_endpoint_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Discards the draft for one scope - used by the discard button and after a successful send."""
+    resolved_channel, resolved_thread_id, resolved_endpoint_id = _resolve_reply_draft_scope(
+        db, tenant_id, channel, email_thread_id, whatsapp_endpoint_id
+    )
+    existing = _find_reply_draft(db, tenant_id, resolved_channel, resolved_thread_id, resolved_endpoint_id)
+    if existing is not None:
+        db.delete(existing)
+        db.commit()

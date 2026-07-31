@@ -1,14 +1,17 @@
 """
 Regression test for Beds24 sync-all silently wiping tenant guest data.
 
-When Beds24's per-booking detail endpoint fails (e.g. upstream 500), _sync_beds24
-falls back to the sparser bulk-list booking dict. _update_tenant_from_beds24 must not
-overwrite existing tenant fields with blanks just because that fallback payload lacks
-guest details.
+_sync_beds24 updates tenants straight from the bulk-list booking dicts returned by
+get_bookings(). Some of those items carry no guest details at all, so
+_update_tenant_from_beds24 must not overwrite existing tenant fields with blanks just
+because a given payload lacks them.
 """
 
 from decimal import Decimal
 
+import pytest
+
+from app.api import admin_sync
 from app.api.admin_sync import _update_tenant_from_beds24
 from app.models.tenant import Tenant
 
@@ -103,3 +106,26 @@ def test_full_booking_detail_still_updates_fields(db_session):
     assert tenant.city == "Porto"
     assert tenant.num_adults == 3
     assert tenant.currency == "USD"
+
+
+@pytest.mark.asyncio
+async def test_sync_beds24_does_not_refetch_each_booking(db_session, monkeypatch):
+    """Regression: every GET /v2/bookings/{id} returned 500, so the per-booking detail fetch
+    was pure cost - one failing sequential HTTPS round-trip per tenant - and the code silently
+    fell back to the list item anyway. The list payload is now used directly."""
+    tenant = create_populated_tenant(db_session, booking_id="B-no-refetch")
+
+    async def fake_get_bookings():
+        return [{"id": "B-no-refetch", "firstName": "Updated", "lastName": "Guest"}]
+
+    monkeypatch.setattr(admin_sync, "get_bookings", fake_get_bookings)
+
+    # The module must no longer reach for the single-booking endpoint at all.
+    assert not hasattr(admin_sync, "get_booking_detail")
+
+    updated = await admin_sync._sync_beds24(db_session, changed_by_user_id=None)
+
+    db_session.refresh(tenant)
+    assert updated == 1
+    assert tenant.first_name == "Updated"
+    assert tenant.last_name == "Guest"

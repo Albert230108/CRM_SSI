@@ -17,7 +17,6 @@ type SyncSummary = {
   bookings_updated: number
   emails_imported: number
   whatsapp_messages_imported: number
-  whatsapp_sync_queued?: boolean
   tenant_threads_updated: number
   partial_failures: { step: string; error: string }[]
 }
@@ -27,7 +26,7 @@ function formatSyncSummary(summary: SyncSummary | null) {
   return [
     `Bookings updated: ${summary.bookings_updated}`,
     `Emails imported: ${summary.emails_imported}`,
-    summary.whatsapp_sync_queued ? 'WhatsApp sync queued in background' : `WhatsApp messages imported: ${summary.whatsapp_messages_imported}`,
+    `WhatsApp messages imported: ${summary.whatsapp_messages_imported}`,
     `Tenant threads updated: ${summary.tenant_threads_updated}`,
   ].join(' � ')
 }
@@ -44,9 +43,15 @@ export default function Navbar() {
   const [pendingAiDraftsCount, setPendingAiDraftsCount] = useState(0)
   const notifySyncCompleted = useSyncStore((state) => state.notifySyncCompleted)
   const notifyImportCompleted = useSyncStore((state) => state.notifyImportCompleted)
+  const syncJobId = useSyncStore((state) => state.syncJobId)
+  const syncProgress = useSyncStore((state) => state.syncProgress)
+  const setSyncJob = useSyncStore((state) => state.setSyncJob)
+  const setSyncProgress = useSyncStore((state) => state.setSyncProgress)
 
   const [importModalOpen, setImportModalOpen] = useState(false)
-  const [syncRunning, setSyncRunning] = useState(false)
+  // Seeded from the store so a remount during an in-flight job (e.g. after navigating) shows
+  // the button as busy instead of inviting a second run.
+  const [syncRunning, setSyncRunning] = useState(Boolean(syncJobId))
   const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null)
   const [syncError, setSyncError] = useState('')
   const [syncToken, setSyncToken] = useState(0)
@@ -90,42 +95,60 @@ export default function Navbar() {
     useNotesDraftStore.getState().guardNavigation(logout)
   }
 
+  // sync-all is a backend job: the POST only hands back a job id, so completion is observed
+  // by polling. Keyed on syncJobId (which lives in syncStore) so a run started before a route
+  // change is picked back up when Navbar remounts, rather than being abandoned mid-flight.
   useEffect(() => {
-    if (!syncSummary?.whatsapp_sync_queued) {
-      return
-    }
+    if (!syncJobId) return
 
     let cancelled = false
 
-    const refreshSyncStatus = async () => {
+    const finish = (summary: SyncSummary | null, error: string) => {
+      if (cancelled) return
+      if (summary) setSyncSummary(summary)
+      if (error) setSyncError(error)
+      setSyncJob(null)
+      setSyncRunning(false)
+      setSyncToken((current) => current + 1)
+      if (!error) notifySyncCompleted()
+    }
+
+    const pollJob = async () => {
       try {
-        const statusResponse = await fetch(`${API_BASE_URL}/api/admin/sync-status`, {
+        const response = await fetch(`${API_BASE_URL}/api/admin/sync-all/${syncJobId}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         })
-        const statusPayload = await statusResponse.json().catch(() => null)
-        if (!statusResponse.ok || cancelled) {
+        if (cancelled) return
+        if (response.status === 404) {
+          // The job registry is process-memory, so a backend restart drops in-flight jobs.
+          // Treat that as "over" and refresh, rather than polling a job that can never return.
+          finish(null, 'Sync status was lost (the server restarted). Data may still have been updated.')
           return
         }
-        if (!statusPayload?.whatsapp_sync_running) {
-          setSyncSummary((current) => (current ? { ...current, whatsapp_sync_queued: false } : current))
-          notifySyncCompleted()
+        const job = await response.json().catch(() => null)
+        if (!response.ok || !job || cancelled) return
+        setSyncProgress(job.progress ?? {})
+        if (job.status === 'done') {
+          finish(job.result as SyncSummary, '')
+        } else if (job.status === 'error') {
+          finish(null, job.error || 'Sync failed')
         }
       } catch {
-        // Keep the banner in queued state until the next poll succeeds.
+        // Transient network failure: keep polling, the next tick will retry.
       }
     }
 
-    void refreshSyncStatus()
-    const intervalId = window.setInterval(refreshSyncStatus, 5000)
+    void pollJob()
+    const intervalId = window.setInterval(pollJob, 2000)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [syncSummary?.whatsapp_sync_queued, token, notifySyncCompleted])
+  }, [syncJobId, token, notifySyncCompleted, setSyncJob, setSyncProgress])
 
-  // Show the sync toast for exactly 8s per completed attempt. Keyed on syncToken
-  // (not syncSummary) so the later background queued-status poll, which quietly
-  // mutates syncSummary, doesn't re-trigger or extend the toast.
+  // Show the sync toast for exactly 8s per completed attempt. Keyed on syncToken (not
+  // syncSummary) so it fires once per finished run, and a re-render carrying the same
+  // summary doesn't re-trigger or extend the toast.
   useEffect(() => {
     if (syncToken === 0) return
     setToastVisible(true)
@@ -133,6 +156,8 @@ export default function Navbar() {
     return () => window.clearTimeout(timeoutId)
   }, [syncToken])
 
+  // Only starts the job; the polling effect above owns completion, so syncRunning is cleared
+  // there rather than in a finally here.
   const handleSyncAll = async () => {
     if (syncRunning) return
     try {
@@ -153,11 +178,12 @@ export default function Navbar() {
       if (!response.ok) {
         throw new Error(payload?.detail || 'Sync failed')
       }
-      setSyncSummary(payload as SyncSummary)
-      notifySyncCompleted()
+      if (!payload?.job_id) {
+        throw new Error('Sync did not return a job id')
+      }
+      setSyncJob(payload.job_id as string)
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : 'Sync failed')
-    } finally {
       setSyncRunning(false)
       setSyncToken((current) => current + 1)
     }
@@ -227,7 +253,7 @@ export default function Navbar() {
         </div>
       </header>
 
-      <SyncProgressOverlay active={syncRunning} />
+      <SyncProgressOverlay active={syncRunning} progress={syncProgress} />
 
       <ImportModal
         open={importModalOpen}
@@ -242,11 +268,8 @@ export default function Navbar() {
               <p className="font-semibold">{syncError}</p>
             ) : syncSummary ? (
               <>
-                <p className="font-semibold">{syncSummary.whatsapp_sync_queued ? 'Sync started' : 'Sync complete'}</p>
+                <p className="font-semibold">Sync complete</p>
                 <p className="mt-1">{formatSyncSummary(syncSummary)}</p>
-                {syncSummary.whatsapp_sync_queued ? (
-                  <p className="mt-2 text-xs text-emerald-800/80">WhatsApp history sync continues in the background.</p>
-                ) : null}
                 {syncSummary.partial_failures.length ? (
                   <p className="mt-2 text-xs text-emerald-800/80">
                     Partial failures: {syncSummary.partial_failures.map((item) => `${item.step}: ${item.error}`).join(' | ')}

@@ -201,3 +201,139 @@ describe('ThreadView Draft with AI', () => {
     expect(within(dialog).getByDisplayValue(pendingDraft.generated_text)).toBeInTheDocument()
   })
 })
+
+const TENANT_8 = { id: 8, name: 'Sam Roe', email: 'sam@example.com', phone: '+2000000', booking_id: 'BK-456' }
+
+const emailThread = (threadId: number, subject: string) => ({
+  type: 'email_thread',
+  thread_id: threadId,
+  provider_account_id: 1,
+  provider_account_email: 'host@example.com',
+  provider_account_display_name: 'Host',
+  matched_tenant_email: 'guest@example.com',
+  provider_thread_id: `gmail-${threadId}`,
+  subject,
+  preview_text: 'hello',
+  anchor_timestamp: '2026-07-20T10:00:00Z',
+  whatsapp_blocks: [],
+  messages: [
+    {
+      id: threadId * 100,
+      subject,
+      body: 'hello',
+      body_text: 'hello',
+      body_html: null,
+      body_display: 'hello',
+      direction: 'inbound',
+      sent_at: '2026-07-20T10:00:00Z',
+      from_email: 'guest@example.com',
+      to_email: 'host@example.com',
+      attachments: [],
+    },
+  ],
+})
+
+// tenantId -> { thread, drafts } so a rerender with a different tenant serves that tenant's data.
+function buildTenantFetchMock(fixtures: Record<number, { thread: unknown; drafts: unknown[]; draftsOk?: boolean }>) {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    const tenantMatch = url.match(/\/tenants\/(\d+)/)
+    const tenantId = tenantMatch ? Number(tenantMatch[1]) : null
+    const fixture = tenantId != null ? fixtures[tenantId] : null
+
+    if (url.includes('/reply-drafts')) return jsonResponse(fixture?.drafts ?? [], fixture?.draftsOk ?? true)
+    if (url.includes('/grouped-thread')) {
+      return jsonResponse({ tenant_id: tenantId, tenant_name: '', items: fixture ? [fixture.thread] : [] })
+    }
+    if (url.includes('/whatsapp-endpoints')) return jsonResponse([])
+    if (url.match(/\/whatsapp-links$/)) return jsonResponse([])
+    if (url.includes('/api/ai-auto-drafts')) return jsonResponse([])
+    if (url.includes('/ai-settings')) return jsonResponse({ tenant_id: tenantId, available_template_ids: [], default_email_template_id: null, default_whatsapp_template_id: null, auto_draft_email: false, auto_draft_whatsapp: false, auto_send_email: false, auto_send_whatsapp: false })
+    if (url.includes('/api/ai-reply-templates')) return jsonResponse([])
+    if (url.includes('/api/tenants/8')) return jsonResponse(TENANT_8)
+    if (url.includes('/api/tenants/7')) return jsonResponse(TENANT)
+    return jsonResponse({ detail: `unhandled ${url}` }, false)
+  })
+}
+
+describe('ThreadView per-thread reply drafts', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    useAuthStore.setState({ token: null })
+  })
+
+  it('does not carry a reply draft over to the next tenant', async () => {
+    // Regression: replyMessage used to be one component-wide slot that survived a tenant
+    // switch, so the draft written for tenant 7 showed up in tenant 8's reply box.
+    useAuthStore.setState({ token: 'test-token' })
+    // Tenant 8's draft fetch deliberately fails, so only the tenant-switch reset - not
+    // hydration happening to overwrite the map - can keep tenant 7's text out of the box.
+    vi.stubGlobal('fetch', buildTenantFetchMock({
+      7: { thread: emailThread(101, 'Tenant 7 thread'), drafts: [] },
+      8: { thread: emailThread(202, 'Tenant 8 thread'), drafts: [], draftsOk: false },
+    }))
+    const user = userEvent.setup()
+
+    const { rerender } = render(<ThreadView tenantId={7} />)
+    await screen.findByText('Jane Doe')
+
+    await user.click(await screen.findByText('Tenant 7 thread'))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByPlaceholderText('Write your reply...'), 'private to tenant 7')
+    expect(within(dialog).getByDisplayValue('private to tenant 7')).toBeInTheDocument()
+
+    rerender(<ThreadView tenantId={8} />)
+
+    await screen.findByText('Sam Roe')
+    // Tenant 7's thread panel must not stay open over tenant 8's timeline either.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('private to tenant 7')).not.toBeInTheDocument()
+
+    await user.click(await screen.findByText('Tenant 8 thread'))
+    const nextDialog = await screen.findByRole('dialog')
+    expect(within(nextDialog).getByPlaceholderText('Write your reply...')).toHaveValue('')
+  })
+
+  it('restores each thread\'s own persisted draft when that thread is opened', async () => {
+    useAuthStore.setState({ token: 'test-token' })
+    vi.stubGlobal('fetch', buildTenantFetchMock({
+      8: {
+        thread: emailThread(202, 'Tenant 8 thread'),
+        drafts: [{ id: 1, tenant_id: 8, channel: 'email', email_thread_id: 202, whatsapp_endpoint_id: null, subject: 'Re: stay', body: 'saved earlier for 202' }],
+      },
+    }))
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={8} />)
+    await screen.findByText('Sam Roe')
+
+    await user.click(await screen.findByText('Tenant 8 thread'))
+
+    const dialog = await screen.findByRole('dialog')
+    await waitFor(() => expect(within(dialog).getByPlaceholderText('Write your reply...')).toHaveValue('saved earlier for 202'))
+    expect(within(dialog).getByDisplayValue('Re: stay')).toBeInTheDocument()
+  })
+
+  it('persists the draft against the thread it was written for', async () => {
+    useAuthStore.setState({ token: 'test-token' })
+    const fetchMock = buildTenantFetchMock({ 7: { thread: emailThread(101, 'Tenant 7 thread'), drafts: [] } })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={7} />)
+    await screen.findByText('Jane Doe')
+
+    await user.click(await screen.findByText('Tenant 7 thread'))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByPlaceholderText('Write your reply...'), 'autosave me')
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+      expect(put).toBeDefined()
+      const [url, init] = put as [string, RequestInit]
+      expect(url).toContain('/api/communications/tenants/7/reply-drafts')
+      expect(JSON.parse(init.body as string)).toMatchObject({ channel: 'email', email_thread_id: 101, body: 'autosave me' })
+    }, { timeout: 3000 })
+  })
+})

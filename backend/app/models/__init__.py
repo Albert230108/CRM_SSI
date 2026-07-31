@@ -5,6 +5,7 @@ from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.beds24_webhook_log import Beds24WebhookLog
 from app.models.communication import Communication
+from app.models.communication_reply_draft import CommunicationReplyDraft
 from app.models.email_template import EmailTemplate
 from app.models.finance import Finance
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount

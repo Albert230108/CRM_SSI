@@ -24,6 +24,22 @@ export function formatDisplayDate(value?: string | number | Date | null): string
   return `${DISPLAY_WEEKDAY_FORMATTER.format(date)} ${DISPLAY_DAY_MONTH_YEAR_FORMATTER.format(date)}`
 }
 
+export function computeNights(
+  checkIn?: string | number | Date | null,
+  checkOut?: string | number | Date | null,
+): number | null {
+  const start = toValidDate(checkIn)
+  const end = toValidDate(checkOut)
+  if (!start || !end) return null
+
+  // Compare calendar days only: booking dates can carry stray times that would
+  // otherwise round a full night up or down.
+  const startDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())
+  const endDay = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate())
+  const nights = Math.round((endDay - startDay) / 86_400_000)
+  return nights > 0 ? nights : null
+}
+
 export function formatDisplayTime(value?: string | number | Date | null): string {
   const date = toValidDate(value)
   if (!date) return '-'

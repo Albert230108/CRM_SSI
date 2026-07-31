@@ -388,6 +388,63 @@ type ReplyTarget =
 
 type ForwardTarget = { threadId: number; providerThreadId: string; subject: string | null } | null
 
+type ReplyDraftEntry = { subject: string; body: string }
+
+const EMPTY_REPLY_DRAFT: ReplyDraftEntry = { subject: '', body: '' }
+
+// Holds a WhatsApp draft typed before an account was picked. Transient and never persisted -
+// there is no linked chat to key it to yet; it migrates to the real key once one is selected.
+const WHATSAPP_PENDING_DRAFT_KEY = 'whatsapp:pending'
+
+const emailDraftKey = (threadId: number) => `email:${threadId}`
+const whatsappDraftKey = (endpointId: number | string) => `whatsapp:${endpointId}`
+
+// Reply drafts are scoped to one email thread or one linked WhatsApp chat, never to the tenant
+// as a whole, so a draft can never surface in another thread's - or another tenant's - reply box.
+const draftKeyForTarget = (target: ReplyTarget, whatsappEndpointId: string): string | null => {
+  if (!target) return null
+  if (target.type === 'email') return emailDraftKey(target.threadId)
+  return whatsappEndpointId ? whatsappDraftKey(whatsappEndpointId) : WHATSAPP_PENDING_DRAFT_KEY
+}
+
+type ReplyDraftRead = {
+  id: number
+  tenant_id: number
+  channel: string
+  email_thread_id: number | null
+  whatsapp_endpoint_id: number | null
+  subject: string | null
+  body: string
+}
+
+const REPLY_DRAFT_AUTOSAVE_DELAY_MS = 800
+
+// JSON rather than concatenation so a subject/body split cannot alias a different pair.
+const serializeReplyDraft = (entry: ReplyDraftEntry) => JSON.stringify([entry.subject, entry.body])
+
+// Turns a local draft key back into the scope the API validates against the tenant. Returns null
+// for the transient pending-WhatsApp key, which has no linked chat and so is never persisted.
+const replyDraftScopeParams = (
+  key: string,
+): { channel: string; email_thread_id?: number; whatsapp_endpoint_id?: number } | null => {
+  if (key.startsWith('email:')) {
+    const threadId = Number(key.slice('email:'.length))
+    return Number.isFinite(threadId) ? { channel: 'email', email_thread_id: threadId } : null
+  }
+  if (key === WHATSAPP_PENDING_DRAFT_KEY) return null
+  if (key.startsWith('whatsapp:')) {
+    const endpointId = Number(key.slice('whatsapp:'.length))
+    return Number.isFinite(endpointId) ? { channel: 'whatsapp', whatsapp_endpoint_id: endpointId } : null
+  }
+  return null
+}
+
+const draftKeyForRead = (draft: ReplyDraftRead): string | null => {
+  if (draft.channel === 'email' && draft.email_thread_id != null) return emailDraftKey(draft.email_thread_id)
+  if (draft.channel === 'whatsapp' && draft.whatsapp_endpoint_id != null) return whatsappDraftKey(draft.whatsapp_endpoint_id)
+  return null
+}
+
 type EmailTemplateOption = {
   id: number
   name: string
@@ -470,8 +527,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const [emailSyncToast, setEmailSyncToast] = useState<EmailSyncToast | null>(null)
   const emailSyncToastKeyRef = useRef(0)
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
-  const [replyMessage, setReplyMessage] = useState('')
-  const [replySubject, setReplySubject] = useState('')
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraftEntry>>({})
   const [replySending, setReplySending] = useState(false)
   const [aiTemplates, setAiTemplates] = useState<AiTemplateOption[]>([])
   const [tenantAiSettings, setTenantAiSettings] = useState<TenantAiSettings | null>(null)
@@ -534,6 +590,114 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const selectedWhatsappEndpoint = whatsappEndpoints.find((endpoint) => String(endpoint.id) === selectedWhatsappEndpointId) ?? null
   const hasWhatsappEndpoints = whatsappEndpoints.length > 0
   const [livePollSignal, setLivePollSignal] = useState(0)
+
+  const currentDraftKey = draftKeyForTarget(replyTarget, selectedWhatsappEndpointId)
+  const currentDraft = (currentDraftKey ? replyDrafts[currentDraftKey] : null) ?? EMPTY_REPLY_DRAFT
+  const replyMessage = currentDraft.body
+  const replySubject = currentDraft.subject
+
+  // Writes go through an explicit key so a caller that changes replyTarget and the body in the
+  // same tick (e.g. useDraftAsReply) writes to the new scope, not the one being navigated away from.
+  const writeReplyDraft = useCallback((key: string | null, patch: Partial<ReplyDraftEntry>) => {
+    if (!key) return
+    setReplyDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? EMPTY_REPLY_DRAFT), ...patch } }))
+  }, [])
+  const setReplyMessage = useCallback(
+    (body: string) => writeReplyDraft(currentDraftKey, { body }),
+    [writeReplyDraft, currentDraftKey],
+  )
+  const setReplySubject = useCallback(
+    (subject: string) => writeReplyDraft(currentDraftKey, { subject }),
+    [writeReplyDraft, currentDraftKey],
+  )
+
+  // Mirrors of the live values so the beforeunload/tenant-switch flush never reads a stale closure.
+  const replyDraftsRef = useRef<Record<string, ReplyDraftEntry>>({})
+  replyDraftsRef.current = replyDrafts
+  // key -> last value the server acknowledged, so a hydrated draft is not immediately re-sent.
+  const persistedDraftsRef = useRef<Record<string, string>>({})
+  const draftTenantIdRef = useRef<number | null>(null)
+  const previousTenantIdRef = useRef<number | null | undefined>(undefined)
+  // Tenant whose drafts are actually in state. Tracked separately from previousTenantIdRef so an
+  // aborted first load retries hydration on the next pass instead of leaving the boxes empty.
+  const hydratedDraftTenantIdRef = useRef<number | null>(null)
+
+  const persistReplyDraft = useCallback(
+    (draftTenantId: number, key: string, entry: ReplyDraftEntry, keepalive: boolean) => {
+      const scope = replyDraftScopeParams(key)
+      if (!scope) return
+      persistedDraftsRef.current[key] = serializeReplyDraft(entry)
+      fetch(`${API_BASE_URL}/api/communications/tenants/${draftTenantId}/reply-drafts`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ ...scope, subject: entry.subject || null, body: entry.body }),
+        keepalive,
+      }).catch(() => {
+        // Best-effort: drop the acknowledgement so the next debounce tick retries.
+        delete persistedDraftsRef.current[key]
+      })
+    },
+    [token],
+  )
+
+  const deleteReplyDraft = useCallback(
+    (draftTenantId: number, key: string) => {
+      const scope = replyDraftScopeParams(key)
+      if (!scope) return
+      persistedDraftsRef.current[key] = serializeReplyDraft(EMPTY_REPLY_DRAFT)
+      const params = new URLSearchParams({ channel: scope.channel })
+      if (scope.email_thread_id != null) params.set('email_thread_id', String(scope.email_thread_id))
+      if (scope.whatsapp_endpoint_id != null) params.set('whatsapp_endpoint_id', String(scope.whatsapp_endpoint_id))
+      fetch(`${API_BASE_URL}/api/communications/tenants/${draftTenantId}/reply-drafts?${params.toString()}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }).catch(() => {})
+    },
+    [token],
+  )
+
+  // Pushes every scope whose text has drifted from the server copy. Used for the debounced
+  // autosave and for the last-chance flush on tenant switch / page unload.
+  const flushReplyDrafts = useCallback(
+    (keepalive: boolean) => {
+      const draftTenantId = draftTenantIdRef.current
+      if (!draftTenantId) return
+      Object.entries(replyDraftsRef.current).forEach(([key, entry]) => {
+        if (serializeReplyDraft(entry) === persistedDraftsRef.current[key]) return
+        persistReplyDraft(draftTenantId, key, entry, keepalive)
+      })
+    },
+    [persistReplyDraft],
+  )
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => flushReplyDrafts(false), REPLY_DRAFT_AUTOSAVE_DELAY_MS)
+    return () => window.clearTimeout(timeoutId)
+  }, [replyDrafts, flushReplyDrafts])
+
+  useEffect(() => {
+    const handleBeforeUnload = () => flushReplyDrafts(true)
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      flushReplyDrafts(true)
+    }
+  }, [flushReplyDrafts])
+
+  // A WhatsApp draft typed before an account was chosen is transient; once an account is picked
+  // it becomes a real, persistable draft for that linked chat.
+  useEffect(() => {
+    if (!selectedWhatsappEndpointId) return
+    setReplyDrafts((current) => {
+      const pending = current[WHATSAPP_PENDING_DRAFT_KEY]
+      if (!pending || (!pending.body && !pending.subject)) return current
+      const { [WHATSAPP_PENDING_DRAFT_KEY]: _pending, ...rest } = current
+      return { ...rest, [whatsappDraftKey(selectedWhatsappEndpointId)]: pending }
+    })
+  }, [selectedWhatsappEndpointId])
 
   // Color/label are resolved from the fixed WHATSAPP_ACCOUNT_DIRECTORY (by account identity),
   // not from per-tenant link order, so SSI is always green and EDI is always violet everywhere.
@@ -795,6 +959,28 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   }
 
   useEffect(() => {
+    // Only a genuine tenant change resets the open scope. This effect also reruns on
+    // reloadSignal/livePollSignal, and those must not wipe a reply that is being typed.
+    const tenantChanged = previousTenantIdRef.current !== tenantId
+    if (tenantChanged) {
+      // Push whatever is unsaved for the outgoing tenant before dropping it from state.
+      flushReplyDrafts(true)
+      previousTenantIdRef.current = tenantId
+      draftTenantIdRef.current = tenantId ?? null
+      persistedDraftsRef.current = {}
+      hydratedDraftTenantIdRef.current = null
+      setReplyDrafts({})
+      setReplyTarget(null)
+      setForwardTarget(null)
+      setForwardBody('')
+      setForwardSubject('')
+      setSelectedEmailThread(null)
+      setSelectedWhatsappGroup(null)
+      setSelectedWhatsappBlock(null)
+      setDraftResults(null)
+      setDraftError('')
+    }
+
     if (!tenantId) {
       setTenant(null)
       setItems([])
@@ -813,7 +999,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       try {
         setLoading(true)
         setError('')
-        const [tenantResponse, threadResponse, endpointResponse, linksResponse] = await Promise.all([
+        const [tenantResponse, threadResponse, endpointResponse, linksResponse, replyDraftsResponse] = await Promise.all([
           fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
@@ -827,6 +1013,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             signal: controller.signal,
           }),
           fetch(`${API_BASE_URL}/api/threads/${tenantId}/whatsapp-links`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            signal: controller.signal,
+          }),
+          fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/reply-drafts`, {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             signal: controller.signal,
           }),
@@ -870,6 +1060,23 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
         if (linksResponse.ok) {
           const linksData: ThreadWhatsappLink[] = await linksResponse.json()
           setWhatsappLinks(Array.isArray(linksData) ? linksData : [])
+        }
+        // Hydrate once per tenant only: a background refresh must not clobber text the user is
+        // typing right now with the last value the server happened to have.
+        if (hydratedDraftTenantIdRef.current !== activeTenantId && replyDraftsResponse.ok) {
+          const draftData: ReplyDraftRead[] = await replyDraftsResponse.json()
+          const hydrated: Record<string, ReplyDraftEntry> = {}
+          const acknowledged: Record<string, string> = {}
+          ;(Array.isArray(draftData) ? draftData : []).forEach((draft) => {
+            const key = draftKeyForRead(draft)
+            if (!key) return
+            const entry = { subject: draft.subject ?? '', body: draft.body ?? '' }
+            hydrated[key] = entry
+            acknowledged[key] = serializeReplyDraft(entry)
+          })
+          persistedDraftsRef.current = acknowledged
+          hydratedDraftTenantIdRef.current = activeTenantId
+          setReplyDrafts(hydrated)
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -1128,8 +1335,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       }
 
       await loadGroupedThread()
-      setReplyMessage('')
-      setReplySubject('')
+      // Drop the draft for the scope that was just sent - locally and on the server - so it does
+      // not come back on the next load. Other scopes' drafts are untouched.
+      if (currentDraftKey) {
+        setReplyDrafts((current) => {
+          const { [currentDraftKey]: _sent, ...rest } = current
+          return rest
+        })
+        deleteReplyDraft(tenantId, currentDraftKey)
+      }
       if (replyTarget.type === 'whatsapp') {
         setSelectedWhatsappGroup(null)
         setSelectedWhatsappBlock(null)
@@ -1234,8 +1448,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
 
   const useDraftAsReply = (draft: GmailDraft, thread: EmailThreadItem) => {
     setReplyTarget({ type: 'email', threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, providerAccountId: thread.provider_account_id || 0, subject: thread.subject })
-    setReplySubject(draft.subject || '')
-    setReplyMessage(draft.body_text || '')
+    // Keyed on the thread being opened, not on the current replyTarget, which is still the
+    // previously open scope until this render commits.
+    writeReplyDraft(emailDraftKey(thread.thread_id), { subject: draft.subject || '', body: draft.body_text || '' })
     setForwardTarget(null)
     setDraftResults(null)
   }
