@@ -1,5 +1,5 @@
 const qrcode = require("qrcode-terminal");
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const ChatFactory = require("whatsapp-web.js/src/factories/ChatFactory");
 
 const {
@@ -18,6 +18,7 @@ const {
   whatsappHistoryBackfillLimit,
   whatsappHistoryBackfillEnabled,
   forwardedMessageCacheTtlMs,
+  maxInboundMediaBytes,
 } = require("./config");
 const { resolveOutboundTenantOwnership } = require("./outboundResolution");
 const { createForwardedMessageCache } = require("./forwardedMessageCache");
@@ -666,6 +667,40 @@ function extractText(message) {
   return describeMediaPlaceholder(message) || "";
 }
 
+// Only ever called from the live inbound path. The history/backfill path must NOT download
+// media: backfillAllChats forwards in batches of 200 chats' worth of messages, so downloading
+// there would mean thousands of WhatsApp Web round trips and multi-hundred-MB batch bodies.
+// The guard is the call site, deliberately not a `source` check on the payload - that field was
+// previously hard-coded to "history" here and silently broke source-gated logic.
+async function downloadMediaSafely(message) {
+  if (!message?.hasMedia) {
+    return null;
+  }
+  try {
+    const media = await message.downloadMedia();
+    // downloadMedia resolves undefined for expired or undecryptable media rather than throwing.
+    if (!media?.data) {
+      return null;
+    }
+    const sizeBytes = Buffer.byteLength(media.data, "base64");
+    if (sizeBytes > maxInboundMediaBytes) {
+      console.warn(
+        `Skipping inbound WhatsApp media above the size cap: ${sizeBytes} bytes > ${maxInboundMediaBytes}`,
+      );
+      return null;
+    }
+    return {
+      filename: media.filename || null,
+      mime_type: media.mimetype || null,
+      size_bytes: sizeBytes,
+      data_base64: media.data,
+    };
+  } catch (error) {
+    console.warn("Failed to download inbound WhatsApp media:", error);
+    return null;
+  }
+}
+
 function normalizeHistoryValue(value) {
   return String(value || "").trim();
 }
@@ -695,7 +730,13 @@ function buildHistoryDedupeKey(message, chatId, direction) {
 }
 
 function buildCrmPayload(message, direction, overrides = {}) {
-  const text = extractText(message);
+  // A media message with no caption has no text of its own, so fall back to the filename
+  // before the generic "[Image]"-style placeholder that extractText would otherwise return.
+  const media = overrides.media || null;
+  let text = extractText(message);
+  if (!text && media) {
+    text = media.filename ? `[File] ${media.filename}` : "[File]";
+  }
   const timestamp = message?.timestamp;
   const author = message?.author || null;
   const sender = overrides.sender || author || message?.from || null;
@@ -741,6 +782,18 @@ function buildCrmPayload(message, direction, overrides = {}) {
     whatsapp_endpoint_id: overrides.whatsapp_endpoint_id ?? null,
     is_group: identity.isGroup,
     source: overrides.source ?? null,
+    // Always present so the CRM webhook can iterate it unconditionally; only the live inbound
+    // path ever populates it (see downloadMediaSafely).
+    attachments: media
+      ? [
+          {
+            filename: media.filename,
+            mime_type: media.mime_type,
+            size_bytes: media.size_bytes,
+            data_base64: media.data_base64,
+          },
+        ]
+      : [],
   };
 }
 
@@ -880,14 +933,18 @@ async function forwardInboundMessage(message) {
     return forwardOutboundCapturedMessage(message, message?.chatId || message?.to || message?.from || null, message?.to || null, "inbound-hook");
   }
 
+  // Downloaded before the empty-text bail so a caption-less media message still gets through:
+  // buildCrmPayload derives placeholder text from the media's filename when there's no caption.
+  const media = await downloadMediaSafely(message);
   const text = extractText(message);
-  if (!text) {
+  if (!text && !media) {
     return false;
   }
 
   const payload = buildCrmPayload(message, "inbound", {
     sender: message?.author || message?.from || null,
     whatsapp_chat_id: message?.from || null,
+    media,
   });
   return forwardCrmMessage(payload, "inbound");
 }
@@ -1554,7 +1611,9 @@ async function listChats({ externalAccountId, search = "", limit = 200, offset =
 }
 
 async function sendTextMessage(payload) {
-  if (!client || !ready) {
+  const activeClient = payload?.clientOverride || client;
+  const isClientReady = payload?.readyOverride ?? ready;
+  if (!activeClient || !isClientReady) {
     throw new Error("WhatsApp client is not ready");
   }
 
@@ -1563,6 +1622,7 @@ async function sendTextMessage(payload) {
   const tenantId = payload?.tenant_id ?? null;
   const externalAccountId = String(payload?.external_account_id || "").trim();
   const whatsappEndpointId = payload?.whatsapp_endpoint_id ?? null;
+  const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
 
   if (tenantId == null) {
     console.error(JSON.stringify({
@@ -1599,26 +1659,69 @@ async function sendTextMessage(payload) {
   if (identity.canonicalChatId) {
     pendingOutboundTenantByIdentityKey.set(identity.canonicalChatId, tenantId || null);
   }
-  const sentMessage = await client.sendMessage(chatId, message);
-  if (sentMessage?.id?._serialized) {
-    pendingOutboundTenantByMessageId.set(sentMessage.id._serialized, tenantId || null);
-    console.info(JSON.stringify({
-      event: "whatsapp_outbound_send",
-      message_id: sentMessage.id._serialized,
-      chat_id: chatId,
-      whatsapp_identity_key: identity.canonicalChatId,
-      whatsapp_normalized_phone: identity.normalizedPhone,
-      external_account_id: externalAccountId,
-      tenant_id_received: tenantId || null,
-      whatsapp_endpoint_id: whatsappEndpointId,
-      resolution_source: "send_payload",
-    }));
+  const sent = [];
+
+  // A caption only renders on the media it rides along with, so it's only used when there is
+  // exactly one attachment. With several, the text would be buried in the first item (and
+  // some types - audio/ptt, stickers - drop captions entirely), so it goes out on its own.
+  if (attachments.length === 1 && message) {
+    const attachment = attachments[0];
+    const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.filename);
+    sent.push({
+      message: await activeClient.sendMessage(chatId, media, { caption: message }),
+      kind: "media",
+      attachment_index: 0,
+    });
+  } else {
+    if (message) {
+      sent.push({ message: await activeClient.sendMessage(chatId, message), kind: "text", attachment_index: null });
+    }
+    for (let index = 0; index < attachments.length; index += 1) {
+      const attachment = attachments[index];
+      const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.filename);
+      sent.push({
+        message: await activeClient.sendMessage(chatId, media),
+        kind: "media",
+        attachment_index: index,
+      });
+    }
   }
-  void forwardOutboundCapturedMessage(sentMessage, chatId, to, "sendMessage", tenantId).catch((error) => {
-    console.error("Failed to forward outbound WhatsApp message to CRM:", error);
-  });
+
+  // Every sent message must register its own pending-tenant entry and be forwarded: messages
+  // 2..N would otherwise come back through the message_create listener with no tenant and be
+  // dropped by outbound resolution.
+  for (const entry of sent) {
+    const sentMessage = entry.message;
+    if (sentMessage?.id?._serialized) {
+      pendingOutboundTenantByMessageId.set(sentMessage.id._serialized, tenantId || null);
+      console.info(JSON.stringify({
+        event: "whatsapp_outbound_send",
+        message_id: sentMessage.id._serialized,
+        chat_id: chatId,
+        whatsapp_identity_key: identity.canonicalChatId,
+        whatsapp_normalized_phone: identity.normalizedPhone,
+        external_account_id: externalAccountId,
+        tenant_id_received: tenantId || null,
+        whatsapp_endpoint_id: whatsappEndpointId,
+        resolution_source: "send_payload",
+        kind: entry.kind,
+      }));
+    }
+    void forwardOutboundCapturedMessage(sentMessage, chatId, to, "sendMessage", tenantId).catch((error) => {
+      console.error("Failed to forward outbound WhatsApp message to CRM:", error);
+    });
+  }
+
+  const firstMessage = sent.length > 0 ? sent[0].message : null;
   return {
-    whatsapp_message_id: sentMessage?.id?._serialized || null,
+    // Kept as the first message id for backwards compatibility with existing callers and
+    // tests; the full per-message list is in `messages`.
+    whatsapp_message_id: firstMessage?.id?._serialized || null,
+    messages: sent.map((entry) => ({
+      whatsapp_message_id: entry.message?.id?._serialized || null,
+      kind: entry.kind,
+      attachment_index: entry.attachment_index,
+    })),
     whatsapp_chat_id: chatId,
     whatsapp_identity_key: identity.canonicalChatId,
     whatsapp_normalized_phone: identity.normalizedPhone,

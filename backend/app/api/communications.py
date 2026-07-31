@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime, timezone
 import logging
 from typing import Any
@@ -21,9 +22,19 @@ from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
 from app.services import ai_reply_service
+from app.services.attachment_service import (
+    AttachmentLimitExceededError,
+    AttachmentNotFoundError,
+    OutboundAttachment,
+    link_attachments,
+    load_outbound_attachments,
+    store_upload,
+)
+from app.services.attachment_storage import max_message_bytes
 from app.services.email_outbound_persistence import persist_gmail_outbound_message
+from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_gmail_attachment_bytes
 from app.services.gemini_client import GeminiClientError
-from app.services.gmail_client import GMAIL_SCOPES, build_gmail_credentials, list_thread_drafts, send_gmail_forward, send_gmail_reply
+from app.services.gmail_client import GMAIL_SCOPES, build_gmail_credentials, build_gmail_service_for_account, list_thread_drafts, send_gmail_forward, send_gmail_reply
 from app.services.tenant_channel_resolver import (
     _lookup_whatsapp_endpoint_by_exact_chat_identity,
     _lookup_whatsapp_endpoint_by_normalized_chat_identity,
@@ -60,6 +71,12 @@ class EmailForwardRequest(BaseModel):
     email_thread_id: int
     subject: str | None = None
     body: str
+    # Newly uploaded attachments, by stored-blob id.
+    attachment_ids: list[int] = []
+    # Attachments from the thread being forwarded, encoded "{conversation_message_id}:{gmail_attachment_id}".
+    # Explicit ids rather than an include-all flag: a long thread can carry far more than the
+    # per-message cap, so the caller has to choose which ones travel.
+    include_original_attachment_ids: list[str] = []
 
 
 class GmailDraftRead(BaseModel):
@@ -427,8 +444,17 @@ async def send_tenant_communication(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported channel")
 
     message = payload.message.strip()
-    if not message:
+    if not message and not payload.attachment_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
+
+    try:
+        outbound_attachments = load_outbound_attachments(
+            db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel=channel
+        )
+    except AttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except AttachmentLimitExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
 
     selected_endpoint = None
     if channel == "whatsapp":
@@ -485,6 +511,14 @@ async def send_tenant_communication(
             "tenant_id": tenant_id_from_path,
             "whatsapp_endpoint_id": selected_endpoint.id,
             "external_account_id": selected_external_account_id,
+            "attachments": [
+                {
+                    "filename": item.filename,
+                    "mime_type": item.mime_type,
+                    "data_base64": base64.b64encode(item.content).decode("ascii"),
+                }
+                for item in outbound_attachments
+            ],
         }
         print(
             "WA DEBUG backend send outbound request tenant_id=",
@@ -573,6 +607,7 @@ async def send_tenant_communication(
                 from_email=account.email_address,
                 in_reply_to_message_id=in_reply_to_message_id,
                 references=references,
+                attachments=outbound_attachments,
             )
         except Exception as exc:
             logger.exception("Failed to send Gmail reply")
@@ -587,40 +622,74 @@ async def send_tenant_communication(
             subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
             message=message,
             gmail_result=gmail_result,
+            attachment_ids=payload.attachment_ids,
         )
 
     if channel == "whatsapp":
         # Immediately persist the outbound message to ensure UI visibility
         # Use the selected endpoint's chat namespace if available for better identity matching
-        communication_result = persist_whatsapp_outbound_communication(
-            db,
-            tenant_id=tenant.id,
-            provider=(selected_endpoint.provider if selected_endpoint is not None else None),
-            external_account_id=(selected_endpoint.external_account_id if selected_endpoint is not None else None),
-            external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
-            external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
-            whatsapp_chat_id=(whatsapp_result.get("whatsapp_chat_id") if isinstance(whatsapp_result, dict) else None),
-            whatsapp_identity_key=(whatsapp_result.get("whatsapp_identity_key") if isinstance(whatsapp_result, dict) else None),
-            whatsapp_normalized_phone=(whatsapp_result.get("whatsapp_normalized_phone") if isinstance(whatsapp_result, dict) else None),
-            provider_message_id=(
-                (whatsapp_result.get("whatsapp_message_id") if isinstance(whatsapp_result, dict) else None)
-                or (whatsapp_result.get("provider_message_id") if isinstance(whatsapp_result, dict) else None)
-            ),
-            subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
-            message=message,
-            created_at=datetime.now(timezone.utc),
-        )
-        communication = communication_result.communication
-        logger.info(
-            "WhatsApp outbound communication persisted source=backend_send persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s external_chat_namespace=%s",
-            communication_result.persistence_state,
-            communication_result.match_strategy,
-            communication.tenant_id,
-            communication.id,
-            communication.provider_message_id,
-            communication.external_chat_namespace,
-        )
-        return communication
+        result_dict = whatsapp_result if isinstance(whatsapp_result, dict) else {}
+        # The bridge splits a send into several WhatsApp messages when attachments are present
+        # (text and each file are separate messages), so persist one Communication per sent
+        # message - they each have their own provider_message_id and the unique constraint on
+        # (tenant_id, provider_message_id) would otherwise be the only thing keeping them apart.
+        sent_messages = result_dict.get("messages")
+        if not isinstance(sent_messages, list) or not sent_messages:
+            sent_messages = [
+                {
+                    "whatsapp_message_id": (
+                        result_dict.get("whatsapp_message_id") or result_dict.get("provider_message_id")
+                    ),
+                    "kind": "text",
+                    "attachment_index": None,
+                }
+            ]
+
+        persisted_communications: list[Communication] = []
+        for sent in sent_messages:
+            attachment_index = sent.get("attachment_index")
+            if sent.get("kind") == "media" and isinstance(attachment_index, int):
+                attachment = outbound_attachments[attachment_index]
+                # Communication.message is NOT NULL, so a caption-less media row carries a
+                # placeholder in the same house style as the inbound MEDIA_TYPE_LABELS.
+                row_message = f"[File] {attachment.filename}"
+                row_attachment_ids = [attachment.attachment_id]
+            else:
+                row_message = message
+                row_attachment_ids = []
+
+            communication_result = persist_whatsapp_outbound_communication(
+                db,
+                tenant_id=tenant.id,
+                provider=(selected_endpoint.provider if selected_endpoint is not None else None),
+                external_account_id=(selected_endpoint.external_account_id if selected_endpoint is not None else None),
+                external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
+                external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
+                whatsapp_chat_id=result_dict.get("whatsapp_chat_id"),
+                whatsapp_identity_key=result_dict.get("whatsapp_identity_key"),
+                whatsapp_normalized_phone=result_dict.get("whatsapp_normalized_phone"),
+                provider_message_id=sent.get("whatsapp_message_id"),
+                subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
+                message=row_message,
+                created_at=datetime.now(timezone.utc),
+            )
+            communication = communication_result.communication
+            if row_attachment_ids:
+                link_attachments(db, attachment_ids=row_attachment_ids, communication_id=communication.id)
+            persisted_communications.append(communication)
+            logger.info(
+                "WhatsApp outbound communication persisted source=backend_send persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s external_chat_namespace=%s",
+                communication_result.persistence_state,
+                communication_result.match_strategy,
+                communication.tenant_id,
+                communication.id,
+                communication.provider_message_id,
+                communication.external_chat_namespace,
+            )
+
+        # The response model is a single CommunicationRead; the frontend reloads the whole
+        # thread right after a send, so returning the first row is sufficient.
+        return persisted_communications[0]
 
 
 @router.post("/tenants/{tenant_id}/forward", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)
@@ -678,6 +747,71 @@ async def forward_tenant_email_thread(
     if not credentials:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account credentials are missing or could not be decrypted")
 
+    # Newly uploaded attachments first, then whichever of the thread's own attachments the
+    # caller selected. Both share the one per-message cap.
+    try:
+        forward_attachments = load_outbound_attachments(
+            db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel="email"
+        )
+    except AttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except AttachmentLimitExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
+
+    thread_messages_by_id = {thread_message.id: thread_message for thread_message in thread_messages}
+    budget = max_message_bytes("email")
+    used_bytes = sum(len(item.content) for item in forward_attachments)
+    omitted_count = 0
+    stored_original_ids: list[int] = []
+
+    for encoded in payload.include_original_attachment_ids:
+        message_id_text, _, gmail_attachment_id = str(encoded).partition(":")
+        try:
+            source_message = thread_messages_by_id[int(message_id_text)]
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Attachment reference '{encoded}' is not part of this thread",
+            ) from exc
+
+        try:
+            data, filename, mime_type = fetch_gmail_attachment_bytes(
+                db,
+                build_service_for_account=build_gmail_service_for_account,
+                message=source_message,
+                attachment_id=gmail_attachment_id,
+            )
+        except GmailAttachmentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+        # Overflow is surfaced in the body rather than silently dropping files.
+        if used_bytes + len(data) > budget:
+            omitted_count += 1
+            continue
+        used_bytes += len(data)
+
+        record = store_upload(
+            db,
+            tenant_id=tenant.id,
+            filename=filename,
+            mime_type=mime_type,
+            data=data,
+            user_id=current_user.id,
+            origin="gmail",
+        )
+        stored_original_ids.append(record.id)
+        forward_attachments.append(
+            OutboundAttachment(
+                attachment_id=record.id, filename=filename, mime_type=mime_type, content=data
+            )
+        )
+
+    if omitted_count:
+        full_body = (
+            f"{full_body}\n\n({omitted_count} attachment(s) omitted: the message would exceed "
+            f"the {budget} byte size limit.)"
+        )
+
     try:
         gmail_result = send_gmail_forward(
             credentials,
@@ -688,26 +822,26 @@ async def forward_tenant_email_thread(
             from_email=account.email_address,
             in_reply_to_message_id=in_reply_to_message_id,
             references=references,
+            attachments=forward_attachments,
         )
     except Exception as exc:
         logger.exception("Failed to forward Gmail thread")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to forward email: {str(exc)}") from exc
 
     provider_message_id = gmail_result.get("id")
-    db.add(
-        ConversationMessage(
-            conversation_id=conversation.id,
-            provider=PROVIDER_GMAIL,
-            provider_message_id=provider_message_id or "",
-            direction="outbound",
-            sender_email=account.email_address,
-            recipient_email=forward_to_email,
-            subject=subject,
-            body=body,
-            sent_at=datetime.now(timezone.utc),
-            raw_payload={"gmail": gmail_result},
-        )
+    forward_message = ConversationMessage(
+        conversation_id=conversation.id,
+        provider=PROVIDER_GMAIL,
+        provider_message_id=provider_message_id or "",
+        direction="outbound",
+        sender_email=account.email_address,
+        recipient_email=forward_to_email,
+        subject=subject,
+        body=body,
+        sent_at=datetime.now(timezone.utc),
+        raw_payload={"gmail": gmail_result},
     )
+    db.add(forward_message)
     db.commit()
 
     communication = Communication(
@@ -723,6 +857,12 @@ async def forward_tenant_email_thread(
     db.add(communication)
     db.commit()
     db.refresh(communication)
+
+    sent_attachment_ids = list(payload.attachment_ids) + stored_original_ids
+    if sent_attachment_ids:
+        link_attachments(db, attachment_ids=sent_attachment_ids, conversation_message_id=forward_message.id)
+        link_attachments(db, attachment_ids=sent_attachment_ids, communication_id=communication.id)
+
     return communication
 
 

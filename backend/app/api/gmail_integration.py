@@ -33,6 +33,7 @@ from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
 from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.background_jobs import get_job, start_job
+from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_gmail_attachment_bytes
 from app.services.notification_service import create_notification
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
@@ -1061,34 +1062,23 @@ def download_message_attachment(
     if message is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
 
-    raw_payload = message.raw_payload if isinstance(message.raw_payload, dict) else {}
-    attachments = raw_payload.get("attachments") or []
-    attachment_meta = next((item for item in attachments if item.get("attachment_id") == attachment_id), None)
-    if attachment_meta is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found on this message")
+    try:
+        data, filename, mime_type = fetch_gmail_attachment_bytes(
+            db,
+            build_service_for_account=_build_service_for_account,
+            message=message,
+            attachment_id=attachment_id,
+        )
+    except GmailAttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    conversation = db.query(Conversation).filter(Conversation.id == message.conversation_id).first()
-    if conversation is None or conversation.provider_account_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gmail account not found for message")
-    account = db.query(GmailAccount).filter(GmailAccount.id == conversation.provider_account_id).first()
-    if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gmail account not found for message")
-
-    service = _build_service_for_account(account)
-    result = (
-        service.users()
-        .messages()
-        .attachments()
-        .get(userId="me", messageId=message.provider_message_id, id=attachment_id)
-        .execute()
-    )
-    data = base64.urlsafe_b64decode(result["data"].encode("utf-8"))
-    filename = attachment_meta.get("filename") or "attachment"
-    mime_type = attachment_meta.get("mime_type") or "application/octet-stream"
     return Response(
         content=data,
         media_type=mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

@@ -14,6 +14,7 @@ from app.api.ai_reply_templates import router as ai_reply_templates_router
 from app.api.auth import router as auth_router
 from app.api.beds24_webhooks import router as beds24_webhook_router
 from app.api.communications import router as communications_router
+from app.api.communication_attachments import router as communication_attachments_router
 from app.api.email_templates import router as email_templates_router
 from app.api.gmail_integration import _catch_up_gmail_account, _start_watch
 from app.api.gmail_integration import router as gmail_integration_router
@@ -213,6 +214,7 @@ app.include_router(admin_settings_router, prefix="/api")
 app.include_router(admin_sync_router, prefix="/api")
 app.include_router(invites_router, prefix="/api")
 app.include_router(communications_router, prefix="/api")
+app.include_router(communication_attachments_router, prefix="/api")
 app.include_router(email_templates_router, prefix="/api")
 app.include_router(ai_reply_templates_router, prefix="/api")
 app.include_router(tenant_ai_settings_router, prefix="/api")

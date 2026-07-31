@@ -7,12 +7,26 @@ import { useResizableSize } from '../hooks/useResizableSize'
 import LinkChatModal from './LinkChatModal'
 import EmailLinkModal from './EmailLinkModal'
 import ToastCard from './ToastCard'
+import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
+import { MAX_EMAIL_TOTAL_BYTES, formatBytes } from '../lib/attachmentLimits'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
 
 const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'BLOCKQUOTE', 'DIV', 'DL', 'DT', 'DD', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'LI', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL'])
 const ALLOWED_TAGS = new Set(['A', 'B', 'BR', 'CODE', 'DIV', 'EM', 'I', 'LI', 'OL', 'P', 'PRE', 'SPAN', 'STRONG', 'SUB', 'SUP', 'U', 'UL', 'BLOCKQUOTE'])
 const ALLOWED_ATTRS = new Set(['href', 'title', 'target', 'rel'])
+
+type Attachment = {
+  attachment_id: string
+  filename: string
+  mime_type: string | null
+  size: number | null
+  // 'gmail' attachments are proxied live from Gmail by message id; 'stored' ones are blobs
+  // the CRM holds itself and are fetched by their own id.
+  source?: 'gmail' | 'stored'
+  id?: number | null
+}
+
 type TimelineMessage = {
   id: number
   provider: string
@@ -25,7 +39,7 @@ type TimelineMessage = {
   body_display: string | null
   body_text: string | null
   body_html: string | null
-  attachments?: { attachment_id: string; filename: string; mime_type: string | null; size: number | null }[]
+  attachments?: Attachment[]
   external_account_id?: string | null
   external_phone_id?: string | null
   whatsapp_chat_id?: string | null
@@ -38,6 +52,42 @@ const AiGeneratedBadge = () => (
     AI
   </span>
 )
+
+type AttachmentChipsProps = {
+  messageId: number
+  attachments?: Attachment[]
+  downloadingAttachmentId: string | null
+  onDownload: (messageId: number, attachment: Attachment) => void
+}
+
+const AttachmentChips = ({ messageId, attachments, downloadingAttachmentId, onDownload }: AttachmentChipsProps) => {
+  if (!attachments || attachments.length === 0) return null
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {attachments.map((attachment) => {
+        const isDownloading = downloadingAttachmentId === attachment.attachment_id
+        return (
+          <button
+            key={attachment.attachment_id}
+            type="button"
+            disabled={isDownloading}
+            onClick={() => onDownload(messageId, attachment)}
+            className="flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70"
+          >
+            {isDownloading ? (
+              <>
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                Downloading {attachment.filename}…
+              </>
+            ) : (
+              <>📎 {attachment.filename}</>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 const MessageJumpNav = ({
   total,
@@ -317,6 +367,7 @@ type WhatsappTimelineMessage = {
   message: string
   created_at: string
   ai_generated?: boolean
+  attachments?: Attachment[]
 }
 
 // Distinct hue per linked WhatsApp account; darker shade = outbound, lighter shade = inbound.
@@ -391,6 +442,8 @@ type ForwardTarget = { threadId: number; providerThreadId: string; subject: stri
 type ReplyDraftEntry = { subject: string; body: string }
 
 const EMPTY_REPLY_DRAFT: ReplyDraftEntry = { subject: '', body: '' }
+// Stable identity so the empty case doesn't produce a new array on every render.
+const EMPTY_ATTACHMENTS: PendingAttachment[] = []
 
 // Holds a WhatsApp draft typed before an account was picked. Transient and never persisted -
 // there is no linked chat to key it to yet; it migrates to the real key once one is selected.
@@ -489,27 +542,32 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const user = useAuthStore((state) => state.user)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const downloadAttachment = useCallback(
-    async (messageId: number, attachmentId: string, filename: string) => {
+    async (messageId: number, attachment: Attachment) => {
+      const { attachment_id: attachmentId, filename } = attachment
       setDownloadingAttachmentId(attachmentId)
       try {
-        const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/messages/${messageId}/attachments/${attachmentId}`, {
+        const downloadUrl =
+          attachment.source === 'stored'
+            ? `${API_BASE_URL}/api/communications/tenants/${tenantId}/attachments/${attachment.id}/download`
+            : `${API_BASE_URL}/api/integrations/gmail/messages/${messageId}/attachments/${attachmentId}`
+        const response = await fetch(downloadUrl, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         })
         if (!response.ok) {
           return
         }
         const blob = await response.blob()
-        const url = URL.createObjectURL(blob)
+        const objectUrl = URL.createObjectURL(blob)
         const link = document.createElement('a')
-        link.href = url
+        link.href = objectUrl
         link.download = filename
         link.click()
-        URL.revokeObjectURL(url)
+        URL.revokeObjectURL(objectUrl)
       } finally {
         setDownloadingAttachmentId((current) => (current === attachmentId ? null : current))
       }
     },
-    [token],
+    [token, tenantId],
   )
   const [relativeTimestampsFirst] = useRelativeTimestampsFirstPreference()
   const formatTimestamp = useCallback((value?: string | number | Date | null) => formatCombinedDateTime(value, relativeTimestampsFirst), [relativeTimestampsFirst])
@@ -529,6 +587,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
   const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraftEntry>>({})
   const [replySending, setReplySending] = useState(false)
+  // Keyed by the same draft scope key as reply bodies, so attachments picked for one thread
+  // never leak into another thread's or tenant's composer.
+  const [replyAttachments, setReplyAttachments] = useState<Record<string, PendingAttachment[]>>({})
   const [aiTemplates, setAiTemplates] = useState<AiTemplateOption[]>([])
   const [tenantAiSettings, setTenantAiSettings] = useState<TenantAiSettings | null>(null)
   const [selectedAiTemplateId, setSelectedAiTemplateId] = useState('')
@@ -545,6 +606,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const [forwardBody, setForwardBody] = useState('')
   const [forwardSending, setForwardSending] = useState(false)
   const [forwardToEmail, setForwardToEmail] = useState<string | null>(null)
+  const [forwardAttachments, setForwardAttachments] = useState<PendingAttachment[]>([])
+  // Encoded "{conversation_message_id}:{gmail_attachment_id}"; pre-selected when the forward
+  // composer opens, and auto-unticked past the size cap.
+  const [forwardOriginalIds, setForwardOriginalIds] = useState<string[]>([])
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplateOption[]>([])
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [templateLoading, setTemplateLoading] = useState(false)
@@ -595,6 +660,35 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const currentDraft = (currentDraftKey ? replyDrafts[currentDraftKey] : null) ?? EMPTY_REPLY_DRAFT
   const replyMessage = currentDraft.body
   const replySubject = currentDraft.subject
+  const currentReplyAttachments = (currentDraftKey ? replyAttachments[currentDraftKey] : null) ?? EMPTY_ATTACHMENTS
+  const currentReplyAttachmentIds = currentReplyAttachments
+    .map((item) => item.id)
+    .filter((id): id is number => id !== null)
+  const setCurrentReplyAttachments = useCallback(
+    (next: PendingAttachment[]) => {
+      if (!currentDraftKey) return
+      setReplyAttachments((current) => ({ ...current, [currentDraftKey]: next }))
+    },
+    [currentDraftKey],
+  )
+
+  // Only Gmail-sourced attachments can be re-fetched from the original thread; stored blobs
+  // are already re-attachable through the picker's history browser.
+  const forwardableOriginalAttachments = (selectedEmailThread?.messages ?? []).flatMap((message) =>
+    (message.attachments ?? [])
+      .filter((attachment) => attachment.source !== 'stored')
+      .map((attachment) => ({
+        key: `${message.id}:${attachment.attachment_id}`,
+        filename: attachment.filename,
+        size: attachment.size,
+      })),
+  )
+  const forwardOriginalsSelectedBytes = forwardableOriginalAttachments
+    .filter((item) => forwardOriginalIds.includes(item.key))
+    .reduce((total, item) => total + (item.size ?? 0), 0)
+  const forwardOriginalsOverCap =
+    forwardOriginalsSelectedBytes + forwardAttachments.reduce((total, item) => total + item.size, 0) >
+    MAX_EMAIL_TOTAL_BYTES
 
   // Writes go through an explicit key so a caller that changes replyTarget and the body in the
   // same tick (e.g. useDraftAsReply) writes to the new scope, not the one being navigated away from.
@@ -1283,7 +1377,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
 
   const handleSendReply = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!tenantId || !replyMessage.trim() || replySending || !replyTarget) return
+    // An attachment-only message is allowed, so an empty body alone no longer blocks the send.
+    if (!tenantId || replySending || !replyTarget) return
+    if (!replyMessage.trim() && currentReplyAttachmentIds.length === 0) return
+    if (currentReplyAttachments.some((item) => item.error || item.id === null)) {
+      setError('Wait for attachments to finish uploading, or remove the failed ones.')
+      return
+    }
 
     try {
       setReplySending(true)
@@ -1295,6 +1395,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           subject: replySubject.trim() || replyTarget.subject || '',
           message: replyMessage,
           email_thread_id: replyTarget.threadId,
+          attachment_ids: currentReplyAttachmentIds,
         }
         console.info('[crm] Email reply request:', { tenantId, replyTarget, requestBody })
         const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
@@ -1319,6 +1420,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           message: replyMessage,
           whatsapp_endpoint_id: Number(selectedWhatsappEndpointId),
           external_account_id: selectedWhatsappEndpoint?.external_account_id ?? null,
+          attachment_ids: currentReplyAttachmentIds,
         }
         const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/send`, {
           method: 'POST',
@@ -1342,6 +1444,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           const { [currentDraftKey]: _sent, ...rest } = current
           return rest
         })
+        setReplyAttachments((current) => {
+          const { [currentDraftKey]: _sentAttachments, ...rest } = current
+          return rest
+        })
         deleteReplyDraft(tenantId, currentDraftKey)
       }
       if (replyTarget.type === 'whatsapp') {
@@ -1361,6 +1467,22 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
     setForwardTarget({ threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, subject: thread.subject })
     setForwardSubject(thread.subject ? (thread.subject.toLowerCase().startsWith('fwd:') ? thread.subject : `Fwd: ${thread.subject}`) : 'Fwd:')
     setForwardBody('')
+    setForwardAttachments([])
+    // Pre-select the thread's own attachments, then drop the tail that would push the message
+    // past the email cap - carrying everything is the common case, but a long thread can hold
+    // far more than one message can.
+    let runningBytes = 0
+    setForwardOriginalIds(
+      (thread.messages ?? []).flatMap((message) =>
+        (message.attachments ?? [])
+          .filter((attachment) => attachment.source !== 'stored')
+          .filter((attachment) => {
+            runningBytes += attachment.size ?? 0
+            return runningBytes <= MAX_EMAIL_TOTAL_BYTES
+          })
+          .map((attachment) => `${message.id}:${attachment.attachment_id}`),
+      ),
+    )
     setSelectedTemplateId('')
     setDraftResults(null)
     setDraftError('')
@@ -1391,6 +1513,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const handleSendForward = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!tenantId || !forwardTarget || !forwardBody.trim() || forwardSending) return
+    if (forwardAttachments.some((item) => item.error || item.id === null)) {
+      setError('Wait for attachments to finish uploading, or remove the failed ones.')
+      return
+    }
 
     try {
       setForwardSending(true)
@@ -1405,6 +1531,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           email_thread_id: forwardTarget.threadId,
           subject: forwardSubject.trim() || forwardTarget.subject || '',
           body: forwardBody,
+          attachment_ids: forwardAttachments
+            .map((item) => item.id)
+            .filter((id): id is number => id !== null),
+          include_original_attachment_ids: forwardOriginalIds,
         }),
       })
       if (!response.ok) {
@@ -1416,6 +1546,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       setForwardTarget(null)
       setForwardBody('')
       setForwardSubject('')
+      setForwardAttachments([])
+      setForwardOriginalIds([])
       setSelectedTemplateId('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to forward email')
@@ -1708,31 +1840,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         ) : (
                           <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{messageItem.body_text || messageItem.body_display || messageItem.body}</p>
                         )}
-                        {messageItem.attachments && messageItem.attachments.length > 0 ? (
-                          <div className="mt-1.5 flex flex-wrap gap-2">
-                            {messageItem.attachments.map((attachment) => {
-                              const isDownloading = downloadingAttachmentId === attachment.attachment_id
-                              return (
-                                <button
-                                  key={attachment.attachment_id}
-                                  type="button"
-                                  disabled={isDownloading}
-                                  onClick={() => downloadAttachment(messageItem.id, attachment.attachment_id, attachment.filename)}
-                                  className="flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-70"
-                                >
-                                  {isDownloading ? (
-                                    <>
-                                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
-                                      Downloading {attachment.filename}…
-                                    </>
-                                  ) : (
-                                    <>📎 {attachment.filename}</>
-                                  )}
-                                </button>
-                              )
-                            })}
-                          </div>
-                        ) : null}
+                        <AttachmentChips
+                          messageId={messageItem.id}
+                          attachments={messageItem.attachments}
+                          downloadingAttachmentId={downloadingAttachmentId}
+                          onDownload={downloadAttachment}
+                        />
                       </article>
                     )
                   }
@@ -1870,6 +1983,46 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                   <p className="text-xs text-gray-500">The full thread history is included automatically below this text when sent.</p>
+                  {forwardableOriginalAttachments.length > 0 ? (
+                    <div className="space-y-1 rounded-lg border border-slate-200 bg-white/60 p-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
+                        Attachments from this thread
+                      </p>
+                      {forwardableOriginalAttachments.map((item) => (
+                        <label key={item.key} className="flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={forwardOriginalIds.includes(item.key)}
+                            onChange={(event) => {
+                              setForwardOriginalIds((current) =>
+                                event.target.checked
+                                  ? [...current, item.key]
+                                  : current.filter((existing) => existing !== item.key),
+                              )
+                            }}
+                          />
+                          <span className="truncate">📎 {item.filename}</span>
+                          {item.size ? <span className="text-gray-400">{formatBytes(item.size)}</span> : null}
+                        </label>
+                      ))}
+                      {forwardOriginalsOverCap ? (
+                        <p className="text-xs text-amber-600">
+                          Selected attachments exceed the {formatBytes(MAX_EMAIL_TOTAL_BYTES)} email limit — the
+                          server will omit the overflow and note it in the message.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {tenantId ? (
+                    <AttachmentPicker
+                      tenantId={tenantId}
+                      token={token}
+                      channel="email"
+                      attachments={forwardAttachments}
+                      onChange={setForwardAttachments}
+                      disabled={forwardSending}
+                    />
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
@@ -1955,6 +2108,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     disabled={replySending}
                     className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
+                  {tenantId ? (
+                    <AttachmentPicker
+                      tenantId={tenantId}
+                      token={token}
+                      channel="email"
+                      attachments={currentReplyAttachments}
+                      onChange={setCurrentReplyAttachments}
+                      disabled={replySending}
+                    />
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
@@ -1965,7 +2128,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     </button>
                     <button
                       type="submit"
-                      disabled={replySending || !replyMessage.trim()}
+                      disabled={replySending || (!replyMessage.trim() && currentReplyAttachmentIds.length === 0)}
                       className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
@@ -2060,6 +2223,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         </div>
                         {blockMessage.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                         <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
+                        <AttachmentChips
+                          messageId={blockMessage.id}
+                          attachments={blockMessage.attachments}
+                          downloadingAttachmentId={downloadingAttachmentId}
+                          onDownload={downloadAttachment}
+                        />
                       </article>
                     )
                   })}
@@ -2139,6 +2308,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       disabled={replySending}
                       className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                     />
+                    {tenantId ? (
+                      <AttachmentPicker
+                        tenantId={tenantId}
+                        token={token}
+                        channel="whatsapp"
+                        attachments={currentReplyAttachments}
+                        onChange={setCurrentReplyAttachments}
+                        disabled={replySending}
+                      />
+                    ) : null}
                     <div className="flex items-center justify-between gap-2">
                       <button
                         type="button"
@@ -2149,7 +2328,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       </button>
                       <button
                         type="submit"
-                        disabled={replySending || !replyMessage.trim() || !selectedWhatsappEndpointId}
+                        disabled={replySending || (!replyMessage.trim() && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
                         className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {replySending ? 'Sending...' : 'Send'}
@@ -2260,6 +2439,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       </div>
                       {blockMessage.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
                       <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
+                      <AttachmentChips
+                        messageId={blockMessage.id}
+                        attachments={blockMessage.attachments}
+                        downloadingAttachmentId={downloadingAttachmentId}
+                        onDownload={downloadAttachment}
+                      />
                     </article>
                   )
                 })}
@@ -2338,6 +2523,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     disabled={replySending}
                     className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
+                  {tenantId ? (
+                    <AttachmentPicker
+                      tenantId={tenantId}
+                      token={token}
+                      channel="whatsapp"
+                      attachments={currentReplyAttachments}
+                      onChange={setCurrentReplyAttachments}
+                      disabled={replySending}
+                    />
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
@@ -2348,7 +2543,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     </button>
                     <button
                       type="submit"
-                      disabled={replySending || !replyMessage.trim() || !selectedWhatsappEndpointId}
+                      disabled={replySending || (!replyMessage.trim() && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
                       className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}

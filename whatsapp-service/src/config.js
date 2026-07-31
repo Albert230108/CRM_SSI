@@ -46,4 +46,10 @@ module.exports = {
   whatsappHistoryBackfillEnabled: String(process.env.WHATSAPP_HISTORY_BACKFILL_ENABLED ?? "false").trim().toLowerCase() === "true",
   whatsappHistoryBackfillLimit: Math.max(1, toInteger(process.env.WHATSAPP_HISTORY_BACKFILL_LIMIT, 100)),
   forwardedMessageCacheTtlMs: Math.max(1000, toInteger(process.env.WHATSAPP_FORWARDED_MESSAGE_TTL_MS, 10 * 60 * 1000)),
+  // Outbound attachments arrive base64-encoded in the JSON body, so the express limit must
+  // clear 25MB of files (~33.4MB encoded) plus JSON escaping overhead.
+  maxRequestBody: String(process.env.WHATSAPP_MAX_REQUEST_BODY || "40mb").trim(),
+  maxOutboundAttachmentBytes: Math.max(1, toInteger(process.env.WHATSAPP_MAX_OUTBOUND_ATTACHMENT_BYTES, 10 * 1024 * 1024)),
+  maxOutboundAttachmentsTotalBytes: Math.max(1, toInteger(process.env.WHATSAPP_MAX_OUTBOUND_TOTAL_BYTES, 25 * 1024 * 1024)),
+  maxInboundMediaBytes: Math.max(1, toInteger(process.env.WHATSAPP_MAX_INBOUND_MEDIA_BYTES, 10 * 1024 * 1024)),
 };

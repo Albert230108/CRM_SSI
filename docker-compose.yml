@@ -22,6 +22,10 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+psycopg2://crm_user:crm_password@db:5432/crm
+      ATTACHMENTS_ROOT: /app/attachments
+    volumes:
+      # Defaulted so an unset var can't turn into an invalid ":/app/attachments" bind.
+      - ${ATTACHMENTS_HOST_PATH:-./attachments_data}:/app/attachments
     depends_on:
       db:
         condition: service_healthy

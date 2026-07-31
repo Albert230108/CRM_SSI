@@ -12,16 +12,36 @@ from app.models.gmail_integration import Conversation, ConversationMessage, Gmai
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
+from app.services.attachment_service import attachments_for_communications, attachments_for_conversation_messages
 from app.services.email_quote_strip import strip_quoted_reply
 
 PROVIDER_GMAIL = "gmail"
 
 
 class AttachmentRead(BaseModel):
+    # attachment_id is the frontend's React key and download discriminator. Gmail-derived rows
+    # carry Gmail's own opaque id; stored blobs use "stored:{id}" so the two namespaces can
+    # never collide on a message that has both.
     attachment_id: str
     filename: str
     mime_type: str | None = None
     size: int | None = None
+    source: str = "gmail"
+    id: int | None = None
+
+
+def _stored_attachment_reads(records: list[Any]) -> list[AttachmentRead]:
+    return [
+        AttachmentRead(
+            attachment_id=f"stored:{record.id}",
+            filename=record.filename,
+            mime_type=record.mime_type,
+            size=record.size_bytes,
+            source="stored",
+            id=record.id,
+        )
+        for record in records
+    ]
 
 
 class TimelineMessageRead(BaseModel):
@@ -64,6 +84,7 @@ class TimelineWhatsappMessageRead(BaseModel):
     message: str
     created_at: datetime
     ai_generated: bool = False
+    attachments: list[AttachmentRead] = []
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -288,11 +309,45 @@ def _build_whatsapp_block_id(thread_id: int, index: int, start: datetime | None,
     return f"thread-{thread_id}:whatsapp-{index}:{start_key}:{end_key}:{count}"
 
 
-def _as_whatsapp_message(message: Communication) -> TimelineWhatsappMessageRead | None:
+def _build_timeline_message(
+    message: ConversationMessage,
+    stored_attachments: dict[int, list[Any]],
+    ai_generated_email_timestamps: set[datetime],
+) -> TimelineMessageRead:
+    raw_payload = message.raw_payload if isinstance(message.raw_payload, dict) else {}
+    # Gmail-derived attachment metadata first (inbound messages), then anything we stored
+    # ourselves (outbound sends, forwards) - an outbound row has no Gmail metadata at all.
+    attachments: list[Any] = list(raw_payload.get("attachments") or [])
+    attachments.extend(_stored_attachment_reads(stored_attachments.get(message.id, [])))
+    return TimelineMessageRead.model_validate(
+        {
+            "id": message.id,
+            "provider": message.provider,
+            "provider_message_id": message.provider_message_id,
+            "direction": message.direction,
+            "sender_email": message.sender_email,
+            "recipient_email": message.recipient_email,
+            "subject": message.subject,
+            "body": message.body,
+            "body_text": raw_payload.get("body_text"),
+            "body_html": raw_payload.get("body_html"),
+            "attachments": attachments,
+            "sent_at": message.sent_at,
+            "ai_generated": _ensure_utc(message.sent_at) in ai_generated_email_timestamps,
+        }
+    )
+
+
+def _as_whatsapp_message(
+    message: Communication, stored_attachments: dict[int, list[Any]] | None = None
+) -> TimelineWhatsappMessageRead | None:
     try:
-        return TimelineWhatsappMessageRead.model_validate(message)
+        rendered = TimelineWhatsappMessageRead.model_validate(message)
     except ValidationError:
         return None
+    if stored_attachments:
+        rendered.attachments = _stored_attachment_reads(stored_attachments.get(message.id, []))
+    return rendered
 
 
 def _group_whatsapp_by_thread_windows(
@@ -314,13 +369,21 @@ def _group_whatsapp_by_thread_windows(
     return buckets
 
 
-def _build_whatsapp_groups(whatsapp_messages: list[Communication], thread_windows: list[_EmailThreadWindow]) -> list[TimelineWhatsappGroupRead]:
+def _build_whatsapp_groups(
+    whatsapp_messages: list[Communication],
+    thread_windows: list[_EmailThreadWindow],
+    stored_attachments: dict[int, list[Any]] | None = None,
+) -> list[TimelineWhatsappGroupRead]:
     buckets = _group_whatsapp_by_thread_windows(whatsapp_messages, thread_windows)
     groups: list[TimelineWhatsappGroupRead] = []
     for index, bucket in enumerate(buckets):
         if not bucket:
             continue
-        rendered_messages = [message for message in (_as_whatsapp_message(item) for item in bucket) if message is not None]
+        rendered_messages = [
+            message
+            for message in (_as_whatsapp_message(item, stored_attachments) for item in bucket)
+            if message is not None
+        ]
         if not rendered_messages:
             continue
         start_timestamp = _ensure_utc(bucket[0].created_at)
@@ -341,6 +404,7 @@ def _build_whatsapp_groups(whatsapp_messages: list[Communication], thread_window
 def _build_whatsapp_blocks_for_thread(
     thread: Conversation,
     whatsapp_messages: list[Communication],
+    stored_attachments: dict[int, list[Any]] | None = None,
 ) -> list[TimelineWhatsappBlockRead]:
     messages = sorted(thread.messages or [], key=_thread_message_sort_key)
     if not whatsapp_messages:
@@ -364,7 +428,7 @@ def _build_whatsapp_blocks_for_thread(
                 continue
             if candidate_at > right:
                 break
-            rendered = _as_whatsapp_message(candidate)
+            rendered = _as_whatsapp_message(candidate, stored_attachments)
             if rendered is not None:
                 block_messages.append(rendered)
             whatsapp_index += 1
@@ -404,6 +468,13 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
     whatsapp_messages = _load_tenant_whatsapp(db, tenant_id)
     thread_windows = _build_thread_windows(conversations)
 
+    # Two bulk lookups (one per link column) rather than a query per message.
+    stored_whatsapp_attachments = attachments_for_communications(db, [m.id for m in whatsapp_messages])
+    stored_email_attachments = attachments_for_conversation_messages(
+        db,
+        [message.id for conversation in conversations for message in (conversation.messages or [])],
+    )
+
     whatsapp_blocks_by_thread_id: dict[int, list[TimelineWhatsappBlockRead]] = {}
     if whatsapp_messages:
         for window in thread_windows:
@@ -416,10 +487,12 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
                 for message in whatsapp_messages
                 if window.start_timestamp < _ensure_utc(message.created_at) <= window.anchor_timestamp
             ]
-            whatsapp_blocks_by_thread_id[window.thread.id] = _build_whatsapp_blocks_for_thread(window.thread, block_messages)
+            whatsapp_blocks_by_thread_id[window.thread.id] = _build_whatsapp_blocks_for_thread(
+                window.thread, block_messages, stored_whatsapp_attachments
+            )
 
     items: list[TimelineEmailThreadRead | TimelineWhatsappGroupRead] = []
-    whatsapp_groups = _build_whatsapp_groups(whatsapp_messages, thread_windows)
+    whatsapp_groups = _build_whatsapp_groups(whatsapp_messages, thread_windows, stored_whatsapp_attachments)
 
     thread_items: list[tuple[datetime, int, TimelineEmailThreadRead]] = []
     for window in thread_windows:
@@ -438,7 +511,10 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
                     subject=window.thread.subject,
                     preview_text=window.thread.preview_text,
                     anchor_timestamp=window.anchor_timestamp,
-                    messages=[TimelineMessageRead.model_validate({"id": message.id, "provider": message.provider, "provider_message_id": message.provider_message_id, "direction": message.direction, "sender_email": message.sender_email, "recipient_email": message.recipient_email, "subject": message.subject, "body": message.body, "body_text": (message.raw_payload or {}).get("body_text") if isinstance(message.raw_payload, dict) else None, "body_html": (message.raw_payload or {}).get("body_html") if isinstance(message.raw_payload, dict) else None, "attachments": ((message.raw_payload or {}).get("attachments") if isinstance(message.raw_payload, dict) else None) or [], "sent_at": message.sent_at, "ai_generated": _ensure_utc(message.sent_at) in ai_generated_email_timestamps}) for message in messages],
+                    messages=[
+                        _build_timeline_message(message, stored_email_attachments, ai_generated_email_timestamps)
+                        for message in messages
+                    ],
                     whatsapp_blocks=whatsapp_blocks_by_thread_id.get(window.thread.id, []),
                 ),
             )

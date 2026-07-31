@@ -1,6 +1,20 @@
 const express = require("express");
 
-function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats }) {
+const {
+  maxOutboundAttachmentBytes: defaultMaxOutboundAttachmentBytes,
+  maxOutboundAttachmentsTotalBytes: defaultMaxOutboundAttachmentsTotalBytes,
+} = require("../config");
+
+function createMessageRouter({
+  requireApiKey,
+  sendTextMessage,
+  runHistoryBackfill,
+  runHistoryDebugSample,
+  debugChatModelBuild,
+  listChats,
+  maxOutboundAttachmentBytes = defaultMaxOutboundAttachmentBytes,
+  maxOutboundAttachmentsTotalBytes = defaultMaxOutboundAttachmentsTotalBytes,
+}) {
   const router = express.Router();
 
   router.get("/chats", requireApiKey, async (req, res) => {
@@ -37,18 +51,50 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
       const externalAccountId = typeof req.body?.external_account_id === "string" ? req.body.external_account_id.trim() : "";
       const whatsappEndpointId = req.body?.whatsapp_endpoint_id ?? null;
 
+      const rawAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+      const attachments = [];
+      let attachmentsTotalBytes = 0;
+      for (const item of rawAttachments) {
+        if (!item || typeof item !== "object" || typeof item.data_base64 !== "string" || !item.data_base64) {
+          return res.status(400).json({
+            ok: false,
+            error: "Each attachment requires a non-empty data_base64 string.",
+          });
+        }
+        const sizeBytes = Buffer.byteLength(item.data_base64, "base64");
+        if (sizeBytes > maxOutboundAttachmentBytes) {
+          return res.status(413).json({
+            ok: false,
+            error: `Attachment "${item.filename || "unnamed"}" exceeds the ${maxOutboundAttachmentBytes} byte per-file limit.`,
+          });
+        }
+        attachmentsTotalBytes += sizeBytes;
+        if (attachmentsTotalBytes > maxOutboundAttachmentsTotalBytes) {
+          return res.status(413).json({
+            ok: false,
+            error: `Attachments exceed the ${maxOutboundAttachmentsTotalBytes} byte total limit.`,
+          });
+        }
+        attachments.push({
+          filename: typeof item.filename === "string" && item.filename ? item.filename : "attachment",
+          mime_type: typeof item.mime_type === "string" && item.mime_type ? item.mime_type : "application/octet-stream",
+          data_base64: item.data_base64,
+        });
+      }
+
       console.info("[whatsapp] /send request body", {
         to,
         message,
         tenant_id: tenantId ?? null,
         external_account_id: externalAccountId || null,
         whatsapp_endpoint_id: whatsappEndpointId,
+        attachment_count: attachments.length,
       });
 
-      if (!to || !message) {
+      if (!to || (!message && attachments.length === 0)) {
         return res.status(400).json({
           ok: false,
-          error: 'Both "to" and "message" are required.',
+          error: '"to" and either "message" or "attachments" are required.',
         });
       }
       if (tenantId == null) {
@@ -67,6 +113,7 @@ function createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfil
         tenant_id: tenantId,
         external_account_id: externalAccountId,
         whatsapp_endpoint_id: whatsappEndpointId,
+        attachments,
       });
       return res.json({ ok: true, ...result });
     } catch (error) {

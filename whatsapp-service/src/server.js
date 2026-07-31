@@ -3,7 +3,7 @@ require("dotenv").config();
 const crypto = require("crypto");
 const express = require("express");
 
-const { apiKey, port } = require("./config");
+const { apiKey, port, maxRequestBody } = require("./config");
 const { initializeClient, isReady, sendTextMessage, shutdownClient, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats } = require("./whatsappClient");
 const { createMessageRouter } = require("./routes/messages");
 
@@ -34,7 +34,7 @@ function requireApiKey(req, res, next) {
 async function main() {
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "256kb" }));
+  app.use(express.json({ limit: maxRequestBody }));
 
   app.use(createMessageRouter({ requireApiKey, sendTextMessage, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats }));
 

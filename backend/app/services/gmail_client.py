@@ -1,8 +1,9 @@
 import base64
 import os
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cryptography.fernet import Fernet
 from google.oauth2.credentials import Credentials
@@ -14,6 +15,9 @@ from app.models.communication import Communication
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_email_address import TenantEmailAddress
+
+if TYPE_CHECKING:
+    from app.services.attachment_service import OutboundAttachment
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -57,6 +61,13 @@ def build_gmail_credentials(account: GmailAccount) -> Credentials | None:
 
 def _build_service(credentials_info: dict[str, Any]) -> Any:
     credentials = Credentials.from_authorized_user_info(credentials_info, scopes=GMAIL_SCOPES)
+    return build("gmail", "v1", credentials=credentials, cache_discovery=False)
+
+
+def build_gmail_service_for_account(account: GmailAccount) -> Any:
+    credentials = build_gmail_credentials(account)
+    if credentials is None:
+        raise ValueError("Gmail account credentials are missing or could not be decrypted")
     return build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
 
@@ -114,6 +125,7 @@ def _send_gmail_message(
     subject_prefix: str,
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
+    attachments: Sequence["OutboundAttachment"] = (),
 ) -> dict[str, Any]:
     service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
@@ -128,6 +140,17 @@ def _send_gmail_message(
     if references:
         message["References"] = references
     message.set_content(body_text)
+
+    # add_attachment promotes the message to multipart/mixed on the first call, so a send
+    # with no attachments produces exactly the same single-part bytes it always did.
+    for item in attachments:
+        maintype, _, subtype = (item.mime_type or "application/octet-stream").partition("/")
+        message.add_attachment(
+            item.content,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=item.filename,
+        )
 
     raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
     result = service.users().messages().send(
@@ -147,6 +170,7 @@ def send_gmail_reply(
     from_email: str,
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
+    attachments: Sequence["OutboundAttachment"] = (),
 ) -> dict[str, Any]:
     return _send_gmail_message(
         credentials,
@@ -158,6 +182,7 @@ def send_gmail_reply(
         subject_prefix="Re:",
         in_reply_to_message_id=in_reply_to_message_id,
         references=references,
+        attachments=attachments,
     )
 
 
@@ -171,6 +196,7 @@ def send_gmail_forward(
     from_email: str,
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
+    attachments: Sequence["OutboundAttachment"] = (),
 ) -> dict[str, Any]:
     return _send_gmail_message(
         credentials,
@@ -182,6 +208,7 @@ def send_gmail_forward(
         subject_prefix="Fwd:",
         in_reply_to_message_id=in_reply_to_message_id,
         references=references,
+        attachments=attachments,
     )
 
 

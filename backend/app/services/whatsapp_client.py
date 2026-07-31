@@ -37,6 +37,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
     tenant_id = payload.get("tenant_id")
     external_account_id = payload.get("external_account_id")
     whatsapp_endpoint_id = payload.get("whatsapp_endpoint_id")
+    attachments = payload.get("attachments") or []
 
     service_url = _resolve_service_url(external_account_id if isinstance(external_account_id, str) else None, whatsapp_endpoint_id if isinstance(whatsapp_endpoint_id, int) else None)
     if not service_url:
@@ -45,7 +46,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
         raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge API key is not configured")
     if not to:
         raise WhatsAppBridgeError(status.HTTP_400_BAD_REQUEST, "WhatsApp payload is missing 'to'")
-    if not message:
+    if not message and not attachments:
         raise WhatsAppBridgeError(status.HTTP_400_BAD_REQUEST, "WhatsApp payload is missing 'message'")
 
     url = urljoin(service_url.rstrip("/") + "/", "send")
@@ -55,6 +56,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
         "tenant_id": tenant_id,
         "external_account_id": external_account_id,
         "whatsapp_endpoint_id": whatsapp_endpoint_id,
+        "attachments": attachments,
     }
     print(
         "WA DEBUG backend to Node request",
@@ -65,10 +67,17 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
             "whatsapp_endpoint_id": whatsapp_endpoint_id,
             "to": to,
             "message_length": len(str(message)),
+            "attachment_count": len(attachments),
         },
     )
 
-    timeout = httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0)
+    # Attachments are base64 in the body (the bridge runs on the host, so it can't read the
+    # backend container's attachment volume) - 25MB of files is ~33MB of base64, which the
+    # default 10s write timeout cannot push on a slow link.
+    if attachments:
+        timeout = httpx.Timeout(connect=5.0, read=120.0, write=120.0, pool=5.0)
+    else:
+        timeout = httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.services.attachment_service import link_attachments
 
 PROVIDER_GMAIL = "gmail"
 
@@ -20,6 +21,7 @@ def persist_gmail_outbound_message(
     message: str,
     gmail_result: dict[str, Any],
     ai_generated: bool = False,
+    attachment_ids: list[int] | None = None,
 ) -> Communication:
     """Persist a Gmail message the CRM just sent (manually or via AI auto-send).
 
@@ -29,20 +31,19 @@ def persist_gmail_outbound_message(
     """
     now = datetime.now(timezone.utc)
     provider_message_id = gmail_result.get("id")
-    db.add(
-        ConversationMessage(
-            conversation_id=conversation.id,
-            provider=PROVIDER_GMAIL,
-            provider_message_id=provider_message_id or "",
-            direction="outbound",
-            sender_email=account.email_address,
-            recipient_email=to_email,
-            subject=subject,
-            body=message,
-            sent_at=now,
-            raw_payload={"gmail": gmail_result},
-        )
+    conversation_message = ConversationMessage(
+        conversation_id=conversation.id,
+        provider=PROVIDER_GMAIL,
+        provider_message_id=provider_message_id or "",
+        direction="outbound",
+        sender_email=account.email_address,
+        recipient_email=to_email,
+        subject=subject,
+        body=message,
+        sent_at=now,
+        raw_payload={"gmail": gmail_result},
     )
+    db.add(conversation_message)
     db.commit()
 
     communication = Communication(
@@ -59,4 +60,11 @@ def persist_gmail_outbound_message(
     db.add(communication)
     db.commit()
     db.refresh(communication)
+
+    # Link to both sides of the dual write: the ConversationMessage drives the email
+    # thread view, the Communication drives the cross-channel tenant timeline.
+    if attachment_ids:
+        link_attachments(db, attachment_ids=attachment_ids, conversation_message_id=conversation_message.id)
+        link_attachments(db, attachment_ids=attachment_ids, communication_id=communication.id)
+
     return communication

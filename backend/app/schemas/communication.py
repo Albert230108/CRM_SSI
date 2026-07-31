@@ -11,6 +11,7 @@ class CommunicationCreate(BaseModel):
     whatsapp_endpoint_id: int | None = None
     external_account_id: str | None = None
     email_thread_id: int | None = None
+    attachment_ids: list[int] = []
 
 
 class CommunicationRead(BaseModel):
