@@ -5,6 +5,7 @@ from app.models.communication import Communication
 from app.models.finance import Finance
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services import ai_reply_service
 
@@ -183,7 +184,7 @@ def test_history_is_channel_wide_not_thread_scoped(db_session, monkeypatch):
     assert "Message from thread B" in captured["prompt"]
 
 
-def test_history_respects_message_limit_and_channel(db_session, monkeypatch):
+def test_history_respects_message_limit(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     now = datetime.now(timezone.utc)
     for index in range(5):
@@ -196,26 +197,180 @@ def test_history_respects_message_limit_and_channel(db_session, monkeypatch):
                 created_at=now - timedelta(minutes=5 - index),
             )
         )
-    db_session.add(
-        Communication(
-            tenant_id=tenant.id,
-            channel="email",
-            direction="inbound",
-            message="an email message, wrong channel",
-            created_at=now,
-        )
-    )
     db_session.commit()
 
     captured = _capture_gemini_call(monkeypatch)
     template = _template(include_history=True, history_message_limit=2)
     ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="whatsapp", rough_draft="hi")
 
-    # Only the 2 most recent WhatsApp messages, none of the email one.
+    # Only the 2 most recent WhatsApp messages.
     assert "whatsapp message 3" in captured["prompt"]
     assert "whatsapp message 4" in captured["prompt"]
     assert "whatsapp message 0" not in captured["prompt"]
-    assert "wrong channel" not in captured["prompt"]
+
+
+def _seed_cross_channel_history(db_session, tenant, now):
+    """Two emails and two WhatsApps interleaved: wa-old, email-old, wa-new, email-new."""
+    thread = Conversation(
+        provider="gmail",
+        provider_account_id=1,
+        provider_thread_id="thread-mixed",
+        subject="Booking question",
+    )
+    db_session.add(thread)
+    db_session.commit()
+    db_session.refresh(thread)
+    db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=thread.id))
+    db_session.add_all(
+        [
+            ConversationMessage(
+                conversation_id=thread.id,
+                provider="gmail",
+                provider_message_id="mixed-e1",
+                direction="inbound",
+                subject="Booking question",
+                body="email body old",
+                sent_at=now - timedelta(minutes=30),
+            ),
+            ConversationMessage(
+                conversation_id=thread.id,
+                provider="gmail",
+                provider_message_id="mixed-e2",
+                direction="outbound",
+                subject="Re: Booking question",
+                body="email body new",
+                sent_at=now - timedelta(minutes=10),
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            Communication(
+                tenant_id=tenant.id,
+                channel="whatsapp",
+                direction="inbound",
+                message="whatsapp body old",
+                created_at=now - timedelta(minutes=40),
+            ),
+            Communication(
+                tenant_id=tenant.id,
+                channel="whatsapp",
+                direction="outbound",
+                message="whatsapp body new",
+                created_at=now - timedelta(minutes=20),
+            ),
+        ]
+    )
+    db_session.commit()
+
+
+def test_history_merges_email_and_whatsapp_for_an_email_draft(db_session, monkeypatch):
+    # Regression: the history block used to load only the drafted channel, so an email reply was
+    # generated with zero awareness of anything the guest said over WhatsApp.
+    tenant = _create_tenant(db_session)
+    _seed_cross_channel_history(db_session, tenant, datetime.now(timezone.utc))
+
+    captured = _capture_gemini_call(monkeypatch)
+    template = _template(include_history=True, history_message_limit=20)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
+
+    prompt = captured["prompt"]
+    for body in ("email body old", "email body new", "whatsapp body old", "whatsapp body new"):
+        assert body in prompt
+
+
+def test_history_merges_email_and_whatsapp_for_a_whatsapp_draft(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _seed_cross_channel_history(db_session, tenant, datetime.now(timezone.utc))
+
+    captured = _capture_gemini_call(monkeypatch)
+    template = _template(include_history=True, history_message_limit=20)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="whatsapp", rough_draft="hi")
+
+    prompt = captured["prompt"]
+    for body in ("email body old", "email body new", "whatsapp body old", "whatsapp body new"):
+        assert body in prompt
+
+
+def test_history_is_chronological_across_channels_and_tags_each_line(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _seed_cross_channel_history(db_session, tenant, datetime.now(timezone.utc))
+
+    captured = _capture_gemini_call(monkeypatch)
+    template = _template(include_history=True, history_message_limit=20)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
+
+    prompt = captured["prompt"]
+    order = [prompt.index(body) for body in ("whatsapp body old", "email body old", "whatsapp body new", "email body new")]
+    assert order == sorted(order)
+    assert "[WHATSAPP inbound]" in prompt
+    assert "[EMAIL inbound]" in prompt
+    # Email lines carry their subject so the model can tell which thread a message belongs to.
+    assert "Re: Booking question" in prompt
+
+
+def test_history_limit_applies_to_the_combined_cross_channel_stream(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    now = datetime.now(timezone.utc)
+    _seed_cross_channel_history(db_session, tenant, now)
+
+    captured = _capture_gemini_call(monkeypatch)
+    template = _template(include_history=True, history_message_limit=2)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
+
+    # The 2 most recent messages overall, regardless of channel - not 2 per channel.
+    prompt = captured["prompt"]
+    assert "whatsapp body new" in prompt
+    assert "email body new" in prompt
+    assert "whatsapp body old" not in prompt
+    assert "email body old" not in prompt
+
+
+def test_history_excludes_whatsapp_chats_hidden_from_the_tenant_timeline(db_session, monkeypatch):
+    # The manual chat link is authoritative: a stray message routed to this tenant under a
+    # different chat on the same account is hidden in the UI and must be hidden from the model too.
+    tenant = _create_tenant(db_session)
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        TenantChannelEndpoint(
+            tenant_id=tenant.id,
+            channel_type="whatsapp",
+            provider="whatsapp_web",
+            external_account_id="acct-1",
+            external_chat_namespace="351900000000@c.us",
+            is_active=True,
+        )
+    )
+    db_session.add_all(
+        [
+            Communication(
+                tenant_id=tenant.id,
+                channel="whatsapp",
+                direction="inbound",
+                message="linked chat message",
+                external_account_id="acct-1",
+                whatsapp_chat_id="351900000000@c.us",
+                created_at=now - timedelta(minutes=5),
+            ),
+            Communication(
+                tenant_id=tenant.id,
+                channel="whatsapp",
+                direction="inbound",
+                message="stray chat message",
+                external_account_id="acct-1",
+                whatsapp_chat_id="351911111111@c.us",
+                created_at=now - timedelta(minutes=4),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    captured = _capture_gemini_call(monkeypatch)
+    template = _template(include_history=True, history_message_limit=20)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
+
+    assert "linked chat message" in captured["prompt"]
+    assert "stray chat message" not in captured["prompt"]
 
 
 def test_guidelines_block_appears_first_when_present(db_session, monkeypatch):

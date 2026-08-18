@@ -141,6 +141,10 @@ def _ensure_utc(value: datetime | None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+# Public alias for other services that need the same naive/aware normalization.
+ensure_utc = _ensure_utc
+
+
 def _thread_message_sort_key(message: ConversationMessage) -> tuple[datetime, int]:
     return (_ensure_utc(message.sent_at), int(message.id))
 
@@ -282,6 +286,15 @@ def _load_tenant_whatsapp(db: Session, tenant_id: int) -> list[Communication]:
             filtered.append(message)
 
     return filtered
+
+
+def load_tenant_whatsapp_messages(db: Session, tenant_id: int) -> list[Communication]:
+    """Public accessor for the tenant's timeline-visible WhatsApp messages, oldest first.
+
+    Shared with the AI prompt builder so generated drafts see exactly the WhatsApp history the
+    operator sees in the thread view - same manual-link chat filtering, no stray chats.
+    """
+    return _load_tenant_whatsapp(db, tenant_id)
 
 
 def _build_thread_windows(conversations: Iterable[Conversation]) -> list[_EmailThreadWindow]:

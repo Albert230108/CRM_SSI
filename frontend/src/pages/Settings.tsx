@@ -742,7 +742,7 @@ export default function Settings() {
                 disabled={!aiTemplateForm.include_history}
                 className="w-20 rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none disabled:cursor-not-allowed disabled:bg-gray-100"
               />
-              messages
+              messages (email + WhatsApp combined)
             </label>
           </div>
 

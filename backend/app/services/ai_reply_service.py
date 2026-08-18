@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from app.models.ai_reply_template import AiReplyTemplate
-from app.models.communication import Communication
 from app.models.finance import Finance as FinanceRecord
 from app.models.gmail_integration import ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services import gemini_client
 from app.services.email_template_service import resolve_template_text
+from app.services.thread_timeline_service import ensure_utc as _ensure_utc, load_tenant_whatsapp_messages
 
 _DEFAULT_HISTORY_LIMIT = 20
+
+
+@dataclass(frozen=True)
+class _HistoryEntry:
+    timestamp: datetime
+    sort_id: int
+    text: str
 
 
 def _build_guidelines_content(template: AiReplyTemplate, tenant: Tenant) -> str:
@@ -64,7 +74,8 @@ def _build_payments_context(db: Session, tenant: Tenant) -> str:
     return "## Payments & Charges\n" + "\n".join(lines)
 
 
-def _load_email_history(db: Session, tenant_id: int, limit: int) -> list[str]:
+def _load_email_history(db: Session, tenant_id: int, limit: int) -> list[_HistoryEntry]:
+    """Most recent `limit` email messages across every linked thread of this tenant."""
     messages = (
         db.query(ConversationMessage)
         .join(TenantConversationLink, TenantConversationLink.conversation_id == ConversationMessage.conversation_id)
@@ -73,20 +84,32 @@ def _load_email_history(db: Session, tenant_id: int, limit: int) -> list[str]:
         .limit(limit)
         .all()
     )
-    messages.reverse()
-    return [f"[{message.direction}] {message.sent_at.isoformat()}: {message.body}" for message in messages]
+    entries: list[_HistoryEntry] = []
+    for message in messages:
+        sent_at = _ensure_utc(message.sent_at)
+        subject = (message.subject or "").strip()
+        prefix = f"[EMAIL {message.direction}] {sent_at.isoformat()}"
+        text = f"{prefix} — {subject}: {message.body}" if subject else f"{prefix}: {message.body}"
+        entries.append(_HistoryEntry(timestamp=sent_at, sort_id=int(message.id), text=text))
+    return entries
 
 
-def _load_whatsapp_history(db: Session, tenant_id: int, limit: int) -> list[str]:
-    messages = (
-        db.query(Communication)
-        .filter(Communication.tenant_id == tenant_id, Communication.channel == "whatsapp")
-        .order_by(Communication.created_at.desc(), Communication.id.desc())
-        .limit(limit)
-        .all()
-    )
-    messages.reverse()
-    return [f"[{message.direction}] {message.created_at.isoformat()}: {message.message}" for message in messages]
+def _load_whatsapp_history(db: Session, tenant_id: int, limit: int) -> list[_HistoryEntry]:
+    """Most recent `limit` WhatsApp messages, filtered exactly like the tenant's UI timeline.
+
+    Reuses the timeline loader so a tenant with an active manual chat link never feeds the model
+    stray messages from a different chat on the same account - what the model sees is what the
+    operator sees in the thread view.
+    """
+    messages = load_tenant_whatsapp_messages(db, tenant_id)[-limit:] if limit > 0 else []
+    return [
+        _HistoryEntry(
+            timestamp=_ensure_utc(message.created_at),
+            sort_id=int(message.id),
+            text=f"[WHATSAPP {message.direction}] {_ensure_utc(message.created_at).isoformat()}: {message.message}",
+        )
+        for message in messages
+    ]
 
 
 def _build_notes_context(tenant: Tenant) -> str:
@@ -96,11 +119,22 @@ def _build_notes_context(tenant: Tenant) -> str:
     return "## Internal Notes\n" + notes
 
 
-def _build_history_context(db: Session, tenant: Tenant, channel: str, limit: int) -> str:
-    lines = _load_email_history(db, tenant.id, limit) if channel == "email" else _load_whatsapp_history(db, tenant.id, limit)
-    if not lines:
-        return f"## Conversation History (last {limit} messages on {channel})\nNo prior messages on file."
-    return f"## Conversation History (last {limit} messages on {channel})\n" + "\n".join(lines)
+def _build_history_context(db: Session, tenant: Tenant, limit: int) -> str:
+    """Last `limit` messages for this tenant across *all* channels, oldest first.
+
+    The history is deliberately channel-agnostic: a reply on one channel routinely depends on what
+    was said on the other, so both email (every linked thread, not just the one being replied to)
+    and WhatsApp are merged into a single chronological stream and only then truncated to `limit`.
+    Each line carries its channel so the model can tell the two mediums apart.
+    """
+    entries = _load_email_history(db, tenant.id, limit) + _load_whatsapp_history(db, tenant.id, limit)
+    entries.sort(key=lambda entry: (entry.timestamp, entry.sort_id))
+    entries = entries[-limit:] if limit > 0 else []
+
+    header = f"## Conversation History (last {limit} messages across email and WhatsApp)"
+    if not entries:
+        return f"{header}\nNo prior messages on file."
+    return header + "\n" + "\n".join(entry.text for entry in entries)
 
 
 def assemble_prompt(
@@ -113,7 +147,7 @@ def assemble_prompt(
 ) -> str:
     """Build the exact, single flat prompt string sent to Gemini.
 
-    Fixed order: 0. guidelines, 1. template text/subprompts, 2. message history,
+    Fixed order: 0. guidelines, 1. template text/subprompts, 2. message history (all channels),
     3. Beds24 info (booking + payments + notes), 4. the user's typed text. Each present
     group is prefixed with its position number so the numbering is visible directly in
     the payload, not just in the template editor UI. Group 4 is included only if the
@@ -133,7 +167,7 @@ def assemble_prompt(
 
     if template.include_history:
         limit = template.history_message_limit or _DEFAULT_HISTORY_LIMIT
-        history_content = _build_history_context(db, tenant, channel, limit)
+        history_content = _build_history_context(db, tenant, limit)
         blocks.append(f"2. Message History\n{history_content}")
 
     beds24_group: list[str] = []
