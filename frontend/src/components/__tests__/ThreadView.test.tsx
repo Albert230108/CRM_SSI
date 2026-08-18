@@ -163,6 +163,101 @@ describe('ThreadView Draft with AI', () => {
     expect(requestBody).toEqual({ channel: 'whatsapp', template_id: AI_TEMPLATE.id, rough_draft: 'let them know 3pm' })
   })
 
+  it('hides the Run planner button when the planner is off for the tenant', async () => {
+    useAuthStore.setState({ token: 'test-token' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.includes('/api/tenants/7/ai-settings')) return jsonResponse({ tenant_id: 7, available_template_ids: [], default_email_template_id: null, default_whatsapp_template_id: AI_TEMPLATE.id, auto_draft_email: false, auto_draft_whatsapp: false, auto_send_email: false, auto_send_whatsapp: false, planner_mode: 'off' })
+        if (url.includes('/api/ai-reply-templates')) return jsonResponse([AI_TEMPLATE])
+        if (url.includes('/api/tenants/7')) return jsonResponse(TENANT)
+        if (url.includes('/grouped-thread')) return jsonResponse({ tenant_id: 7, tenant_name: TENANT.name, items: [WHATSAPP_GROUP] })
+        if (url.includes('/whatsapp-endpoints')) return jsonResponse([])
+        if (url.match(/\/whatsapp-links$/)) return jsonResponse([])
+        return jsonResponse({ detail: `unhandled ${url}` }, false)
+      }),
+    )
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={7} />)
+    await screen.findByText('Jane Doe')
+    await user.click(await screen.findByRole('button', { name: 'Reply' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await within(dialog).findByRole('button', { name: 'Draft with AI' })
+    expect(within(dialog).queryByRole('button', { name: 'Run planner' })).not.toBeInTheDocument()
+  })
+
+  it('runs the planner and fills the textarea with the final draft', async () => {
+    useAuthStore.setState({ token: 'test-token' })
+    const planSpy = vi.fn(() =>
+      jsonResponse({ status: 'completed', generated_text: 'Planned reply text', template_id: AI_TEMPLATE.id, run_id: 12, checker_passed: true, checker_feedback: null, escalation_reason: null }),
+    )
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.includes('/api/tenants/7/ai-settings')) return jsonResponse({ tenant_id: 7, available_template_ids: [], default_email_template_id: null, default_whatsapp_template_id: AI_TEMPLATE.id, auto_draft_email: false, auto_draft_whatsapp: false, auto_send_email: false, auto_send_whatsapp: false, planner_mode: 'manual' })
+        if (url.includes('/api/ai-reply-templates')) return jsonResponse([AI_TEMPLATE])
+        if (url.includes('/ai-plan')) return planSpy(input, init)
+        if (url.includes('/api/tenants/7')) return jsonResponse(TENANT)
+        if (url.includes('/grouped-thread')) return jsonResponse({ tenant_id: 7, tenant_name: TENANT.name, items: [WHATSAPP_GROUP] })
+        if (url.includes('/whatsapp-endpoints')) return jsonResponse([])
+        if (url.match(/\/whatsapp-links$/)) return jsonResponse([])
+        return jsonResponse({ detail: `unhandled ${url}` }, false)
+      }),
+    )
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={7} />)
+    await screen.findByText('Jane Doe')
+    await user.click(await screen.findByRole('button', { name: 'Reply' }))
+
+    const dialog = await screen.findByRole('dialog')
+    const textarea = within(dialog).getByPlaceholderText('Write your reply...')
+    await user.type(textarea, 'mention the lockbox')
+
+    await user.click(await within(dialog).findByRole('button', { name: 'Run planner' }))
+
+    await waitFor(() => expect(planSpy).toHaveBeenCalledTimes(1))
+    expect(await within(dialog).findByDisplayValue('Planned reply text')).toBeInTheDocument()
+
+    const [, requestInit] = planSpy.mock.calls[0]
+    // The planner picks its own template, so only the channel and the operator's text go up.
+    expect(JSON.parse((requestInit as RequestInit).body as string)).toEqual({ channel: 'whatsapp', rough_draft: 'mention the lockbox' })
+  })
+
+  it('warns when the planner returns a draft the checker never approved', async () => {
+    useAuthStore.setState({ token: 'test-token' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.includes('/api/tenants/7/ai-settings')) return jsonResponse({ tenant_id: 7, available_template_ids: [], default_email_template_id: null, default_whatsapp_template_id: AI_TEMPLATE.id, auto_draft_email: false, auto_draft_whatsapp: false, auto_send_email: false, auto_send_whatsapp: false, planner_mode: 'manual' })
+        if (url.includes('/api/ai-reply-templates')) return jsonResponse([AI_TEMPLATE])
+        if (url.includes('/ai-plan')) return jsonResponse({ status: 'needs_review', generated_text: 'Unreviewed draft', template_id: AI_TEMPLATE.id, run_id: 13, checker_passed: false, checker_feedback: 'Too formal', escalation_reason: 'checker_rejected' })
+        if (url.includes('/api/tenants/7')) return jsonResponse(TENANT)
+        if (url.includes('/grouped-thread')) return jsonResponse({ tenant_id: 7, tenant_name: TENANT.name, items: [WHATSAPP_GROUP] })
+        if (url.includes('/whatsapp-endpoints')) return jsonResponse([])
+        if (url.match(/\/whatsapp-links$/)) return jsonResponse([])
+        return jsonResponse({ detail: `unhandled ${url}` }, false)
+      }),
+    )
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={7} />)
+    await screen.findByText('Jane Doe')
+    await user.click(await screen.findByRole('button', { name: 'Reply' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(await within(dialog).findByRole('button', { name: 'Run planner' }))
+
+    expect(await within(dialog).findByDisplayValue('Unreviewed draft')).toBeInTheDocument()
+    expect(await within(dialog).findByText(/reviewer never approved/i)).toBeInTheDocument()
+  })
+
   it('shows a pending auto-draft banner and fills the textarea when used', async () => {
     useAuthStore.setState({ token: 'test-token' })
     const pendingDraft = { id: 55, tenant_id: 7, channel: 'whatsapp', generated_text: 'Auto-generated: check-in is 3pm', status: 'pending', scheduled_send_at: null, created_at: '2026-07-20T10:00:00Z' }

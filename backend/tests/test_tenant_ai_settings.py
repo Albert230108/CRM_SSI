@@ -42,6 +42,10 @@ def test_get_creates_default_settings_row(non_admin_client, db_session):
         "auto_draft_whatsapp": False,
         "auto_send_email": False,
         "auto_send_whatsapp": False,
+        # The planner is opt-in: a tenant nobody has configured must never run it.
+        "planner_mode": "off",
+        "planner_profile_id": None,
+        "checker_profile_id": None,
     }
 
 

@@ -24,6 +24,16 @@ type TenantAiSettings = {
   auto_draft_whatsapp: boolean
   auto_send_email: boolean
   auto_send_whatsapp: boolean
+  planner_mode: 'off' | 'manual' | 'auto'
+  planner_profile_id: number | null
+  checker_profile_id: number | null
+}
+
+type AgentProfileOption = {
+  id: number
+  name: string
+  role: 'planner' | 'checker'
+  is_default: boolean
 }
 
 const emptySettings = (tenantId: number): TenantAiSettings => ({
@@ -35,6 +45,9 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
   auto_draft_whatsapp: false,
   auto_send_email: false,
   auto_send_whatsapp: false,
+  planner_mode: 'off',
+  planner_profile_id: null,
+  checker_profile_id: null,
 })
 
 export default function AiTenantSettings() {
@@ -42,6 +55,7 @@ export default function AiTenantSettings() {
   const [searchQuery, setSearchQuery] = useState('')
   const [tenants, setTenants] = useState<TenantSearchResult[]>([])
   const [templates, setTemplates] = useState<AiTemplateOption[]>([])
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfileOption[]>([])
   const [selectedTenant, setSelectedTenant] = useState<TenantSearchResult | null>(null)
   const [settings, setSettings] = useState<TenantAiSettings | null>(null)
   const [loadingSettings, setLoadingSettings] = useState(false)
@@ -61,7 +75,14 @@ export default function AiTenantSettings() {
       })
       if (response.ok) setTemplates(await response.json())
     }
+    const loadAgentProfiles = async () => {
+      const response = await fetch(`${API_BASE_URL}/api/ai-agent-profiles`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (response.ok) setAgentProfiles(await response.json())
+    }
     loadTemplates()
+    loadAgentProfiles()
   }, [token])
 
   useEffect(() => {
@@ -444,6 +465,78 @@ export default function AiTenantSettings() {
                     />
                     Auto-send (requires auto-draft)
                   </label>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-2.5">
+                <p className="text-sm font-semibold text-gray-900">Planner &amp; Checker</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  When on, an AI planner reads the conversation and picks the template itself, then a checker
+                  proof-reads the draft. Configure the profiles on the{' '}
+                  <Link to="/settings/ai-agents" className="text-cyan-700 hover:underline">profiles page</Link>.
+                </p>
+                <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-mode">
+                      Mode
+                    </label>
+                    <select
+                      id="planner-mode"
+                      value={settings.planner_mode}
+                      onChange={(event) =>
+                        setSettings((current) =>
+                          current ? { ...current, planner_mode: event.target.value as TenantAiSettings['planner_mode'] } : current,
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    >
+                      <option value="off">Off — pick templates by hand</option>
+                      <option value="manual">Manual — a "Run planner" button in the reply box</option>
+                      <option value="auto">Auto — also runs on every inbound message</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-profile">
+                      Planner profile
+                    </label>
+                    <select
+                      id="planner-profile"
+                      value={settings.planner_profile_id ?? ''}
+                      disabled={settings.planner_mode === 'off'}
+                      onChange={(event) =>
+                        setSettings((current) =>
+                          current ? { ...current, planner_profile_id: event.target.value ? Number(event.target.value) : null } : current,
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                    >
+                      <option value="">Use the default</option>
+                      {agentProfiles.filter((profile) => profile.role === 'planner').map((profile) => (
+                        <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="checker-profile">
+                      Checker profile
+                    </label>
+                    <select
+                      id="checker-profile"
+                      value={settings.checker_profile_id ?? ''}
+                      disabled={settings.planner_mode === 'off'}
+                      onChange={(event) =>
+                        setSettings((current) =>
+                          current ? { ...current, checker_profile_id: event.target.value ? Number(event.target.value) : null } : current,
+                        )
+                      }
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                    >
+                      <option value="">Use the default</option>
+                      {agentProfiles.filter((profile) => profile.role === 'checker').map((profile) => (
+                        <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 

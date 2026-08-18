@@ -517,6 +517,7 @@ type AiTemplateOption = {
 }
 
 type TenantAiSettings = {
+  planner_mode?: 'off' | 'manual' | 'auto'
   tenant_id: number
   available_template_ids: number[]
   default_email_template_id: number | null
@@ -594,6 +595,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const [tenantAiSettings, setTenantAiSettings] = useState<TenantAiSettings | null>(null)
   const [selectedAiTemplateId, setSelectedAiTemplateId] = useState('')
   const [aiDraftGenerating, setAiDraftGenerating] = useState(false)
+  const [plannerRunning, setPlannerRunning] = useState(false)
+  const [plannerNotice, setPlannerNotice] = useState('')
   const [aiDraftError, setAiDraftError] = useState('')
   const [pendingAutoDrafts, setPendingAutoDrafts] = useState<AiAutoDraftItem[]>([])
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
@@ -1034,6 +1037,50 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       setAiDraftError(err instanceof Error ? err.message : 'Failed to generate AI draft')
     } finally {
       setAiDraftGenerating(false)
+    }
+  }
+
+  const plannerEnabled = (tenantAiSettings?.planner_mode ?? 'off') !== 'off'
+
+  const handleRunPlanner = async () => {
+    if (!tenantId || !replyTarget || plannerRunning) return
+    try {
+      setPlannerRunning(true)
+      setAiDraftError('')
+      setPlannerNotice('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-plan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          channel: replyTarget.type,
+          // Whatever is already in the box is the operator's intent, so it leads the plan.
+          rough_draft: replyMessage.trim() || null,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Failed to run the planner')
+      }
+      if (!data?.generated_text) {
+        setPlannerNotice(
+          data?.status === 'escalated'
+            ? `The planner stopped and flagged this for a human${data.escalation_reason ? ` (${data.escalation_reason})` : ''}.`
+            : 'The planner decided no reply was needed.',
+        )
+        return
+      }
+      setReplyMessage(data.generated_text)
+      if (data.template_id) setSelectedAiTemplateId(String(data.template_id))
+      if (data.status === 'needs_review') {
+        setPlannerNotice('The reviewer never approved this draft - read it carefully before sending.')
+      }
+    } catch (err) {
+      setAiDraftError(err instanceof Error ? err.message : 'Failed to run the planner')
+    } finally {
+      setPlannerRunning(false)
     }
   }
 
@@ -2087,6 +2134,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     >
                       {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
                     </button>
+                    {plannerEnabled ? (
+                      <button
+                        type="button"
+                        onClick={handleRunPlanner}
+                        disabled={plannerRunning}
+                        title="Let the AI pick the template and draft the reply, then have it reviewed"
+                        className="rounded-lg border border-indigo-500 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {plannerRunning ? 'Planning...' : 'Run planner'}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={handlePreviewAiPayload}
@@ -2100,6 +2158,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     </button>
                   </div>
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
+                  {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
@@ -2287,6 +2346,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       >
                         {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
                       </button>
+                      {plannerEnabled ? (
+                        <button
+                          type="button"
+                          onClick={handleRunPlanner}
+                          disabled={plannerRunning}
+                          title="Let the AI pick the template and draft the reply, then have it reviewed"
+                          className="rounded-lg border border-indigo-500 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {plannerRunning ? 'Planning...' : 'Run planner'}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={handlePreviewAiPayload}
@@ -2300,6 +2370,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       </button>
                     </div>
                     {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
+                    {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                     <textarea
                       value={replyMessage}
                       onChange={(event) => setReplyMessage(event.target.value)}
@@ -2502,6 +2573,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     >
                       {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
                     </button>
+                    {plannerEnabled ? (
+                      <button
+                        type="button"
+                        onClick={handleRunPlanner}
+                        disabled={plannerRunning}
+                        title="Let the AI pick the template and draft the reply, then have it reviewed"
+                        className="rounded-lg border border-indigo-500 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {plannerRunning ? 'Planning...' : 'Run planner'}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={handlePreviewAiPayload}
@@ -2515,6 +2597,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     </button>
                   </div>
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
+                  {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}

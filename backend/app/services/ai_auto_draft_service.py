@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
+from app.models.ai_agent_run import STATUS_NEEDS_REVIEW
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
-from app.services import ai_reply_service
+from app.services import ai_agent_orchestrator, ai_reply_service
 from app.services.email_outbound_persistence import persist_gmail_outbound_message
 from app.services.gmail_client import build_gmail_credentials, send_gmail_reply
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
@@ -25,6 +26,63 @@ logger = logging.getLogger(__name__)
 def _auto_send_delay_seconds(db: Session) -> int:
     settings = db.query(AdminSettings).first()
     return settings.ai_auto_send_delay_seconds if settings is not None else 300
+
+
+def _generate_draft_via_planner(
+    db: Session,
+    trigger: AiAutoDraftTrigger,
+    tenant: Tenant,
+    ai_settings: TenantAiSettings,
+) -> AiAutoDraft | None:
+    """Auto-mode drafting: the planner chooses the template instead of the tenant default.
+
+    A draft the checker never approved is stored as `needs_review` so staff still see it, but it
+    is deliberately kept out of the auto-send path regardless of the tenant's auto_send setting.
+    """
+    result = ai_agent_orchestrator.run_planner_loop(
+        db,
+        tenant=tenant,
+        channel=trigger.channel,
+        mode="auto",
+        inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel),
+    )
+    if not result.generated_text:
+        logger.info(
+            "Planner produced no draft tenant_id=%s channel=%s status=%s reason=%s",
+            tenant.id,
+            trigger.channel,
+            result.status,
+            result.escalation_reason,
+        )
+        return None
+
+    auto_send_enabled = (
+        ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp
+    ) and result.auto_send_allowed
+
+    if result.status == STATUS_NEEDS_REVIEW and not result.auto_send_allowed:
+        status_value = "needs_review"
+    else:
+        status_value = "pending_auto_send" if auto_send_enabled else "pending"
+
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel=trigger.channel,
+        template_id=result.template_id,
+        email_thread_id=trigger.email_thread_id,
+        whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
+        generated_text=result.generated_text,
+        status=status_value,
+        scheduled_send_at=(
+            datetime.now(timezone.utc) + timedelta(seconds=_auto_send_delay_seconds(db))
+        )
+        if status_value == "pending_auto_send"
+        else None,
+        agent_run_id=result.run_id,
+        checker_feedback=result.checker_feedback,
+    )
+    db.add(draft)
+    return draft
 
 
 def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAutoDraft | None:
@@ -41,6 +99,9 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
     if ai_settings is None:
         return None
+
+    if (ai_settings.planner_mode or "off") == "auto":
+        return _generate_draft_via_planner(db, trigger, tenant, ai_settings)
 
     template_id = ai_settings.default_email_template_id if trigger.channel == "email" else ai_settings.default_whatsapp_template_id
     if template_id is None:

@@ -36,8 +36,10 @@ type AiTemplateSection = { label: string; content: string }
 type AiReplyTemplate = {
   id: number
   name: string
+  description: string | null
   guidelines: string | null
   sections: AiTemplateSection[]
+  brain_section_ids: number[]
   include_history: boolean
   history_message_limit: number | null
   include_beds24: boolean
@@ -45,11 +47,20 @@ type AiReplyTemplate = {
   include_notes: boolean
 }
 
+type BrainSectionOption = {
+  id: number
+  path: string
+  title: string
+  is_active: boolean
+}
+
 const emptyAiTemplateForm = {
   id: null as number | null,
   name: '',
+  description: '',
   guidelines: '',
   sections: [{ label: '', content: '' }] as AiTemplateSection[],
+  brain_section_ids: [] as number[],
   include_history: false,
   history_message_limit: 20 as number | null,
   include_beds24: false,
@@ -80,6 +91,7 @@ export default function Settings() {
   const [aiTemplateForm, setAiTemplateForm] = useState(emptyAiTemplateForm)
   const [savingAiTemplate, setSavingAiTemplate] = useState(false)
   const [aiTemplateMessage, setAiTemplateMessage] = useState('')
+  const [brainSections, setBrainSections] = useState<BrainSectionOption[]>([])
 
   const loadGmailAccounts = async () => {
     const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
@@ -100,6 +112,13 @@ export default function Settings() {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     if (response.ok) setAiTemplates(await response.json())
+  }
+
+  const loadBrainSections = async () => {
+    const response = await fetch(`${API_BASE_URL}/api/brain-sections/flat`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) setBrainSections(await response.json())
   }
 
   useEffect(() => {
@@ -143,6 +162,7 @@ export default function Settings() {
     loadGmailAccounts()
     loadEmailTemplates()
     loadAiTemplates()
+    loadBrainSections()
 
     return () => {
       cancelled = true
@@ -332,8 +352,10 @@ export default function Settings() {
     setAiTemplateForm({
       id: template.id,
       name: template.name,
+      description: template.description ?? '',
       guidelines: template.guidelines ?? '',
       sections: template.sections.length ? template.sections : [{ label: '', content: '' }],
+      brain_section_ids: template.brain_section_ids ?? [],
       include_history: template.include_history,
       history_message_limit: template.history_message_limit ?? 20,
       include_beds24: template.include_beds24,
@@ -386,8 +408,10 @@ export default function Settings() {
           headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
           body: JSON.stringify({
             name: aiTemplateForm.name.trim(),
+            description: aiTemplateForm.description.trim() || null,
             guidelines: aiTemplateForm.guidelines.trim() || null,
             sections: aiTemplateForm.sections.filter((section) => section.label.trim() || section.content.trim()),
+            brain_section_ids: aiTemplateForm.brain_section_ids,
             include_history: aiTemplateForm.include_history,
             history_message_limit: aiTemplateForm.include_history ? aiTemplateForm.history_message_limit : null,
             include_beds24: aiTemplateForm.include_beds24,
@@ -631,14 +655,23 @@ export default function Settings() {
             <p className="mt-1.5 flex flex-wrap gap-2 text-xs font-semibold text-gray-600">
               <span className="rounded-full bg-gray-100 px-2 py-0.5">0. Goal &amp; Guidelines</span>
               <span className="rounded-full bg-gray-100 px-2 py-0.5">1. Template text</span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5">1b. Knowledge base (brain)</span>
               <span className="rounded-full bg-gray-100 px-2 py-0.5">2. Message history</span>
               <span className="rounded-full bg-gray-100 px-2 py-0.5">3. Beds24 info (booking + payments + notes)</span>
               <span className="rounded-full bg-gray-100 px-2 py-0.5">4. Your typed reply</span>
             </p>
           </div>
-          <Link to="/settings/ai-tenants" className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
-            Configure per tenant &rarr;
-          </Link>
+          <div className="flex shrink-0 flex-col gap-2">
+            <Link to="/settings/ai-tenants" className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+              Configure per tenant &rarr;
+            </Link>
+            <Link to="/settings/brain" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
+              Edit the AI Brain &rarr;
+            </Link>
+            <Link to="/settings/ai-agents" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
+              Planner &amp; Checker &rarr;
+            </Link>
+          </div>
         </div>
 
         <div className="mt-3 space-y-2">
@@ -647,11 +680,15 @@ export default function Settings() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">{template.name}</p>
+                  {template.description ? (
+                    <p className="mt-1 truncate text-xs text-gray-500">When: {template.description}</p>
+                  ) : null}
                   {template.guidelines ? (
                     <p className="mt-1 truncate text-xs italic text-gray-500">0. {template.guidelines}</p>
                   ) : null}
                   <p className="mt-1 text-xs text-gray-500">{template.sections.length} section{template.sections.length === 1 ? '' : 's'}</p>
                   <p className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
+                    {template.brain_section_ids?.length ? <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{template.brain_section_ids.length} brain section{template.brain_section_ids.length === 1 ? '' : 's'}</span> : null}
                     {template.include_history ? <span className="rounded-full bg-gray-100 px-2 py-0.5">History ({template.history_message_limit ?? '-'} msgs)</span> : null}
                     {template.include_beds24 ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Beds24 info</span> : null}
                     {template.include_payments ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Payments/charges</span> : null}
@@ -680,6 +717,21 @@ export default function Settings() {
           />
 
           <div className="space-y-1.5">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">When to use this template</p>
+            <textarea
+              value={aiTemplateForm.description}
+              onChange={(event) => setAiTemplateForm((current) => ({ ...current, description: event.target.value }))}
+              placeholder="e.g. Use when a guest asks to arrive outside normal check-in hours."
+              rows={2}
+              className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+            />
+            <p className="text-xs text-gray-500">
+              Read by the planner when it picks a template. It is never sent to the drafting model, so describe the
+              situation rather than writing instructions here.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">0. Goal &amp; Guidelines</p>
             <textarea
               value={aiTemplateForm.guidelines}
@@ -690,6 +742,10 @@ export default function Settings() {
             />
             <p className="text-xs text-gray-500">
               Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
+            </p>
+            <p className="text-xs text-gray-500">
+              Brain references also work here and in every section below, e.g.{' '}
+              <code className="rounded bg-white px-1 py-0.5">{'{{brain:policies.cancellation}}'}</code>.
             </p>
           </div>
 
@@ -721,6 +777,46 @@ export default function Settings() {
             <button type="button" onClick={addAiTemplateSection} className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100">+ Add section</button>
             <p className="text-xs text-gray-500">
               Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1b. Knowledge base (brain sections)</p>
+            {brainSections.length === 0 ? (
+              <p className="text-xs text-gray-500">
+                No brain sections yet. <Link to="/settings/brain" className="text-cyan-700 hover:underline">Create some</Link> to
+                share knowledge across templates.
+              </p>
+            ) : (
+              <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
+                {brainSections.map((section) => (
+                  <label key={section.id} className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={aiTemplateForm.brain_section_ids.includes(section.id)}
+                      onChange={(event) =>
+                        setAiTemplateForm((current) => ({
+                          ...current,
+                          brain_section_ids: event.target.checked
+                            ? [...current.brain_section_ids, section.id]
+                            : current.brain_section_ids.filter((id) => id !== section.id),
+                        }))
+                      }
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <span className="truncate">
+                      {section.title}
+                      {!section.is_active ? <span className="ml-2 text-xs text-amber-600">inactive</span> : null}
+                      <span className="ml-2 font-mono text-xs text-gray-400">{section.path}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-gray-500">
+              Attached sections are appended as their own block, including everything nested under them. Use an inline{' '}
+              <code className="rounded bg-white px-1 py-0.5">{'{{brain:path}}'}</code> token instead when the text needs
+              to land at a specific spot.
             </p>
           </div>
 

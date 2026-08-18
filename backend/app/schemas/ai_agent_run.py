@@ -1,0 +1,44 @@
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
+
+
+class AiAgentRunStepRead(BaseModel):
+    id: int
+    step_index: int
+    stage: str
+    model: str | None = None
+    prompt: str | None = None
+    response: str | None = None
+    parsed: Any | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_ms: int | None = None
+    error: str | None = None
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+
+
+class AiAgentRunRead(BaseModel):
+    id: int
+    tenant_id: int
+    tenant_name: str | None = None
+    channel: str
+    mode: str
+    status: str
+    escalation_reason: str | None = None
+    planner_profile_id: int | None = None
+    checker_profile_id: int | None = None
+    final_template_id: int | None = None
+    checker_feedback: str | None = None
+    attempts: int
+    total_prompt_tokens: int
+    total_output_tokens: int
+    duration_ms: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AiAgentRunDetail(AiAgentRunRead):
+    final_text: str | None = None
+    steps: list[AiAgentRunStepRead] = []

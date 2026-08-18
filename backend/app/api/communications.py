@@ -21,7 +21,7 @@ from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
-from app.services import ai_reply_service
+from app.services import ai_agent_orchestrator, ai_reply_service
 from app.services.attachment_service import (
     AttachmentLimitExceededError,
     AttachmentNotFoundError,
@@ -101,6 +101,21 @@ class AiDraftPreviewResponse(BaseModel):
     char_count: int
     approx_token_count: int
     template_id: int
+
+
+class AiPlanRequest(BaseModel):
+    channel: str
+    rough_draft: str | None = None
+
+
+class AiPlanResponse(BaseModel):
+    status: str
+    generated_text: str | None = None
+    template_id: int | None = None
+    run_id: int | None = None
+    checker_passed: bool = False
+    checker_feedback: str | None = None
+    escalation_reason: str | None = None
 
 
 def _resolve_tenant_conversation(db: Session, tenant: Tenant, email_thread_id: int) -> tuple[Conversation, GmailAccount]:
@@ -945,6 +960,64 @@ def generate_tenant_ai_draft(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return AiDraftGenerateResponse(generated_text=generated_text, template_id=template.id)
+
+
+@router.post("/tenants/{tenant_id}/ai-plan", response_model=AiPlanResponse)
+def run_tenant_ai_planner(
+    tenant_id: int,
+    payload: AiPlanRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiPlanResponse:
+    """Run the planner -> drafter -> checker loop on demand for the reply box.
+
+    Unlike /ai-draft the caller does not choose a template: the planner picks one from what the
+    tenant has available. Anything the operator already typed is passed through as the strongest
+    hint about what the reply must say. Nothing is sent; the run log is persisted for auditing.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    channel = (payload.channel or "").strip().lower()
+    if channel not in ("email", "whatsapp"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="channel must be email or whatsapp")
+
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    if ai_settings is None or (ai_settings.planner_mode or "off") == "off":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The planner is turned off for this tenant.",
+        )
+
+    try:
+        result = ai_agent_orchestrator.run_planner_loop(
+            db,
+            tenant=tenant,
+            channel=channel,
+            mode="manual",
+            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
+            operator_note=payload.rough_draft,
+            user_id=current_user.id,
+        )
+    except GeminiClientError as exc:
+        db.rollback()
+        logger.exception("AI planner run failed")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    # The run log is worth keeping even when the loop declined to draft - that decision is
+    # exactly what an operator asking "why didn't it reply?" needs to see.
+    db.commit()
+
+    return AiPlanResponse(
+        status=result.status,
+        generated_text=result.generated_text,
+        template_id=result.template_id,
+        run_id=result.run_id,
+        checker_passed=result.checker_passed,
+        checker_feedback=result.checker_feedback,
+        escalation_reason=result.escalation_reason,
+    )
 
 
 @router.post("/tenants/{tenant_id}/ai-draft/preview", response_model=AiDraftPreviewResponse)

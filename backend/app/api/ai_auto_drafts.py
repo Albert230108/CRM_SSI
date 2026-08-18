@@ -9,7 +9,9 @@ from app.schemas.ai_auto_draft import AiAutoDraftRead
 
 router = APIRouter(prefix="/ai-auto-drafts", tags=["ai-auto-drafts"])
 
-DEFAULT_STATUSES = ("pending", "pending_auto_send")
+# "needs_review" drafts came out of the planner loop without the checker ever approving them.
+# They are surfaced alongside ordinary pending drafts precisely because they need a human.
+DEFAULT_STATUSES = ("pending", "pending_auto_send", "needs_review")
 
 
 def _get_draft(db: Session, draft_id: int) -> AiAutoDraft:

@@ -16,8 +16,13 @@ class AiAutoDraft(Base):
     # pending -> pending_auto_send -> sent, or pending -> dismissed / used_as_manual_seed.
     # A draft superseded by a fresher one (new inbound message before it was acted on) moves to
     # "superseded" rather than being deleted, so the automatic pipeline keeps a full audit trail.
+    # "needs_review" is a terminal state for planner drafts the checker never approved: they are
+    # shown to staff but are deliberately excluded from the auto-send scheduler.
     status = Column(String(20), nullable=False, default="pending", server_default="pending", index=True)
     scheduled_send_at = Column(DateTime(timezone=True), nullable=True)
     sent_communication_id = Column(Integer, ForeignKey("communications.id", ondelete="SET NULL"), nullable=True)
+    # Set when the draft came out of the planner loop, linking it to its full execution log.
+    agent_run_id = Column(Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True)
+    checker_feedback = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

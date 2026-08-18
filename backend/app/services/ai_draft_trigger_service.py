@@ -42,7 +42,9 @@ def register_inbound_message(
     db.query(AiAutoDraft).filter(
         AiAutoDraft.tenant_id == tenant.id,
         AiAutoDraft.channel == channel,
-        AiAutoDraft.status.in_(["pending", "pending_auto_send"]),
+        # A parked "needs_review" draft is superseded too: once a newer message arrives, the
+        # stale draft is no longer the reply a human should be reviewing.
+        AiAutoDraft.status.in_(["pending", "pending_auto_send", "needs_review"]),
     ).update({"status": "superseded"}, synchronize_session=False)
 
     trigger_at = datetime.now(timezone.utc) + timedelta(seconds=_debounce_seconds(db))

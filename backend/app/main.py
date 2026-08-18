@@ -9,10 +9,13 @@ from fastapi import FastAPI
 from app.api.admin_invites import router as admin_invites_router
 from app.api.admin_settings import router as admin_settings_router
 from app.api.admin_sync import router as admin_sync_router
+from app.api.ai_agent_profiles import router as ai_agent_profiles_router
+from app.api.ai_agent_runs import router as ai_agent_runs_router
 from app.api.ai_auto_drafts import router as ai_auto_drafts_router
 from app.api.ai_reply_templates import router as ai_reply_templates_router
 from app.api.auth import router as auth_router
 from app.api.beds24_webhooks import router as beds24_webhook_router
+from app.api.brain_sections import router as brain_sections_router
 from app.api.communications import router as communications_router
 from app.api.communication_attachments import router as communication_attachments_router
 from app.api.email_templates import router as email_templates_router
@@ -217,8 +220,11 @@ app.include_router(communications_router, prefix="/api")
 app.include_router(communication_attachments_router, prefix="/api")
 app.include_router(email_templates_router, prefix="/api")
 app.include_router(ai_reply_templates_router, prefix="/api")
+app.include_router(brain_sections_router, prefix="/api")
 app.include_router(tenant_ai_settings_router, prefix="/api")
 app.include_router(ai_auto_drafts_router, prefix="/api")
+app.include_router(ai_agent_profiles_router, prefix="/api")
+app.include_router(ai_agent_runs_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(gmail_integration_router)
 app.include_router(tenants_router, prefix="/api")

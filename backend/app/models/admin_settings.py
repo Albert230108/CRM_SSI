@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, func
 
 from app.database import Base
 
@@ -16,4 +16,10 @@ class AdminSettings(Base):
     # When true, every newly created tenant is automatically linked to all existing shared AI
     # reply templates (see tenants.py create_tenant), instead of starting with none available.
     ai_auto_apply_templates_to_new_tenants = Column(Boolean, nullable=False, default=False, server_default="false")
+    # planner_mode given to newly created tenants (off | manual | auto). Existing tenants are
+    # never retro-fitted, so turning this on cannot silently start drafting for live bookings.
+    planner_default_mode = Column(String(10), nullable=False, default="off", server_default="off")
+    # Ceiling on tokens the planner/checker loop may spend per calendar day (UTC) across all
+    # tenants. NULL means unlimited. BigInteger because a busy day can exceed a 32-bit count.
+    ai_daily_token_cap = Column(BigInteger, nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

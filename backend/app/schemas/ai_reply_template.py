@@ -10,8 +10,11 @@ class AiReplyTemplateSection(BaseModel):
 
 class AiReplyTemplateCreate(BaseModel):
     name: str
+    # Free-text explanation of when to use this template. Read by the Planner, not the drafter.
+    description: str | None = None
     guidelines: str | None = None
     sections: list[AiReplyTemplateSection] = []
+    brain_section_ids: list[int] = []
     include_history: bool = False
     history_message_limit: int | None = None
     include_beds24: bool = False
@@ -21,8 +24,10 @@ class AiReplyTemplateCreate(BaseModel):
 
 class AiReplyTemplateUpdate(BaseModel):
     name: str
+    description: str | None = None
     guidelines: str | None = None
     sections: list[AiReplyTemplateSection] = []
+    brain_section_ids: list[int] = []
     include_history: bool = False
     history_message_limit: int | None = None
     include_beds24: bool = False
@@ -33,8 +38,10 @@ class AiReplyTemplateUpdate(BaseModel):
 class AiReplyTemplateRead(BaseModel):
     id: int
     name: str
+    description: str | None = None
     guidelines: str | None = None
     sections: list[AiReplyTemplateSection]
+    brain_section_ids: list[int] = []
     include_history: bool
     history_message_limit: int | None = None
     include_beds24: bool

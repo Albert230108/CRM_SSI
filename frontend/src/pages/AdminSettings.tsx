@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -115,6 +116,10 @@ export default function AdminSettings() {
   const [forwardToEmailMessage, setForwardToEmailMessage] = useState('')
   const [draftDebounceSeconds, setDraftDebounceSeconds] = useState(120)
   const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
+  const [plannerDefaultMode, setPlannerDefaultMode] = useState<'off' | 'manual' | 'auto'>('off')
+  const [dailyTokenCap, setDailyTokenCap] = useState(0)
+  const [savingPlannerDefaults, setSavingPlannerDefaults] = useState(false)
+  const [plannerDefaultsMessage, setPlannerDefaultsMessage] = useState('')
   const [savingAiDraftTiming, setSavingAiDraftTiming] = useState(false)
   const [aiDraftTimingMessage, setAiDraftTimingMessage] = useState('')
   const [autoApplyTemplatesToNewTenants, setAutoApplyTemplatesToNewTenants] = useState(false)
@@ -151,6 +156,8 @@ export default function AdminSettings() {
         setForwardToEmail(data.forward_to_email ?? '')
         if (typeof data.ai_draft_debounce_seconds === 'number') setDraftDebounceSeconds(data.ai_draft_debounce_seconds)
         if (typeof data.ai_auto_send_delay_seconds === 'number') setAutoSendDelaySeconds(data.ai_auto_send_delay_seconds)
+        if (typeof data.planner_default_mode === 'string') setPlannerDefaultMode(data.planner_default_mode)
+        setDailyTokenCap(typeof data.ai_daily_token_cap === 'number' ? data.ai_daily_token_cap : 0)
         if (typeof data.ai_auto_apply_templates_to_new_tenants === 'boolean') setAutoApplyTemplatesToNewTenants(data.ai_auto_apply_templates_to_new_tenants)
       }
     }
@@ -381,6 +388,33 @@ export default function AdminSettings() {
     }
   }
 
+  const savePlannerDefaults = async (event: FormEvent) => {
+    event.preventDefault()
+    setPlannerDefaultsMessage('')
+    setSavingPlannerDefaults(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        // 0 is how the cap is cleared: a null would be indistinguishable from "not in this
+        // partial update", which is how every other field on this page signals "leave alone".
+        body: JSON.stringify({ planner_default_mode: plannerDefaultMode, ai_daily_token_cap: dailyTokenCap }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setPlannerDefaultsMessage(typeof data.detail === 'string' ? data.detail : 'Failed to save planner defaults')
+        return
+      }
+      setPlannerDefaultMode(data.planner_default_mode)
+      setDailyTokenCap(data.ai_daily_token_cap ?? 0)
+      setPlannerDefaultsMessage('Saved')
+    } catch {
+      setPlannerDefaultsMessage('Failed to save planner defaults')
+    } finally {
+      setSavingPlannerDefaults(false)
+    }
+  }
+
   const saveAutoApplyTemplates = async (nextValue: boolean) => {
     setAutoApplyTemplatesMessage('')
     setSavingAutoApplyTemplates(true)
@@ -537,6 +571,57 @@ export default function AdminSettings() {
           </p>
           {autoApplyTemplatesMessage ? <p className="mt-1.5 text-sm text-gray-600">{autoApplyTemplatesMessage}</p> : null}
         </div>
+      </section>
+
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
+        <h2 className="text-lg font-semibold text-gray-900">AI Planner Defaults</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          The planner reads a conversation, picks a template and drafts a reply, which a checker then proof-reads.
+          Configure the agents themselves under Settings &rarr; Planner &amp; Checker, and inspect what they did on the{' '}
+          <Link to="/ai-runs" className="text-cyan-700 hover:underline">runs page</Link>.
+        </p>
+        <form onSubmit={savePlannerDefaults} className="mt-3 flex max-w-2xl flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-default-mode">
+              Planner mode for new tenants
+            </label>
+            <select
+              id="planner-default-mode"
+              value={plannerDefaultMode}
+              onChange={(event) => setPlannerDefaultMode(event.target.value as 'off' | 'manual' | 'auto')}
+              className="mt-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            >
+              <option value="off">Off</option>
+              <option value="manual">Manual</option>
+              <option value="auto">Auto</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-daily-token-cap">
+              Daily token cap (0 = unlimited)
+            </label>
+            <input
+              id="ai-daily-token-cap"
+              type="number"
+              min={0}
+              value={dailyTokenCap}
+              onChange={(event) => setDailyTokenCap(Number(event.target.value))}
+              className="mt-1.5 w-40 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={savingPlannerDefaults}
+            className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+          >
+            {savingPlannerDefaults ? 'Saving...' : 'Save'}
+          </button>
+        </form>
+        <p className="mt-2 text-xs text-gray-500">
+          Existing tenants are never changed by this setting, so turning it on cannot start drafting for bookings
+          already in flight.
+        </p>
+        {plannerDefaultsMessage ? <p className="mt-2 text-sm text-gray-600">{plannerDefaultsMessage}</p> : null}
       </section>
 
       <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">

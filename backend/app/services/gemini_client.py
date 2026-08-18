@@ -1,16 +1,37 @@
+import json
 import os
+import re
+import time
+from dataclasses import dataclass
 from typing import Any
 
 from google import genai
+from google.genai import types
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 _client: Any | None = None
 
+# Models occasionally wrap JSON in a markdown fence despite responseMimeType; strip it rather
+# than burn a retry on a response whose content is actually correct.
+_JSON_FENCE_PATTERN = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
+
 
 class GeminiClientError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    """One model call's output plus the metering the run log needs."""
+
+    text: str
+    parsed: dict | None
+    model: str
+    prompt_tokens: int | None
+    output_tokens: int | None
+    latency_ms: int
 
 
 def _get_client() -> Any:
@@ -38,3 +59,79 @@ def generate_text_flat(prompt: str) -> str:
     if not text:
         raise GeminiClientError("Gemini returned an empty response")
     return text
+
+
+def _extract_json(text: str) -> dict:
+    candidate = text.strip()
+    fenced = _JSON_FENCE_PATTERN.match(candidate)
+    if fenced:
+        candidate = fenced.group(1)
+    parsed = json.loads(candidate)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Expected a JSON object, got {type(parsed).__name__}")
+    return parsed
+
+
+def generate(
+    prompt: str,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_output_tokens: int | None = None,
+    response_schema: dict | None = None,
+) -> GenerationResult:
+    """Single flat-prompt call with per-call model/sampling overrides and optional JSON output.
+
+    When `response_schema` is given the model is constrained to that JSON Schema and the parsed
+    object is returned alongside the raw text. A response that still fails to parse is retried
+    once - a second failure is a real error, not a blip worth hiding from the caller.
+    """
+    client = _get_client()
+    resolved_model = model or GEMINI_MODEL
+
+    config_kwargs: dict[str, Any] = {}
+    if temperature is not None:
+        config_kwargs["temperature"] = temperature
+    if max_output_tokens is not None:
+        config_kwargs["max_output_tokens"] = max_output_tokens
+    if response_schema is not None:
+        config_kwargs["response_mime_type"] = "application/json"
+        config_kwargs["response_json_schema"] = response_schema
+    config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
+
+    last_error: Exception | None = None
+    for attempt in range(2):
+        started = time.monotonic()
+        try:
+            response = client.models.generate_content(
+                model=resolved_model, contents=prompt, config=config
+            )
+        except Exception as exc:
+            raise GeminiClientError(f"Gemini generation failed: {exc}") from exc
+        latency_ms = int((time.monotonic() - started) * 1000)
+
+        text = (response.text or "").strip() if response is not None else ""
+        if not text:
+            raise GeminiClientError("Gemini returned an empty response")
+
+        parsed: dict | None = None
+        if response_schema is not None:
+            try:
+                parsed = _extract_json(text)
+            except (ValueError, json.JSONDecodeError) as exc:
+                last_error = exc
+                if attempt == 0:
+                    continue
+                raise GeminiClientError(f"Gemini returned unparseable JSON: {exc}") from exc
+
+        usage = getattr(response, "usage_metadata", None)
+        return GenerationResult(
+            text=text,
+            parsed=parsed,
+            model=resolved_model,
+            prompt_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
+            output_tokens=getattr(usage, "candidates_token_count", None) if usage else None,
+            latency_ms=latency_ms,
+        )
+
+    raise GeminiClientError(f"Gemini returned unparseable JSON: {last_error}")

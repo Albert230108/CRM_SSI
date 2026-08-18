@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+PlannerMode = Literal["off", "manual", "auto"]
+
 
 class TenantAiSettingsRead(BaseModel):
     tenant_id: int
@@ -12,6 +14,9 @@ class TenantAiSettingsRead(BaseModel):
     auto_draft_whatsapp: bool
     auto_send_email: bool
     auto_send_whatsapp: bool
+    planner_mode: PlannerMode = "off"
+    planner_profile_id: int | None = None
+    checker_profile_id: int | None = None
 
 
 class TenantAiSettingsUpdate(BaseModel):
@@ -22,6 +27,9 @@ class TenantAiSettingsUpdate(BaseModel):
     auto_draft_whatsapp: bool = False
     auto_send_email: bool = False
     auto_send_whatsapp: bool = False
+    planner_mode: PlannerMode = "off"
+    planner_profile_id: int | None = None
+    checker_profile_id: int | None = None
 
 
 class BulkTenantAiTemplateAssignment(BaseModel):

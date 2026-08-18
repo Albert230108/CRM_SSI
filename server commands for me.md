@@ -4,3 +4,9 @@ docker compose exec backend alembic heads
 docker compose exec backend alembic current
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic current
+
+journalctl -u crm-whatsapp -f
+journalctl -u crm-whatsapp-2 -f
+
+sudo systemctl restart crm-whatsapp-2
+sudo systemctl restart crm-whatsapp

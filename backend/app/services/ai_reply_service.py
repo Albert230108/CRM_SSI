@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from app.models.finance import Finance as FinanceRecord
 from app.models.gmail_integration import ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
-from app.services import gemini_client
+from app.services import brain_service, gemini_client
 from app.services.email_template_service import resolve_template_text
 from app.services.thread_timeline_service import ensure_utc as _ensure_utc, load_tenant_whatsapp_messages
 
@@ -24,20 +24,49 @@ class _HistoryEntry:
     text: str
 
 
-def _build_guidelines_content(template: AiReplyTemplate, tenant: Tenant) -> str:
-    return resolve_template_text((template.guidelines or "").strip(), tenant)
+def _resolve_text(db: Session, text: str, tenant: Tenant) -> str:
+    """Expand `{{brain:...}}` references first, then tenant `{{placeholders}}`.
+
+    Order matters: brain content is authored with tenant placeholders in it, so the brain has
+    to be inlined before the tenant pass runs, otherwise those placeholders stay literal.
+    """
+    expanded = brain_service.resolve_brain_tokens(db, text).text
+    return resolve_template_text(expanded, tenant)
 
 
-def _build_sections_prompt(template: AiReplyTemplate, tenant: Tenant) -> str:
+def _build_guidelines_content(db: Session, template: AiReplyTemplate, tenant: Tenant) -> str:
+    return _resolve_text(db, (template.guidelines or "").strip(), tenant).strip()
+
+
+def _build_sections_prompt(db: Session, template: AiReplyTemplate, tenant: Tenant) -> str:
     sections = template.sections or []
     blocks: list[str] = []
     for section in sections:
         label = str(section.get("label") or "").strip()
-        content = resolve_template_text(str(section.get("content") or "").strip(), tenant)
+        content = _resolve_text(db, str(section.get("content") or "").strip(), tenant).strip()
         if not content:
             continue
         blocks.append(f"## {label}\n{content}" if label else content)
     return "\n\n".join(blocks)
+
+
+def _build_knowledge_base(
+    db: Session,
+    template: AiReplyTemplate,
+    tenant: Tenant,
+    extra_paths: list[str] | None,
+) -> str:
+    """Brain sections attached to the template, plus any the Planner asked for on top.
+
+    The template's own attachments come first and win de-duplication, so a Planner suggestion
+    can add knowledge but never reorder or displace what the template author pinned.
+    """
+    paths = [link.brain_section.path for link in template.brain_links if link.brain_section is not None]
+    paths += list(extra_paths or [])
+    if not paths:
+        return ""
+    rendered = brain_service.render_paths(db, paths).text
+    return resolve_template_text(rendered, tenant).strip()
 
 
 def _build_beds24_context(tenant: Tenant) -> str:
@@ -119,19 +148,40 @@ def _build_notes_context(tenant: Tenant) -> str:
     return "## Internal Notes\n" + notes
 
 
-def _build_history_context(db: Session, tenant: Tenant, limit: int) -> str:
-    """Last `limit` messages for this tenant across *all* channels, oldest first.
+def _build_history_context(
+    db: Session,
+    tenant: Tenant,
+    limit: int,
+    *,
+    channels: str = "both",
+    lookback_days: int | None = None,
+) -> str:
+    """Last `limit` messages for this tenant, oldest first.
 
-    The history is deliberately channel-agnostic: a reply on one channel routinely depends on what
-    was said on the other, so both email (every linked thread, not just the one being replied to)
-    and WhatsApp are merged into a single chronological stream and only then truncated to `limit`.
-    Each line carries its channel so the model can tell the two mediums apart.
+    History is channel-agnostic by default: a reply on one channel routinely depends on what was
+    said on the other, so both email (every linked thread, not just the one being replied to) and
+    WhatsApp are merged into a single chronological stream and only then truncated to `limit`.
+    Each line carries its channel so the model can tell the two mediums apart. `channels` narrows
+    that to one medium and `lookback_days` drops anything older, both for planner/checker profiles
+    that deliberately want a tighter context budget.
     """
-    entries = _load_email_history(db, tenant.id, limit) + _load_whatsapp_history(db, tenant.id, limit)
+    entries: list[_HistoryEntry] = []
+    if channels in ("both", "email"):
+        entries += _load_email_history(db, tenant.id, limit)
+    if channels in ("both", "whatsapp"):
+        entries += _load_whatsapp_history(db, tenant.id, limit)
+
+    if lookback_days:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        entries = [entry for entry in entries if entry.timestamp >= cutoff]
+
     entries.sort(key=lambda entry: (entry.timestamp, entry.sort_id))
     entries = entries[-limit:] if limit > 0 else []
 
-    header = f"## Conversation History (last {limit} messages across email and WhatsApp)"
+    scope = {"both": "email and WhatsApp", "email": "email", "whatsapp": "WhatsApp"}.get(channels, channels)
+    header = f"## Conversation History (last {limit} messages across {scope})"
+    if lookback_days:
+        header += f", limited to the past {lookback_days} day(s)"
     if not entries:
         return f"{header}\nNo prior messages on file."
     return header + "\n" + "\n".join(entry.text for entry in entries)
@@ -144,26 +194,33 @@ def assemble_prompt(
     template: AiReplyTemplate,
     channel: str,
     rough_draft: str | None,
+    extra_brain_section_paths: list[str] | None = None,
+    reviewer_feedback: str | None = None,
 ) -> str:
     """Build the exact, single flat prompt string sent to Gemini.
 
-    Fixed order: 0. guidelines, 1. template text/subprompts, 2. message history (all channels),
-    3. Beds24 info (booking + payments + notes), 4. the user's typed text. Each present
-    group is prefixed with its position number so the numbering is visible directly in
-    the payload, not just in the template editor UI. Group 4 is included only if the
-    user actually typed something - there is no default filler instruction. This is the
-    single source of truth reused by both the "Draft with AI" generation endpoint and the
-    payload preview endpoint, so what the user previews is guaranteed to be what is sent.
+    Fixed order: 0. guidelines, 1. template text/subprompts, 1b. knowledge base (brain
+    sections), 2. message history (all channels), 3. Beds24 info (booking + payments + notes),
+    4. the user's typed text, 5. reviewer feedback on a redraft round. Each present group is
+    prefixed with its position number so the numbering is visible directly in the payload, not
+    just in the template editor UI. Groups 4 and 5 are included only if there is something to
+    put in them - there is no default filler instruction. This is the single source of truth
+    reused by the "Draft with AI" endpoint, the payload preview endpoint and the planner loop,
+    so what the user previews is guaranteed to be what is sent.
     """
     blocks: list[str] = []
 
-    guidelines_content = _build_guidelines_content(template, tenant)
+    guidelines_content = _build_guidelines_content(db, template, tenant)
     if guidelines_content:
         blocks.append(f"0. Goal & Guidelines\n{guidelines_content}")
 
-    sections_content = _build_sections_prompt(template, tenant)
+    sections_content = _build_sections_prompt(db, template, tenant)
     if sections_content:
         blocks.append(f"1. Template Text\n{sections_content}")
+
+    knowledge_content = _build_knowledge_base(db, template, tenant, extra_brain_section_paths)
+    if knowledge_content:
+        blocks.append(f"1b. Knowledge Base\n{knowledge_content}")
 
     if template.include_history:
         limit = template.history_message_limit or _DEFAULT_HISTORY_LIMIT
@@ -184,6 +241,15 @@ def assemble_prompt(
     if user_message:
         blocks.append(f"4. Your Instruction\n{user_message}")
 
+    feedback = (reviewer_feedback or "").strip()
+    if feedback:
+        blocks.append(
+            "5. Reviewer Feedback\n"
+            "A reviewer rejected your previous draft for the reasons below. Rewrite the reply so that "
+            "every point is addressed. Output only the corrected reply.\n"
+            f"{feedback}"
+        )
+
     return "\n\n".join(block for block in blocks if block.strip())
 
 
@@ -194,6 +260,16 @@ def build_prompt_and_generate(
     template: AiReplyTemplate,
     channel: str,
     rough_draft: str | None,
+    extra_brain_section_paths: list[str] | None = None,
+    reviewer_feedback: str | None = None,
 ) -> str:
-    prompt = assemble_prompt(db, tenant=tenant, template=template, channel=channel, rough_draft=rough_draft)
+    prompt = assemble_prompt(
+        db,
+        tenant=tenant,
+        template=template,
+        channel=channel,
+        rough_draft=rough_draft,
+        extra_brain_section_paths=extra_brain_section_paths,
+        reviewer_feedback=reviewer_feedback,
+    )
     return gemini_client.generate_text_flat(prompt)

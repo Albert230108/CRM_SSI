@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
+from app.models.ai_agent_profile import CHECKER_ROLE, PLANNER_ROLE, AiAgentProfile
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
@@ -14,6 +15,17 @@ from app.schemas.tenant_ai_settings import (
 )
 
 router = APIRouter(tags=["tenant-ai-settings"])
+
+
+def _validated_profile_id(db: Session, profile_id: int | None, role: str) -> int | None:
+    if profile_id is None:
+        return None
+    exists = (
+        db.query(AiAgentProfile.id)
+        .filter(AiAgentProfile.id == profile_id, AiAgentProfile.role == role)
+        .first()
+    )
+    return profile_id if exists else None
 
 
 def _get_or_create_settings(db: Session, tenant_id: int) -> TenantAiSettings:
@@ -40,6 +52,9 @@ def _to_read(db: Session, settings: TenantAiSettings) -> TenantAiSettingsRead:
         auto_draft_whatsapp=settings.auto_draft_whatsapp,
         auto_send_email=settings.auto_send_email,
         auto_send_whatsapp=settings.auto_send_whatsapp,
+        planner_mode=settings.planner_mode or "off",
+        planner_profile_id=settings.planner_profile_id,
+        checker_profile_id=settings.checker_profile_id,
     )
 
 
@@ -91,6 +106,11 @@ def update_tenant_ai_settings(
     # — this is the server-side guarantee behind that rule, independent of what the client sends.
     settings.auto_send_email = payload.auto_send_email and payload.auto_draft_email
     settings.auto_send_whatsapp = payload.auto_send_whatsapp and payload.auto_draft_whatsapp
+    settings.planner_mode = payload.planner_mode
+    # A profile id that does not exist (or is for the wrong role) is stored as "unpinned" rather
+    # than rejected, so the tenant transparently falls back to the role default.
+    settings.planner_profile_id = _validated_profile_id(db, payload.planner_profile_id, PLANNER_ROLE)
+    settings.checker_profile_id = _validated_profile_id(db, payload.checker_profile_id, CHECKER_ROLE)
 
     db.commit()
     db.refresh(settings)
