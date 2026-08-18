@@ -6,6 +6,22 @@ from pydantic import BaseModel, ConfigDict
 class AiReplyTemplateSection(BaseModel):
     label: str
     content: str
+    # Canvas-only metadata: not read by the prompt builder. id/x/y/order may be absent for
+    # sections created before the canvas editor existed.
+    id: str | None = None
+    x: float | None = None
+    y: float | None = None
+    order: int | None = None
+
+
+class AiReplyTemplateNote(BaseModel):
+    """A freeform post-it note on the section canvas. Never sent to the AI."""
+
+    id: str
+    text: str
+    x: float
+    y: float
+    color: str | None = None
 
 
 class AiReplyTemplateCreate(BaseModel):
@@ -14,6 +30,7 @@ class AiReplyTemplateCreate(BaseModel):
     description: str | None = None
     guidelines: str | None = None
     sections: list[AiReplyTemplateSection] = []
+    canvas_notes: list[AiReplyTemplateNote] = []
     brain_section_ids: list[int] = []
     include_history: bool = False
     history_message_limit: int | None = None
@@ -27,6 +44,7 @@ class AiReplyTemplateUpdate(BaseModel):
     description: str | None = None
     guidelines: str | None = None
     sections: list[AiReplyTemplateSection] = []
+    canvas_notes: list[AiReplyTemplateNote] = []
     brain_section_ids: list[int] = []
     include_history: bool = False
     history_message_limit: int | None = None
@@ -41,6 +59,7 @@ class AiReplyTemplateRead(BaseModel):
     description: str | None = None
     guidelines: str | None = None
     sections: list[AiReplyTemplateSection]
+    canvas_notes: list[AiReplyTemplateNote] = []
     brain_section_ids: list[int] = []
     include_history: bool
     history_message_limit: int | None = None

@@ -28,15 +28,34 @@ def _sync_brain_links(db: Session, template: AiReplyTemplate, section_ids: list[
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unknown brain section id(s): {', '.join(str(value) for value in missing)}",
             )
-    template.brain_links = [
-        AiReplyTemplateBrainSection(brain_section_id=section_id, position=index)
-        for index, section_id in enumerate(unique_ids)
-    ]
+    # Reuse existing link rows for section ids that are kept, rather than deleting and
+    # re-inserting them: the delete-orphan cascade flushes inserts before deletes, so a
+    # fresh row for a retained section id collides with the not-yet-deleted old row on
+    # uq_ai_template_brain_section.
+    existing_links = {link.brain_section_id: link for link in template.brain_links}
+    new_links = []
+    for index, section_id in enumerate(unique_ids):
+        link = existing_links.get(section_id)
+        if link is not None:
+            link.position = index
+            new_links.append(link)
+        else:
+            new_links.append(AiReplyTemplateBrainSection(brain_section_id=section_id, position=index))
+    template.brain_links = new_links
 
 
 @router.get("", response_model=list[AiReplyTemplateRead])
 def list_ai_reply_templates(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list[AiReplyTemplate]:
     return db.query(AiReplyTemplate).order_by(AiReplyTemplate.name).all()
+
+
+@router.get("/{template_id}", response_model=AiReplyTemplateRead)
+def get_ai_reply_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiReplyTemplate:
+    return _get_template(db, template_id)
 
 
 @router.post("", response_model=AiReplyTemplateRead, status_code=status.HTTP_201_CREATED)
@@ -50,6 +69,7 @@ def create_ai_reply_template(
         description=(payload.description or "").strip() or None,
         guidelines=(payload.guidelines or "").strip() or None,
         sections=[section.model_dump() for section in payload.sections],
+        canvas_notes=[note.model_dump() for note in payload.canvas_notes],
         include_history=payload.include_history,
         history_message_limit=payload.history_message_limit,
         include_beds24=payload.include_beds24,
@@ -76,6 +96,7 @@ def update_ai_reply_template(
     template.description = (payload.description or "").strip() or None
     template.guidelines = (payload.guidelines or "").strip() or None
     template.sections = [section.model_dump() for section in payload.sections]
+    template.canvas_notes = [note.model_dump() for note in payload.canvas_notes]
     template.include_history = payload.include_history
     template.history_message_limit = payload.history_message_limit
     template.include_beds24 = payload.include_beds24

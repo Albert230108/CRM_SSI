@@ -7,6 +7,8 @@ import ProtectedRoute from './components/ProtectedRoute'
 import SessionExpiredModal from './components/SessionExpiredModal'
 import UnsavedNotesModal from './components/UnsavedNotesModal'
 import Settings from './pages/Settings'
+import AiTemplatesOverview from './pages/AiTemplatesOverview'
+import AiTemplateEditor from './pages/AiTemplateEditor'
 import AiTenantSettings from './pages/AiTenantSettings'
 import AiAgentProfiles from './pages/AiAgentProfiles'
 import AiAgentRuns from './pages/AiAgentRuns'
@@ -58,6 +60,8 @@ export default function App() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/dashboard/tenant/:tenantId" element={<Dashboard />} />
                     <Route path="/settings" element={<Settings />} />
+                    <Route path="/settings/ai-templates" element={<AiTemplatesOverview />} />
+                    <Route path="/settings/ai-templates/:templateId" element={<AiTemplateEditor />} />
                     <Route path="/settings/ai-tenants" element={<AiTenantSettings />} />
                     <Route path="/settings/brain" element={<BrainSections />} />
                     <Route path="/settings/ai-agents" element={<AiAgentProfiles />} />

@@ -30,6 +30,7 @@ class AiAgentRunRead(BaseModel):
     planner_profile_id: int | None = None
     checker_profile_id: int | None = None
     final_template_id: int | None = None
+    final_template_name: str | None = None
     checker_feedback: str | None = None
     attempts: int
     total_prompt_tokens: int
@@ -42,3 +43,6 @@ class AiAgentRunRead(BaseModel):
 class AiAgentRunDetail(AiAgentRunRead):
     final_text: str | None = None
     steps: list[AiAgentRunStepRead] = []
+    # Names for every template id referenced anywhere in this run - the final choice and any
+    # alternatives the planner considered and rejected - keyed by id for the frontend to look up.
+    template_names: dict[int, str] = {}

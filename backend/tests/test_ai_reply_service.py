@@ -77,6 +77,26 @@ def test_sections_are_concatenated_in_order(db_session, monkeypatch):
     assert "Let them know check-in is at 3pm." in captured["prompt"]
 
 
+def test_canvas_notes_are_never_sent_to_the_ai(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template = _template(
+        sections=[
+            {"label": "Persona", "content": "You are a helpful host.", "id": "sec-1", "x": 0, "y": 0, "order": 0},
+        ],
+        canvas_notes=[
+            {"id": "note-1", "text": "REMEMBER-TO-CHECK-WITH-LEGAL-BEFORE-SENDING", "x": 10, "y": 10, "color": "yellow"},
+        ],
+    )
+    captured = _capture_gemini_call(monkeypatch)
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="Let them know check-in is at 3pm."
+    )
+
+    assert "REMEMBER-TO-CHECK-WITH-LEGAL-BEFORE-SENDING" not in captured["prompt"]
+    assert "You are a helpful host." in captured["prompt"]
+
+
 def test_no_rough_draft_sends_empty_instruction_block(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     template = _template()

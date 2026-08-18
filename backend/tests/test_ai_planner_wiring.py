@@ -266,11 +266,47 @@ def test_runs_api_exposes_the_planner_decision(client, db_session, monkeypatch):
     listing = client.get("/api/ai-agent-runs").json()
     assert [run["id"] for run in listing] == [result.run_id]
     assert listing[0]["tenant_name"] == "Wired Tenant"
+    assert listing[0]["final_template_name"] == "Late check-in"
 
     detail = client.get(f"/api/ai-agent-runs/{result.run_id}").json()
     assert [step["stage"] for step in detail["steps"]] == ["planner", "drafter", "checker"]
     assert detail["steps"][0]["parsed"]["reasoning"] == "Guest asked about arrival."
     assert detail["final_text"] == "Draft."
+    assert detail["final_template_name"] == "Late check-in"
+    assert detail["template_names"] == {str(template.id): "Late check-in"}
+
+
+def test_runs_api_resolves_names_for_rejected_alternatives(client, db_session, monkeypatch):
+    """Regression: the planner log used to show only raw template ids, never names."""
+    tenant, template = _setup(db_session, planner_mode="manual")
+    other_template = AiReplyTemplate(
+        name="Early check-in",
+        sections=[{"label": "Persona", "content": "Be helpful."}],
+        created_by_user_id=1,
+    )
+    db_session.add(other_template)
+    db_session.commit()
+    db_session.refresh(other_template)
+
+    plan = _plan(
+        template.id,
+        alternatives=[{"template_id": other_template.id, "why_not": "Guest already checked in."}],
+    )
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([plan, "Draft.", {"passed": True, "feedback": ""}]),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Hi"
+    )
+    db_session.commit()
+
+    detail = client.get(f"/api/ai-agent-runs/{result.run_id}").json()
+    assert detail["template_names"] == {
+        str(template.id): "Late check-in",
+        str(other_template.id): "Early check-in",
+    }
 
 
 def test_runs_api_filters_by_status(client, db_session):

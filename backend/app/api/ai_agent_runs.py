@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin_user, get_db
 from app.models.ai_agent_run import AiAgentRun
+from app.models.ai_reply_template import AiReplyTemplate
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.ai_agent_run import AiAgentRunDetail, AiAgentRunRead
@@ -14,6 +15,26 @@ def _with_tenant_name(db: Session, run: AiAgentRun) -> dict:
     """Runs are listed cross-tenant, so the tenant name is joined in for the UI."""
     name = db.query(Tenant.name).filter(Tenant.id == run.tenant_id).scalar()
     return {"tenant_name": name}
+
+
+def _template_name_map(db: Session, template_ids: set[int]) -> dict[int, str]:
+    """Batch-resolve template ids to names; a missing id (deleted template) is simply absent."""
+    if not template_ids:
+        return {}
+    rows = db.query(AiReplyTemplate.id, AiReplyTemplate.name).filter(AiReplyTemplate.id.in_(template_ids)).all()
+    return {template_id: name for template_id, name in rows}
+
+
+def _alternative_template_ids(run: AiAgentRun) -> set[int]:
+    """Template ids the planner considered and rejected, read out of its stored plan JSON."""
+    ids: set[int] = set()
+    for step in run.steps:
+        parsed = step.parsed if isinstance(step.parsed, dict) else None
+        for alternative in (parsed or {}).get("alternatives") or []:
+            template_id = alternative.get("template_id") if isinstance(alternative, dict) else None
+            if isinstance(template_id, int):
+                ids.add(template_id)
+    return ids
 
 
 @router.get("", response_model=list[AiAgentRunRead])
@@ -30,8 +51,17 @@ def list_agent_runs(
     if status_filter:
         query = query.filter(AiAgentRun.status == status_filter)
     runs = query.order_by(AiAgentRun.created_at.desc(), AiAgentRun.id.desc()).limit(limit).all()
+    template_names = _template_name_map(
+        db, {run.final_template_id for run in runs if run.final_template_id is not None}
+    )
     return [
-        AiAgentRunRead.model_validate(run).model_copy(update=_with_tenant_name(db, run)) for run in runs
+        AiAgentRunRead.model_validate(run).model_copy(
+            update={
+                **_with_tenant_name(db, run),
+                "final_template_name": template_names.get(run.final_template_id),
+            }
+        )
+        for run in runs
     ]
 
 
@@ -44,4 +74,16 @@ def get_agent_run(
     run = db.query(AiAgentRun).filter(AiAgentRun.id == run_id).first()
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
-    return AiAgentRunDetail.model_validate(run).model_copy(update=_with_tenant_name(db, run))
+
+    template_ids = _alternative_template_ids(run)
+    if run.final_template_id is not None:
+        template_ids.add(run.final_template_id)
+    template_names = _template_name_map(db, template_ids)
+
+    return AiAgentRunDetail.model_validate(run).model_copy(
+        update={
+            **_with_tenant_name(db, run),
+            "final_template_name": template_names.get(run.final_template_id),
+            "template_names": template_names,
+        }
+    )

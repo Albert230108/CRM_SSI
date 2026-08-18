@@ -45,9 +45,14 @@ class AiReplyTemplate(Base):
     description = Column(Text, nullable=True)
     # Goal/explanation of this template's purpose, sent to Gemini as the first block of the prompt.
     guidelines = Column(Text, nullable=True)
-    # Ordered list of {"label": str, "content": str} blocks, concatenated in array order to
-    # form the background/system prompt sent to Gemini.
+    # Ordered list of {"label": str, "content": str, "id": str, "x": float, "y": float,
+    # "order": int} blocks. Concatenated in array order (kept in sync with "order" by the
+    # client) to form the background/system prompt sent to Gemini; "id"/"x"/"y" are canvas-only
+    # metadata, ignored by the prompt builder.
     sections = Column(JSON, nullable=False, default=list)
+    # Freeform organizational post-it notes on the section canvas: list of {id, text, x, y,
+    # color}. Never read by the prompt builder - explicitly excluded from what is sent to Gemini.
+    canvas_notes = Column(JSON, nullable=False, default=list, server_default="[]")
     include_history = Column(Boolean, nullable=False, default=False, server_default="false")
     history_message_limit = Column(Integer, nullable=True)
     include_beds24 = Column(Boolean, nullable=False, default=False, server_default="false")

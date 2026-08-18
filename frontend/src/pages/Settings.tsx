@@ -31,43 +31,6 @@ const EMAIL_TEMPLATE_PLACEHOLDERS = [
 
 const emptyTemplateForm = { id: null as number | null, name: '', subject: '', body: '' }
 
-type AiTemplateSection = { label: string; content: string }
-
-type AiReplyTemplate = {
-  id: number
-  name: string
-  description: string | null
-  guidelines: string | null
-  sections: AiTemplateSection[]
-  brain_section_ids: number[]
-  include_history: boolean
-  history_message_limit: number | null
-  include_beds24: boolean
-  include_payments: boolean
-  include_notes: boolean
-}
-
-type BrainSectionOption = {
-  id: number
-  path: string
-  title: string
-  is_active: boolean
-}
-
-const emptyAiTemplateForm = {
-  id: null as number | null,
-  name: '',
-  description: '',
-  guidelines: '',
-  sections: [{ label: '', content: '' }] as AiTemplateSection[],
-  brain_section_ids: [] as number[],
-  include_history: false,
-  history_message_limit: 20 as number | null,
-  include_beds24: false,
-  include_payments: false,
-  include_notes: false,
-}
-
 export default function Settings() {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
@@ -87,12 +50,6 @@ export default function Settings() {
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [templateMessage, setTemplateMessage] = useState('')
 
-  const [aiTemplates, setAiTemplates] = useState<AiReplyTemplate[]>([])
-  const [aiTemplateForm, setAiTemplateForm] = useState(emptyAiTemplateForm)
-  const [savingAiTemplate, setSavingAiTemplate] = useState(false)
-  const [aiTemplateMessage, setAiTemplateMessage] = useState('')
-  const [brainSections, setBrainSections] = useState<BrainSectionOption[]>([])
-
   const loadGmailAccounts = async () => {
     const response = await fetch(`${API_BASE_URL}/api/integrations/gmail/accounts`, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -105,20 +62,6 @@ export default function Settings() {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
     if (response.ok) setEmailTemplates(await response.json())
-  }
-
-  const loadAiTemplates = async () => {
-    const response = await fetch(`${API_BASE_URL}/api/ai-reply-templates`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    })
-    if (response.ok) setAiTemplates(await response.json())
-  }
-
-  const loadBrainSections = async () => {
-    const response = await fetch(`${API_BASE_URL}/api/brain-sections/flat`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    })
-    if (response.ok) setBrainSections(await response.json())
   }
 
   useEffect(() => {
@@ -161,8 +104,6 @@ export default function Settings() {
     loadHandle()
     loadGmailAccounts()
     loadEmailTemplates()
-    loadAiTemplates()
-    loadBrainSections()
 
     return () => {
       cancelled = true
@@ -344,104 +285,6 @@ export default function Settings() {
     if (response.ok) {
       if (templateForm.id === templateId) setTemplateForm(emptyTemplateForm)
       await loadEmailTemplates()
-    }
-  }
-
-  const startEditAiTemplate = (template: AiReplyTemplate) => {
-    setAiTemplateMessage('')
-    setAiTemplateForm({
-      id: template.id,
-      name: template.name,
-      description: template.description ?? '',
-      guidelines: template.guidelines ?? '',
-      sections: template.sections.length ? template.sections : [{ label: '', content: '' }],
-      brain_section_ids: template.brain_section_ids ?? [],
-      include_history: template.include_history,
-      history_message_limit: template.history_message_limit ?? 20,
-      include_beds24: template.include_beds24,
-      include_payments: template.include_payments,
-      include_notes: template.include_notes,
-    })
-  }
-
-  const cancelEditAiTemplate = () => {
-    setAiTemplateMessage('')
-    setAiTemplateForm(emptyAiTemplateForm)
-  }
-
-  const updateAiTemplateSection = (index: number, field: keyof AiTemplateSection, value: string) => {
-    setAiTemplateForm((current) => ({
-      ...current,
-      sections: current.sections.map((section, i) => (i === index ? { ...section, [field]: value } : section)),
-    }))
-  }
-
-  const addAiTemplateSection = () => {
-    setAiTemplateForm((current) => ({ ...current, sections: [...current.sections, { label: '', content: '' }] }))
-  }
-
-  const removeAiTemplateSection = (index: number) => {
-    setAiTemplateForm((current) => ({ ...current, sections: current.sections.filter((_, i) => i !== index) }))
-  }
-
-  const moveAiTemplateSection = (index: number, direction: -1 | 1) => {
-    setAiTemplateForm((current) => {
-      const targetIndex = index + direction
-      if (targetIndex < 0 || targetIndex >= current.sections.length) return current
-      const sections = [...current.sections]
-      const [moved] = sections.splice(index, 1)
-      sections.splice(targetIndex, 0, moved)
-      return { ...current, sections }
-    })
-  }
-
-  const saveAiTemplate = async (event: FormEvent) => {
-    event.preventDefault()
-    setAiTemplateMessage('')
-    setSavingAiTemplate(true)
-    try {
-      const isEditing = aiTemplateForm.id !== null
-      const response = await fetch(
-        `${API_BASE_URL}/api/ai-reply-templates${isEditing ? `/${aiTemplateForm.id}` : ''}`,
-        {
-          method: isEditing ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({
-            name: aiTemplateForm.name.trim(),
-            description: aiTemplateForm.description.trim() || null,
-            guidelines: aiTemplateForm.guidelines.trim() || null,
-            sections: aiTemplateForm.sections.filter((section) => section.label.trim() || section.content.trim()),
-            brain_section_ids: aiTemplateForm.brain_section_ids,
-            include_history: aiTemplateForm.include_history,
-            history_message_limit: aiTemplateForm.include_history ? aiTemplateForm.history_message_limit : null,
-            include_beds24: aiTemplateForm.include_beds24,
-            include_payments: aiTemplateForm.include_payments,
-            include_notes: aiTemplateForm.include_notes,
-          }),
-        },
-      )
-      const data = await response.json().catch(() => null)
-      if (!response.ok) {
-        setAiTemplateMessage(data?.detail ?? 'Failed to save template')
-        return
-      }
-      setAiTemplateForm(emptyAiTemplateForm)
-      await loadAiTemplates()
-    } catch {
-      setAiTemplateMessage('Failed to save template')
-    } finally {
-      setSavingAiTemplate(false)
-    }
-  }
-
-  const deleteAiTemplate = async (templateId: number) => {
-    const response = await fetch(`${API_BASE_URL}/api/ai-reply-templates/${templateId}`, {
-      method: 'DELETE',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    })
-    if (response.ok) {
-      if (aiTemplateForm.id === templateId) setAiTemplateForm(emptyAiTemplateForm)
-      await loadAiTemplates()
     }
   }
 
@@ -649,19 +492,14 @@ export default function Settings() {
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Shared AI Reply Templates</h2>
             <p className="mt-1.5 text-sm text-gray-500">
-              Templates used by "Draft with AI" in the reply box, shared across all users. The payload sent to Gemini
-              always follows this fixed order:
-            </p>
-            <p className="mt-1.5 flex flex-wrap gap-2 text-xs font-semibold text-gray-600">
-              <span className="rounded-full bg-gray-100 px-2 py-0.5">0. Goal &amp; Guidelines</span>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5">1. Template text</span>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5">1b. Knowledge base (brain)</span>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5">2. Message history</span>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5">3. Beds24 info (booking + payments + notes)</span>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5">4. Your typed reply</span>
+              Templates used by "Draft with AI" in the reply box, shared across all users. Manage the compact list, and
+              edit each template's subprompts on its own draggable canvas, in a dedicated page.
             </p>
           </div>
           <div className="flex shrink-0 flex-col gap-2">
+            <Link to="/settings/ai-templates" className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700">
+              Manage AI templates &rarr;
+            </Link>
             <Link to="/settings/ai-tenants" className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
               Configure per tenant &rarr;
             </Link>
@@ -671,220 +509,11 @@ export default function Settings() {
             <Link to="/settings/ai-agents" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
               Planner &amp; Checker &rarr;
             </Link>
+            <Link to="/ai-runs" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
+              AI logs &rarr;
+            </Link>
           </div>
         </div>
-
-        <div className="mt-3 space-y-2">
-          {aiTemplates.map((template) => (
-            <div key={template.id} className="rounded-xl border border-gray-200 p-2.5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-gray-900">{template.name}</p>
-                  {template.description ? (
-                    <p className="mt-1 truncate text-xs text-gray-500">When: {template.description}</p>
-                  ) : null}
-                  {template.guidelines ? (
-                    <p className="mt-1 truncate text-xs italic text-gray-500">0. {template.guidelines}</p>
-                  ) : null}
-                  <p className="mt-1 text-xs text-gray-500">{template.sections.length} section{template.sections.length === 1 ? '' : 's'}</p>
-                  <p className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
-                    {template.brain_section_ids?.length ? <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{template.brain_section_ids.length} brain section{template.brain_section_ids.length === 1 ? '' : 's'}</span> : null}
-                    {template.include_history ? <span className="rounded-full bg-gray-100 px-2 py-0.5">History ({template.history_message_limit ?? '-'} msgs)</span> : null}
-                    {template.include_beds24 ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Beds24 info</span> : null}
-                    {template.include_payments ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Payments/charges</span> : null}
-                    {template.include_notes ? <span className="rounded-full bg-gray-100 px-2 py-0.5">Tenant notes</span> : null}
-                  </p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <button type="button" className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700" onClick={() => startEditAiTemplate(template)}>Edit</button>
-                  <button type="button" className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600" onClick={() => deleteAiTemplate(template.id)}>Delete</button>
-                </div>
-              </div>
-            </div>
-          ))}
-          {!aiTemplates.length ? <p className="text-sm text-gray-500">No AI templates yet.</p> : null}
-        </div>
-
-        <form onSubmit={saveAiTemplate} className="mt-3 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-          <p className="text-sm font-semibold text-gray-900">{aiTemplateForm.id !== null ? 'Edit template' : 'Add template'}</p>
-          <input
-            type="text"
-            value={aiTemplateForm.name}
-            onChange={(event) => setAiTemplateForm((current) => ({ ...current, name: event.target.value }))}
-            placeholder="Template name"
-            required
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-          />
-
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">When to use this template</p>
-            <textarea
-              value={aiTemplateForm.description}
-              onChange={(event) => setAiTemplateForm((current) => ({ ...current, description: event.target.value }))}
-              placeholder="e.g. Use when a guest asks to arrive outside normal check-in hours."
-              rows={2}
-              className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-            />
-            <p className="text-xs text-gray-500">
-              Read by the planner when it picks a template. It is never sent to the drafting model, so describe the
-              situation rather than writing instructions here.
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">0. Goal &amp; Guidelines</p>
-            <textarea
-              value={aiTemplateForm.guidelines}
-              onChange={(event) => setAiTemplateForm((current) => ({ ...current, guidelines: event.target.value }))}
-              placeholder="Describe this template's goal, e.g. Used for late check-in requests; keep replies under 3 sentences."
-              rows={2}
-              className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-            />
-            <p className="text-xs text-gray-500">
-              Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
-            </p>
-            <p className="text-xs text-gray-500">
-              Brain references also work here and in every section below, e.g.{' '}
-              <code className="rounded bg-white px-1 py-0.5">{'{{brain:policies.cancellation}}'}</code>.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1. Template text (subprompts)</p>
-            {aiTemplateForm.sections.map((section, index) => (
-              <div key={index} className="rounded-lg border border-gray-200 bg-white p-2.5">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={section.label}
-                    onChange={(event) => updateAiTemplateSection(index, 'label', event.target.value)}
-                    placeholder="Section label, e.g. Persona"
-                    className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-                  />
-                  <button type="button" onClick={() => moveAiTemplateSection(index, -1)} disabled={index === 0} className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-600 disabled:opacity-30">&uarr;</button>
-                  <button type="button" onClick={() => moveAiTemplateSection(index, 1)} disabled={index === aiTemplateForm.sections.length - 1} className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-600 disabled:opacity-30">&darr;</button>
-                  <button type="button" onClick={() => removeAiTemplateSection(index)} className="rounded-lg border border-rose-200 px-2 py-1.5 text-xs text-rose-600">Remove</button>
-                </div>
-                <textarea
-                  value={section.content}
-                  onChange={(event) => updateAiTemplateSection(index, 'content', event.target.value)}
-                  placeholder="Section content, e.g. You are a friendly host responding on behalf of..."
-                  rows={3}
-                  className="mt-1.5 w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
-                />
-              </div>
-            ))}
-            <button type="button" onClick={addAiTemplateSection} className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100">+ Add section</button>
-            <p className="text-xs text-gray-500">
-              Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1b. Knowledge base (brain sections)</p>
-            {brainSections.length === 0 ? (
-              <p className="text-xs text-gray-500">
-                No brain sections yet. <Link to="/settings/brain" className="text-cyan-700 hover:underline">Create some</Link> to
-                share knowledge across templates.
-              </p>
-            ) : (
-              <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
-                {brainSections.map((section) => (
-                  <label key={section.id} className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={aiTemplateForm.brain_section_ids.includes(section.id)}
-                      onChange={(event) =>
-                        setAiTemplateForm((current) => ({
-                          ...current,
-                          brain_section_ids: event.target.checked
-                            ? [...current.brain_section_ids, section.id]
-                            : current.brain_section_ids.filter((id) => id !== section.id),
-                        }))
-                      }
-                      className="h-4 w-4 rounded border-gray-300"
-                    />
-                    <span className="truncate">
-                      {section.title}
-                      {!section.is_active ? <span className="ml-2 text-xs text-amber-600">inactive</span> : null}
-                      <span className="ml-2 font-mono text-xs text-gray-400">{section.path}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            )}
-            <p className="text-xs text-gray-500">
-              Attached sections are appended as their own block, including everything nested under them. Use an inline{' '}
-              <code className="rounded bg-white px-1 py-0.5">{'{{brain:path}}'}</code> token instead when the text needs
-              to land at a specific spot.
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">2. Message history</p>
-            <label className="flex items-center gap-3 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={aiTemplateForm.include_history}
-                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_history: event.target.checked }))}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              Include conversation history, last
-              <input
-                type="number"
-                min={1}
-                value={aiTemplateForm.history_message_limit ?? ''}
-                onChange={(event) => setAiTemplateForm((current) => ({ ...current, history_message_limit: event.target.value ? Number(event.target.value) : null }))}
-                disabled={!aiTemplateForm.include_history}
-                className="w-20 rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none disabled:cursor-not-allowed disabled:bg-gray-100"
-              />
-              messages (email + WhatsApp combined)
-            </label>
-          </div>
-
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">3. Beds24 info (booking + payments + notes)</p>
-            <label className="flex items-center gap-3 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={aiTemplateForm.include_beds24}
-                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_beds24: event.target.checked }))}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              Include Beds24 booking info
-            </label>
-            <label className="flex items-center gap-3 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={aiTemplateForm.include_payments}
-                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_payments: event.target.checked }))}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              Include payments/charges
-            </label>
-            <label className="flex items-center gap-3 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={aiTemplateForm.include_notes}
-                onChange={(event) => setAiTemplateForm((current) => ({ ...current, include_notes: event.target.checked }))}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              Include tenant notes
-            </label>
-          </div>
-
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">4. Your typed reply (sent automatically when you use "Draft with AI")</p>
-
-          <div className="flex items-center gap-2">
-            <button type="submit" disabled={savingAiTemplate} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
-              {savingAiTemplate ? 'Saving...' : aiTemplateForm.id !== null ? 'Save changes' : 'Add template'}
-            </button>
-            {aiTemplateForm.id !== null ? (
-              <button type="button" onClick={cancelEditAiTemplate} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700">Cancel</button>
-            ) : null}
-          </div>
-          {aiTemplateMessage ? <p className="text-sm text-gray-600">{aiTemplateMessage}</p> : null}
-        </form>
       </section>
     </main>
   )

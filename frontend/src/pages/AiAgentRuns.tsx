@@ -13,6 +13,7 @@ type AgentRun = {
   status: string
   escalation_reason: string | null
   final_template_id: number | null
+  final_template_name: string | null
   checker_feedback: string | null
   attempts: number
   total_prompt_tokens: number
@@ -35,7 +36,11 @@ type AgentRunStep = {
   error: string | null
 }
 
-type AgentRunDetail = AgentRun & { final_text: string | null; steps: AgentRunStep[] }
+type AgentRunDetail = AgentRun & {
+  final_text: string | null
+  steps: AgentRunStep[]
+  template_names: Record<number, string>
+}
 
 const STATUS_STYLES: Record<string, string> = {
   completed: 'bg-emerald-50 text-emerald-700',
@@ -46,6 +51,12 @@ const STATUS_STYLES: Record<string, string> = {
 }
 
 const STATUS_FILTERS = ['', 'completed', 'needs_review', 'escalated', 'skipped', 'failed']
+
+function templateLabel(id: number | null, name?: string | null): string {
+  if (name) return name
+  if (id != null) return `Template #${id} (deleted)`
+  return '—'
+}
 
 export default function AiAgentRuns() {
   const token = useAuthStore((state) => state.token)
@@ -130,6 +141,7 @@ export default function AiAgentRuns() {
                   <th className="py-1.5 pr-3">Channel</th>
                   <th className="py-1.5 pr-3">Mode</th>
                   <th className="py-1.5 pr-3">Status</th>
+                  <th className="py-1.5 pr-3">Template</th>
                   <th className="py-1.5 pr-3">Tries</th>
                   <th className="py-1.5 pr-3">Tokens</th>
                   <th className="py-1.5" />
@@ -150,6 +162,7 @@ export default function AiAgentRuns() {
                         <span className="ml-2 text-xs text-gray-500">{run.escalation_reason}</span>
                       ) : null}
                     </td>
+                    <td className="py-1.5 pr-3 text-gray-600">{templateLabel(run.final_template_id, run.final_template_name)}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{run.attempts}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{run.total_prompt_tokens + run.total_output_tokens}</td>
                     <td className="py-1.5">
@@ -181,7 +194,7 @@ export default function AiAgentRuns() {
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Why this template</p>
               <p className="mt-1 text-sm text-gray-800">{plan.reasoning ?? '—'}</p>
               <p className="mt-1.5 text-xs text-gray-500">
-                Template #{selected.final_template_id ?? '—'} · confidence {plan.confidence ?? '—'}
+                {templateLabel(selected.final_template_id, selected.final_template_name)} · confidence {plan.confidence ?? '—'}
               </p>
               {plan.extra_instructions ? (
                 <>
@@ -200,7 +213,7 @@ export default function AiAgentRuns() {
                   <ul className="mt-1 space-y-0.5 text-sm text-gray-700">
                     {plan.alternatives.map((alternative) => (
                       <li key={alternative.template_id}>
-                        Template #{alternative.template_id} — {alternative.why_not}
+                        {templateLabel(alternative.template_id, selected.template_names[alternative.template_id])} — {alternative.why_not}
                       </li>
                     ))}
                   </ul>
