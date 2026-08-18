@@ -112,12 +112,17 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
     if template is None:
         return None
 
+    blocks, agent_instructions = ai_agent_orchestrator.resolve_drafter_context(
+        db, ai_settings.drafter_profile_id
+    )
     generated_text = ai_reply_service.build_prompt_and_generate(
         db,
         tenant=tenant,
         template=template,
         channel=trigger.channel,
         rough_draft=None,
+        blocks=blocks,
+        agent_instructions=agent_instructions,
     )
 
     auto_send_enabled = ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp

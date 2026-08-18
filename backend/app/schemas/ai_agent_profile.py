@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AgentRole = Literal["planner", "checker"]
+AgentRole = Literal["planner", "checker", "drafter"]
 HistoryChannels = Literal["both", "inbound", "email", "whatsapp"]
 NoMatchBehaviour = Literal["escalate", "skip"]
 
@@ -14,6 +14,9 @@ class AiAgentProfileBase(BaseModel):
     is_default: bool = False
     is_active: bool = True
     instructions: str | None = None
+    # Overrides for the fixed prompt scaffolding, keyed by block key. Keys absent from the
+    # dict use the built-in default; a key mapped to "" removes that block from the prompt.
+    prompt_blocks: dict[str, str] = {}
 
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)

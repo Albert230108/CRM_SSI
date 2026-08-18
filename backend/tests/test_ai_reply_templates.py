@@ -106,10 +106,29 @@ def test_canvas_notes_and_section_positions_round_trip(non_admin_client):
     body = create_response.json()
     template_id = body["id"]
     assert body["sections"] == [
-        {"label": "Persona", "content": "Be helpful.", "id": "sec-1", "x": 10.5, "y": 20.0, "order": 0},
+        {
+            "label": "Persona",
+            "content": "Be helpful.",
+            "id": "sec-1",
+            "x": 10.5,
+            "y": 20.0,
+            "order": 0,
+            "w": None,
+            "h": None,
+            "z": None,
+        },
     ]
     assert body["canvas_notes"] == [
-        {"id": "note-1", "text": "Double-check with legal before using this", "x": 40.0, "y": 5.0, "color": "yellow"},
+        {
+            "id": "note-1",
+            "text": "Double-check with legal before using this",
+            "x": 40.0,
+            "y": 5.0,
+            "color": "yellow",
+            "w": None,
+            "h": None,
+            "z": None,
+        },
     ]
 
     get_response = non_admin_client.get(f"/api/ai-reply-templates/{template_id}")
@@ -129,6 +148,85 @@ def test_canvas_notes_and_section_positions_round_trip(non_admin_client):
     assert update_response.status_code == 200
     assert update_response.json()["sections"][0]["x"] == 99.0
     assert update_response.json()["canvas_notes"] == []
+
+
+def test_canvas_sizes_and_stacking_order_round_trip(non_admin_client):
+    """w/h/z are canvas-only metadata; Pydantic would silently drop them if unmodelled."""
+    create_response = non_admin_client.post(
+        "/api/ai-reply-templates",
+        json={
+            "name": "Sized canvas template",
+            "sections": [
+                {
+                    "label": "Persona",
+                    "content": "Be helpful.",
+                    "id": "sec-1",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "order": 0,
+                    "w": 384.0,
+                    "h": 240.0,
+                    "z": 7,
+                },
+            ],
+            "canvas_notes": [
+                {"id": "note-1", "text": "Behind the card", "x": 0.0, "y": 0.0, "w": 168.0, "h": 144.0, "z": 3},
+            ],
+        },
+    )
+    assert create_response.status_code == 201
+    template_id = create_response.json()["id"]
+
+    get_response = non_admin_client.get(f"/api/ai-reply-templates/{template_id}")
+    assert get_response.status_code == 200
+    body = get_response.json()
+    assert (body["sections"][0]["w"], body["sections"][0]["h"], body["sections"][0]["z"]) == (384.0, 240.0, 7)
+    assert (body["canvas_notes"][0]["w"], body["canvas_notes"][0]["h"], body["canvas_notes"][0]["z"]) == (168.0, 144.0, 3)
+
+    update_response = non_admin_client.put(
+        f"/api/ai-reply-templates/{template_id}",
+        json={
+            "name": "Sized canvas template",
+            "sections": [
+                {
+                    "label": "Persona",
+                    "content": "Be helpful.",
+                    "id": "sec-1",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "order": 0,
+                    "w": 288.0,
+                    "h": 192.0,
+                    "z": 9,
+                },
+            ],
+            "canvas_notes": [],
+        },
+    )
+    assert update_response.status_code == 200
+    updated_section = update_response.json()["sections"][0]
+    assert (updated_section["w"], updated_section["h"], updated_section["z"]) == (288.0, 192.0, 9)
+
+
+def test_empty_sections_and_notes_are_persisted_not_dropped(non_admin_client):
+    """The canvas keeps blank placeholders the user positioned; the prompt builder skips them."""
+    create_response = non_admin_client.post(
+        "/api/ai-reply-templates",
+        json={
+            "name": "Template with placeholders",
+            "sections": [
+                {"label": "Persona", "content": "Be helpful.", "id": "sec-1", "x": 0.0, "y": 0.0, "order": 0},
+                {"label": "", "content": "", "id": "sec-blank", "x": 312.0, "y": 0.0, "order": 1},
+            ],
+            "canvas_notes": [{"id": "note-blank", "text": "", "x": 0.0, "y": -168.0}],
+        },
+    )
+    assert create_response.status_code == 201
+    template_id = create_response.json()["id"]
+
+    body = non_admin_client.get(f"/api/ai-reply-templates/{template_id}").json()
+    assert [section["id"] for section in body["sections"]] == ["sec-1", "sec-blank"]
+    assert [note["id"] for note in body["canvas_notes"]] == ["note-blank"]
 
 
 def test_get_ai_reply_template_by_id_returns_404_when_missing(non_admin_client):

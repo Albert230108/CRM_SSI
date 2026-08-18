@@ -4,6 +4,9 @@ from app.database import Base
 
 PLANNER_ROLE = "planner"
 CHECKER_ROLE = "checker"
+# The drafter writes the reply itself. Its profile carries prompt text only - the model,
+# sampling and context budget for a draft still come from the reply template.
+DRAFTER_ROLE = "drafter"
 
 
 class AiAgentProfile(Base):
@@ -18,12 +21,16 @@ class AiAgentProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False, index=True)  # planner | checker
+    role = Column(String(20), nullable=False, index=True)  # planner | checker | drafter
     # Exactly one profile per role is the fallback used by tenants that have not pinned one.
     is_default = Column(Boolean, nullable=False, default=False, server_default="false")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     # The operator-written rules that define this agent's job. Sent as the first prompt block.
     instructions = Column(Text, nullable=True)
+    # Overrides for the fixed prompt scaffolding defined in services/ai_prompt_blocks.py,
+    # keyed by block key. A key present here wins even when its value is an empty string -
+    # that is how an operator removes a block. A key absent falls back to the built-in text.
+    prompt_blocks = Column(JSON, nullable=False, default=dict, server_default="{}")
 
     # --- Model & sampling -------------------------------------------------------------
     # NULL means "use the process-wide GEMINI_MODEL", so profiles do not silently pin an old

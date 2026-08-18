@@ -11,6 +11,7 @@ export type BrainNode = {
   slug: string
   title: string
   content: string | null
+  color: string | null
   position: number
   is_active: boolean
   children: BrainNode[]
@@ -20,10 +21,24 @@ type EditorState = {
   title: string
   slug: string
   content: string
+  color: string
   is_active: boolean
 }
 
-const emptyEditor: EditorState = { title: '', slug: '', content: '', is_active: true }
+const emptyEditor: EditorState = { title: '', slug: '', content: '', color: '', is_active: true }
+
+const COLOR_PRESETS = [
+  '#ef4444',
+  '#f97316',
+  '#f59e0b',
+  '#84cc16',
+  '#22c55e',
+  '#14b8a6',
+  '#06b6d4',
+  '#3b82f6',
+  '#8b5cf6',
+  '#ec4899',
+]
 
 /** Depth-first walk so the tree can be searched and flattened without re-fetching. */
 function flatten(nodes: BrainNode[], depth = 0): { node: BrainNode; depth: number }[] {
@@ -87,6 +102,7 @@ export default function BrainSections() {
       title: node.title,
       slug: node.slug,
       content: node.content ?? '',
+      color: node.color ?? '',
       is_active: node.is_active,
     })
   }
@@ -95,7 +111,9 @@ export default function BrainSections() {
     setSelectedId(null)
     setCreatingUnder(parentId)
     setMessage('')
-    setEditor(emptyEditor)
+    // New subsections default to their parent's color; top-level sections start with none.
+    const parent = parentId === null ? null : findNode(tree, parentId)
+    setEditor({ ...emptyEditor, color: parent?.color ?? '' })
   }
 
   const save = async () => {
@@ -119,6 +137,7 @@ export default function BrainSections() {
           // existing slug (and therefore every {{brain:...}} reference) untouched on update.
           slug: editor.slug.trim() || null,
           content: editor.content,
+          color: editor.color || null,
           is_active: editor.is_active,
           ...(isCreate ? { parent_id: creatingUnder } : {}),
         }),
@@ -135,6 +154,7 @@ export default function BrainSections() {
         title: data.title,
         slug: data.slug,
         content: data.content ?? '',
+        color: data.color ?? '',
         is_active: data.is_active,
       })
       setMessage('Saved')
@@ -236,8 +256,16 @@ export default function BrainSections() {
                     className={`group flex items-center gap-1.5 rounded-lg px-2 py-1.5 ${
                       selectedId === node.id ? 'bg-indigo-50' : 'hover:bg-gray-50'
                     }`}
-                    style={{ paddingLeft: `${8 + depth * 16}px` }}
+                    style={{
+                      paddingLeft: `${8 + depth * 16}px`,
+                      borderLeft: `3px solid ${node.color || 'transparent'}`,
+                    }}
                   >
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full border border-gray-300"
+                      style={{ backgroundColor: node.color || 'transparent' }}
+                      title={node.color ?? 'No color'}
+                    />
                     <button
                       type="button"
                       onClick={() => selectNode(node)}
@@ -357,6 +385,42 @@ export default function BrainSections() {
                   Tenant placeholders such as <code>{'{{first_name}}'}</code> work here, and so do nested{' '}
                   <code>{'{{brain:other.path}}'}</code> references.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Color</label>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {COLOR_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setEditor({ ...editor, color: preset })}
+                      className={`h-6 w-6 rounded-full border-2 ${
+                        editor.color.toLowerCase() === preset ? 'border-gray-900' : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: preset }}
+                      title={preset}
+                      aria-label={`Set color ${preset}`}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={editor.color || '#ffffff'}
+                    onChange={(event) => setEditor({ ...editor, color: event.target.value })}
+                    className="h-6 w-8 cursor-pointer rounded border border-gray-300 bg-white p-0"
+                    title="Custom color"
+                    aria-label="Custom color"
+                  />
+                  {editor.color ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditor({ ...editor, color: '' })}
+                      className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
               </div>
 
               <label className="flex items-center gap-2 text-sm text-gray-700">

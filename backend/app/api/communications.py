@@ -936,6 +936,18 @@ def _resolve_ai_draft_tenant_template(
     return tenant, normalized_channel, template
 
 
+def _drafter_context(db: Session, tenant_id: int) -> tuple[dict[str, str], str | None]:
+    """The drafter's prompt scaffolding for this tenant, honouring any pinned drafter profile.
+
+    Both the generate and the preview endpoint go through this, so the preview cannot drift from
+    what is actually sent.
+    """
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    return ai_agent_orchestrator.resolve_drafter_context(
+        db, ai_settings.drafter_profile_id if ai_settings is not None else None
+    )
+
+
 @router.post("/tenants/{tenant_id}/ai-draft", response_model=AiDraftGenerateResponse)
 def generate_tenant_ai_draft(
     tenant_id: int,
@@ -946,6 +958,7 @@ def generate_tenant_ai_draft(
     """Stateless "Draft with AI" generation for the reply box - the caller pastes the result
     into the reply textarea for proofreading before sending; nothing is persisted here."""
     tenant, channel, template = _resolve_ai_draft_tenant_template(db, tenant_id, payload.channel, payload.template_id)
+    blocks, agent_instructions = _drafter_context(db, tenant_id)
 
     try:
         generated_text = ai_reply_service.build_prompt_and_generate(
@@ -954,6 +967,8 @@ def generate_tenant_ai_draft(
             template=template,
             channel=channel,
             rough_draft=payload.rough_draft,
+            blocks=blocks,
+            agent_instructions=agent_instructions,
         )
     except GeminiClientError as exc:
         logger.exception("AI draft generation failed")
@@ -1032,6 +1047,7 @@ def preview_tenant_ai_draft(
     the same ai_reply_service.assemble_prompt() builder as generate_tenant_ai_draft so the
     preview is guaranteed to match what gets sent."""
     tenant, channel, template = _resolve_ai_draft_tenant_template(db, tenant_id, payload.channel, payload.template_id)
+    blocks, agent_instructions = _drafter_context(db, tenant_id)
 
     prompt = ai_reply_service.assemble_prompt(
         db,
@@ -1039,6 +1055,8 @@ def preview_tenant_ai_draft(
         template=template,
         channel=channel,
         rough_draft=payload.rough_draft,
+        blocks=blocks,
+        agent_instructions=agent_instructions,
     )
 
     return AiDraftPreviewResponse(

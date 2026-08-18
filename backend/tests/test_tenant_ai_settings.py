@@ -46,6 +46,7 @@ def test_get_creates_default_settings_row(non_admin_client, db_session):
         "planner_mode": "off",
         "planner_profile_id": None,
         "checker_profile_id": None,
+        "drafter_profile_id": None,
     }
 
 

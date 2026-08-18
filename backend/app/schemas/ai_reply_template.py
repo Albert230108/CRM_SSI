@@ -6,12 +6,16 @@ from pydantic import BaseModel, ConfigDict
 class AiReplyTemplateSection(BaseModel):
     label: str
     content: str
-    # Canvas-only metadata: not read by the prompt builder. id/x/y/order may be absent for
-    # sections created before the canvas editor existed.
+    # Canvas-only metadata: not read by the prompt builder. All of it may be absent for
+    # sections created before the canvas editor existed. w/h are the card size and z the
+    # stacking order, shared with notes so a note can sit behind a card.
     id: str | None = None
     x: float | None = None
     y: float | None = None
     order: int | None = None
+    w: float | None = None
+    h: float | None = None
+    z: int | None = None
 
 
 class AiReplyTemplateNote(BaseModel):
@@ -22,6 +26,9 @@ class AiReplyTemplateNote(BaseModel):
     x: float
     y: float
     color: str | None = None
+    w: float | None = None
+    h: float | None = None
+    z: int | None = None
 
 
 class AiReplyTemplateCreate(BaseModel):

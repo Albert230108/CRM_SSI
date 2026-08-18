@@ -319,3 +319,145 @@ def test_runs_api_filters_by_status(client, db_session):
 
     assert len(client.get("/api/ai-agent-runs?status=needs_review").json()) == 1
     assert len(client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}").json()) == 2
+
+
+def _step_prompt(db_session, run_id, stage):
+    from app.models.ai_agent_run import AiAgentRunStep
+
+    step = (
+        db_session.query(AiAgentRunStep)
+        .filter(AiAgentRunStep.run_id == run_id, AiAgentRunStep.stage == stage)
+        .order_by(AiAgentRunStep.step_index)
+        .first()
+    )
+    assert step is not None, f"no {stage} step recorded for run {run_id}"
+    return step.prompt
+
+
+def test_planner_prompt_reproduces_the_built_in_wording_by_default(db_session, monkeypatch):
+    """Regression: a profile with no prompt_blocks overrides must produce exactly the wording
+    that used to be hardcoded, so this change is a no-op for every profile created before it."""
+    from app.services import ai_prompt_blocks
+
+    tenant, template = _setup(db_session, planner_mode="manual")
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}]),
+    )
+
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="When can I check in?"
+    )
+    db_session.commit()
+
+    planner_prompt = _step_prompt(db_session, result.run_id, "planner")
+    defaults = ai_prompt_blocks.DEFAULTS_BY_ROLE["planner"]
+    assert defaults["preamble"] in planner_prompt
+    assert defaults["language"] in planner_prompt
+    assert "Pick `template_id` from this list only." in planner_prompt
+    assert defaults["output"] in planner_prompt
+
+    checker_prompt = _step_prompt(db_session, result.run_id, "checker")
+    checker_defaults = ai_prompt_blocks.DEFAULTS_BY_ROLE["checker"]
+    assert checker_defaults["preamble"] in checker_prompt
+    assert checker_defaults["output"] in checker_prompt
+
+
+def test_planner_preamble_override_replaces_the_default_wording(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual")
+    profile = db_session.query(AiAgentProfile).filter(AiAgentProfile.role == "planner").one()
+    profile.prompt_blocks = {"preamble": "Custom planner preamble."}
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}]),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Hi"
+    )
+    db_session.commit()
+
+    planner_prompt = _step_prompt(db_session, result.run_id, "planner")
+    assert "Custom planner preamble." in planner_prompt
+    assert "You are the planner for a short-stay rental CRM" not in planner_prompt
+
+
+def test_clearing_the_operator_note_block_removes_the_framing_but_keeps_the_text(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual")
+    profile = db_session.query(AiAgentProfile).filter(AiAgentProfile.role == "planner").one()
+    profile.prompt_blocks = {"operator_note": ""}
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}]),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session,
+        tenant=tenant,
+        channel="email",
+        mode="manual",
+        inbound_text="Hi",
+        operator_note="Guest wants an early check-in.",
+    )
+    db_session.commit()
+
+    planner_prompt = _step_prompt(db_session, result.run_id, "planner")
+    assert "## Operator Note" not in planner_prompt
+    assert "Guest wants an early check-in." in planner_prompt
+
+
+def test_clearing_the_language_rule_stops_it_being_sent(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual")
+    profile = db_session.query(AiAgentProfile).filter(AiAgentProfile.role == "planner").one()
+    profile.prompt_blocks = {"language": ""}
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}]),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Hi"
+    )
+    db_session.commit()
+
+    planner_prompt = _step_prompt(db_session, result.run_id, "planner")
+    assert "same language the guest used" not in planner_prompt
+
+
+def test_drafter_profile_overrides_the_section_label_in_the_planner_loop(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual")
+    drafter = AiAgentProfile(
+        name="D", role="drafter", is_default=True, escalate_keywords=[],
+        prompt_blocks={"sections": "Custom Drafter Section"},
+    )
+    db_session.add(drafter)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}]),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Hi"
+    )
+    db_session.commit()
+
+    drafter_prompt = _step_prompt(db_session, result.run_id, "drafter")
+    assert "Custom Drafter Section" in drafter_prompt
+    assert "1. Template Text" not in drafter_prompt
+
+
+def test_resolve_drafter_context_returns_built_in_defaults_with_no_pinned_profile(db_session):
+    blocks, instructions = ai_agent_orchestrator.resolve_drafter_context(db_session, None)
+    from app.services import ai_prompt_blocks
+
+    assert blocks == ai_prompt_blocks.DEFAULTS_BY_ROLE["drafter"]
+    assert instructions is None

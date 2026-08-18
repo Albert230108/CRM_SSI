@@ -24,4 +24,5 @@ class TenantAiSettings(Base):
     # tenant that has not deliberately pinned a different one.
     planner_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     checker_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
+    drafter_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

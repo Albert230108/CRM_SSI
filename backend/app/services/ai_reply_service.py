@@ -10,11 +10,21 @@ from app.models.finance import Finance as FinanceRecord
 from app.models.gmail_integration import ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
-from app.services import brain_service, gemini_client
+from app.services import ai_prompt_blocks, brain_service, gemini_client
 from app.services.email_template_service import resolve_template_text
 from app.services.thread_timeline_service import ensure_utc as _ensure_utc, load_tenant_whatsapp_messages
 
 _DEFAULT_HISTORY_LIMIT = 20
+
+
+def _blocks(blocks: dict[str, str] | None) -> dict[str, str]:
+    """Fall back to the drafter's built-in scaffolding when a caller passes nothing.
+
+    The planner and checker resolve their own role's blocks and pass them in; the three
+    drafter entry points pass the drafter profile's. A caller that passes None gets the
+    original hardcoded wording, so nothing breaks if a new call site forgets.
+    """
+    return blocks if blocks is not None else ai_prompt_blocks.DEFAULTS_BY_ROLE[ai_prompt_blocks.DRAFTER_ROLE]
 
 
 @dataclass(frozen=True)
@@ -69,7 +79,7 @@ def _build_knowledge_base(
     return resolve_template_text(rendered, tenant).strip()
 
 
-def _build_beds24_context(tenant: Tenant) -> str:
+def _build_beds24_context(tenant: Tenant, blocks: dict[str, str] | None = None) -> str:
     lines = [
         f"Booking ID: {tenant.booking_id}",
         f"Guest name: {tenant.name or 'Unknown'}",
@@ -83,24 +93,25 @@ def _build_beds24_context(tenant: Tenant) -> str:
         f"Adults / Children: {tenant.num_adults or 0} / {tenant.num_children or 0}",
         f"Booking status: {tenant.booking_status or 'Unknown'}",
     ]
-    return "## Booking Information (Beds24)\n" + "\n".join(lines)
+    return ai_prompt_blocks.join(_blocks(blocks)["ctx_beds24"], "\n".join(lines))
 
 
-def _build_payments_context(db: Session, tenant: Tenant) -> str:
+def _build_payments_context(db: Session, tenant: Tenant, blocks: dict[str, str] | None = None) -> str:
     records = (
         db.query(FinanceRecord)
         .filter(FinanceRecord.tenant_id == tenant.id)
         .order_by(FinanceRecord.created_at.asc(), FinanceRecord.id.asc())
         .all()
     )
+    heading = _blocks(blocks)["ctx_payments"]
     if not records:
-        return "## Payments & Charges\nNo payment or charge records on file."
+        return ai_prompt_blocks.join(heading, "No payment or charge records on file.")
 
     lines = [
         f"- {record.type}: {record.amount} {record.currency} — {record.description or 'no description'}"
         for record in records
     ]
-    return "## Payments & Charges\n" + "\n".join(lines)
+    return ai_prompt_blocks.join(heading, "\n".join(lines))
 
 
 def _load_email_history(db: Session, tenant_id: int, limit: int) -> list[_HistoryEntry]:
@@ -141,11 +152,12 @@ def _load_whatsapp_history(db: Session, tenant_id: int, limit: int) -> list[_His
     ]
 
 
-def _build_notes_context(tenant: Tenant) -> str:
+def _build_notes_context(tenant: Tenant, blocks: dict[str, str] | None = None) -> str:
+    heading = _blocks(blocks)["ctx_notes"]
     notes = (tenant.notes or "").strip()
     if not notes:
-        return "## Internal Notes\nNo internal notes on file."
-    return "## Internal Notes\n" + notes
+        return ai_prompt_blocks.join(heading, "No internal notes on file.")
+    return ai_prompt_blocks.join(heading, notes)
 
 
 def _build_history_context(
@@ -155,6 +167,7 @@ def _build_history_context(
     *,
     channels: str = "both",
     lookback_days: int | None = None,
+    blocks: dict[str, str] | None = None,
 ) -> str:
     """Last `limit` messages for this tenant, oldest first.
 
@@ -179,12 +192,14 @@ def _build_history_context(
     entries = entries[-limit:] if limit > 0 else []
 
     scope = {"both": "email and WhatsApp", "email": "email", "whatsapp": "WhatsApp"}.get(channels, channels)
-    header = f"## Conversation History (last {limit} messages across {scope})"
-    if lookback_days:
+    header = ai_prompt_blocks.fill(_blocks(blocks)["ctx_history"], limit=limit, scope=scope)
+    # Only qualify a heading that still exists - an operator who cleared it does not want a
+    # stray ", limited to the past N day(s)" fragment left behind on its own line.
+    if lookback_days and header:
         header += f", limited to the past {lookback_days} day(s)"
     if not entries:
-        return f"{header}\nNo prior messages on file."
-    return header + "\n" + "\n".join(entry.text for entry in entries)
+        return ai_prompt_blocks.join(header, "No prior messages on file.")
+    return ai_prompt_blocks.join(header, "\n".join(entry.text for entry in entries))
 
 
 def assemble_prompt(
@@ -196,61 +211,69 @@ def assemble_prompt(
     rough_draft: str | None,
     extra_brain_section_paths: list[str] | None = None,
     reviewer_feedback: str | None = None,
+    blocks: dict[str, str] | None = None,
+    agent_instructions: str | None = None,
 ) -> str:
     """Build the exact, single flat prompt string sent to Gemini.
 
-    Fixed order: 0. guidelines, 1. template text/subprompts, 1b. knowledge base (brain
-    sections), 2. message history (all channels), 3. Beds24 info (booking + payments + notes),
-    4. the user's typed text, 5. reviewer feedback on a redraft round. Each present group is
-    prefixed with its position number so the numbering is visible directly in the payload, not
-    just in the template editor UI. Groups 4 and 5 are included only if there is something to
-    put in them - there is no default filler instruction. This is the single source of truth
-    reused by the "Draft with AI" endpoint, the payload preview endpoint and the planner loop,
-    so what the user previews is guaranteed to be what is sent.
+    Fixed order: the drafter profile's preamble and instructions, then 0. guidelines, 1. template
+    text/subprompts, 1b. knowledge base (brain sections), 2. message history (all channels),
+    3. Beds24 info (booking + payments + notes), 4. the user's typed text, 5. reviewer feedback on
+    a redraft round. Each present group is prefixed with its label so the numbering is visible
+    directly in the payload, not just in the template editor UI. Those labels are not hardcoded:
+    they come from `blocks`, so an operator can reword or delete any of them (a label resolving to
+    an empty string emits the content on its own). Groups 4 and 5 are included only if there is
+    something to put in them - there is no default filler instruction. This is the single source
+    of truth reused by the "Draft with AI" endpoint, the payload preview endpoint and the planner
+    loop, so what the user previews is guaranteed to be what is sent.
     """
-    blocks: list[str] = []
+    text = _blocks(blocks)
+    parts: list[str] = []
+
+    preamble = (text["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
+
+    instructions = (agent_instructions or "").strip()
+    if instructions:
+        parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
 
     guidelines_content = _build_guidelines_content(db, template, tenant)
     if guidelines_content:
-        blocks.append(f"0. Goal & Guidelines\n{guidelines_content}")
+        parts.append(ai_prompt_blocks.join(text["guidelines"], guidelines_content))
 
     sections_content = _build_sections_prompt(db, template, tenant)
     if sections_content:
-        blocks.append(f"1. Template Text\n{sections_content}")
+        parts.append(ai_prompt_blocks.join(text["sections"], sections_content))
 
     knowledge_content = _build_knowledge_base(db, template, tenant, extra_brain_section_paths)
     if knowledge_content:
-        blocks.append(f"1b. Knowledge Base\n{knowledge_content}")
+        parts.append(ai_prompt_blocks.join(text["knowledge"], knowledge_content))
 
     if template.include_history:
         limit = template.history_message_limit or _DEFAULT_HISTORY_LIMIT
-        history_content = _build_history_context(db, tenant, limit)
-        blocks.append(f"2. Message History\n{history_content}")
+        history_content = _build_history_context(db, tenant, limit, blocks=text)
+        parts.append(ai_prompt_blocks.join(text["history"], history_content))
 
     beds24_group: list[str] = []
     if template.include_beds24:
-        beds24_group.append(_build_beds24_context(tenant))
+        beds24_group.append(_build_beds24_context(tenant, text))
     if template.include_payments:
-        beds24_group.append(_build_payments_context(db, tenant))
+        beds24_group.append(_build_payments_context(db, tenant, text))
     if template.include_notes:
-        beds24_group.append(_build_notes_context(tenant))
+        beds24_group.append(_build_notes_context(tenant, text))
     if beds24_group:
-        blocks.append("3. Beds24 Info\n" + "\n\n".join(beds24_group))
+        parts.append(ai_prompt_blocks.join(text["beds24"], "\n\n".join(beds24_group)))
 
     user_message = (rough_draft or "").strip()
     if user_message:
-        blocks.append(f"4. Your Instruction\n{user_message}")
+        parts.append(ai_prompt_blocks.join(text["user_instruction"], user_message))
 
     feedback = (reviewer_feedback or "").strip()
     if feedback:
-        blocks.append(
-            "5. Reviewer Feedback\n"
-            "A reviewer rejected your previous draft for the reasons below. Rewrite the reply so that "
-            "every point is addressed. Output only the corrected reply.\n"
-            f"{feedback}"
-        )
+        parts.append(ai_prompt_blocks.join(text["reviewer_feedback"], feedback))
 
-    return "\n\n".join(block for block in blocks if block.strip())
+    return "\n\n".join(part for part in parts if part.strip())
 
 
 def build_prompt_and_generate(
@@ -262,6 +285,8 @@ def build_prompt_and_generate(
     rough_draft: str | None,
     extra_brain_section_paths: list[str] | None = None,
     reviewer_feedback: str | None = None,
+    blocks: dict[str, str] | None = None,
+    agent_instructions: str | None = None,
 ) -> str:
     prompt = assemble_prompt(
         db,
@@ -271,5 +296,7 @@ def build_prompt_and_generate(
         rough_draft=rough_draft,
         extra_brain_section_paths=extra_brain_section_paths,
         reviewer_feedback=reviewer_feedback,
+        blocks=blocks,
+        agent_instructions=agent_instructions,
     )
     return gemini_client.generate_text_flat(prompt)

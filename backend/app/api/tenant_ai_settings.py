@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.ai_agent_profile import CHECKER_ROLE, PLANNER_ROLE, AiAgentProfile
+from app.models.ai_agent_profile import CHECKER_ROLE, DRAFTER_ROLE, PLANNER_ROLE, AiAgentProfile
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
@@ -55,6 +55,7 @@ def _to_read(db: Session, settings: TenantAiSettings) -> TenantAiSettingsRead:
         planner_mode=settings.planner_mode or "off",
         planner_profile_id=settings.planner_profile_id,
         checker_profile_id=settings.checker_profile_id,
+        drafter_profile_id=settings.drafter_profile_id,
     )
 
 
@@ -111,6 +112,7 @@ def update_tenant_ai_settings(
     # than rejected, so the tenant transparently falls back to the role default.
     settings.planner_profile_id = _validated_profile_id(db, payload.planner_profile_id, PLANNER_ROLE)
     settings.checker_profile_id = _validated_profile_id(db, payload.checker_profile_id, CHECKER_ROLE)
+    settings.drafter_profile_id = _validated_profile_id(db, payload.drafter_profile_id, DRAFTER_ROLE)
 
     db.commit()
     db.refresh(settings)

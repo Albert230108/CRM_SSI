@@ -19,7 +19,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.admin_settings import AdminSettings
-from app.models.ai_agent_profile import CHECKER_ROLE, PLANNER_ROLE, AiAgentProfile
+from app.models.ai_agent_profile import CHECKER_ROLE, DRAFTER_ROLE, PLANNER_ROLE, AiAgentProfile
 from app.models.ai_agent_run import (
     STATUS_COMPLETED,
     STATUS_ESCALATED,
@@ -34,7 +34,7 @@ from app.models.gmail_integration import ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant_ai_settings import TenantAiSettings
-from app.services import ai_reply_service, brain_service, gemini_client
+from app.services import ai_prompt_blocks, ai_reply_service, brain_service, gemini_client
 from app.services.thread_timeline_service import load_tenant_whatsapp_messages
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,18 @@ def resolve_profile(db: Session, role: str, pinned_id: int | None) -> AiAgentPro
     )
 
 
+def resolve_drafter_context(db: Session, pinned_id: int | None) -> tuple[dict[str, str], str | None]:
+    """The prompt scaffolding and standing instructions the drafter should use for this tenant.
+
+    Shared by the planner loop and the two "Draft with AI" endpoints so the payload preview keeps
+    matching what is actually sent. With no drafter profile configured this returns the built-in
+    scaffolding and no instructions, i.e. the behaviour from before profiles carried prompt text.
+    """
+    profile = resolve_profile(db, DRAFTER_ROLE, pinned_id)
+    blocks = ai_prompt_blocks.resolve_blocks(profile, DRAFTER_ROLE)
+    return blocks, (profile.instructions if profile is not None else None)
+
+
 def tokens_spent_today(db: Session) -> int:
     """Total planner/checker tokens billed since midnight UTC, across every tenant."""
     midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -221,29 +233,31 @@ def _build_context_blocks(
     *,
     channel: str,
     inbound_text: str | None,
+    blocks: dict[str, str],
 ) -> list[str]:
     """The shared context every agent gets, sized by its own profile's budget."""
-    blocks: list[str] = []
+    parts: list[str] = []
     limit = max(0, int(profile.history_limit or 0))
     if limit:
-        blocks.append(
+        parts.append(
             ai_reply_service._build_history_context(
                 db,
                 tenant,
                 limit,
                 channels=_resolve_history_channels(profile, channel),
                 lookback_days=profile.history_lookback_days,
+                blocks=blocks,
             )
         )
     if profile.include_beds24:
-        blocks.append(ai_reply_service._build_beds24_context(tenant))
+        parts.append(ai_reply_service._build_beds24_context(tenant, blocks))
     if profile.include_payments:
-        blocks.append(ai_reply_service._build_payments_context(db, tenant))
+        parts.append(ai_reply_service._build_payments_context(db, tenant, blocks))
     if profile.include_notes:
-        blocks.append(ai_reply_service._build_notes_context(tenant))
+        parts.append(ai_reply_service._build_notes_context(tenant, blocks))
     if inbound_text:
-        blocks.append(f"## Message To Answer\n{inbound_text}")
-    return blocks
+        parts.append(ai_prompt_blocks.join(blocks["ctx_inbound"], inbound_text))
+    return parts
 
 
 def _template_catalogue(db: Session, tenant_id: int) -> tuple[str, set[int]]:
@@ -272,10 +286,15 @@ def _template_catalogue(db: Session, tenant_id: int) -> tuple[str, set[int]]:
     return "\n".join(lines), {template.id for template in templates}
 
 
-def _language_directive(profile: AiAgentProfile) -> str | None:
+def _language_directive(profile: AiAgentProfile, blocks: dict[str, str]) -> str | None:
+    """The language rule, or None when this profile does not enforce one.
+
+    The `## Language` heading lives inside the block text itself, so clearing the block removes
+    the heading too rather than leaving a bare heading behind.
+    """
     if not profile.match_inbound_language:
         return None
-    return "The reply must be written in the same language the guest used in their latest message."
+    return (blocks["language"] or "").strip() or None
 
 
 def _build_planner_prompt(
@@ -288,48 +307,42 @@ def _build_planner_prompt(
     inbound_text: str | None,
     operator_note: str | None,
 ) -> str:
-    blocks = [
-        "You are the planner for a short-stay rental CRM. Read the conversation and decide how to "
-        "reply. Choose exactly one template from the catalogue, name any extra knowledge-base "
-        "sections the reply needs, and write the concrete instruction the drafting model should "
-        "follow. Do not write the reply itself."
-    ]
+    """Assemble the planner prompt from this profile's editable blocks.
+
+    Every fixed string here comes from `ai_prompt_blocks`, so an operator reading the run log can
+    change any of it. A block whose text is empty contributes nothing: for the standalone blocks
+    that means they vanish, and for the framed ones the live data is emitted on its own.
+    """
+    text = ai_prompt_blocks.resolve_blocks(profile, PLANNER_ROLE)
+    parts: list[str] = []
+
+    preamble = (text["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
+
     instructions = (profile.instructions or "").strip()
     if instructions:
-        blocks.append(f"## Your Instructions\n{instructions}")
+        parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
 
-    directive = _language_directive(profile)
+    directive = _language_directive(profile, text)
     if directive:
-        blocks.append(f"## Language\n{directive}")
+        parts.append(directive)
 
-    blocks.append(f"## Template Catalogue\nPick `template_id` from this list only.\n{catalogue}")
+    parts.append(ai_prompt_blocks.join(text["catalogue"], catalogue))
 
     if profile.include_brain_index:
-        blocks.append(
-            "## Knowledge Base Index\n"
-            "Put any paths the reply needs into `extra_brain_sections`. Referencing a parent path "
-            "also pulls in everything nested under it.\n"
-            + brain_service.build_brain_index(db)
-        )
+        parts.append(ai_prompt_blocks.join(text["brain_index"], brain_service.build_brain_index(db)))
 
-    blocks += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text)
+    parts += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text, blocks=text)
 
     note = (operator_note or "").strip()
     if note:
-        blocks.append(
-            "## Operator Note\n"
-            "A member of staff typed this into the reply box before asking for a draft. Treat it as "
-            "the strongest signal about what the reply must contain.\n"
-            f"{note}"
-        )
+        parts.append(ai_prompt_blocks.join(text["operator_note"], note))
 
-    blocks.append(
-        "## Output\n"
-        "Return JSON only. `confidence` is 0-1 for how well the chosen template fits. `reasoning` "
-        "explains why you chose it. `alternatives` lists the other templates you seriously "
-        "considered and why you rejected each. Set `should_reply` to false if no reply is warranted."
-    )
-    return "\n\n".join(blocks)
+    output = (text["output"] or "").strip()
+    if output:
+        parts.append(output)
+    return "\n\n".join(part for part in parts if part.strip())
 
 
 def _build_checker_prompt(
@@ -342,31 +355,32 @@ def _build_checker_prompt(
     inbound_text: str | None,
     plan_instructions: str,
 ) -> str:
-    blocks = [
-        "You are the reviewer for a short-stay rental CRM. Proof-read the draft reply below "
-        "against your instructions and the conversation. You do not rewrite the reply - you "
-        "either approve it or explain precisely what must change."
-    ]
+    """Assemble the checker prompt from this profile's editable blocks. See _build_planner_prompt."""
+    text = ai_prompt_blocks.resolve_blocks(profile, CHECKER_ROLE)
+    parts: list[str] = []
+
+    preamble = (text["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
+
     instructions = (profile.instructions or "").strip()
     if instructions:
-        blocks.append(f"## Your Instructions\n{instructions}")
+        parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
 
-    directive = _language_directive(profile)
+    directive = _language_directive(profile, text)
     if directive:
-        blocks.append(f"## Language\n{directive}")
+        parts.append(directive)
 
     if plan_instructions.strip():
-        blocks.append(f"## What The Draft Was Asked To Do\n{plan_instructions.strip()}")
+        parts.append(ai_prompt_blocks.join(text["plan_instructions"], plan_instructions.strip()))
 
-    blocks += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text)
-    blocks.append(f"## Draft To Review\n{draft}")
-    blocks.append(
-        "## Output\n"
-        "Return JSON only. Set `passed` to true only if the draft can be sent as-is. When it "
-        "cannot, `feedback` must be specific enough for the writer to fix it in one pass, and "
-        "`issues` should list each problem separately."
-    )
-    return "\n\n".join(blocks)
+    parts += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text, blocks=text)
+    parts.append(ai_prompt_blocks.join(text["draft"], draft))
+
+    output = (text["output"] or "").strip()
+    if output:
+        parts.append(output)
+    return "\n\n".join(part for part in parts if part.strip())
 
 
 def run_planner_loop(
@@ -383,6 +397,9 @@ def run_planner_loop(
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
     planner_profile = resolve_profile(db, PLANNER_ROLE, ai_settings.planner_profile_id if ai_settings else None)
     checker_profile = resolve_profile(db, CHECKER_ROLE, ai_settings.checker_profile_id if ai_settings else None)
+    drafter_blocks, drafter_instructions = resolve_drafter_context(
+        db, ai_settings.drafter_profile_id if ai_settings else None
+    )
 
     run = AiAgentRun(
         tenant_id=tenant.id,
@@ -482,6 +499,8 @@ def run_planner_loop(
             rough_draft=drafter_instruction or None,
             extra_brain_section_paths=extra_sections,
             reviewer_feedback=feedback,
+            blocks=drafter_blocks,
+            agent_instructions=drafter_instructions,
         )
         try:
             draft_result = gemini_client.generate(draft_prompt)

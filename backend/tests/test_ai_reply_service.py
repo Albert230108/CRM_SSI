@@ -97,6 +97,26 @@ def test_canvas_notes_are_never_sent_to_the_ai(db_session, monkeypatch):
     assert "You are a helpful host." in captured["prompt"]
 
 
+def test_empty_sections_contribute_no_prompt_block(db_session, monkeypatch):
+    """Blank canvas placeholders are stored but must not leak an empty heading into the prompt."""
+    tenant = _create_tenant(db_session)
+    template = _template(
+        sections=[
+            {"label": "Persona", "content": "You are a helpful host.", "id": "sec-1", "order": 0},
+            {"label": "PLACEHOLDER-LABEL-ONLY", "content": "", "id": "sec-blank", "order": 1},
+            {"label": "Tone", "content": "Be warm and concise.", "id": "sec-2", "order": 2},
+        ]
+    )
+    captured = _capture_gemini_call(monkeypatch)
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="Check-in is at 3pm."
+    )
+
+    assert "PLACEHOLDER-LABEL-ONLY" not in captured["prompt"]
+    assert captured["prompt"].index("You are a helpful host.") < captured["prompt"].index("Be warm and concise.")
+
+
 def test_no_rough_draft_sends_empty_instruction_block(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     template = _template()
@@ -502,3 +522,108 @@ def test_booking_status_placeholder_is_resolved(db_session, monkeypatch):
     ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
 
     assert "Current status: confirmed." in captured["prompt"]
+
+
+def test_default_labels_match_the_prompt_blocks_registry(db_session, monkeypatch):
+    """Regression: assemble_prompt's numbered labels come from ai_prompt_blocks now, not literals."""
+    from app.services import ai_prompt_blocks
+
+    tenant = _create_tenant(db_session)
+    template = _template(include_history=True, history_message_limit=5, include_beds24=True)
+    captured = _capture_gemini_call(monkeypatch)
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="hi"
+    )
+
+    defaults = ai_prompt_blocks.DEFAULTS_BY_ROLE["drafter"]
+    assert defaults["sections"] in captured["prompt"]
+    assert defaults["history"] in captured["prompt"]
+    assert defaults["beds24"] in captured["prompt"]
+    assert defaults["user_instruction"] in captured["prompt"]
+
+
+def test_custom_blocks_override_the_drafter_labels(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template = _template()
+    captured = _capture_gemini_call(monkeypatch)
+
+    from app.services import ai_prompt_blocks
+
+    blocks = dict(ai_prompt_blocks.DEFAULTS_BY_ROLE["drafter"])
+    blocks["sections"] = "Custom Section Heading"
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="hi", blocks=blocks
+    )
+
+    assert "Custom Section Heading" in captured["prompt"]
+    assert "1. Template Text" not in captured["prompt"]
+
+
+def test_blank_block_omits_the_label_but_keeps_the_content(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template = _template()
+    captured = _capture_gemini_call(monkeypatch)
+
+    from app.services import ai_prompt_blocks
+
+    blocks = dict(ai_prompt_blocks.DEFAULTS_BY_ROLE["drafter"])
+    blocks["sections"] = ""
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="hi", blocks=blocks
+    )
+
+    assert "1. Template Text" not in captured["prompt"]
+    assert "You are a helpful host." in captured["prompt"]
+
+
+def test_agent_instructions_use_the_instructions_header_block(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template = _template()
+    captured = _capture_gemini_call(monkeypatch)
+
+    from app.services import ai_prompt_blocks
+
+    blocks = dict(ai_prompt_blocks.DEFAULTS_BY_ROLE["drafter"])
+    blocks["instructions_header"] = "## Standing Rules"
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session,
+        tenant=tenant,
+        template=template,
+        channel="email",
+        rough_draft="hi",
+        blocks=blocks,
+        agent_instructions="Never mention refunds.",
+    )
+
+    assert "## Standing Rules\nNever mention refunds." in captured["prompt"]
+
+
+def test_history_heading_substitutes_limit_and_scope(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template = _template(include_history=True, history_message_limit=7)
+    captured = _capture_gemini_call(monkeypatch)
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="hi"
+    )
+
+    assert "## Conversation History (last 7 messages across email and WhatsApp)" in captured["prompt"]
+
+
+def test_omitting_blocks_argument_falls_back_to_built_in_defaults(db_session, monkeypatch):
+    """No blocks passed at all -> identical output to before prompt blocks existed."""
+    tenant = _create_tenant(db_session)
+    template = _template(include_beds24=True)
+    captured = _capture_gemini_call(monkeypatch)
+
+    ai_reply_service.build_prompt_and_generate(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft="hi"
+    )
+
+    assert "0. Goal & Guidelines" not in captured["prompt"]  # guidelines blank for this template
+    assert "1. Template Text" in captured["prompt"]
+    assert "## Booking Information (Beds24)" in captured["prompt"]

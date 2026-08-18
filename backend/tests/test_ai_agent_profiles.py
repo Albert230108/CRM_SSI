@@ -100,7 +100,7 @@ def test_non_default_profile_can_be_deleted(client):
 
 
 def test_invalid_enum_values_are_rejected(client):
-    assert client.post("/api/ai-agent-profiles", json=_payload(role="drafter")).status_code == 422
+    assert client.post("/api/ai-agent-profiles", json=_payload(role="wizard")).status_code == 422
     assert client.post("/api/ai-agent-profiles", json=_payload(history_channels="carrier-pigeon")).status_code == 422
     assert client.post("/api/ai-agent-profiles", json=_payload(min_confidence=1.5)).status_code == 422
 
@@ -164,3 +164,79 @@ def test_planner_mode_defaults_to_off(client, db_session):
     body = client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
     assert body["planner_mode"] == "off"
     assert body["planner_profile_id"] is None
+
+
+def test_create_a_drafter_profile_with_prompt_block_overrides(client):
+    response = client.post(
+        "/api/ai-agent-profiles",
+        json=_payload(name="Standard drafter", role="drafter", prompt_blocks={"sections": "Custom label"}),
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["role"] == "drafter"
+    assert body["prompt_blocks"] == {"sections": "Custom label"}
+
+
+def test_drafter_role_is_listed_and_filterable(client):
+    client.post("/api/ai-agent-profiles", json=_payload(name="D", role="drafter"))
+    client.post("/api/ai-agent-profiles", json=_payload(name="P", role="planner"))
+
+    response = client.get("/api/ai-agent-profiles", params={"role": "drafter"})
+    assert response.status_code == 200
+    roles = {profile["role"] for profile in response.json()}
+    assert roles == {"drafter"}
+
+
+def test_updating_prompt_blocks_round_trips(client):
+    created = client.post("/api/ai-agent-profiles", json=_payload(name="P", role="planner")).json()
+    updated = client.put(
+        f"/api/ai-agent-profiles/{created['id']}",
+        json=_payload(name="P", role="planner", prompt_blocks={"output": ""}),
+    )
+    assert updated.status_code == 200
+    assert updated.json()["prompt_blocks"] == {"output": ""}
+
+
+def test_tenant_can_pin_a_drafter_profile(client, db_session):
+    tenant = Tenant(name="Drafter pin tenant", booking_id="B-drafter-1")
+    db_session.add(tenant)
+    db_session.commit()
+    drafter = client.post("/api/ai-agent-profiles", json=_payload(name="D", role="drafter", is_default=True)).json()
+
+    response = client.put(
+        f"/api/tenants/{tenant.id}/ai-settings",
+        json={
+            "available_template_ids": [],
+            "auto_draft_email": False,
+            "auto_draft_whatsapp": False,
+            "auto_send_email": False,
+            "auto_send_whatsapp": False,
+            "planner_mode": "off",
+            "drafter_profile_id": drafter["id"],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["drafter_profile_id"] == drafter["id"]
+
+
+def test_a_checker_profile_id_is_rejected_as_a_drafter_pin(client, db_session):
+    """A profile id for the wrong role must be silently unpinned, mirroring planner/checker."""
+    tenant = Tenant(name="Wrong role tenant", booking_id="B-drafter-2")
+    db_session.add(tenant)
+    db_session.commit()
+    checker = client.post("/api/ai-agent-profiles", json=_payload(name="C", role="checker")).json()
+
+    response = client.put(
+        f"/api/tenants/{tenant.id}/ai-settings",
+        json={
+            "available_template_ids": [],
+            "auto_draft_email": False,
+            "auto_draft_whatsapp": False,
+            "auto_send_email": False,
+            "auto_send_whatsapp": False,
+            "planner_mode": "off",
+            "drafter_profile_id": checker["id"],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["drafter_profile_id"] is None

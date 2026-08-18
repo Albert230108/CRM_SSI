@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.ai_agent_profile import AiAgentProfile
 from app.models.user import User
 from app.schemas.ai_agent_profile import AiAgentProfileCreate, AiAgentProfileRead, AiAgentProfileUpdate
+from app.services import ai_prompt_blocks
 
 router = APIRouter(prefix="/ai-agent-profiles", tags=["ai-agent-profiles"])
 
@@ -13,6 +15,7 @@ _ASSIGNABLE_FIELDS = (
     "role",
     "is_active",
     "instructions",
+    "prompt_blocks",
     "model",
     "temperature",
     "max_output_tokens",
@@ -51,9 +54,37 @@ def _apply_default_flag(db: Session, profile: AiAgentProfile, is_default: bool) 
     profile.is_default = True
 
 
+class PromptBlockDefinition(BaseModel):
+    """One editable piece of an agent's prompt scaffolding, as the settings UI renders it."""
+
+    key: str
+    label: str
+    help: str
+    default: str
+    group: str
+
+
+@router.get("/prompt-blocks", response_model=list[PromptBlockDefinition])
+def list_prompt_blocks(
+    role: str = Query(..., pattern="^(planner|checker|drafter)$"),
+    current_user: User = Depends(get_current_user),
+) -> list[PromptBlockDefinition]:
+    """The blocks a profile of this role may override, with their built-in default text.
+
+    Serving the registry rather than duplicating it in TypeScript is what lets the form render
+    the real defaults and offer a per-field "reset" without the two copies drifting apart.
+    """
+    return [
+        PromptBlockDefinition(
+            key=block.key, label=block.label, help=block.help, default=block.default, group=block.group
+        )
+        for block in ai_prompt_blocks.BLOCKS_BY_ROLE[role]
+    ]
+
+
 @router.get("", response_model=list[AiAgentProfileRead])
 def list_agent_profiles(
-    role: str | None = Query(None, pattern="^(planner|checker)$"),
+    role: str | None = Query(None, pattern="^(planner|checker|drafter)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AiAgentProfile]:

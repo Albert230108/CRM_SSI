@@ -17,6 +17,7 @@ class TenantAiSettingsRead(BaseModel):
     planner_mode: PlannerMode = "off"
     planner_profile_id: int | None = None
     checker_profile_id: int | None = None
+    drafter_profile_id: int | None = None
 
 
 class TenantAiSettingsUpdate(BaseModel):
@@ -30,6 +31,7 @@ class TenantAiSettingsUpdate(BaseModel):
     planner_mode: PlannerMode = "off"
     planner_profile_id: int | None = None
     checker_profile_id: int | None = None
+    drafter_profile_id: int | None = None
 
 
 class BulkTenantAiTemplateAssignment(BaseModel):

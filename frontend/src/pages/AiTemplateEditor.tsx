@@ -1,16 +1,24 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
-import AiTemplateSectionCanvas, { nextSectionPosition } from '../components/AiTemplateSectionCanvas'
-import type { AiReplyTemplate, AiTemplateNote, AiTemplateSection, BrainSectionOption } from '../types/aiReplyTemplate'
+import AiTemplateSectionCanvas from '../components/AiTemplateSectionCanvas'
+import {
+  CARD_HEIGHT,
+  CARD_WIDTH,
+  NOTE_HEIGHT,
+  NOTE_WIDTH,
+  NOTE_Z_BASE,
+  nextSectionPosition,
+} from '../lib/aiTemplateCanvas'
+import {
+  EMAIL_TEMPLATE_PLACEHOLDERS,
+  type AiReplyTemplate,
+  type AiTemplateNote,
+  type AiTemplateSection,
+  type BrainSectionOption,
+} from '../types/aiReplyTemplate'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
-
-const EMAIL_TEMPLATE_PLACEHOLDERS = [
-  'tenant_name', 'first_name', 'last_name', 'email', 'phone', 'check_in', 'check_out',
-  'num_nights', 'num_adults', 'num_children', 'room_name', 'property_name', 'booking_id',
-  'booking_status', 'language', 'arrival_time', 'departure_time', 'city', 'country',
-]
 
 type FormState = {
   id: number | null
@@ -27,32 +35,60 @@ type FormState = {
   include_notes: boolean
 }
 
-const emptyForm: FormState = {
-  id: null,
-  name: '',
-  description: '',
-  guidelines: '',
-  sections: [{ id: crypto.randomUUID(), label: '', content: '', order: 0, ...nextSectionPosition(0) }],
-  canvas_notes: [],
-  brain_section_ids: [],
-  include_history: false,
-  history_message_limit: 20,
-  include_beds24: false,
-  include_payments: false,
-  include_notes: false,
+function createEmptyForm(): FormState {
+  return {
+    id: null,
+    name: '',
+    description: '',
+    guidelines: '',
+    sections: [
+      {
+        id: crypto.randomUUID(),
+        label: '',
+        content: '',
+        order: 0,
+        w: CARD_WIDTH,
+        h: CARD_HEIGHT,
+        z: 0,
+        ...nextSectionPosition(0),
+      },
+    ],
+    canvas_notes: [],
+    brain_section_ids: [],
+    include_history: false,
+    history_message_limit: 20,
+    include_beds24: false,
+    include_payments: false,
+    include_notes: false,
+  }
 }
 
+/** Gives pre-canvas sections an id, a grid slot, and a size/stacking order. */
 function backfillSections(sections: AiTemplateSection[]): AiTemplateSection[] {
   return sections.map((section, index) => {
-    const position = section.x != null && section.y != null ? { x: section.x, y: section.y } : nextSectionPosition(index)
+    const position =
+      section.x != null && section.y != null ? { x: section.x, y: section.y } : nextSectionPosition(index)
     return {
       ...section,
       id: section.id ?? crypto.randomUUID(),
       order: section.order ?? index,
       x: position.x,
       y: position.y,
+      w: section.w ?? CARD_WIDTH,
+      h: section.h ?? CARD_HEIGHT,
+      z: section.z ?? section.order ?? index,
     }
   })
+}
+
+/** Notes default above sections, matching how the canvas looked before z existed. */
+function backfillNotes(notes: AiTemplateNote[]): AiTemplateNote[] {
+  return notes.map((note, index) => ({
+    ...note,
+    w: note.w ?? NOTE_WIDTH,
+    h: note.h ?? NOTE_HEIGHT,
+    z: note.z ?? NOTE_Z_BASE + index,
+  }))
 }
 
 function toFormState(template: AiReplyTemplate): FormState {
@@ -62,7 +98,7 @@ function toFormState(template: AiReplyTemplate): FormState {
     description: template.description ?? '',
     guidelines: template.guidelines ?? '',
     sections: backfillSections(template.sections.length ? template.sections : [{ label: '', content: '' }]),
-    canvas_notes: template.canvas_notes ?? [],
+    canvas_notes: backfillNotes(template.canvas_notes ?? []),
     brain_section_ids: template.brain_section_ids ?? [],
     include_history: template.include_history,
     history_message_limit: template.history_message_limit ?? 20,
@@ -78,12 +114,19 @@ export default function AiTemplateEditor() {
   const token = useAuthStore((state) => state.token)
   const isNew = templateId === 'new'
 
-  const [form, setForm] = useState<FormState>(emptyForm)
+  const [form, setForm] = useState<FormState>(createEmptyForm)
   const [brainSections, setBrainSections] = useState<BrainSectionOption[]>([])
   const [loading, setLoading] = useState(!isNew)
   const [notFound, setNotFound] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [leavePrompt, setLeavePrompt] = useState(false)
+
+  // Layout work (dragging, resizing, tidying) is easy to lose, so track a dirty flag against the
+  // last state that reached the server.
+  const savedSnapshotRef = useRef<string>('')
+  const currentSnapshot = useMemo(() => JSON.stringify(form), [form])
+  const isDirty = savedSnapshotRef.current !== '' && currentSnapshot !== savedSnapshotRef.current
 
   useEffect(() => {
     const loadBrainSections = async () => {
@@ -97,7 +140,9 @@ export default function AiTemplateEditor() {
 
   useEffect(() => {
     if (isNew) {
-      setForm(emptyForm)
+      const blank = createEmptyForm()
+      savedSnapshotRef.current = JSON.stringify(blank)
+      setForm(blank)
       setLoading(false)
       return
     }
@@ -114,7 +159,9 @@ export default function AiTemplateEditor() {
         return
       }
       const data: AiReplyTemplate = await response.json()
-      setForm(toFormState(data))
+      const next = toFormState(data)
+      savedSnapshotRef.current = JSON.stringify(next)
+      setForm(next)
       setLoading(false)
     }
     loadTemplate()
@@ -123,8 +170,17 @@ export default function AiTemplateEditor() {
     }
   }, [templateId, isNew, token])
 
-  const save = async (event: FormEvent) => {
-    event.preventDefault()
+  useEffect(() => {
+    if (!isDirty) return
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [isDirty])
+
+  const saveTemplate = async (): Promise<boolean> => {
     setMessage('')
     setSaving(true)
     try {
@@ -135,10 +191,11 @@ export default function AiTemplateEditor() {
           name: form.name.trim(),
           description: form.description.trim() || null,
           guidelines: form.guidelines.trim() || null,
-          sections: [...form.sections]
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-            .filter((section) => section.label.trim() || section.content.trim()),
-          canvas_notes: form.canvas_notes.filter((note) => note.text.trim()),
+          // Sent in badge order so the stored array matches what the prompt builder reads. Empty
+          // cards are kept on purpose: the builder already skips sections with no content, and
+          // dropping them would delete placeholders the user deliberately positioned.
+          sections: [...form.sections].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+          canvas_notes: form.canvas_notes,
           brain_section_ids: form.brain_section_ids,
           include_history: form.include_history,
           history_message_limit: form.include_history ? form.history_message_limit : null,
@@ -150,16 +207,32 @@ export default function AiTemplateEditor() {
       const data = await response.json().catch(() => null)
       if (!response.ok) {
         setMessage(data?.detail ?? 'Failed to save template')
-        return
+        return false
       }
       setMessage('Saved.')
-      setForm(toFormState(data))
+      const next = toFormState(data)
+      savedSnapshotRef.current = JSON.stringify(next)
+      setForm(next)
       if (form.id === null) navigate(`/settings/ai-templates/${data.id}`, { replace: true })
+      return true
     } catch {
       setMessage('Failed to save template')
+      return false
     } finally {
       setSaving(false)
     }
+  }
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    await saveTemplate()
+  }
+
+  const leave = () => navigate('/settings/ai-templates')
+
+  const requestLeave = () => {
+    if (isDirty) setLeavePrompt(true)
+    else leave()
   }
 
   if (loading) {
@@ -182,7 +255,7 @@ export default function AiTemplateEditor() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-4">
       <p className="text-xs">
-        <Link to="/settings/ai-templates" className="text-cyan-700 hover:underline">&larr; All templates</Link>
+        <button type="button" onClick={requestLeave} className="text-cyan-700 hover:underline">&larr; All templates</button>
       </p>
       <h1 className="mt-1 text-lg font-semibold text-gray-900">{form.id !== null ? `Edit: ${form.name || 'Untitled template'}` : 'New template'}</h1>
       <p className="mt-1 text-sm text-gray-500">
@@ -246,6 +319,8 @@ export default function AiTemplateEditor() {
           onSectionsChange={(sections) => setForm((current) => ({ ...current, sections }))}
           onNotesChange={(canvas_notes) => setForm((current) => ({ ...current, canvas_notes }))}
           contentPlaceholderHint="Section content, e.g. You are a friendly host responding on behalf of..."
+          brainSections={brainSections}
+          viewportKey={templateId ?? 'new'}
         />
         <p className="text-xs text-gray-500">
           Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
@@ -350,9 +425,56 @@ export default function AiTemplateEditor() {
           <button type="submit" disabled={saving} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
             {saving ? 'Saving...' : form.id !== null ? 'Save changes' : 'Create template'}
           </button>
+          {isDirty ? (
+            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Unsaved changes</span>
+          ) : null}
           {message ? <p className="text-sm text-gray-600">{message}</p> : null}
         </div>
       </form>
+
+      {leavePrompt ? (
+        <div
+          role="alertdialog"
+          aria-label="Unsaved template changes"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-white/60 p-4 backdrop-blur-md"
+        >
+          <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-xl">
+            <p className="text-lg font-semibold text-gray-800">Unsaved changes</p>
+            <p className="text-sm text-gray-500">
+              This template has changes that have not been saved, including the canvas layout.
+            </p>
+            <div className="flex w-full flex-col gap-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={async () => {
+                  if (await saveTemplate()) leave()
+                  else setLeavePrompt(false)
+                }}
+                className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? 'Saving...' : 'Save & Leave'}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={leave}
+                className="w-full rounded-xl border border-rose-200 bg-white px-4 py-2.5 font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Discard &amp; Leave
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setLeavePrompt(false)}
+                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }

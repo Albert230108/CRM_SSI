@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-export type AgentRole = 'planner' | 'checker'
+export type AgentRole = 'planner' | 'checker' | 'drafter'
 
 export type AiAgentProfile = {
   id: number
@@ -30,6 +30,17 @@ export type AiAgentProfile = {
   max_redraft_attempts: number
   block_auto_send_on_fail: boolean
   daily_token_cap: number | null
+  // Overrides for the fixed prompt scaffolding. A key absent here uses the built-in default
+  // from PromptBlockDefinition.default; a key present with '' removes that block entirely.
+  prompt_blocks: Record<string, string>
+}
+
+export type PromptBlockDefinition = {
+  key: string
+  label: string
+  help: string
+  default: string
+  group: 'structure' | 'context'
 }
 
 // The form keeps the nullable text fields as plain strings so the inputs stay controlled;
@@ -65,6 +76,7 @@ const emptyForm = (role: AgentRole): ProfileForm => ({
   max_redraft_attempts: 2,
   block_auto_send_on_fail: true,
   daily_token_cap: null,
+  prompt_blocks: {},
 })
 
 const CARD = 'rounded-2xl border border-gray-200 bg-white p-3.5'
@@ -75,6 +87,11 @@ const INPUT =
 export default function AiAgentProfiles() {
   const token = useAuthStore((state) => state.token)
   const [profiles, setProfiles] = useState<AiAgentProfile[]>([])
+  const [promptBlockDefs, setPromptBlockDefs] = useState<Record<AgentRole, PromptBlockDefinition[]>>({
+    planner: [],
+    checker: [],
+    drafter: [],
+  })
   const [form, setForm] = useState<ProfileForm | null>(null)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -89,6 +106,22 @@ export default function AiAgentProfiles() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const roles: AgentRole[] = ['planner', 'checker', 'drafter']
+    const loadPromptBlocks = async () => {
+      const entries = await Promise.all(
+        roles.map(async (role) => {
+          const response = await fetch(`${API_BASE_URL}/api/ai-agent-profiles/prompt-blocks?role=${role}`, {
+            headers: authHeaders,
+          })
+          return [role, response.ok ? ((await response.json()) as PromptBlockDefinition[]) : []] as const
+        }),
+      )
+      setPromptBlockDefs(Object.fromEntries(entries) as Record<AgentRole, PromptBlockDefinition[]>)
+    }
+    void loadPromptBlocks()
+  }, [authHeaders])
 
   const startEdit = (profile: AiAgentProfile) => {
     setMessage('')
@@ -189,19 +222,28 @@ export default function AiAgentProfiles() {
                     {!profile.is_active ? <span className="ml-2 text-xs text-amber-600">inactive</span> : null}
                   </p>
                   <p className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5">{profile.model || 'default model'}</span>
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5">temp {profile.temperature ?? '-'}</span>
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5">
-                      {profile.history_limit} msgs / {profile.history_channels}
-                    </span>
-                    {role === 'planner' ? (
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5">min conf {profile.min_confidence}</span>
-                    ) : (
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5">{profile.max_redraft_attempts} redrafts</span>
+                    {role === 'drafter' ? null : (
+                      <>
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5">{profile.model || 'default model'}</span>
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5">temp {profile.temperature ?? '-'}</span>
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5">
+                          {profile.history_limit} msgs / {profile.history_channels}
+                        </span>
+                        {role === 'planner' ? (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5">min conf {profile.min_confidence}</span>
+                        ) : (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5">{profile.max_redraft_attempts} redrafts</span>
+                        )}
+                        {profile.escalate_keywords.length ? (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">
+                            {profile.escalate_keywords.length} escalation keyword(s)
+                          </span>
+                        ) : null}
+                      </>
                     )}
-                    {profile.escalate_keywords.length ? (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">
-                        {profile.escalate_keywords.length} escalation keyword(s)
+                    {Object.keys(profile.prompt_blocks).length ? (
+                      <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">
+                        {Object.keys(profile.prompt_blocks).length} prompt block override(s)
                       </span>
                     ) : null}
                   </p>
@@ -243,6 +285,7 @@ export default function AiAgentProfiles() {
 
       {renderRole('planner', 'Planner profiles', 'Chooses the template, the knowledge to pull in, and the instruction for the drafter.')}
       {renderRole('checker', 'Checker profiles', 'Reviews each draft. It never rewrites the text itself — it only approves or gives feedback.')}
+      {renderRole('drafter', 'Drafter profiles', 'Writes the reply itself. Prompt text only — model, sampling and context still come from the reply template.')}
 
       {form ? (
         <section className={`mt-4 ${CARD}`}>
@@ -283,106 +326,178 @@ export default function AiAgentProfiles() {
             />
           </div>
 
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Model &amp; sampling</h3>
-          <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <label className={LABEL} htmlFor="profile-model">Model</label>
-              <input id="profile-model" type="text" value={form.model} onChange={(event) => set('model', event.target.value)} placeholder="leave blank for the default" className={INPUT} />
+          {form.role === 'drafter' ? null : (
+            <>
+            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Model &amp; sampling</h3>
+            <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div>
+                <label className={LABEL} htmlFor="profile-model">Model</label>
+                <input id="profile-model" type="text" value={form.model} onChange={(event) => set('model', event.target.value)} placeholder="leave blank for the default" className={INPUT} />
+              </div>
+              <div>
+                <label className={LABEL} htmlFor="profile-temp">Temperature</label>
+                <input id="profile-temp" type="number" step="0.1" min={0} max={2} value={form.temperature ?? ''} onChange={(event) => set('temperature', event.target.value === '' ? null : Number(event.target.value))} className={INPUT} />
+              </div>
+              <div>
+                <label className={LABEL} htmlFor="profile-max-tokens">Max output tokens</label>
+                <input id="profile-max-tokens" type="number" min={1} value={form.max_output_tokens ?? ''} onChange={(event) => set('max_output_tokens', event.target.value === '' ? null : Number(event.target.value))} className={INPUT} />
+              </div>
             </div>
-            <div>
-              <label className={LABEL} htmlFor="profile-temp">Temperature</label>
-              <input id="profile-temp" type="number" step="0.1" min={0} max={2} value={form.temperature ?? ''} onChange={(event) => set('temperature', event.target.value === '' ? null : Number(event.target.value))} className={INPUT} />
-            </div>
-            <div>
-              <label className={LABEL} htmlFor="profile-max-tokens">Max output tokens</label>
-              <input id="profile-max-tokens" type="number" min={1} value={form.max_output_tokens ?? ''} onChange={(event) => set('max_output_tokens', event.target.value === '' ? null : Number(event.target.value))} className={INPUT} />
-            </div>
-          </div>
 
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Context budget</h3>
-          <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <label className={LABEL} htmlFor="profile-history">History messages</label>
-              <input id="profile-history" type="number" min={0} value={form.history_limit} onChange={(event) => set('history_limit', Number(event.target.value))} className={INPUT} />
+            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Context budget</h3>
+            <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div>
+                <label className={LABEL} htmlFor="profile-history">History messages</label>
+                <input id="profile-history" type="number" min={0} value={form.history_limit} onChange={(event) => set('history_limit', Number(event.target.value))} className={INPUT} />
+              </div>
+              <div>
+                <label className={LABEL} htmlFor="profile-channels">History channels</label>
+                <select id="profile-channels" value={form.history_channels} onChange={(event) => set('history_channels', event.target.value as ProfileForm['history_channels'])} className={INPUT}>
+                  <option value="both">Email + WhatsApp</option>
+                  <option value="inbound">Whichever the message arrived on</option>
+                  <option value="email">Email only</option>
+                  <option value="whatsapp">WhatsApp only</option>
+                </select>
+              </div>
+              <div>
+                <label className={LABEL} htmlFor="profile-lookback">Lookback days</label>
+                <input id="profile-lookback" type="number" min={1} value={form.history_lookback_days ?? ''} onChange={(event) => set('history_lookback_days', event.target.value === '' ? null : Number(event.target.value))} placeholder="no limit" className={INPUT} />
+              </div>
             </div>
-            <div>
-              <label className={LABEL} htmlFor="profile-channels">History channels</label>
-              <select id="profile-channels" value={form.history_channels} onChange={(event) => set('history_channels', event.target.value as ProfileForm['history_channels'])} className={INPUT}>
-                <option value="both">Email + WhatsApp</option>
-                <option value="inbound">Whichever the message arrived on</option>
-                <option value="email">Email only</option>
-                <option value="whatsapp">WhatsApp only</option>
-              </select>
-            </div>
-            <div>
-              <label className={LABEL} htmlFor="profile-lookback">Lookback days</label>
-              <input id="profile-lookback" type="number" min={1} value={form.history_lookback_days ?? ''} onChange={(event) => set('history_lookback_days', event.target.value === '' ? null : Number(event.target.value))} placeholder="no limit" className={INPUT} />
-            </div>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.include_beds24} onChange={(event) => set('include_beds24', event.target.checked)} /> Booking info
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.include_payments} onChange={(event) => set('include_payments', event.target.checked)} /> Payments &amp; charges
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} /> Internal notes
-            </label>
-            {form.role === 'planner' ? (
+            <div className="mt-2 flex flex-wrap gap-4">
               <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} /> Brain index
+                <input type="checkbox" checked={form.include_beds24} onChange={(event) => set('include_beds24', event.target.checked)} /> Booking info
               </label>
-            ) : null}
-          </div>
-
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Guardrails &amp; escalation</h3>
-          <div className="mt-1.5">
-            <label className={LABEL} htmlFor="profile-keywords">Escalation keywords</label>
-            <input id="profile-keywords" type="text" value={form.escalate_keywords} onChange={(event) => set('escalate_keywords', event.target.value)} placeholder="refund, lawyer, police" className={INPUT} />
-            <p className="mt-1 text-xs text-gray-500">
-              Comma separated, case-insensitive. A match parks the conversation for a human before any model is called.
-            </p>
-          </div>
-          <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
-            {form.role === 'planner' ? (
-              <>
-                <div>
-                  <label className={LABEL} htmlFor="profile-min-conf">Minimum confidence</label>
-                  <input id="profile-min-conf" type="number" step="0.05" min={0} max={1} value={form.min_confidence} onChange={(event) => set('min_confidence', Number(event.target.value))} className={INPUT} />
-                </div>
-                <div>
-                  <label className={LABEL} htmlFor="profile-no-match">When no template fits</label>
-                  <select id="profile-no-match" value={form.on_no_template_match} onChange={(event) => set('on_no_template_match', event.target.value as ProfileForm['on_no_template_match'])} className={INPUT}>
-                    <option value="escalate">Park it for a human</option>
-                    <option value="skip">Do nothing</option>
-                  </select>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <label className={LABEL} htmlFor="profile-redrafts">Max redrafts</label>
-                  <input id="profile-redrafts" type="number" min={0} max={5} value={form.max_redraft_attempts} onChange={(event) => set('max_redraft_attempts', Number(event.target.value))} className={INPUT} />
-                  <p className="mt-1 text-xs text-gray-500">After this many rejections the last draft is parked for review.</p>
-                </div>
-                <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
-                  <input type="checkbox" checked={form.block_auto_send_on_fail} onChange={(event) => set('block_auto_send_on_fail', event.target.checked)} />
-                  Never auto-send a draft I rejected
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={form.include_payments} onChange={(event) => set('include_payments', event.target.checked)} /> Payments &amp; charges
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} /> Internal notes
+              </label>
+              {form.role === 'planner' ? (
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} /> Brain index
                 </label>
-              </>
-            )}
-            <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
-              <input type="checkbox" checked={form.match_inbound_language} onChange={(event) => set('match_inbound_language', event.target.checked)} />
-              Reply in the guest's language
-            </label>
-          </div>
+              ) : null}
+            </div>
 
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Cost</h3>
-          <div className="mt-1.5 max-w-xs">
-            <label className={LABEL} htmlFor="profile-cap">Daily token cap</label>
-            <input id="profile-cap" type="number" min={1} value={form.daily_token_cap ?? ''} onChange={(event) => set('daily_token_cap', event.target.value === '' ? null : Number(event.target.value))} placeholder="unlimited" className={INPUT} />
-          </div>
+            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Guardrails &amp; escalation</h3>
+            <div className="mt-1.5">
+              <label className={LABEL} htmlFor="profile-keywords">Escalation keywords</label>
+              <input id="profile-keywords" type="text" value={form.escalate_keywords} onChange={(event) => set('escalate_keywords', event.target.value)} placeholder="refund, lawyer, police" className={INPUT} />
+              <p className="mt-1 text-xs text-gray-500">
+                Comma separated, case-insensitive. A match parks the conversation for a human before any model is called.
+              </p>
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
+              {form.role === 'planner' ? (
+                <>
+                  <div>
+                    <label className={LABEL} htmlFor="profile-min-conf">Minimum confidence</label>
+                    <input id="profile-min-conf" type="number" step="0.05" min={0} max={1} value={form.min_confidence} onChange={(event) => set('min_confidence', Number(event.target.value))} className={INPUT} />
+                  </div>
+                  <div>
+                    <label className={LABEL} htmlFor="profile-no-match">When no template fits</label>
+                    <select id="profile-no-match" value={form.on_no_template_match} onChange={(event) => set('on_no_template_match', event.target.value as ProfileForm['on_no_template_match'])} className={INPUT}>
+                      <option value="escalate">Park it for a human</option>
+                      <option value="skip">Do nothing</option>
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className={LABEL} htmlFor="profile-redrafts">Max redrafts</label>
+                    <input id="profile-redrafts" type="number" min={0} max={5} value={form.max_redraft_attempts} onChange={(event) => set('max_redraft_attempts', Number(event.target.value))} className={INPUT} />
+                    <p className="mt-1 text-xs text-gray-500">After this many rejections the last draft is parked for review.</p>
+                  </div>
+                  <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
+                    <input type="checkbox" checked={form.block_auto_send_on_fail} onChange={(event) => set('block_auto_send_on_fail', event.target.checked)} />
+                    Never auto-send a draft I rejected
+                  </label>
+                </>
+              )}
+              <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
+                <input type="checkbox" checked={form.match_inbound_language} onChange={(event) => set('match_inbound_language', event.target.checked)} />
+                Reply in the guest's language
+              </label>
+            </div>
+
+            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Cost</h3>
+            <div className="mt-1.5 max-w-xs">
+              <label className={LABEL} htmlFor="profile-cap">Daily token cap</label>
+              <input id="profile-cap" type="number" min={1} value={form.daily_token_cap ?? ''} onChange={(event) => set('daily_token_cap', event.target.value === '' ? null : Number(event.target.value))} placeholder="unlimited" className={INPUT} />
+            </div>
+
+            </>
+          )}
+
+          <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt blocks</h3>
+          <p className="mt-1.5 text-xs text-gray-500">
+            Every fixed piece of wording this agent sends to the model - the opening line, the framing above each
+            section, the closing output instruction. Leave a box blank to remove that block from the prompt entirely.
+          </p>
+          {form.role !== 'drafter' ? (
+            <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              The "Output" block's prose can be reworded freely, but the field names it describes (e.g.{' '}
+              <code>should_reply</code>, <code>template_id</code>, <code>confidence</code>, <code>passed</code>,{' '}
+              <code>feedback</code>) are enforced separately in code - removing the field itself from the JSON is not
+              possible from here.
+            </p>
+          ) : null}
+
+          {(['structure', 'context'] as const).map((group) => {
+            const defs = promptBlockDefs[form.role].filter((def) => def.group === group)
+            if (!defs.length) return null
+            return (
+              <div key={group} className="mt-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
+                  {group === 'structure' ? 'Structure' : 'Context headings'}
+                </p>
+                <div className="mt-1.5 space-y-3">
+                  {defs.map((def) => {
+                    const value = form.prompt_blocks[def.key] ?? def.default
+                    const isDefault = !(def.key in form.prompt_blocks)
+                    return (
+                      <div key={def.key}>
+                        <div className="flex items-center justify-between gap-3">
+                          <label className={LABEL} htmlFor={`block-${def.key}`}>{def.label}</label>
+                          {isDefault ? null : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setForm((current) => {
+                                  if (!current) return current
+                                  const { [def.key]: _removed, ...rest } = current.prompt_blocks
+                                  return { ...current, prompt_blocks: rest }
+                                })
+                              }
+                              className="shrink-0 text-xs font-semibold text-cyan-700 hover:underline"
+                            >
+                              Reset to default
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          id={`block-${def.key}`}
+                          rows={value.split('\n').length > 2 ? 4 : 2}
+                          value={value}
+                          onChange={(event) => {
+                            const next = event.target.value
+                            setForm((current) =>
+                              current ? { ...current, prompt_blocks: { ...current.prompt_blocks, [def.key]: next } } : current,
+                            )
+                          }}
+                          className={`${INPUT} font-mono text-xs`}
+                        />
+                        <p className="mt-1 text-xs text-gray-500">{def.help}</p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
 
           <div className="mt-4 flex items-center gap-3">
             <button type="button" onClick={save} disabled={saving} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
