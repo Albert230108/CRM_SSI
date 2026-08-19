@@ -35,6 +35,7 @@ from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.gmail_integration import GmailAccount
 from app.services import ai_auto_draft_service
+from app.services.ai_draft_notification_service import notify_admins_of_new_draft
 from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
 from app.webhooks.gmail import router as gmail_webhook_router
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
@@ -144,8 +145,9 @@ def _run_due_ai_draft_triggers_once() -> None:
         due_triggers = db.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.trigger_at <= now).all()
         for trigger in due_triggers:
             trigger_id = trigger.id
+            draft = None
             try:
-                ai_auto_draft_service.generate_draft_for_trigger(db, trigger)
+                draft = ai_auto_draft_service.generate_draft_for_trigger(db, trigger)
             except Exception:
                 db.rollback()
                 logger.exception("AI auto-draft generation failed trigger_id=%s", trigger_id)
@@ -155,6 +157,12 @@ def _run_due_ai_draft_triggers_once() -> None:
                 # cycle forever; a new inbound message will register a fresh trigger anyway.
                 db.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.id == trigger_id).delete()
                 db.commit()
+            if draft is not None:
+                try:
+                    notify_admins_of_new_draft(db, draft)
+                except Exception:
+                    db.rollback()
+                    logger.exception("AI draft approval WhatsApp notification failed draft_id=%s", draft.id)
     except Exception:
         logger.exception("AI auto-draft scheduler loop failed to load due triggers")
     finally:

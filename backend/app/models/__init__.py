@@ -3,6 +3,7 @@ from app.models.admin_settings import AdminSettings
 from app.models.ai_agent_profile import AiAgentProfile
 from app.models.ai_agent_run import AiAgentRun, AiAgentRunStep
 from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_reply_template import AiReplyTemplate, AiReplyTemplateBrainSection
 from app.models.beds24_webhook_log import Beds24WebhookLog

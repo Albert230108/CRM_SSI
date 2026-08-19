@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from datetime import datetime, timezone
 import hmac
@@ -17,6 +18,7 @@ from app.core.whatsapp_identity import get_canonical_whatsapp_identity
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.services.ai_draft_approval_service import try_handle_admin_reply
 from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.attachment_service import link_attachments, store_upload
 from app.services.attachment_storage import max_file_bytes
@@ -24,6 +26,7 @@ from app.services.notification_service import create_notification
 from app.services.notification_whatsapp_service import register_notification_for_whatsapp
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
+from app.services.whatsapp_client import WhatsAppBridgeError, send_system_whatsapp_message
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp-webhooks"])
@@ -571,6 +574,21 @@ def _process_whatsapp_message(
         )
         message = "duplicate skipped" if persistence_result.persistence_state == "deduped" else None
         return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=tenant.id, message=message)
+
+    if not is_history_payload:
+        admin_reply_text = try_handle_admin_reply(
+            db, external_account_id=external_account_id or None, sender_phone=sender, text=_first_text(payload)
+        )
+        if admin_reply_text is not None:
+            try:
+                asyncio.run(
+                    send_system_whatsapp_message(
+                        to=sender, message=admin_reply_text, external_account_id=external_account_id or None
+                    )
+                )
+            except WhatsAppBridgeError:
+                logger.exception("Failed to send AI draft approval reply confirmation sender=%s", sender)
+            return WhatsAppWebhookResponse(ok=True, tenant_id=None, message="admin draft approval handled")
 
     resolved = resolve_tenant_for_inbound_channel(db, payload, request_headers, query_params)
     logger.info(
