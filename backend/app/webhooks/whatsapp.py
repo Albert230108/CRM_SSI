@@ -576,19 +576,31 @@ def _process_whatsapp_message(
         return WhatsAppWebhookResponse(ok=True, routing_strategy=routing_strategy, tenant_id=tenant.id, message=message)
 
     if not is_history_payload:
-        admin_reply_text = try_handle_admin_reply(
-            db, external_account_id=external_account_id or None, sender_phone=sender, text=_first_text(payload)
+        admin_reply = try_handle_admin_reply(
+            db,
+            external_account_id=external_account_id or None,
+            sender_phone=sender,
+            text=_first_text(payload),
+            # The raw sender and raw chat id, never the canonical identity: for an inbound
+            # message from an @lid the canonical id resolves to this CRM's own number.
+            sender_identities=(sender, whatsapp_identity.raw_chat_id, external_chat_namespace),
         )
-        if admin_reply_text is not None:
+        if admin_reply is not None:
+            confirmation_to = admin_reply.reply_to_phone or sender
             try:
                 asyncio.run(
                     send_system_whatsapp_message(
-                        to=sender, message=admin_reply_text, external_account_id=external_account_id or None
+                        to=confirmation_to,
+                        message=admin_reply.reply_text,
+                        external_account_id=external_account_id or None,
                     )
                 )
+                logger.warning(
+                    "Staff draft reply handled to=%s reply=%r", confirmation_to, admin_reply.reply_text[:200]
+                )
             except WhatsAppBridgeError:
-                logger.exception("Failed to send AI draft approval reply confirmation sender=%s", sender)
-            return WhatsAppWebhookResponse(ok=True, tenant_id=None, message="admin draft approval handled")
+                logger.exception("Failed to send staff draft approval confirmation to=%s", confirmation_to)
+            return WhatsAppWebhookResponse(ok=True, tenant_id=None, message="staff draft approval handled")
 
     resolved = resolve_tenant_for_inbound_channel(db, payload, request_headers, query_params)
     logger.info(

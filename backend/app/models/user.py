@@ -14,6 +14,10 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     is_admin = Column(Boolean, nullable=False, default=False, server_default="false")
     whatsapp_notifications_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    # A staff member on an @lid-addressed WhatsApp account replies from that @lid identity even
+    # though we send to their plain phone number, so their phone alone cannot match an inbound
+    # reply. Learned automatically when a notification is sent to them.
+    whatsapp_identity_key = Column(String(255), nullable=True, index=True)
     tenant_status_filter = Column(JSON, nullable=True)
     pinned_tenant_ids = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

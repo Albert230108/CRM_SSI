@@ -58,14 +58,33 @@ def _create_draft(db_session, tenant, **overrides):
     return draft
 
 
-def _patch_send(monkeypatch):
+def _patch_send(monkeypatch, result=None):
     sent_calls = []
 
     async def fake_send(to, message, external_account_id=None):
         sent_calls.append((to, message, external_account_id))
+        return result
 
     monkeypatch.setattr(ai_draft_notification_service, "send_system_whatsapp_message", fake_send)
     return sent_calls
+
+
+def test_learns_recipient_lid_identity_from_send_result(db_session, monkeypatch):
+    # The bridge reports the recipient's @lid; storing it is what lets their reply - which
+    # arrives from that @lid rather than their phone number - be attributed back to them.
+    tenant = _create_tenant(db_session, booking_id="B-notify-draft-lid")
+    _create_ai_settings(db_session, tenant)
+    recipient = _create_user(db_session, email="draft-notify-lid@example.com")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id="edi-crm-whatsapp"))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+
+    _patch_send(monkeypatch, result={"whatsapp_identity_key": "155066153590862@lid"})
+
+    notify_admins_of_new_draft(db_session, draft)
+
+    db_session.refresh(recipient)
+    assert recipient.whatsapp_identity_key == "155066153590862@lid"
 
 
 def test_notifies_opted_in_recipient_for_auto_draft_pending_draft(db_session, monkeypatch):

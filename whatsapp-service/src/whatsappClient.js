@@ -1823,15 +1823,34 @@ async function sendSystemMessage({ to, message, external_account_id: externalAcc
   }
 
   const sentMessage = await activeClient.sendMessage(chatId, message);
+
+  // A recipient whose account uses @lid is reachable on their plain @c.us number, but every
+  // inbound reply arrives filed under their @lid identity instead (same asymmetry documented
+  // in sendTextMessage). Resolve that identity here so callers can attribute replies back to
+  // this recipient - best-effort only, since a failed lookup must never fail a sent message.
+  let identityKey = null;
+  try {
+    const [mapping] = await activeClient.getContactLidAndPhone([chatId]);
+    identityKey = normalizeWhatsAppChatId(mapping?.lid) || null;
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "whatsapp_system_send_lid_lookup_failed",
+      chat_id: chatId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  }
+
   console.info(JSON.stringify({
     event: "whatsapp_system_send",
     message_id: sentMessage?.id?._serialized || null,
     chat_id: chatId,
+    whatsapp_identity_key: identityKey,
   }));
 
   return {
     whatsapp_message_id: sentMessage?.id?._serialized || null,
     whatsapp_chat_id: chatId,
+    whatsapp_identity_key: identityKey,
   };
 }
 

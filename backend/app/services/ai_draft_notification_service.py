@@ -74,12 +74,21 @@ def notify_admins_of_new_draft(db: Session, draft: AiAutoDraft | None) -> None:
         if not phone:
             continue
         try:
-            asyncio.run(send_system_whatsapp_message(to=phone, message=message, external_account_id=external_account_id))
+            send_result = asyncio.run(
+                send_system_whatsapp_message(to=phone, message=message, external_account_id=external_account_id)
+            )
         except WhatsAppBridgeError:
             logger.exception(
                 "Failed to send AI draft approval notification draft_id=%s user_id=%s", draft.id, user.id
             )
             continue
+
+        # The bridge reports the recipient's @lid identity when their account uses one; without
+        # it their reply arrives from an identity their stored phone number cannot match.
+        identity_key = send_result.get("whatsapp_identity_key") if isinstance(send_result, dict) else None
+        if identity_key and user.whatsapp_identity_key != identity_key:
+            user.whatsapp_identity_key = identity_key
+
         db.add(
             AiAutoDraftApprovalRequest(
                 ai_auto_draft_id=draft.id,
