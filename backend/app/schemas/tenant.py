@@ -80,6 +80,7 @@ class TenantRead(BaseModel):
     last_message_date: datetime | None = None
     last_message_channel: str | None = None
     last_message_direction: str | None = None
+    unread_count: int = 0
     model_config = ConfigDict(from_attributes=True)
 
 

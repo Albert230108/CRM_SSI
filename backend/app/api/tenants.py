@@ -21,6 +21,7 @@ from app.models.user import User
 from app.schemas.finance import Finance as FinanceSchema, FinanceItem
 from app.schemas.tenant import Beds24BookingPreview, TenantCreate, TenantRead
 from app.models.communication import Communication
+from app.models.notification import Notification, NotificationReadState
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.beds24_client import get_booking_detail, get_bookings, update_booking_notes
@@ -457,6 +458,22 @@ def list_tenants(
         for row in db.query(email_ranked).filter(email_ranked.c.rn == 1).all():
             last_email_by_tenant_id[row.tenant_id] = (row.sent_at, row.direction)
 
+    unread_by_tenant_id: dict[int, int] = {}
+    if tenant_ids and current_user is not None:
+        from sqlalchemy import func
+
+        read_subquery = db.query(NotificationReadState.notification_id).filter(
+            NotificationReadState.user_id == current_user.id
+        )
+        unread_rows = (
+            db.query(Notification.tenant_id, func.count(Notification.id))
+            .filter(Notification.tenant_id.in_(tenant_ids))
+            .filter(~Notification.id.in_(read_subquery))
+            .group_by(Notification.tenant_id)
+            .all()
+        )
+        unread_by_tenant_id = {tenant_id: count for tenant_id, count in unread_rows if tenant_id is not None}
+
     result = []
     for tenant in tenants:
         candidates: list[tuple[datetime, str, str]] = []
@@ -473,6 +490,7 @@ def list_tenants(
             tenant_dict["last_message_date"] = last_date
             tenant_dict["last_message_channel"] = last_channel
             tenant_dict["last_message_direction"] = last_direction
+        tenant_dict["unread_count"] = unread_by_tenant_id.get(tenant.id, 0)
 
         result.append(TenantRead(**tenant_dict))
 

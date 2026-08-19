@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { computeNights } from '../lib/date'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
 import StatusFilterDropdown from './StatusFilterDropdown'
+import TenantMoreFiltersPopover from './TenantMoreFiltersPopover'
 import TenantContextMenu from './TenantContextMenu'
 import TenantAiTemplatesModal from './TenantAiTemplatesModal'
 
@@ -26,6 +27,7 @@ type Tenant = {
   check_in: string | null
   check_out: string | null
   num_nights: number | null
+  unread_count: number
 }
 
 type ThreadVersion = {
@@ -64,6 +66,8 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const onNewMessageRef = useRef(onNewMessage)
   const [contextMenu, setContextMenu] = useState<{ tenantId: number; tenantName: string; x: number; y: number } | null>(null)
   const [aiTemplatesTenant, setAiTemplatesTenant] = useState<{ id: number; name: string } | null>(null)
+  const [pinnedTenantIds, setPinnedTenantIds] = useState<number[]>([])
+  const listContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     onNewMessageRef.current = onNewMessage
@@ -138,6 +142,47 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
       cancelled = true
     }
   }, [searchParams, statusOptionsLoaded, statusOptions, token])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadPinnedTenants = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/users/me/pinned-tenants`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (cancelled || !response.ok) return
+        const data: { tenant_ids: number[] | null } = await response.json()
+        setPinnedTenantIds(data.tenant_ids ?? [])
+      } catch {
+        // Best-effort load; pinning just starts empty for this session.
+      }
+    }
+    loadPinnedTenants()
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  const togglePinned = (tenantId: number) => {
+    setPinnedTenantIds((current) => {
+      const next = current.includes(tenantId)
+        ? current.filter((id) => id !== tenantId)
+        : [...current, tenantId]
+
+      fetch(`${API_BASE_URL}/api/users/me/pinned-tenants`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ tenant_ids: next }),
+      }).catch(() => {
+        // Best-effort save; the local toggle already reflects the current session's selection.
+      })
+
+      return next
+    })
+  }
 
   const handleStatusesChange = (next: string[]) => {
     setSelectedStatuses(next)
@@ -240,6 +285,33 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
     return Array.from(responsibles).sort()
   }, [tenants])
 
+  const sortedTenants = useMemo(() => {
+    const pinnedSet = new Set(pinnedTenantIds)
+    const pinned = tenants.filter((t) => pinnedSet.has(t.id))
+    const unpinned = tenants.filter((t) => !pinnedSet.has(t.id))
+    return [...pinned, ...unpinned]
+  }, [tenants, pinnedTenantIds])
+
+  const handleListKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+    if (sortedTenants.length === 0) return
+    e.preventDefault()
+
+    const currentIndex = sortedTenants.findIndex((t) => t.id === selectedTenantId)
+    let nextIndex: number
+    if (currentIndex === -1) {
+      nextIndex = 0
+    } else if (e.key === 'ArrowDown') {
+      nextIndex = Math.min(currentIndex + 1, sortedTenants.length - 1)
+    } else {
+      nextIndex = Math.max(currentIndex - 1, 0)
+    }
+
+    const nextTenant = sortedTenants[nextIndex]
+    if (!nextTenant || nextTenant.id === selectedTenantId) return
+    useNotesDraftStore.getState().guardNavigation(() => navigate(`/dashboard/tenant/${nextTenant.id}`))
+  }
+
   const handleDelete = async (tenantId: number) => {
     if (!confirm('Delete this tenant? This cannot be undone.')) return
     const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
@@ -318,20 +390,6 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         <div className="flex gap-1.5">
           <StatusFilterDropdown options={statusOptions} selected={selectedStatuses} onChange={handleStatusesChange} />
 
-          <select
-            value={selectedResponsible || ''}
-            onChange={(e) => setSelectedResponsible(e.target.value || null)}
-            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
-          >
-            <option value="">All Responsible</option>
-            <option value="unassigned">Unassigned</option>
-            {uniqueResponsibles.map((responsible) => (
-              <option key={responsible} value={responsible}>
-                {responsible}
-              </option>
-            ))}
-          </select>
-
           <button
             onClick={() => setSortDesc(!sortDesc)}
             className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
@@ -339,28 +397,32 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           >
             {sortDesc ? '↓' : '↑'}
           </button>
-        </div>
 
-        <select
-          value={selectedDirection || ''}
-          onChange={(e) => setSelectedDirection(e.target.value || null)}
-          className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
-        >
-          <option value="">All Last Messages</option>
-          <option value="inbound">Last Message Inbound ⬇</option>
-          <option value="outbound">Last Message Outbound ⬆</option>
-        </select>
+          <TenantMoreFiltersPopover
+            selectedResponsible={selectedResponsible}
+            onResponsibleChange={setSelectedResponsible}
+            uniqueResponsibles={uniqueResponsibles}
+            selectedDirection={selectedDirection}
+            onDirectionChange={setSelectedDirection}
+          />
+        </div>
       </div>
 
       {loading ? <p className="text-xs text-gray-500">Loading tenants...</p> : null}
       {error ? <p className="text-xs text-rose-400">{error}</p> : null}
 
-      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-2 [scrollbar-width:thin] [scrollbar-color:rgba(34,197,94,0.35)_transparent]">
-        {tenants.length === 0 ? (
+      <div
+        ref={listContainerRef}
+        tabIndex={0}
+        onKeyDown={handleListKeyDown}
+        className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-2 outline-none [scrollbar-width:thin] [scrollbar-color:rgba(34,197,94,0.35)_transparent]"
+      >
+        {sortedTenants.length === 0 ? (
           <p className="text-xs text-gray-400">No tenants found</p>
         ) : (
-          tenants.map((tenant) => {
+          sortedTenants.map((tenant) => {
             const active = selectedTenantId === tenant.id
+            const isPinned = pinnedTenantIds.includes(tenant.id)
             const colors = getStatusColor(tenant.booking_status)
             const contact = [tenant.email, tenant.phone, tenant.mobile].filter(Boolean).join(' · ') || 'No contact'
             const msgTime = formatRelativeTime(tenant.last_message_date)
@@ -412,26 +474,50 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
                         <span>{msgTime}</span>
                         {channelIcon && <span>{channelIcon}</span>}
                         {directionIcon && <span>{directionIcon}</span>}
+                        {tenant.unread_count > 0 && (
+                          <span className="ml-auto shrink-0 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                            {tenant.unread_count}
+                          </span>
+                        )}
                       </p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDelete(tenant.id)
-                    }}
-                    className="shrink-0 rounded-lg p-1 text-rose-400 transition hover:bg-rose-50 hover:text-rose-600"
-                    aria-label={`Delete tenant ${tenant.id}`}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                      <path d="M3 6h18" />
-                      <path d="M8 6V4h8v2" />
-                      <path d="M19 6l-1 14H6L5 6" />
-                      <path d="M10 11v6" />
-                      <path d="M14 11v6" />
-                    </svg>
-                  </button>
+                  <div className="flex shrink-0 flex-col items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        togglePinned(tenant.id)
+                      }}
+                      className={[
+                        'rounded-lg p-1 transition',
+                        isPinned ? 'text-amber-500 hover:bg-amber-50' : 'text-gray-300 hover:bg-gray-50 hover:text-gray-500',
+                      ].join(' ')}
+                      aria-label={isPinned ? `Unpin tenant ${tenant.id}` : `Pin tenant ${tenant.id}`}
+                      title={isPinned ? 'Unpin tenant' : 'Pin tenant'}
+                    >
+                      <svg viewBox="0 0 24 24" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                        <path d="M12 2 9 9l-6 1 4.5 4L6 21l6-4 6 4-1.5-7L21 10l-6-1z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDelete(tenant.id)
+                      }}
+                      className="rounded-lg p-1 text-rose-400 transition hover:bg-rose-50 hover:text-rose-600"
+                      aria-label={`Delete tenant ${tenant.id}`}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                        <path d="M3 6h18" />
+                        <path d="M8 6V4h8v2" />
+                        <path d="M19 6l-1 14H6L5 6" />
+                        <path d="M10 11v6" />
+                        <path d="M14 11v6" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </button>
             )

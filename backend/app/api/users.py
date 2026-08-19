@@ -12,6 +12,8 @@ from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
 from app.schemas.user import (
     AdminUserCreate,
+    PinnedTenantsRead,
+    PinnedTenantsUpdate,
     TenantStatusFilterRead,
     TenantStatusFilterUpdate,
     UserDeleteResult,
@@ -43,6 +45,22 @@ def update_tenant_status_filter(
     db.commit()
     db.refresh(current_user)
     return TenantStatusFilterRead(statuses=current_user.tenant_status_filter)
+
+
+@router.get("/me/pinned-tenants", response_model=PinnedTenantsRead)
+def get_pinned_tenants(current_user: User = Depends(get_current_user)) -> PinnedTenantsRead:
+    return PinnedTenantsRead(tenant_ids=current_user.pinned_tenant_ids)
+
+
+@router.put("/me/pinned-tenants", response_model=PinnedTenantsRead)
+def update_pinned_tenants(
+    payload: PinnedTenantsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PinnedTenantsRead:
+    current_user.pinned_tenant_ids = payload.tenant_ids
+    db.commit()
+    return PinnedTenantsRead(tenant_ids=current_user.pinned_tenant_ids)
 
 
 @router.get("", response_model=list[UserRead], dependencies=[Depends(get_current_admin_user)])

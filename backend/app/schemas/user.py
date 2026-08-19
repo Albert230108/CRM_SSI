@@ -43,6 +43,14 @@ class TenantStatusFilterUpdate(BaseModel):
     statuses: list[str]
 
 
+class PinnedTenantsRead(BaseModel):
+    tenant_ids: list[int] | None = None
+
+
+class PinnedTenantsUpdate(BaseModel):
+    tenant_ids: list[int]
+
+
 class AdminInviteCreate(BaseModel):
     email: str | None = None
     full_name: str | None = None

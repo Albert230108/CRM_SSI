@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.tenants import list_tenant_statuses, list_tenants
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
+from app.models.notification import Notification, NotificationReadState
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
@@ -573,3 +574,44 @@ def test_list_tenant_statuses_returns_distinct_values_from_data(db_session):
 
     statuses = list_tenant_statuses(db=db_session, current_user=None)
     assert statuses == ["Custom Status", "confirmed"]
+
+
+def test_list_tenants_computes_unread_count_per_user(db_session):
+    tenant = create_tenant(db_session, name="Tenant Unread", booking_id="UNREAD-1")
+    other_tenant = create_tenant(db_session, name="Tenant Unread Other", booking_id="UNREAD-2")
+
+    user = User(email="unread-test@example.com", password_hash="x", is_active=True, is_admin=False)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    notification_one = Notification(tenant_id=tenant.id, tenant_name=tenant.name, channel="whatsapp", direction="inbound")
+    notification_two = Notification(tenant_id=tenant.id, tenant_name=tenant.name, channel="whatsapp", direction="inbound")
+    notification_other = Notification(tenant_id=other_tenant.id, tenant_name=other_tenant.name, channel="whatsapp", direction="inbound")
+    db_session.add_all([notification_one, notification_two, notification_other])
+    db_session.commit()
+    db_session.refresh(notification_one)
+    db_session.refresh(notification_two)
+    db_session.refresh(notification_other)
+
+    result = list_tenants(db=db_session, current_user=user, sort_by_message=False, sort_desc=True)
+    by_id = {t.id: t for t in result}
+    assert by_id[tenant.id].unread_count == 2
+    assert by_id[other_tenant.id].unread_count == 1
+
+    db_session.add(NotificationReadState(notification_id=notification_one.id, user_id=user.id))
+    db_session.commit()
+
+    result_after_read = list_tenants(db=db_session, current_user=user, sort_by_message=False, sort_desc=True)
+    by_id_after_read = {t.id: t for t in result_after_read}
+    assert by_id_after_read[tenant.id].unread_count == 1
+
+
+def test_list_tenants_unread_count_defaults_to_zero_without_current_user(db_session):
+    tenant = create_tenant(db_session, name="Tenant No User", booking_id="UNREAD-3")
+    db_session.add(Notification(tenant_id=tenant.id, tenant_name=tenant.name, channel="whatsapp", direction="inbound"))
+    db_session.commit()
+
+    result = list_tenants(db=db_session, current_user=None, sort_by_message=False, sort_desc=True)
+    by_id = {t.id: t for t in result}
+    assert by_id[tenant.id].unread_count == 0
