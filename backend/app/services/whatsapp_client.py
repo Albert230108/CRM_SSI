@@ -38,6 +38,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
     external_account_id = payload.get("external_account_id")
     whatsapp_endpoint_id = payload.get("whatsapp_endpoint_id")
     attachments = payload.get("attachments") or []
+    require_registered_recipient = payload.get("require_registered_recipient") is True
 
     service_url = _resolve_service_url(external_account_id if isinstance(external_account_id, str) else None, whatsapp_endpoint_id if isinstance(whatsapp_endpoint_id, int) else None)
     if not service_url:
@@ -57,6 +58,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
         "external_account_id": external_account_id,
         "whatsapp_endpoint_id": whatsapp_endpoint_id,
         "attachments": attachments,
+        "require_registered_recipient": require_registered_recipient,
     }
     print(
         "WA DEBUG backend to Node request",
@@ -136,7 +138,7 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
             if response_body:
                 error_message = str(response_body)
 
-        status_code = response.status_code if response.status_code in {400, 401, 403, 404} else (
+        status_code = response.status_code if response.status_code in {400, 401, 403, 404, 422} else (
             status.HTTP_502_BAD_GATEWAY if response.status_code < 500 else status.HTTP_503_SERVICE_UNAVAILABLE
         )
         print(
@@ -170,16 +172,15 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
     return response.text
 
 
-async def send_system_whatsapp_message(to: str, message: str) -> Any:
+async def send_system_whatsapp_message(to: str, message: str, external_account_id: str | None = None) -> Any:
     """Sends a WhatsApp message to an arbitrary phone number, not a tenant conversation.
 
     Used for batched staff notification alerts. Unlike send_whatsapp_message, this has no
-    tenant_id/endpoint context to route by, so it always targets WHATSAPP_SERVICE_URL directly
-    (there is a single production WhatsApp instance today; per-account routing can be added
-    here if a second instance is ever dedicated to system alerts).
+    tenant/endpoint context to route by, so the caller supplies the sending account explicitly
+    (the admin-configured notification_whatsapp_external_account_id) and this resolves it
+    through the same WHATSAPP_SERVICE_URL_MAP used for tenant sends - falling back to the bare
+    WHATSAPP_SERVICE_URL for single-instance deployments that don't use the map.
     """
-    if not WHATSAPP_SERVICE_URL:
-        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge URL is not configured")
     if not WHATSAPP_API_KEY:
         raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge API key is not configured")
     if not to:
@@ -187,14 +188,21 @@ async def send_system_whatsapp_message(to: str, message: str) -> Any:
     if not message:
         raise WhatsAppBridgeError(status.HTTP_400_BAD_REQUEST, "System WhatsApp send is missing 'message'")
 
-    url = urljoin(WHATSAPP_SERVICE_URL.rstrip("/") + "/", "send-system")
+    service_url = _resolve_service_url(external_account_id)
+    if not service_url:
+        raise WhatsAppBridgeError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "No WhatsApp account configured for notification alerts - set one in Admin Settings",
+        )
+
+    url = urljoin(service_url.rstrip("/") + "/", "send-system")
     timeout = httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 url,
                 headers={"X-API-Key": WHATSAPP_API_KEY},
-                json={"to": to, "message": message},
+                json={"to": to, "message": message, "external_account_id": external_account_id},
             )
     except httpx.TimeoutException as exc:
         raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge request timed out") from exc

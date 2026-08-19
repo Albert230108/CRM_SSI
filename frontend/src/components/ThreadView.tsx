@@ -5,6 +5,7 @@ import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
 import { useDraggablePosition } from '../hooks/useDraggablePosition'
 import { useResizableSize } from '../hooks/useResizableSize'
 import LinkChatModal from './LinkChatModal'
+import FirstWhatsAppMessageModal from './FirstWhatsAppMessageModal'
 import EmailLinkModal from './EmailLinkModal'
 import ToastCard from './ToastCard'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
@@ -295,6 +296,7 @@ type TenantSummary = {
   name: string
   email: string | null
   phone: string | null
+  mobile?: string | null
   booking_id?: string | null
 }
 
@@ -582,6 +584,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const [selectedWhatsappEndpointId, setSelectedWhatsappEndpointId] = useState<string>('')
   const [whatsappLinks, setWhatsappLinks] = useState<ThreadWhatsappLink[]>([])
   const [showLinkChatModal, setShowLinkChatModal] = useState(false)
+  const [showFirstMessageModal, setShowFirstMessageModal] = useState(false)
   const [showEmailLinkModal, setShowEmailLinkModal] = useState(false)
   const [emailSyncToast, setEmailSyncToast] = useState<EmailSyncToast | null>(null)
   const emailSyncToastKeyRef = useRef(0)
@@ -1380,6 +1383,25 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
     await loadGroupedThread()
   }
 
+  const reloadWhatsappEndpoints = async () => {
+    if (!tenantId) return
+    const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/whatsapp-endpoints`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (!response.ok) return
+    const data: WhatsappEndpointOption[] = await response.json()
+    setWhatsappEndpoints(Array.isArray(data) ? data : [])
+  }
+
+  const handleFirstWhatsappMessageSent = async () => {
+    // Unlike a normal reply, this creates a brand-new TenantChannelEndpoint, so the reply
+    // compose account dropdown (whatsappEndpoints) needs refreshing too, not just the links
+    // list and the message thread.
+    await reloadWhatsappLinks()
+    await reloadWhatsappEndpoints()
+    await loadGroupedThread()
+  }
+
   const handleEmailSyncStarted = (jobId: string, email: string) => {
     emailSyncToastKeyRef.current += 1
     setEmailSyncToast({ jobId, email, status: 'running' })
@@ -1646,6 +1668,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           </div>
           {tenantId ? (
             <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowFirstMessageModal(true)}
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+              >
+                New WhatsApp message
+              </button>
               <button
                 type="button"
                 onClick={() => setShowLinkChatModal(true)}
@@ -2666,6 +2695,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           bookingId={tenant?.booking_id ?? undefined}
           onClose={() => setShowLinkChatModal(false)}
           onChanged={handleWhatsappLinksChanged}
+        />
+      ) : null}
+
+      {tenantId ? (
+        <FirstWhatsAppMessageModal
+          open={showFirstMessageModal}
+          tenantId={tenantId}
+          tenantName={tenant?.name}
+          prefillPhone={tenant?.phone || tenant?.mobile || null}
+          onClose={() => setShowFirstMessageModal(false)}
+          onSent={handleFirstWhatsappMessageSent}
         />
       ) : null}
 

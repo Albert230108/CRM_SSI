@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -41,8 +41,10 @@ from app.services.tenant_channel_resolver import (
 )
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.thread_timeline_service import MixedTimelineRead, build_tenant_thread_timeline
+from app.services.whatsapp_chat_directory import list_whatsapp_accounts
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication
 from app.services.whatsapp_client import WhatsAppBridgeError, send_whatsapp_message
+from app.api.whatsapp_thread_links import AUTO_FIRST_SEND_SOURCE, WhatsAppChatLinkConflict, link_whatsapp_chat_to_thread
 from google.oauth2.credentials import Credentials
 import os
 
@@ -65,6 +67,14 @@ class WhatsAppOutboundResolutionRead(BaseModel):
     whatsapp_normalized_phone: str | None = None
     external_account_id: str | None = None
     resolution_strategy: str | None = None
+
+
+class WhatsAppFirstMessageRequest(BaseModel):
+    to: str
+    message: str
+    external_account_id: str
+    provider: str = "whatsapp-service"
+    attachment_ids: list[int] = []
 
 
 class EmailForwardRequest(BaseModel):
@@ -443,6 +453,81 @@ def resolve_whatsapp_outbound_communication(
     )
 
 
+def _persist_whatsapp_send_result(
+    db: Session,
+    *,
+    tenant: Tenant,
+    provider: str | None,
+    external_account_id: str | None,
+    external_phone_id: str | None,
+    external_chat_namespace: str | None,
+    whatsapp_result: Any,
+    message: str,
+    subject: str | None,
+    outbound_attachments: list[OutboundAttachment],
+) -> list[Communication]:
+    result_dict = whatsapp_result if isinstance(whatsapp_result, dict) else {}
+    # The bridge splits a send into several WhatsApp messages when attachments are present
+    # (text and each file are separate messages), so persist one Communication per sent
+    # message - they each have their own provider_message_id and the unique constraint on
+    # (tenant_id, provider_message_id) would otherwise be the only thing keeping them apart.
+    sent_messages = result_dict.get("messages")
+    if not isinstance(sent_messages, list) or not sent_messages:
+        sent_messages = [
+            {
+                "whatsapp_message_id": (
+                    result_dict.get("whatsapp_message_id") or result_dict.get("provider_message_id")
+                ),
+                "kind": "text",
+                "attachment_index": None,
+            }
+        ]
+
+    persisted_communications: list[Communication] = []
+    for sent in sent_messages:
+        attachment_index = sent.get("attachment_index")
+        if sent.get("kind") == "media" and isinstance(attachment_index, int):
+            attachment = outbound_attachments[attachment_index]
+            # Communication.message is NOT NULL, so a caption-less media row carries a
+            # placeholder in the same house style as the inbound MEDIA_TYPE_LABELS.
+            row_message = f"[File] {attachment.filename}"
+            row_attachment_ids = [attachment.attachment_id]
+        else:
+            row_message = message
+            row_attachment_ids = []
+
+        communication_result = persist_whatsapp_outbound_communication(
+            db,
+            tenant_id=tenant.id,
+            provider=provider,
+            external_account_id=external_account_id,
+            external_phone_id=external_phone_id,
+            external_chat_namespace=external_chat_namespace,
+            whatsapp_chat_id=result_dict.get("whatsapp_chat_id"),
+            whatsapp_identity_key=result_dict.get("whatsapp_identity_key"),
+            whatsapp_normalized_phone=result_dict.get("whatsapp_normalized_phone"),
+            provider_message_id=sent.get("whatsapp_message_id"),
+            subject=subject,
+            message=row_message,
+            created_at=datetime.now(timezone.utc),
+        )
+        communication = communication_result.communication
+        if row_attachment_ids:
+            link_attachments(db, attachment_ids=row_attachment_ids, communication_id=communication.id)
+        persisted_communications.append(communication)
+        logger.info(
+            "WhatsApp outbound communication persisted source=backend_send persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s external_chat_namespace=%s",
+            communication_result.persistence_state,
+            communication_result.match_strategy,
+            communication.tenant_id,
+            communication.id,
+            communication.provider_message_id,
+            communication.external_chat_namespace,
+        )
+
+    return persisted_communications
+
+
 @router.post("/tenants/{tenant_id}/send", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)
 async def send_tenant_communication(
     tenant_id: int,
@@ -643,68 +728,145 @@ async def send_tenant_communication(
     if channel == "whatsapp":
         # Immediately persist the outbound message to ensure UI visibility
         # Use the selected endpoint's chat namespace if available for better identity matching
-        result_dict = whatsapp_result if isinstance(whatsapp_result, dict) else {}
-        # The bridge splits a send into several WhatsApp messages when attachments are present
-        # (text and each file are separate messages), so persist one Communication per sent
-        # message - they each have their own provider_message_id and the unique constraint on
-        # (tenant_id, provider_message_id) would otherwise be the only thing keeping them apart.
-        sent_messages = result_dict.get("messages")
-        if not isinstance(sent_messages, list) or not sent_messages:
-            sent_messages = [
-                {
-                    "whatsapp_message_id": (
-                        result_dict.get("whatsapp_message_id") or result_dict.get("provider_message_id")
-                    ),
-                    "kind": "text",
-                    "attachment_index": None,
-                }
-            ]
-
-        persisted_communications: list[Communication] = []
-        for sent in sent_messages:
-            attachment_index = sent.get("attachment_index")
-            if sent.get("kind") == "media" and isinstance(attachment_index, int):
-                attachment = outbound_attachments[attachment_index]
-                # Communication.message is NOT NULL, so a caption-less media row carries a
-                # placeholder in the same house style as the inbound MEDIA_TYPE_LABELS.
-                row_message = f"[File] {attachment.filename}"
-                row_attachment_ids = [attachment.attachment_id]
-            else:
-                row_message = message
-                row_attachment_ids = []
-
-            communication_result = persist_whatsapp_outbound_communication(
-                db,
-                tenant_id=tenant.id,
-                provider=(selected_endpoint.provider if selected_endpoint is not None else None),
-                external_account_id=(selected_endpoint.external_account_id if selected_endpoint is not None else None),
-                external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
-                external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
-                whatsapp_chat_id=result_dict.get("whatsapp_chat_id"),
-                whatsapp_identity_key=result_dict.get("whatsapp_identity_key"),
-                whatsapp_normalized_phone=result_dict.get("whatsapp_normalized_phone"),
-                provider_message_id=sent.get("whatsapp_message_id"),
-                subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
-                message=row_message,
-                created_at=datetime.now(timezone.utc),
-            )
-            communication = communication_result.communication
-            if row_attachment_ids:
-                link_attachments(db, attachment_ids=row_attachment_ids, communication_id=communication.id)
-            persisted_communications.append(communication)
-            logger.info(
-                "WhatsApp outbound communication persisted source=backend_send persistence_state=%s match_strategy=%s tenant_id=%s communication_id=%s provider_message_id=%s external_chat_namespace=%s",
-                communication_result.persistence_state,
-                communication_result.match_strategy,
-                communication.tenant_id,
-                communication.id,
-                communication.provider_message_id,
-                communication.external_chat_namespace,
-            )
+        persisted_communications = _persist_whatsapp_send_result(
+            db,
+            tenant=tenant,
+            provider=(selected_endpoint.provider if selected_endpoint is not None else None),
+            external_account_id=(selected_endpoint.external_account_id if selected_endpoint is not None else None),
+            external_phone_id=(selected_endpoint.external_phone_id if selected_endpoint is not None else None),
+            external_chat_namespace=(selected_endpoint.external_chat_namespace if selected_endpoint is not None else None),
+            whatsapp_result=whatsapp_result,
+            message=message,
+            subject=payload.subject.strip() if payload.subject and payload.subject.strip() else None,
+            outbound_attachments=outbound_attachments,
+        )
 
         # The response model is a single CommunicationRead; the frontend reloads the whole
         # thread right after a send, so returning the first row is sufficient.
         return persisted_communications[0]
+
+
+@router.post("/tenants/{tenant_id}/send-first-message", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)
+async def send_first_whatsapp_message(
+    tenant_id: int,
+    payload: WhatsAppFirstMessageRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Communication:
+    """Sends the first WhatsApp message to a given phone number for a tenant, whether or not
+    the tenant already has other active WhatsApp chats linked (e.g. a different family
+    member's number).
+
+    Unlike /send, there is no existing TenantChannelEndpoint to route through for this
+    specific number - the caller supplies the destination phone and sending account
+    directly. On success, the resulting chat is auto-linked as another active WhatsApp
+    endpoint for the tenant (source=auto_first_send) so subsequent replies to it use the
+    normal linked-chat flow with no separate manual "Link chat" step. If the chat id
+    whatsapp-service returns turns out to already be linked to a *different* tenant, the
+    message has already been sent by that point - we do not fail the request, we just skip
+    auto-linking and log the conflict; the operator can resolve it via the existing manual
+    "Link chat" flow afterward.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    to = payload.to.strip()
+    external_account_id = payload.external_account_id.strip()
+    message = payload.message.strip()
+    if not to:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone number is required")
+    if not external_account_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select a WhatsApp account to send from")
+    if not message and not payload.attachment_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
+
+    # A tenant may already have one or more other active WhatsApp chats linked (e.g. different
+    # family members texting from different numbers) - that's not a conflict for *this* number.
+    # The real conflict case - this exact chat_id already linked to a *different* tenant - is
+    # handled below, after the send, via link_whatsapp_chat_to_thread's own guard.
+
+    connected_account_ids = {
+        str(account.get("external_account_id") or "").strip() for account in list_whatsapp_accounts()
+    }
+    if external_account_id not in connected_account_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected WhatsApp account is not connected")
+
+    try:
+        outbound_attachments = load_outbound_attachments(
+            db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel="whatsapp"
+        )
+    except AttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except AttachmentLimitExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
+
+    whatsapp_payload = {
+        "to": to,
+        "message": message,
+        "tenant_id": tenant.id,
+        "whatsapp_endpoint_id": None,
+        "external_account_id": external_account_id,
+        "require_registered_recipient": True,
+        "attachments": [
+            {
+                "filename": item.filename,
+                "mime_type": item.mime_type,
+                "data_base64": base64.b64encode(item.content).decode("ascii"),
+            }
+            for item in outbound_attachments
+        ],
+    }
+    try:
+        whatsapp_result = await send_whatsapp_message(whatsapp_payload)
+    except WhatsAppBridgeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    persisted_communications = _persist_whatsapp_send_result(
+        db,
+        tenant=tenant,
+        provider=payload.provider,
+        external_account_id=external_account_id,
+        external_phone_id=None,
+        external_chat_namespace=None,
+        whatsapp_result=whatsapp_result,
+        message=message,
+        subject=None,
+        outbound_attachments=outbound_attachments,
+    )
+
+    result_dict = whatsapp_result if isinstance(whatsapp_result, dict) else {}
+    chat_id = result_dict.get("whatsapp_chat_id")
+    if chat_id:
+        try:
+            link_whatsapp_chat_to_thread(
+                db,
+                thread_id=tenant.id,
+                provider=payload.provider,
+                external_account_id=external_account_id,
+                chat_id=chat_id,
+                chat_display_name=result_dict.get("whatsapp_contact_name"),
+                source=AUTO_FIRST_SEND_SOURCE,
+                linked_by_user_id=current_user.id,
+                background_tasks=background_tasks,
+                resync=False,
+            )
+        except WhatsAppChatLinkConflict as exc:
+            logger.warning(
+                "whatsapp_first_send_chat_conflict tenant_id=%s conflicting_tenant_id=%s chat_id=%s",
+                tenant.id,
+                exc.conflicting_tenant_id,
+                chat_id,
+            )
+    else:
+        logger.warning(
+            "whatsapp_first_send_missing_chat_id tenant_id=%s external_account_id=%s",
+            tenant.id,
+            external_account_id,
+        )
+
+    return persisted_communications[0]
 
 
 @router.post("/tenants/{tenant_id}/forward", response_model=CommunicationRead, status_code=status.HTTP_201_CREATED)

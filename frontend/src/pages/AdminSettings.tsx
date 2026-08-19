@@ -117,6 +117,8 @@ export default function AdminSettings() {
   const [forwardToEmailMessage, setForwardToEmailMessage] = useState('')
   const [draftDebounceSeconds, setDraftDebounceSeconds] = useState(120)
   const [notificationWhatsappDebounceSeconds, setNotificationWhatsappDebounceSeconds] = useState(120)
+  const [notificationWhatsappExternalAccountId, setNotificationWhatsappExternalAccountId] = useState('')
+  const [whatsappAccounts, setWhatsappAccounts] = useState<{ external_account_id: string; provider: string; label: string }[]>([])
   const [savingNotificationWhatsappDebounce, setSavingNotificationWhatsappDebounce] = useState(false)
   const [notificationWhatsappDebounceMessage, setNotificationWhatsappDebounceMessage] = useState('')
   const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
@@ -145,12 +147,14 @@ export default function AdminSettings() {
 
   useEffect(() => {
     const load = async () => {
-      const [usersResponse, invitesResponse] = await Promise.all([
+      const [usersResponse, invitesResponse, whatsappAccountsResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
         fetch(`${API_BASE_URL}/api/admin/invites`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+        fetch(`${API_BASE_URL}/api/whatsapp/accounts`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
       ])
       if (usersResponse.ok) setUsers(await usersResponse.json())
       if (invitesResponse.ok) setInvites(await invitesResponse.json())
+      if (whatsappAccountsResponse.ok) setWhatsappAccounts(await whatsappAccountsResponse.json())
       await loadLogs()
       const adminSettingsResponse = await fetch(`${API_BASE_URL}/api/admin-settings`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -160,6 +164,7 @@ export default function AdminSettings() {
         setForwardToEmail(data.forward_to_email ?? '')
         if (typeof data.ai_draft_debounce_seconds === 'number') setDraftDebounceSeconds(data.ai_draft_debounce_seconds)
         if (typeof data.notification_whatsapp_debounce_seconds === 'number') setNotificationWhatsappDebounceSeconds(data.notification_whatsapp_debounce_seconds)
+        setNotificationWhatsappExternalAccountId(typeof data.notification_whatsapp_external_account_id === 'string' ? data.notification_whatsapp_external_account_id : '')
         if (typeof data.ai_auto_send_delay_seconds === 'number') setAutoSendDelaySeconds(data.ai_auto_send_delay_seconds)
         if (typeof data.planner_default_mode === 'string') setPlannerDefaultMode(data.planner_default_mode)
         setDailyTokenCap(typeof data.ai_daily_token_cap === 'number' ? data.ai_daily_token_cap : 0)
@@ -409,7 +414,11 @@ export default function AdminSettings() {
       const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ notification_whatsapp_debounce_seconds: notificationWhatsappDebounceSeconds }),
+        body: JSON.stringify({
+          notification_whatsapp_debounce_seconds: notificationWhatsappDebounceSeconds,
+          notification_whatsapp_external_account_id: notificationWhatsappExternalAccountId || null,
+          clear_notification_whatsapp_external_account_id: !notificationWhatsappExternalAccountId,
+        }),
       })
       const data = await response.json()
       if (!response.ok) {
@@ -417,6 +426,7 @@ export default function AdminSettings() {
         return
       }
       setNotificationWhatsappDebounceSeconds(data.notification_whatsapp_debounce_seconds)
+      setNotificationWhatsappExternalAccountId(typeof data.notification_whatsapp_external_account_id === 'string' ? data.notification_whatsapp_external_account_id : '')
       setNotificationWhatsappDebounceMessage('Saved')
     } catch {
       setNotificationWhatsappDebounceMessage('Failed to save WhatsApp notification timing')
@@ -618,6 +628,24 @@ export default function AdminSettings() {
           into a single message once things go quiet for this many seconds.
         </p>
         <form onSubmit={saveNotificationWhatsappDebounce} className="mt-3 flex max-w-lg flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="notification-whatsapp-account">
+              Sending account
+            </label>
+            <select
+              id="notification-whatsapp-account"
+              value={notificationWhatsappExternalAccountId}
+              onChange={(event) => setNotificationWhatsappExternalAccountId(event.target.value)}
+              className="mt-1.5 w-56 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            >
+              <option value="">Not configured</option>
+              {whatsappAccounts.map((account) => (
+                <option key={account.external_account_id} value={account.external_account_id}>
+                  {account.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="notification-whatsapp-debounce-seconds">
               Alert debounce (seconds)

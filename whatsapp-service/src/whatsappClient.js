@@ -1013,9 +1013,16 @@ function normalizeRecipient(input) {
   if (value.includes("@")) {
     return value;
   }
-  const digits = value.replace(/\D+/g, "");
+  let digits = value.replace(/\D+/g, "");
   if (!digits) {
     return null;
+  }
+  // A leading "00" is the international dialing exit code many people use in place of "+"
+  // (e.g. "0039..." for an Italian number instead of "+39..."). WhatsApp ids never carry it -
+  // left in place, a valid number becomes a malformed WhatsApp id that the send silently fails
+  // or crashes on instead of a clean "not registered" result.
+  if (digits.length > 2 && digits.startsWith("00")) {
+    digits = digits.slice(2);
   }
   return `${digits}@c.us`;
 }
@@ -1647,6 +1654,19 @@ async function sendTextMessage(payload) {
     throw new Error("Invalid recipient phone number");
   }
 
+  // Opt-in only: the normal reply-to-linked-chat path never sets this, since it's sending
+  // into a chat that's already proven to exist. It's for the "first message to a brand-new
+  // number" flow, where a mistyped or non-WhatsApp number would otherwise silently create a
+  // channel/link to nowhere.
+  if (payload?.require_registered_recipient === true) {
+    const numberId = await activeClient.getNumberId(chatId);
+    if (!numberId) {
+      const error = new Error("Recipient is not a registered WhatsApp user");
+      error.statusCode = 422;
+      throw error;
+    }
+  }
+
   const identity = getCanonicalWhatsAppIdentity({
     direction: "outbound",
     whatsapp_chat_id: chatId,
@@ -1687,6 +1707,37 @@ async function sendTextMessage(payload) {
     }
   }
 
+  // WhatsApp resolves the chat we actually land in independently of the id we requested by -
+  // a contact whose account uses @lid may still be reached by sending to their plain @c.us
+  // number, but the message (and every future inbound reply) is filed under the @lid chat.
+  // `chatId` is only our best guess before sending; `message.id.remote` on the sent message is
+  // what WhatsApp actually resolved it to, and is what must be persisted/matched against.
+  const firstSentMessage = sent.length > 0 ? sent[0].message : null;
+  const resolvedChatId = firstSentMessage?.id?.remote || chatId;
+  const resolvedIdentity = resolvedChatId === chatId
+    ? identity
+    : getCanonicalWhatsAppIdentity({
+      direction: "outbound",
+      whatsapp_chat_id: resolvedChatId,
+      sender: null,
+      recipient: to,
+      to,
+    }, { direction: "outbound" });
+
+  if (resolvedChatId !== chatId) {
+    pendingOutboundTenantByChatId.set(normalizeWhatsAppChatId(resolvedChatId), tenantId || null);
+    if (resolvedIdentity.canonicalChatId) {
+      pendingOutboundTenantByIdentityKey.set(resolvedIdentity.canonicalChatId, tenantId || null);
+    }
+    console.info(JSON.stringify({
+      event: "whatsapp_outbound_chat_id_resolved",
+      requested_chat_id: chatId,
+      resolved_chat_id: resolvedChatId,
+      external_account_id: externalAccountId,
+      tenant_id_received: tenantId || null,
+    }));
+  }
+
   // Every sent message must register its own pending-tenant entry and be forwarded: messages
   // 2..N would otherwise come back through the message_create listener with no tenant and be
   // dropped by outbound resolution.
@@ -1697,9 +1748,9 @@ async function sendTextMessage(payload) {
       console.info(JSON.stringify({
         event: "whatsapp_outbound_send",
         message_id: sentMessage.id._serialized,
-        chat_id: chatId,
-        whatsapp_identity_key: identity.canonicalChatId,
-        whatsapp_normalized_phone: identity.normalizedPhone,
+        chat_id: resolvedChatId,
+        whatsapp_identity_key: resolvedIdentity.canonicalChatId,
+        whatsapp_normalized_phone: resolvedIdentity.normalizedPhone,
         external_account_id: externalAccountId,
         tenant_id_received: tenantId || null,
         whatsapp_endpoint_id: whatsappEndpointId,
@@ -1707,24 +1758,41 @@ async function sendTextMessage(payload) {
         kind: entry.kind,
       }));
     }
-    void forwardOutboundCapturedMessage(sentMessage, chatId, to, "sendMessage", tenantId).catch((error) => {
+    void forwardOutboundCapturedMessage(sentMessage, resolvedChatId, to, "sendMessage", tenantId).catch((error) => {
       console.error("Failed to forward outbound WhatsApp message to CRM:", error);
     });
   }
 
-  const firstMessage = sent.length > 0 ? sent[0].message : null;
+  // Best-effort only, and only for the first-message flow (the reply flow already knows the
+  // chat's display name from its existing link) - a failure here must never break the send
+  // itself, so any error is swallowed and just leaves the name unset.
+  let contactName = null;
+  if (payload?.require_registered_recipient === true) {
+    try {
+      const contact = await activeClient.getContactById(resolvedChatId);
+      contactName = contact?.pushname || contact?.verifiedName || contact?.name || null;
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "whatsapp_contact_name_lookup_failed",
+        chat_id: resolvedChatId,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
   return {
     // Kept as the first message id for backwards compatibility with existing callers and
     // tests; the full per-message list is in `messages`.
-    whatsapp_message_id: firstMessage?.id?._serialized || null,
+    whatsapp_message_id: firstSentMessage?.id?._serialized || null,
     messages: sent.map((entry) => ({
       whatsapp_message_id: entry.message?.id?._serialized || null,
       kind: entry.kind,
       attachment_index: entry.attachment_index,
     })),
-    whatsapp_chat_id: chatId,
-    whatsapp_identity_key: identity.canonicalChatId,
-    whatsapp_normalized_phone: identity.normalizedPhone,
+    whatsapp_chat_id: resolvedChatId,
+    whatsapp_identity_key: resolvedIdentity.canonicalChatId,
+    whatsapp_normalized_phone: resolvedIdentity.normalizedPhone,
+    whatsapp_contact_name: contactName,
     tenant_id: tenantId || null,
     provider: "whatsapp-service",
     external_account_id: externalAccountId,
@@ -1732,11 +1800,18 @@ async function sendTextMessage(payload) {
   };
 }
 
-async function sendSystemMessage({ to, message, clientOverride, readyOverride }) {
+async function sendSystemMessage({ to, message, external_account_id: externalAccountId, clientOverride, readyOverride }) {
   const activeClient = clientOverride || client;
   const isClientReady = readyOverride ?? ready;
   if (!activeClient || !isClientReady) {
     throw new Error("WhatsApp client is not ready");
+  }
+
+  if (!externalAccountId) {
+    throw new Error("System WhatsApp send is missing external_account_id");
+  }
+  if (externalAccountId !== whatsappClientId) {
+    throw new Error(`WhatsApp account id mismatch: requested ${externalAccountId} but this service is configured for ${whatsappClientId}`);
   }
 
   const chatId = normalizeRecipient(to);

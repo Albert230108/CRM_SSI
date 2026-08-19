@@ -25,6 +25,7 @@ router = APIRouter(tags=["whatsapp-thread-links"])
 logger = logging.getLogger(__name__)
 
 MANUAL_LINK_SOURCE = "manual"
+AUTO_FIRST_SEND_SOURCE = "auto_first_send"
 
 
 def _normalize_text(value: str | None) -> str | None:
@@ -185,20 +186,37 @@ def get_thread_whatsapp_links(
     return [_to_link_read(link) for link in links]
 
 
-@router.post("/threads/{thread_id}/whatsapp-links", response_model=ThreadWhatsAppLinkRead)
-def create_thread_whatsapp_link(
-    thread_id: int,
-    payload: ThreadWhatsAppLinkCreate,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> ThreadWhatsAppLinkRead:
-    _get_tenant_or_404(db, thread_id)
+class WhatsAppChatLinkConflict(Exception):
+    """Raised when the target chat is already actively linked to a different tenant."""
 
-    provider = payload.provider
-    external_account_id = payload.external_account_id
-    chat_id = payload.chat_id
-    chat_display_name = _normalize_text(payload.chat_display_name)
+    def __init__(self, conflicting_tenant_id: int):
+        self.conflicting_tenant_id = conflicting_tenant_id
+        super().__init__(f"This WhatsApp chat is already linked to another thread (thread_id={conflicting_tenant_id})")
+
+
+def link_whatsapp_chat_to_thread(
+    db: Session,
+    *,
+    thread_id: int,
+    provider: str,
+    external_account_id: str,
+    chat_id: str,
+    chat_display_name: str | None,
+    source: str,
+    linked_by_user_id: int,
+    background_tasks: BackgroundTasks | None = None,
+    replace_link_id: int | None = None,
+    resync: bool = True,
+) -> TenantChannelEndpoint:
+    """Creates (or idempotently refreshes) an active WhatsApp `TenantChannelEndpoint` link.
+
+    Shared by the manual "Link chat" flow and the auto-link-on-first-send flow so both stay
+    on identical conflict-check and idempotency semantics. Raises `WhatsAppChatLinkConflict`
+    if the chat is already actively linked to a *different* tenant - callers decide how to
+    surface that (the manual flow turns it into a 409; the first-send flow logs and skips
+    linking since the message has already been sent by that point).
+    """
+    chat_display_name = _normalize_text(chat_display_name)
 
     conflicting_link = (
         _active_whatsapp_links_query(db)
@@ -212,18 +230,16 @@ def create_thread_whatsapp_link(
     if conflicting_link is not None and conflicting_link.tenant_id != thread_id:
         logger.warning(
             "whatsapp_thread_link_conflict thread_id=%s provider=%s external_account_id=%s chat_id=%s "
-            "conflicting_thread_id=%s actor_user_id=%s",
+            "conflicting_thread_id=%s actor_user_id=%s source=%s",
             thread_id,
             provider,
             external_account_id,
             chat_id,
             conflicting_link.tenant_id,
-            current_user.id,
+            linked_by_user_id,
+            source,
         )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"This WhatsApp chat is already linked to another thread (thread_id={conflicting_link.tenant_id})",
-        )
+        raise WhatsAppChatLinkConflict(conflicting_link.tenant_id)
 
     # A tenant may have several active chats linked on the same account at once (e.g. multiple
     # family members texting from different numbers, or a 1:1 chat alongside a group chat), so
@@ -245,14 +261,14 @@ def create_thread_whatsapp_link(
         same_chat_existing_link.chat_display_name = chat_display_name or same_chat_existing_link.chat_display_name
         db.commit()
         db.refresh(same_chat_existing_link)
-        return _to_link_read(same_chat_existing_link)
+        return same_chat_existing_link
 
     existing_thread_link = None
-    if payload.replace_link_id is not None:
+    if replace_link_id is not None:
         existing_thread_link = (
             _active_whatsapp_links_query(db)
             .filter(
-                TenantChannelEndpoint.id == payload.replace_link_id,
+                TenantChannelEndpoint.id == replace_link_id,
                 TenantChannelEndpoint.tenant_id == thread_id,
                 TenantChannelEndpoint.provider == provider,
                 TenantChannelEndpoint.external_account_id == external_account_id,
@@ -268,7 +284,7 @@ def create_thread_whatsapp_link(
         now = datetime.now(timezone.utc)
         existing_thread_link.is_active = False
         existing_thread_link.unlinked_at = now
-        existing_thread_link.unlinked_by_user_id = current_user.id
+        existing_thread_link.unlinked_by_user_id = linked_by_user_id
 
     new_link = TenantChannelEndpoint(
         tenant_id=thread_id,
@@ -277,9 +293,9 @@ def create_thread_whatsapp_link(
         external_account_id=external_account_id,
         external_chat_namespace=chat_id,
         chat_display_name=chat_display_name,
-        source=MANUAL_LINK_SOURCE,
+        source=source,
         is_active=True,
-        linked_by_user_id=current_user.id,
+        linked_by_user_id=linked_by_user_id,
     )
     db.add(new_link)
     try:
@@ -320,8 +336,10 @@ def create_thread_whatsapp_link(
 
     # Force a full-history resync for the newly linked chat instead of waiting for the next
     # scheduled sweep, and so this pulls the chat's *entire* history rather than only whatever
-    # was captured by a previous capped sync.
-    background_tasks.add_task(_run_resync, external_account_id, chat_id)
+    # was captured by a previous capped sync. Skipped for a chat that was just created by an
+    # outbound first-send - there is no prior history to backfill.
+    if resync and background_tasks is not None:
+        background_tasks.add_task(_run_resync, external_account_id, chat_id)
 
     if existing_thread_link is not None:
         logger.info(
@@ -332,19 +350,49 @@ def create_thread_whatsapp_link(
             external_account_id,
             existing_thread_link.external_chat_namespace,
             chat_id,
-            current_user.id,
+            linked_by_user_id,
         )
     else:
         logger.info(
-            "whatsapp_thread_link_created thread_id=%s provider=%s external_account_id=%s chat_id=%s actor_user_id=%s",
+            "whatsapp_thread_link_created thread_id=%s provider=%s external_account_id=%s chat_id=%s actor_user_id=%s source=%s",
             thread_id,
             provider,
             external_account_id,
             chat_id,
-            current_user.id,
+            linked_by_user_id,
+            source,
         )
 
-    return _to_link_read(new_link)
+    return new_link
+
+
+@router.post("/threads/{thread_id}/whatsapp-links", response_model=ThreadWhatsAppLinkRead)
+def create_thread_whatsapp_link(
+    thread_id: int,
+    payload: ThreadWhatsAppLinkCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ThreadWhatsAppLinkRead:
+    _get_tenant_or_404(db, thread_id)
+
+    try:
+        link = link_whatsapp_chat_to_thread(
+            db,
+            thread_id=thread_id,
+            provider=payload.provider,
+            external_account_id=payload.external_account_id,
+            chat_id=payload.chat_id,
+            chat_display_name=payload.chat_display_name,
+            source=MANUAL_LINK_SOURCE,
+            linked_by_user_id=current_user.id,
+            background_tasks=background_tasks,
+            replace_link_id=payload.replace_link_id,
+        )
+    except WhatsAppChatLinkConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    return _to_link_read(link)
 
 
 @router.post("/threads/{thread_id}/whatsapp-links/{link_id}/resync", response_model=ThreadWhatsAppLinkResyncRead)

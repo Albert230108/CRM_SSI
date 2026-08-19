@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { sendSystemMessage } = require('../src/whatsappClient');
+const { whatsappClientId } = require('../src/config');
 
 function fakeClient() {
   const calls = [];
@@ -22,6 +23,7 @@ test('sendSystemMessage sends to a raw phone number without tenant context', asy
   const result = await sendSystemMessage({
     to: '31612345678',
     message: 'You have 2 new notification(s) in CRM_SSI',
+    external_account_id: whatsappClientId,
     clientOverride: client,
     readyOverride: true,
   });
@@ -39,6 +41,7 @@ test('sendSystemMessage preserves an already-suffixed chat id', async () => {
   await sendSystemMessage({
     to: '31612345678@c.us',
     message: 'Alert',
+    external_account_id: whatsappClientId,
     clientOverride: client,
     readyOverride: true,
   });
@@ -48,21 +51,43 @@ test('sendSystemMessage preserves an already-suffixed chat id', async () => {
 
 test('sendSystemMessage rejects when the client is not ready', async () => {
   await assert.rejects(
-    () => sendSystemMessage({ to: '31612345678', message: 'Alert', clientOverride: fakeClient(), readyOverride: false }),
+    () => sendSystemMessage({
+      to: '31612345678', message: 'Alert', external_account_id: whatsappClientId, clientOverride: fakeClient(), readyOverride: false,
+    }),
     /not ready/,
   );
 });
 
 test('sendSystemMessage rejects an invalid recipient', async () => {
   await assert.rejects(
-    () => sendSystemMessage({ to: '', message: 'Alert', clientOverride: fakeClient(), readyOverride: true }),
+    () => sendSystemMessage({
+      to: '', message: 'Alert', external_account_id: whatsappClientId, clientOverride: fakeClient(), readyOverride: true,
+    }),
     /Invalid recipient phone number/,
   );
 });
 
 test('sendSystemMessage rejects an empty message', async () => {
   await assert.rejects(
-    () => sendSystemMessage({ to: '31612345678', message: '', clientOverride: fakeClient(), readyOverride: true }),
+    () => sendSystemMessage({
+      to: '31612345678', message: '', external_account_id: whatsappClientId, clientOverride: fakeClient(), readyOverride: true,
+    }),
     /missing message/,
+  );
+});
+
+test('sendSystemMessage rejects a missing external_account_id', async () => {
+  await assert.rejects(
+    () => sendSystemMessage({ to: '31612345678', message: 'Alert', clientOverride: fakeClient(), readyOverride: true }),
+    /missing external_account_id/,
+  );
+});
+
+test('sendSystemMessage rejects a mismatched external_account_id', async () => {
+  await assert.rejects(
+    () => sendSystemMessage({
+      to: '31612345678', message: 'Alert', external_account_id: 'some-other-account', clientOverride: fakeClient(), readyOverride: true,
+    }),
+    /account id mismatch/,
   );
 });

@@ -77,12 +77,15 @@ def flush_due_notification_whatsapp_batch(db: Session) -> None:
         .all()
     )
 
+    settings = db.query(AdminSettings).first()
+    external_account_id = settings.notification_whatsapp_external_account_id if settings is not None else None
+
     for user in recipients:
         phone = (user.phone or "").strip()
         if not phone:
             continue
         try:
-            asyncio.run(send_system_whatsapp_message(to=phone, message=message))
+            asyncio.run(send_system_whatsapp_message(to=phone, message=message, external_account_id=external_account_id))
             db.add(
                 NotificationWhatsappDelivery(
                     user_id=user.id, phone=phone, notification_count=len(pending), status="sent"

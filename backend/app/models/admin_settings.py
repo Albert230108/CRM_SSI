@@ -17,6 +17,11 @@ class AdminSettings(Base):
     # to go quiet before sending a single summarized message to opted-in staff, mirroring the
     # ai_draft_debounce_seconds pattern above.
     notification_whatsapp_debounce_seconds = Column(Integer, nullable=False, default=120, server_default="120")
+    # Which WhatsApp account (external_account_id from WHATSAPP_SERVICE_ACCOUNTS /
+    # WHATSAPP_SERVICE_URL_MAP) sends the batched notification alert. Deployments can run
+    # multiple WhatsApp accounts/instances, so this must be picked explicitly rather than
+    # assumed - NULL means unconfigured and alerts will fail until an admin sets one.
+    notification_whatsapp_external_account_id = Column(String(255), nullable=True)
     # When true, every newly created tenant is automatically linked to all existing shared AI
     # reply templates (see tenants.py create_tenant), instead of starting with none available.
     ai_auto_apply_templates_to_new_tenants = Column(Boolean, nullable=False, default=False, server_default="false")

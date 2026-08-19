@@ -155,3 +155,44 @@ def test_send_whatsapp_message_maps_upstream_5xx_to_503(monkeypatch):
     assert excinfo.value.status_code == 503
     assert str(excinfo.value) == "bridge exploded"
 
+
+def test_send_system_whatsapp_message_requires_a_configured_account(monkeypatch):
+    monkeypatch.setattr(whatsapp_client, "WHATSAPP_SERVICE_URL", None)
+    monkeypatch.setattr(whatsapp_client, "WHATSAPP_SERVICE_URL_MAP", "")
+
+    with pytest.raises(WhatsAppBridgeError) as excinfo:
+        run(whatsapp_client.send_system_whatsapp_message(to="+31600000000", message="Alert"))
+
+    assert excinfo.value.status_code == 503
+    assert "No WhatsApp account configured" in str(excinfo.value)
+
+
+def test_send_system_whatsapp_message_routes_via_account_map(monkeypatch):
+    monkeypatch.setattr(whatsapp_client, "WHATSAPP_SERVICE_URL", None)
+    monkeypatch.setattr(
+        whatsapp_client,
+        "WHATSAPP_SERVICE_URL_MAP",
+        json.dumps({"edi-crm-whatsapp": "http://172.18.0.1:3001", "ssi-crm-whatsapp": "http://172.18.0.1:3002"}),
+    )
+
+    captured = {}
+
+    class RecordingClient(FakeAsyncClient):
+        async def post(self, url, *args, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs.get("json")
+            return await super().post(url, *args, **kwargs)
+
+    fake_response = FakeResponse(200, payload={"whatsapp_message_id": "wamid.1"})
+    fake_client = RecordingClient(response=fake_response)
+    monkeypatch.setattr(whatsapp_client.httpx, "AsyncClient", lambda timeout=None: fake_client)
+
+    run(
+        whatsapp_client.send_system_whatsapp_message(
+            to="+31600000000", message="Alert", external_account_id="ssi-crm-whatsapp"
+        )
+    )
+
+    assert captured["url"] == "http://172.18.0.1:3002/send-system"
+    assert captured["json"] == {"to": "+31600000000", "message": "Alert", "external_account_id": "ssi-crm-whatsapp"}
+

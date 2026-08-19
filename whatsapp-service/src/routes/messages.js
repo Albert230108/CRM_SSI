@@ -108,6 +108,8 @@ function createMessageRouter({
         });
       }
 
+      const requireRegisteredRecipient = req.body?.require_registered_recipient === true;
+
       const result = await sendTextMessage({
         to,
         message,
@@ -115,15 +117,20 @@ function createMessageRouter({
         external_account_id: externalAccountId,
         whatsapp_endpoint_id: whatsappEndpointId,
         attachments,
+        require_registered_recipient: requireRegisteredRecipient,
       });
       return res.json({ ok: true, ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send WhatsApp message";
       let status = 500;
-      if (message.includes("not ready")) {
+      if (typeof error?.statusCode === "number") {
+        status = error.statusCode;
+      } else if (message.includes("not ready")) {
         status = 503;
       } else if (message.includes("Invalid recipient phone number") || message.includes("account id mismatch") || message.includes("missing external_account_id")) {
         status = 400;
+      } else if (message.includes("not a registered WhatsApp user")) {
+        status = 422;
       }
       console.error("Failed to handle /send request:", error);
       return res.status(status).json({ ok: false, error: message });
@@ -134,8 +141,9 @@ function createMessageRouter({
     try {
       const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
       const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+      const externalAccountId = typeof req.body?.external_account_id === "string" ? req.body.external_account_id.trim() : "";
 
-      console.info("[whatsapp] /send-system request body", { to, message_length: message.length });
+      console.info("[whatsapp] /send-system request body", { to, message_length: message.length, external_account_id: externalAccountId || null });
 
       if (!to || !message) {
         return res.status(400).json({
@@ -143,15 +151,26 @@ function createMessageRouter({
           error: '"to" and "message" are required.',
         });
       }
+      if (!externalAccountId) {
+        return res.status(400).json({
+          ok: false,
+          error: "external_account_id is required for system WhatsApp sends.",
+        });
+      }
 
-      const result = await sendSystemMessage({ to, message });
+      const result = await sendSystemMessage({ to, message, external_account_id: externalAccountId });
       return res.json({ ok: true, ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send system WhatsApp message";
       let status = 500;
       if (message.includes("not ready")) {
         status = 503;
-      } else if (message.includes("Invalid recipient phone number") || message.includes("missing message")) {
+      } else if (
+        message.includes("Invalid recipient phone number")
+        || message.includes("missing message")
+        || message.includes("missing external_account_id")
+        || message.includes("account id mismatch")
+      ) {
         status = 400;
       }
       console.error("Failed to handle /send-system request:", error);

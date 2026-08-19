@@ -11,6 +11,7 @@ class AdminSettingsRead(BaseModel):
     planner_default_mode: str = "off"
     ai_daily_token_cap: int | None = None
     notification_whatsapp_debounce_seconds: int
+    notification_whatsapp_external_account_id: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -22,3 +23,5 @@ class AdminSettingsUpdate(BaseModel):
     planner_default_mode: Literal["off", "manual", "auto"] | None = None
     ai_daily_token_cap: int | None = Field(default=None, ge=0)
     notification_whatsapp_debounce_seconds: int | None = None
+    notification_whatsapp_external_account_id: str | None = None
+    clear_notification_whatsapp_external_account_id: bool = False

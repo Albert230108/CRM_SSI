@@ -41,6 +41,10 @@ def update_admin_settings(payload: AdminSettingsUpdate, db: Session = Depends(ge
         settings.ai_daily_token_cap = payload.ai_daily_token_cap or None
     if payload.notification_whatsapp_debounce_seconds is not None:
         settings.notification_whatsapp_debounce_seconds = payload.notification_whatsapp_debounce_seconds
+    if payload.clear_notification_whatsapp_external_account_id:
+        settings.notification_whatsapp_external_account_id = None
+    elif payload.notification_whatsapp_external_account_id is not None:
+        settings.notification_whatsapp_external_account_id = payload.notification_whatsapp_external_account_id
     db.commit()
     db.refresh(settings)
     return settings

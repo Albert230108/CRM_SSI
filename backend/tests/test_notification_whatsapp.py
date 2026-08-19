@@ -128,16 +128,17 @@ def test_flush_sends_batched_message_to_opted_in_users_and_marks_dispatched(db_s
 
     sent_calls = []
 
-    async def fake_send(to, message):
-        sent_calls.append((to, message))
+    async def fake_send(to, message, external_account_id=None):
+        sent_calls.append((to, message, external_account_id))
 
     monkeypatch.setattr(notification_whatsapp_service, "send_system_whatsapp_message", fake_send)
 
     flush_due_notification_whatsapp_batch(db_session)
 
     assert len(sent_calls) == 1
-    to, message = sent_calls[0]
+    to, message, external_account_id = sent_calls[0]
     assert to == recipient.phone
+    assert external_account_id is None
     assert "2 new notification(s)" in message
     assert "First message" in message
     assert "Second message" in message
@@ -165,7 +166,7 @@ def test_flush_excludes_users_without_opt_in_phone_or_active(db_session, monkeyp
 
     sent_calls = []
 
-    async def fake_send(to, message):
+    async def fake_send(to, message, external_account_id=None):
         sent_calls.append((to, message))
 
     monkeypatch.setattr(notification_whatsapp_service, "send_system_whatsapp_message", fake_send)
@@ -186,7 +187,7 @@ def test_flush_continues_after_one_recipient_failure_and_logs_delivery(db_sessio
 
     sent_calls = []
 
-    async def fake_send(to, message):
+    async def fake_send(to, message, external_account_id=None):
         if to == failing_user.phone:
             raise WhatsAppBridgeError(503, "bridge unavailable")
         sent_calls.append(to)
@@ -200,6 +201,51 @@ def test_flush_continues_after_one_recipient_failure_and_logs_delivery(db_sessio
     assert deliveries[failing_user.id].status == "failed"
     assert deliveries[failing_user.id].error_message
     assert deliveries[succeeding_user.id].status == "sent"
+
+
+def test_flush_passes_configured_external_account_id_to_send(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _create_notification(db_session, tenant)
+    recipient = _create_user(db_session, email="wa-notify-account-id@example.com")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id="ssi-crm-whatsapp"))
+    db_session.add(NotificationWhatsappTrigger(trigger_at=datetime.now(timezone.utc) - timedelta(seconds=1)))
+    db_session.commit()
+
+    sent_calls = []
+
+    async def fake_send(to, message, external_account_id=None):
+        sent_calls.append((to, external_account_id))
+
+    monkeypatch.setattr(notification_whatsapp_service, "send_system_whatsapp_message", fake_send)
+
+    flush_due_notification_whatsapp_batch(db_session)
+
+    assert sent_calls == [(recipient.phone, "ssi-crm-whatsapp")]
+
+
+def test_flush_records_failure_when_no_account_configured(db_session, monkeypatch):
+    # Regression test: with no notification_whatsapp_external_account_id set (the default
+    # after just applying the migration) and no bare WHATSAPP_SERVICE_URL in this deployment,
+    # send_system_whatsapp_message must fail loudly (recorded as a failed delivery) instead of
+    # notifications silently never going out.
+    from app.services import whatsapp_client
+
+    monkeypatch.setattr(whatsapp_client, "WHATSAPP_SERVICE_URL", None)
+    monkeypatch.setattr(whatsapp_client, "WHATSAPP_SERVICE_URL_MAP", "")
+
+    tenant = _create_tenant(db_session)
+    _create_notification(db_session, tenant)
+    recipient = _create_user(db_session, email="wa-notify-no-account@example.com")
+    db_session.add(NotificationWhatsappTrigger(trigger_at=datetime.now(timezone.utc) - timedelta(seconds=1)))
+    db_session.commit()
+
+    flush_due_notification_whatsapp_batch(db_session)
+
+    delivery = db_session.query(NotificationWhatsappDelivery).filter(
+        NotificationWhatsappDelivery.user_id == recipient.id
+    ).one()
+    assert delivery.status == "failed"
+    assert "No WhatsApp account configured" in delivery.error_message
 
 
 def test_debounce_seconds_falls_back_to_default_without_admin_settings(db_session):
