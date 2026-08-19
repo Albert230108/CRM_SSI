@@ -91,6 +91,7 @@ def create_brain_section(
         path=path,
         title=payload.title.strip(),
         content=(payload.content or "").strip() or None,
+        color=payload.color,
         position=brain_service.next_position(db, parent.id if parent else None),
         is_active=payload.is_active,
         created_by_user_id=current_user.id,
@@ -125,6 +126,7 @@ def update_brain_section(
 
     section.title = payload.title.strip()
     section.content = (payload.content or "").strip() or None
+    section.color = payload.color
     section.is_active = payload.is_active
     section.slug = slug
     section.updated_by_user_id = current_user.id

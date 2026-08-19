@@ -34,6 +34,9 @@ class BrainSection(Base):
     title = Column(String(255), nullable=False)
     # A node may be a pure container with no text of its own.
     content = Column(Text, nullable=True)
+    # Hex string (e.g. "#3b82f6") used to color-code the section in the tree UI. Null means
+    # "no color assigned" rather than any particular default.
+    color = Column(String(7), nullable=True)
     position = Column(Integer, nullable=False, default=0, server_default="0")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)

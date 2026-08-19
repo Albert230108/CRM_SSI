@@ -10,6 +10,7 @@ class BrainSectionCreate(BaseModel):
     slug: str | None = None
     parent_id: int | None = None
     content: str | None = None
+    color: str | None = None
     is_active: bool = True
 
 
@@ -17,6 +18,7 @@ class BrainSectionUpdate(BaseModel):
     title: str
     slug: str | None = None
     content: str | None = None
+    color: str | None = None
     is_active: bool = True
 
 
@@ -32,6 +34,7 @@ class BrainSectionRead(BaseModel):
     slug: str
     title: str
     content: str | None = None
+    color: str | None = None
     position: int
     is_active: bool
     created_at: datetime

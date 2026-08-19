@@ -136,6 +136,18 @@ def test_delete_blocked_while_a_template_attaches_the_section(client, db_session
     assert "Attached" in response.json()["detail"]
 
 
+def test_color_is_saved_and_returned(client):
+    root = _create(client, title="Policies", color="#3b82f6")
+    assert root["color"] == "#3b82f6"
+
+    response = client.put(
+        f"/api/brain-sections/{root['id']}",
+        json={"title": "Policies", "slug": None, "content": None, "color": None, "is_active": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["color"] is None
+
+
 def test_list_returns_a_nested_tree(client):
     root = _create(client, title="Root")
     _create(client, title="Child A", parent_id=root["id"])
