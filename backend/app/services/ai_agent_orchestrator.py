@@ -486,6 +486,7 @@ def run_planner_loop(
     redrafts = checker_profile.max_redraft_attempts if checker_profile is not None else None
     max_attempts = (int(redrafts) + 1) if redrafts is not None else 1
     feedback: str | None = None
+    rejected_draft: str | None = None
     draft_text = ""
     checker_passed = False
 
@@ -498,6 +499,7 @@ def run_planner_loop(
             channel=channel,
             rough_draft=drafter_instruction or None,
             extra_brain_section_paths=extra_sections,
+            previous_draft=rejected_draft,
             reviewer_feedback=feedback,
             blocks=drafter_blocks,
             agent_instructions=drafter_instructions,
@@ -558,8 +560,14 @@ def run_planner_loop(
         if verdict.get("passed"):
             checker_passed = True
             feedback = None
+            rejected_draft = None
             break
         feedback = str(verdict.get("feedback") or "").strip() or "The reviewer rejected the draft."
+        issues = [str(issue).strip() for issue in (verdict.get("issues") or []) if str(issue).strip()]
+        if issues:
+            feedback += "\n\nSpecific issues:\n" + "\n".join(f"- {issue}" for issue in issues)
+        # So the next drafting attempt is a rewrite of what it actually wrote, not a blind retry.
+        rejected_draft = draft_text
 
     if checker_passed:
         recorder.finish(STATUS_COMPLETED, final_template_id=template.id, final_text=draft_text)

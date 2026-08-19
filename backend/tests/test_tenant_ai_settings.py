@@ -194,3 +194,85 @@ def test_auto_send_enforcement_is_independent_per_channel(non_admin_client, db_s
     assert body["auto_send_email"] is True
     assert body["auto_draft_whatsapp"] is False
     assert body["auto_send_whatsapp"] is False
+
+
+def test_auto_draft_mode_forces_auto_send_off_even_when_requested(non_admin_client, db_session):
+    """Regression: auto-draft mode must never leave a tenant scheduling auto-sends, even if the
+    client still sends auto_send=True alongside it."""
+    tenant = _create_tenant(db_session)
+    response = non_admin_client.put(
+        f"/api/tenants/{tenant.id}/ai-settings",
+        json={
+            "auto_draft_email": True,
+            "auto_send_email": True,
+            "auto_draft_whatsapp": True,
+            "auto_send_whatsapp": True,
+            "planner_mode": "auto-draft",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["planner_mode"] == "auto-draft"
+    assert body["auto_send_email"] is False
+    assert body["auto_send_whatsapp"] is False
+
+
+def test_auto_draft_and_auto_send_mode_force_the_trigger_toggles_on(non_admin_client, db_session):
+    """Regression: without this, choosing 'auto-draft' or 'auto-send' in the mode dropdown while
+    the per-channel auto_draft toggles are still off silently does nothing on an inbound message
+    - the background trigger never registers, so the planner never runs."""
+    for mode in ("auto-draft", "auto-send"):
+        tenant = _create_tenant(db_session, booking_id=f"B-implies-{mode}", name=f"Implies {mode}")
+        response = non_admin_client.put(
+            f"/api/tenants/{tenant.id}/ai-settings",
+            json={
+                "auto_draft_email": False,
+                "auto_draft_whatsapp": False,
+                "planner_mode": mode,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["auto_draft_email"] is True, mode
+        assert body["auto_draft_whatsapp"] is True, mode
+
+
+def test_bulk_planner_mode_also_forces_the_trigger_toggles_on(non_admin_client, db_session):
+    tenant = _create_tenant(db_session, booking_id="B-bulk-implies-1", name="Bulk Implies")
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-planner-mode",
+        json={"tenant_ids": [tenant.id], "planner_mode": "auto-send"},
+    )
+    assert response.status_code == 200
+    settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+    assert settings["auto_draft_email"] is True
+    assert settings["auto_draft_whatsapp"] is True
+
+
+def test_bulk_planner_mode_assigns_across_tenants_with_and_without_settings(non_admin_client, db_session):
+    tenant_with_settings = _create_tenant(db_session, booking_id="B-planner-bulk-1", name="Bulk Planner A")
+    tenant_without_settings = _create_tenant(db_session, booking_id="B-planner-bulk-2", name="Bulk Planner B")
+
+    # Give one tenant a pre-existing settings row (and turn on auto-send) so the bulk action must
+    # both create a row for the other tenant and override the existing one's auto-send toggles.
+    non_admin_client.put(
+        f"/api/tenants/{tenant_with_settings.id}/ai-settings",
+        json={"auto_draft_email": True, "auto_send_email": True, "planner_mode": "manual"},
+    )
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-planner-mode",
+        json={
+            "tenant_ids": [tenant_with_settings.id, tenant_without_settings.id],
+            "planner_mode": "auto-draft",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["tenants_affected"] == 2
+
+    for tenant in (tenant_with_settings, tenant_without_settings):
+        settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+        assert settings["planner_mode"] == "auto-draft"
+
+    # The pre-existing tenant's auto-send toggle must be cleared by the bulk action too.
+    assert non_admin_client.get(f"/api/tenants/{tenant_with_settings.id}/ai-settings").json()["auto_send_email"] is False

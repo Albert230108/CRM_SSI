@@ -210,6 +210,7 @@ def assemble_prompt(
     channel: str,
     rough_draft: str | None,
     extra_brain_section_paths: list[str] | None = None,
+    previous_draft: str | None = None,
     reviewer_feedback: str | None = None,
     blocks: dict[str, str] | None = None,
     agent_instructions: str | None = None,
@@ -218,14 +219,15 @@ def assemble_prompt(
 
     Fixed order: the drafter profile's preamble and instructions, then 0. guidelines, 1. template
     text/subprompts, 1b. knowledge base (brain sections), 2. message history (all channels),
-    3. Beds24 info (booking + payments + notes), 4. the user's typed text, 5. reviewer feedback on
-    a redraft round. Each present group is prefixed with its label so the numbering is visible
-    directly in the payload, not just in the template editor UI. Those labels are not hardcoded:
-    they come from `blocks`, so an operator can reword or delete any of them (a label resolving to
-    an empty string emits the content on its own). Groups 4 and 5 are included only if there is
-    something to put in them - there is no default filler instruction. This is the single source
-    of truth reused by the "Draft with AI" endpoint, the payload preview endpoint and the planner
-    loop, so what the user previews is guaranteed to be what is sent.
+    3. Beds24 info (booking + payments + notes), 4. the user's typed text, 5. the previous draft on
+    a redraft round, 6. reviewer feedback on that redraft round. Each present group is prefixed
+    with its label so the numbering is visible directly in the payload, not just in the template
+    editor UI. Those labels are not hardcoded: they come from `blocks`, so an operator can reword
+    or delete any of them (a label resolving to an empty string emits the content on its own).
+    Groups 4, 5 and 6 are included only if there is something to put in them - there is no default
+    filler instruction. This is the single source of truth reused by the "Draft with AI" endpoint,
+    the payload preview endpoint and the planner loop, so what the user previews is guaranteed to
+    be what is sent.
     """
     text = _blocks(blocks)
     parts: list[str] = []
@@ -268,6 +270,10 @@ def assemble_prompt(
     user_message = (rough_draft or "").strip()
     if user_message:
         parts.append(ai_prompt_blocks.join(text["user_instruction"], user_message))
+
+    prior_draft = (previous_draft or "").strip()
+    if prior_draft:
+        parts.append(ai_prompt_blocks.join(text["previous_draft"], prior_draft))
 
     feedback = (reviewer_feedback or "").strip()
     if feedback:

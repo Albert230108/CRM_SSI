@@ -24,7 +24,7 @@ type TenantAiSettings = {
   auto_draft_whatsapp: boolean
   auto_send_email: boolean
   auto_send_whatsapp: boolean
-  planner_mode: 'off' | 'manual' | 'auto'
+  planner_mode: 'off' | 'manual' | 'auto-draft' | 'auto-send'
   planner_profile_id: number | null
   checker_profile_id: number | null
   drafter_profile_id: number | null
@@ -69,6 +69,10 @@ export default function AiTenantSettings() {
   const [bulkAction, setBulkAction] = useState<'add' | 'remove'>('add')
   const [bulkSaving, setBulkSaving] = useState(false)
   const [bulkMessage, setBulkMessage] = useState('')
+
+  const [bulkPlannerMode, setBulkPlannerMode] = useState<TenantAiSettings['planner_mode']>('manual')
+  const [bulkPlannerModeSaving, setBulkPlannerModeSaving] = useState(false)
+  const [bulkPlannerModeMessage, setBulkPlannerModeMessage] = useState('')
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -153,8 +157,24 @@ export default function AiTenantSettings() {
     setSettings((current) => {
       if (!current) return current
       const draftEnabled = channel === 'email' ? current.auto_draft_email : current.auto_draft_whatsapp
-      if (value && !draftEnabled) return current
+      if (value && (!draftEnabled || current.planner_mode === 'auto-draft')) return current
       return { ...current, [channel === 'email' ? 'auto_send_email' : 'auto_send_whatsapp']: value }
+    })
+  }
+
+  const setPlannerMode = (value: TenantAiSettings['planner_mode']) => {
+    setSettings((current) => {
+      if (!current) return current
+      // Mirrors the server-side overrides: auto-draft/auto-send imply the trigger toggles are on
+      // (otherwise the mode never fires on an inbound message), and auto-draft must never leave
+      // an auto-send toggle on.
+      const impliesAutoDraft = value === 'auto-draft' || value === 'auto-send'
+      return {
+        ...current,
+        planner_mode: value,
+        ...(impliesAutoDraft ? { auto_draft_email: true, auto_draft_whatsapp: true } : {}),
+        ...(value === 'auto-draft' ? { auto_send_email: false, auto_send_whatsapp: false } : {}),
+      }
     })
   }
 
@@ -207,6 +227,33 @@ export default function AiTenantSettings() {
       }
     } finally {
       setBulkSaving(false)
+    }
+  }
+
+  const runBulkPlannerModeAction = async () => {
+    if (!bulkTenantIds.size) return
+    setBulkPlannerModeSaving(true)
+    setBulkPlannerModeMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenant-ai-settings/bulk-planner-mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          tenant_ids: Array.from(bulkTenantIds),
+          planner_mode: bulkPlannerMode,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setBulkPlannerModeMessage(data?.detail ?? 'Failed to run bulk action')
+        return
+      }
+      setBulkPlannerModeMessage(`Set planner mode to "${bulkPlannerMode}" for ${data.tenants_affected} tenant(s).`)
+      if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
+        await selectTenant(selectedTenant)
+      }
+    } finally {
+      setBulkPlannerModeSaving(false)
     }
   }
 
@@ -370,6 +417,34 @@ export default function AiTenantSettings() {
             {bulkMessage ? <p className="text-sm text-gray-600">{bulkMessage}</p> : null}
           </div>
         </div>
+
+        <div className="mt-3 border-t border-gray-200 pt-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk planner mode</p>
+          <p className="mt-1 text-xs text-gray-500">
+            Select tenants above, then set their Planner &amp; Checker mode all at once.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <select
+              value={bulkPlannerMode}
+              onChange={(event) => setBulkPlannerMode(event.target.value as TenantAiSettings['planner_mode'])}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            >
+              <option value="off">Off</option>
+              <option value="manual">Manual</option>
+              <option value="auto-draft">Auto-draft</option>
+              <option value="auto-send">Auto-send</option>
+            </select>
+            <button
+              type="button"
+              onClick={runBulkPlannerModeAction}
+              disabled={bulkPlannerModeSaving || !bulkTenantIds.size}
+              className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+            >
+              {bulkPlannerModeSaving ? 'Working...' : 'Apply'}
+            </button>
+            {bulkPlannerModeMessage ? <p className="text-sm text-gray-600">{bulkPlannerModeMessage}</p> : null}
+          </div>
+        </div>
       </section>
 
       {selectedTenant ? (
@@ -437,35 +512,55 @@ export default function AiTenantSettings() {
                 <div className="rounded-xl border border-gray-200 p-2.5">
                   <p className="text-sm font-semibold text-gray-900">Email automation</p>
                   <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
-                    <input type="checkbox" checked={settings.auto_draft_email} onChange={(event) => setAutoDraft('email', event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
-                    Auto-draft on new email
+                    <input
+                      type="checkbox"
+                      checked={settings.auto_draft_email}
+                      disabled={settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'}
+                      onChange={(event) => setAutoDraft('email', event.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
+                    />
+                    {settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'
+                      ? 'Auto-draft on new email (required by the Planner mode below)'
+                      : 'Auto-draft on new email'}
                   </label>
                   <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                     <input
                       type="checkbox"
                       checked={settings.auto_send_email}
-                      disabled={!settings.auto_draft_email}
+                      disabled={!settings.auto_draft_email || settings.planner_mode === 'auto-draft'}
                       onChange={(event) => setAutoSend('email', event.target.checked)}
                       className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
                     />
-                    Auto-send (requires auto-draft)
+                    {settings.planner_mode === 'auto-draft'
+                      ? 'Auto-send (overridden — Auto-draft mode never sends automatically)'
+                      : 'Auto-send (requires auto-draft)'}
                   </label>
                 </div>
                 <div className="rounded-xl border border-gray-200 p-2.5">
                   <p className="text-sm font-semibold text-gray-900">WhatsApp automation</p>
                   <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
-                    <input type="checkbox" checked={settings.auto_draft_whatsapp} onChange={(event) => setAutoDraft('whatsapp', event.target.checked)} className="h-4 w-4 rounded border-gray-300" />
-                    Auto-draft on new WhatsApp message
+                    <input
+                      type="checkbox"
+                      checked={settings.auto_draft_whatsapp}
+                      disabled={settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'}
+                      onChange={(event) => setAutoDraft('whatsapp', event.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
+                    />
+                    {settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'
+                      ? 'Auto-draft on new WhatsApp message (required by the Planner mode below)'
+                      : 'Auto-draft on new WhatsApp message'}
                   </label>
                   <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
                     <input
                       type="checkbox"
                       checked={settings.auto_send_whatsapp}
-                      disabled={!settings.auto_draft_whatsapp}
+                      disabled={!settings.auto_draft_whatsapp || settings.planner_mode === 'auto-draft'}
                       onChange={(event) => setAutoSend('whatsapp', event.target.checked)}
                       className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
                     />
-                    Auto-send (requires auto-draft)
+                    {settings.planner_mode === 'auto-draft'
+                      ? 'Auto-send (overridden — Auto-draft mode never sends automatically)'
+                      : 'Auto-send (requires auto-draft)'}
                   </label>
                 </div>
               </div>
@@ -485,16 +580,13 @@ export default function AiTenantSettings() {
                     <select
                       id="planner-mode"
                       value={settings.planner_mode}
-                      onChange={(event) =>
-                        setSettings((current) =>
-                          current ? { ...current, planner_mode: event.target.value as TenantAiSettings['planner_mode'] } : current,
-                        )
-                      }
+                      onChange={(event) => setPlannerMode(event.target.value as TenantAiSettings['planner_mode'])}
                       className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                     >
                       <option value="off">Off — pick templates by hand</option>
                       <option value="manual">Manual — a "Run planner" button in the reply box</option>
-                      <option value="auto">Auto — also runs on every inbound message</option>
+                      <option value="auto-draft">Auto-draft — runs on every inbound message, drafts wait in the AI Drafts tab</option>
+                      <option value="auto-send">Auto-send — also sends automatically after the review window</option>
                     </select>
                   </div>
                   <div>

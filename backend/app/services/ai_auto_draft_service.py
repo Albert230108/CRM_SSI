@@ -34,16 +34,18 @@ def _generate_draft_via_planner(
     tenant: Tenant,
     ai_settings: TenantAiSettings,
 ) -> AiAutoDraft | None:
-    """Auto-mode drafting: the planner chooses the template instead of the tenant default.
+    """Auto-draft/auto-send drafting: the planner chooses the template instead of the tenant default.
 
     A draft the checker never approved is stored as `needs_review` so staff still see it, but it
     is deliberately kept out of the auto-send path regardless of the tenant's auto_send setting.
+    Same for any draft generated under "auto-draft" mode: even an approved one never auto-sends.
     """
+    planner_mode = ai_settings.planner_mode or "off"
     result = ai_agent_orchestrator.run_planner_loop(
         db,
         tenant=tenant,
         channel=trigger.channel,
-        mode="auto",
+        mode=planner_mode,
         inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel),
     )
     if not result.generated_text:
@@ -56,9 +58,12 @@ def _generate_draft_via_planner(
         )
         return None
 
-    auto_send_enabled = (
-        ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp
-    ) and result.auto_send_allowed
+    # "auto-draft" mode always lands the draft in the AI Drafts tab for a human to send - it must
+    # never be scheduled to auto-send, regardless of the tenant's auto_send toggles.
+    auto_send_enabled = planner_mode == "auto-send" and (
+        (ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp)
+        and result.auto_send_allowed
+    )
 
     if result.status == STATUS_NEEDS_REVIEW and not result.auto_send_allowed:
         status_value = "needs_review"
@@ -100,7 +105,7 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
     if ai_settings is None:
         return None
 
-    if (ai_settings.planner_mode or "off") == "auto":
+    if (ai_settings.planner_mode or "off") in ("auto-draft", "auto-send"):
         return _generate_draft_via_planner(db, trigger, tenant, ai_settings)
 
     template_id = ai_settings.default_email_template_id if trigger.channel == "email" else ai_settings.default_whatsapp_template_id

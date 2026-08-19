@@ -519,7 +519,7 @@ type AiTemplateOption = {
 }
 
 type TenantAiSettings = {
-  planner_mode?: 'off' | 'manual' | 'auto'
+  planner_mode?: 'off' | 'manual' | 'auto-draft' | 'auto-send'
   tenant_id: number
   available_template_ids: number[]
   default_email_template_id: number | null

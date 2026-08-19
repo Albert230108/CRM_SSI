@@ -20,7 +20,7 @@ class AdminSettingsUpdate(BaseModel):
     ai_draft_debounce_seconds: int | None = None
     ai_auto_send_delay_seconds: int | None = None
     ai_auto_apply_templates_to_new_tenants: bool | None = None
-    planner_default_mode: Literal["off", "manual", "auto"] | None = None
+    planner_default_mode: Literal["off", "manual", "auto-draft", "auto-send"] | None = None
     ai_daily_token_cap: int | None = Field(default=None, ge=0)
     notification_whatsapp_debounce_seconds: int | None = None
     notification_whatsapp_external_account_id: str | None = None

@@ -173,7 +173,11 @@ def test_checker_rejection_triggers_a_redraft_with_feedback(db_session, fake_gem
         [
             _plan(template.id),
             "First draft in English.",
-            {"passed": False, "feedback": "The guest wrote in Portuguese."},
+            {
+                "passed": False,
+                "feedback": "The guest wrote in Portuguese.",
+                "issues": ["Wrong language", "Missing check-in time"],
+            },
             "Segundo rascunho.",
             {"passed": True, "feedback": ""},
         ]
@@ -187,10 +191,15 @@ def test_checker_rejection_triggers_a_redraft_with_feedback(db_session, fake_gem
     assert result.status == "completed"
     assert result.generated_text == "Segundo rascunho."
     assert result.attempts == 2
-    # The rejected draft's feedback must reach the second drafting prompt, or the rewrite is blind.
+    # The rejected draft's text, feedback and structured issues must all reach the second
+    # drafting prompt, or the rewrite is blind to what it actually got wrong.
     second_draft_prompt = fake.calls[3]["prompt"]
-    assert "5. Reviewer Feedback" in second_draft_prompt
+    assert "5. Your Previous Draft (Rejected)" in second_draft_prompt
+    assert "First draft in English." in second_draft_prompt
+    assert "6. Reviewer Feedback" in second_draft_prompt
     assert "The guest wrote in Portuguese." in second_draft_prompt
+    assert "Wrong language" in second_draft_prompt
+    assert "Missing check-in time" in second_draft_prompt
 
 
 def test_exhausted_attempts_park_the_draft_for_a_human(db_session, fake_gemini):

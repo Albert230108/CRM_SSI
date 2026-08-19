@@ -133,7 +133,7 @@ export default function AdminSettings() {
   const [whatsappAccounts, setWhatsappAccounts] = useState<{ external_account_id: string; provider: string; label: string }[]>([])
   const [savingNotificationWhatsappDebounce, setSavingNotificationWhatsappDebounce] = useState(false)
   const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
-  const [plannerDefaultMode, setPlannerDefaultMode] = useState<'off' | 'manual' | 'auto'>('off')
+  const [plannerDefaultMode, setPlannerDefaultMode] = useState<'off' | 'manual' | 'auto-draft' | 'auto-send'>('off')
   const [dailyTokenCap, setDailyTokenCap] = useState(0)
   const [savingPlannerDefaults, setSavingPlannerDefaults] = useState(false)
   const [savingAiDraftTiming, setSavingAiDraftTiming] = useState(false)
@@ -844,12 +844,13 @@ export default function AdminSettings() {
                   <select
                     id="planner-default-mode"
                     value={plannerDefaultMode}
-                    onChange={(event) => setPlannerDefaultMode(event.target.value as 'off' | 'manual' | 'auto')}
+                    onChange={(event) => setPlannerDefaultMode(event.target.value as 'off' | 'manual' | 'auto-draft' | 'auto-send')}
                     className="mt-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
                   >
                     <option value="off">Off</option>
                     <option value="manual">Manual</option>
-                    <option value="auto">Auto</option>
+                    <option value="auto-draft">Auto-draft</option>
+                    <option value="auto-send">Auto-send</option>
                   </select>
                 </div>
                 <div>

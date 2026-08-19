@@ -147,13 +147,13 @@ def test_profile_pinned_to_the_wrong_role_is_stored_as_unpinned(client, db_sessi
             "auto_draft_whatsapp": False,
             "auto_send_email": False,
             "auto_send_whatsapp": False,
-            "planner_mode": "auto",
+            "planner_mode": "auto-send",
             "planner_profile_id": checker["id"],
         },
     )
     assert response.status_code == 200
     assert response.json()["planner_profile_id"] is None
-    assert db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).one().planner_mode == "auto"
+    assert db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).one().planner_mode == "auto-send"
 
 
 def test_planner_mode_defaults_to_off(client, db_session):

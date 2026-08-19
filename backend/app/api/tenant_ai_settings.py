@@ -10,6 +10,8 @@ from app.models.user import User
 from app.schemas.tenant_ai_settings import (
     BulkTenantAiTemplateAssignment,
     BulkTenantAiTemplateAssignmentResult,
+    BulkTenantPlannerModeAssignment,
+    BulkTenantPlannerModeAssignmentResult,
     TenantAiSettingsRead,
     TenantAiSettingsUpdate,
 )
@@ -100,13 +102,21 @@ def update_tenant_ai_settings(
 
     settings.default_email_template_id = payload.default_email_template_id
     settings.default_whatsapp_template_id = payload.default_whatsapp_template_id
-    settings.auto_draft_email = payload.auto_draft_email
-    settings.auto_draft_whatsapp = payload.auto_draft_whatsapp
+    # "auto-draft"/"auto-send" planner mode is meaningless unless the background pipeline actually
+    # triggers on inbound messages, which is gated separately by auto_draft_email/whatsapp - so
+    # picking either mode implies both channels' triggers are on, regardless of what the client
+    # sends. Without this, a tenant can be put in "auto-draft" mode and nothing will ever happen.
+    planner_mode_implies_auto_draft = payload.planner_mode in ("auto-draft", "auto-send")
+    settings.auto_draft_email = payload.auto_draft_email or planner_mode_implies_auto_draft
+    settings.auto_draft_whatsapp = payload.auto_draft_whatsapp or planner_mode_implies_auto_draft
     # Auto-send is meaningless without auto-draft generating something to send, and the manual
     # UI is expected to disable the auto-send toggle whenever auto-draft is off for that channel
     # — this is the server-side guarantee behind that rule, independent of what the client sends.
-    settings.auto_send_email = payload.auto_send_email and payload.auto_draft_email
-    settings.auto_send_whatsapp = payload.auto_send_whatsapp and payload.auto_draft_whatsapp
+    # "auto-draft" planner mode carries the same guarantee: it must never schedule an auto-send,
+    # regardless of what the client sends, so the toggles are force-cleared server-side too.
+    auto_send_allowed = payload.planner_mode != "auto-draft"
+    settings.auto_send_email = payload.auto_send_email and settings.auto_draft_email and auto_send_allowed
+    settings.auto_send_whatsapp = payload.auto_send_whatsapp and settings.auto_draft_whatsapp and auto_send_allowed
     settings.planner_mode = payload.planner_mode
     # A profile id that does not exist (or is for the wrong role) is stored as "unpinned" rather
     # than rejected, so the tenant transparently falls back to the role default.
@@ -161,3 +171,33 @@ def bulk_update_tenant_ai_templates(
             settings.default_whatsapp_template_id = None
     db.commit()
     return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=0, links_removed=links_removed)
+
+
+@router.post("/tenant-ai-settings/bulk-planner-mode", response_model=BulkTenantPlannerModeAssignmentResult)
+def bulk_update_tenant_planner_mode(
+    payload: BulkTenantPlannerModeAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantPlannerModeAssignmentResult:
+    tenant_ids = sorted(set(payload.tenant_ids))
+    if not tenant_ids:
+        return BulkTenantPlannerModeAssignmentResult(tenants_affected=0)
+
+    # Matches the single-tenant update endpoint's server-side guarantees: "auto-draft"/"auto-send"
+    # implies the trigger toggles are on (otherwise the mode does nothing), and "auto-draft" must
+    # never leave a tenant scheduling auto-sends — independent of what was set before the bulk run.
+    planner_mode_implies_auto_draft = payload.planner_mode in ("auto-draft", "auto-send")
+    auto_send_allowed = payload.planner_mode != "auto-draft"
+
+    for tenant_id in tenant_ids:
+        settings = _get_or_create_settings(db, tenant_id)
+        settings.planner_mode = payload.planner_mode
+        if planner_mode_implies_auto_draft:
+            settings.auto_draft_email = True
+            settings.auto_draft_whatsapp = True
+        if not auto_send_allowed:
+            settings.auto_send_email = False
+            settings.auto_send_whatsapp = False
+
+    db.commit()
+    return BulkTenantPlannerModeAssignmentResult(tenants_affected=len(tenant_ids))

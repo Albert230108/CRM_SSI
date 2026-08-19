@@ -257,11 +257,17 @@ DRAFTER_BLOCKS: tuple[PromptBlock, ...] = (
         default="4. Your Instruction",
     ),
     PromptBlock(
+        key="previous_draft",
+        label="Previous draft label",
+        help="Only emitted on a redraft. Shows the drafter exactly what it wrote last time, so the rewrite is grounded rather than guessed at.",
+        default="5. Your Previous Draft (Rejected)",
+    ),
+    PromptBlock(
         key="reviewer_feedback",
         label="Reviewer feedback framing",
         help="Only emitted on a redraft, after the checker has rejected the previous attempt.",
         default=(
-            "5. Reviewer Feedback\n"
+            "6. Reviewer Feedback\n"
             "A reviewer rejected your previous draft for the reasons below. Rewrite the reply so that "
             "every point is addressed. Output only the corrected reply."
         ),

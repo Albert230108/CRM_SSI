@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-PlannerMode = Literal["off", "manual", "auto"]
+PlannerMode = Literal["off", "manual", "auto-draft", "auto-send"]
 
 
 class TenantAiSettingsRead(BaseModel):
@@ -44,3 +44,12 @@ class BulkTenantAiTemplateAssignmentResult(BaseModel):
     tenants_affected: int
     links_added: int
     links_removed: int
+
+
+class BulkTenantPlannerModeAssignment(BaseModel):
+    tenant_ids: list[int]
+    planner_mode: PlannerMode
+
+
+class BulkTenantPlannerModeAssignmentResult(BaseModel):
+    tenants_affected: int

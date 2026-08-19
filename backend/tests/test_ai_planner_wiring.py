@@ -45,7 +45,7 @@ def _fake_generate(responses):
     return _generate
 
 
-def _setup(db_session, *, planner_mode="auto", auto_send=False, max_redraft_attempts=1):
+def _setup(db_session, *, planner_mode="auto-send", auto_send=False, max_redraft_attempts=1):
     tenant = Tenant(name="Wired Tenant", booking_id="B-wire-1")
     db_session.add(tenant)
     db_session.commit()
@@ -114,7 +114,7 @@ def test_auto_mode_uses_the_planner_instead_of_the_default_template(db_session, 
     assert draft.template_id == template.id
     assert draft.status == "pending"
     assert draft.agent_run_id is not None
-    assert db_session.query(AiAgentRun).filter(AiAgentRun.id == draft.agent_run_id).one().mode == "auto"
+    assert db_session.query(AiAgentRun).filter(AiAgentRun.id == draft.agent_run_id).one().mode == "auto-send"
 
 
 def test_auto_send_is_scheduled_only_when_the_checker_approved(db_session, monkeypatch):
@@ -131,6 +131,26 @@ def test_auto_send_is_scheduled_only_when_the_checker_approved(db_session, monke
 
     assert draft.status == "pending_auto_send"
     assert draft.scheduled_send_at is not None
+
+
+def test_auto_draft_mode_never_schedules_an_auto_send(db_session, monkeypatch):
+    """Regression: auto-draft must land in the AI Drafts tab, never in the auto-send queue,
+    even when the tenant's auto_send toggle is on and the checker approved the draft."""
+    tenant, template = _setup(db_session, planner_mode="auto-draft", auto_send=True)
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Approved draft.", {"passed": True, "feedback": ""}]),
+    )
+    trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert draft.status == "pending"
+    assert draft.scheduled_send_at is None
+    assert draft.agent_run_id is not None
+    assert db_session.query(AiAgentRun).filter(AiAgentRun.id == draft.agent_run_id).one().mode == "auto-draft"
 
 
 def test_rejected_draft_is_parked_and_never_auto_sent(db_session, monkeypatch):

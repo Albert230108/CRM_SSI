@@ -152,7 +152,7 @@ def test_reviewer_feedback_block_only_appears_on_a_redraft(db_session):
     without = ai_reply_service.assemble_prompt(
         db_session, tenant=tenant, template=template, channel="email", rough_draft=None
     )
-    assert "5. Reviewer Feedback" not in without
+    assert "6. Reviewer Feedback" not in without
 
     with_feedback = ai_reply_service.assemble_prompt(
         db_session,
@@ -162,6 +162,30 @@ def test_reviewer_feedback_block_only_appears_on_a_redraft(db_session):
         rough_draft=None,
         reviewer_feedback="Wrong language; the guest wrote in Portuguese.",
     )
-    assert "5. Reviewer Feedback" in with_feedback
+    assert "6. Reviewer Feedback" in with_feedback
     assert "Wrong language; the guest wrote in Portuguese." in with_feedback
     assert with_feedback.rstrip().endswith("Wrong language; the guest wrote in Portuguese.")
+
+
+def test_previous_draft_block_only_appears_on_a_redraft(db_session):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+
+    without = ai_reply_service.assemble_prompt(
+        db_session, tenant=tenant, template=template, channel="email", rough_draft=None
+    )
+    assert "5. Your Previous Draft (Rejected)" not in without
+
+    with_previous = ai_reply_service.assemble_prompt(
+        db_session,
+        tenant=tenant,
+        template=template,
+        channel="email",
+        rough_draft=None,
+        previous_draft="Dear guest, check-in is at 3pm.",
+        reviewer_feedback="Wrong language; the guest wrote in Portuguese.",
+    )
+    assert "5. Your Previous Draft (Rejected)" in with_previous
+    assert "Dear guest, check-in is at 3pm." in with_previous
+    # The previous draft must come before the reviewer feedback that explains what was wrong with it.
+    assert with_previous.index("5. Your Previous Draft") < with_previous.index("6. Reviewer Feedback")
