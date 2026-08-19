@@ -13,13 +13,9 @@ from app.services.whatsapp_client import WhatsAppBridgeError, send_system_whatsa
 
 logger = logging.getLogger(__name__)
 
-PREVIEW_MAX_CHARS = 300
-
 
 def _build_message(*, tenant_name: str, draft: AiAutoDraft) -> str:
-    preview = draft.generated_text.strip()
-    if len(preview) > PREVIEW_MAX_CHARS:
-        preview = preview[:PREVIEW_MAX_CHARS].rstrip() + "..."
+    text = draft.generated_text.strip()
 
     header = f"New AI draft — {tenant_name} ({draft.channel})"
     if draft.status == "needs_review":
@@ -28,7 +24,7 @@ def _build_message(*, tenant_name: str, draft: AiAutoDraft) -> str:
         header = "🤖 " + header
 
     return (
-        f'{header}\n\n"{preview}"\n\n'
+        f'{header}\n\n"{text}"\n\n'
         f"Reply YES-{draft.id} to send\n"
         f"Reply NO-{draft.id} to dismiss"
     )
