@@ -1320,6 +1320,101 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
     }
   }, [selectedWhatsappBlock])
 
+  // Keeps the MessageJumpNav counter synced to the topmost visible message
+  // while the user scrolls manually (not just on click/keyboard nav).
+  useEffect(() => {
+    if (!selectedEmailThread) return
+    const container = document.querySelector<HTMLElement>('[data-email-messages]')
+    if (!container) return
+    const items = Array.from(container.querySelectorAll<HTMLElement>('[data-message-index]'))
+    if (!items.length) return
+
+    // IntersectionObserver callbacks only report entries whose state just
+    // changed, not every currently-visible item, so the visible set must be
+    // tracked cumulatively across callbacks rather than recomputed each time.
+    const visible = new Set<number>()
+    let currentTop = -1
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const index = Number((entry.target as HTMLElement).dataset.messageIndex)
+          if (Number.isNaN(index)) return
+          if (entry.isIntersecting) visible.add(index)
+          else visible.delete(index)
+        })
+        if (!visible.size) return
+        const topmost = Math.min(...visible)
+        if (topmost !== currentTop) {
+          currentTop = topmost
+          setEmailNavIndex(topmost)
+        }
+      },
+      { root: container, threshold: [0, 0.1] },
+    )
+    items.forEach((item) => observer.observe(item))
+    return () => observer.disconnect()
+  }, [selectedEmailThread])
+
+  useEffect(() => {
+    if (!selectedWhatsappBlock) return
+    const container = document.querySelector<HTMLElement>('[data-whatsapp-block-messages]')
+    if (!container) return
+    const items = Array.from(container.querySelectorAll<HTMLElement>('[data-message-index]'))
+    if (!items.length) return
+
+    const visible = new Set<number>()
+    let currentTop = -1
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const index = Number((entry.target as HTMLElement).dataset.messageIndex)
+          if (Number.isNaN(index)) return
+          if (entry.isIntersecting) visible.add(index)
+          else visible.delete(index)
+        })
+        if (!visible.size) return
+        const topmost = Math.min(...visible)
+        if (topmost !== currentTop) {
+          currentTop = topmost
+          setWhatsappBlockNavIndex(topmost)
+        }
+      },
+      { root: container, threshold: [0, 0.1] },
+    )
+    items.forEach((item) => observer.observe(item))
+    return () => observer.disconnect()
+  }, [selectedWhatsappBlock])
+
+  useEffect(() => {
+    if (!selectedWhatsappGroup) return
+    const container = document.querySelector<HTMLElement>('[data-whatsapp-messages]')
+    if (!container) return
+    const items = Array.from(container.querySelectorAll<HTMLElement>('[data-message-index]'))
+    if (!items.length) return
+
+    const visible = new Set<number>()
+    let currentTop = -1
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const index = Number((entry.target as HTMLElement).dataset.messageIndex)
+          if (Number.isNaN(index)) return
+          if (entry.isIntersecting) visible.add(index)
+          else visible.delete(index)
+        })
+        if (!visible.size) return
+        const topmost = Math.min(...visible)
+        if (topmost !== currentTop) {
+          currentTop = topmost
+          setWhatsappGroupNavIndex(topmost)
+        }
+      },
+      { root: container, threshold: [0, 0.1] },
+    )
+    items.forEach((item) => observer.observe(item))
+    return () => observer.disconnect()
+  }, [selectedWhatsappGroup])
+
   const openWhatsappGroup = (group: WhatsappGroupItem) => {
     setSelectedWhatsappGroup(group)
     setReplyTarget({ type: 'whatsapp', groupId: group.group_id })
@@ -1845,20 +1940,31 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             role="dialog"
             aria-modal="true"
             aria-labelledby="email-thread-modal-title"
-            className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
             style={{ ...emailThreadDrag.style, ...emailThreadSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
             <div
-              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-4 py-2.5"
+              className="flex shrink-0 cursor-move items-center justify-between gap-3 border-b border-gray-200 px-3 py-2"
               onPointerDown={emailThreadDrag.handlePointerDown}
             >
-              <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.35em] text-cyan-700">Email Thread</p>
-                <h3 id="email-thread-modal-title" className="mt-0.5 truncate text-lg font-semibold text-gray-900">
-                  {selectedEmailThread.subject || 'Untitled conversation'}
-                </h3>
-                <p className="mt-0.5 text-xs text-gray-500">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="shrink-0 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-700">
+                    Email
+                  </span>
+                  <h3 id="email-thread-modal-title" className="truncate text-sm font-semibold text-gray-900">
+                    {selectedEmailThread.subject || 'Untitled conversation'}
+                  </h3>
+                </div>
+                <p className="mt-0.5 truncate text-[11px] text-gray-500">
+                  {selectedEmailThread.messages.length === 1 ? '1 message' : `${selectedEmailThread.messages.length} messages`}
+                  {' · '}
+                  {formatMailboxAndTenantEmailLabel(
+                    selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email,
+                    selectedEmailThread.matched_tenant_email,
+                  )}
+                  {' · '}
                   {formatTimestamp(selectedEmailThread.anchor_timestamp || selectedEmailThread.messages[0]?.sent_at || selectedEmailThread.messages[selectedEmailThread.messages.length - 1]?.sent_at || new Date().toISOString())}
                 </p>
               </div>
@@ -1866,30 +1972,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedEmailThread(null)}
-                className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                className="shrink-0 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
                 Close
               </button>
             </div>
 
             <div className="relative min-h-0 flex-1">
-            <div className="absolute inset-0 overflow-y-auto px-4 py-3" data-email-messages>
-              <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-2">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Messages</p>
-                  <p className="mt-1 text-sm font-semibold text-gray-900">
-                    {selectedEmailThread.messages.length === 1 ? '1 message' : `${selectedEmailThread.messages.length} messages`}
-                  </p>
-                </div>
-                <p className="text-xs text-gray-500">
-                  {formatMailboxAndTenantEmailLabel(
-                    selectedEmailThread.provider_account_display_name || selectedEmailThread.provider_account_email,
-                    selectedEmailThread.matched_tenant_email,
-                  )}
-                </p>
-              </div>
-
-              <div className="space-y-2 mb-2">
+            <div className="absolute inset-0 overflow-y-auto px-3 py-2" data-email-messages>
+              <div className="space-y-1.5 mb-2">
                 {buildThreadTimelineEntries(selectedEmailThread).map((entry, entryIndex) => {
                   if (entry.kind === 'email') {
                     const messageItem = entry.message
