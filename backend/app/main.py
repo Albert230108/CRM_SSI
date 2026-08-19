@@ -35,6 +35,7 @@ from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.gmail_integration import GmailAccount
 from app.services import ai_auto_draft_service
+from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
 from app.webhooks.gmail import router as gmail_webhook_router
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
@@ -183,11 +184,23 @@ def _run_due_ai_auto_sends_once() -> None:
         db.close()
 
 
+def _run_due_notification_whatsapp_batch_once() -> None:
+    db = SessionLocal()
+    try:
+        flush_due_notification_whatsapp_batch(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Notification WhatsApp batch flush failed")
+    finally:
+        db.close()
+
+
 async def _ai_draft_scheduler_forever() -> None:
     while True:
         await asyncio.sleep(AI_DRAFT_SCHEDULER_INTERVAL_SECONDS)
         await asyncio.to_thread(_run_due_ai_draft_triggers_once)
         await asyncio.to_thread(_run_due_ai_auto_sends_once)
+        await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
 
 
 @asynccontextmanager

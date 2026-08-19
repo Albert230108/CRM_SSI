@@ -8,6 +8,7 @@ const {
 function createMessageRouter({
   requireApiKey,
   sendTextMessage,
+  sendSystemMessage,
   runHistoryBackfill,
   runHistoryDebugSample,
   debugChatModelBuild,
@@ -125,6 +126,35 @@ function createMessageRouter({
         status = 400;
       }
       console.error("Failed to handle /send request:", error);
+      return res.status(status).json({ ok: false, error: message });
+    }
+  });
+
+  router.post("/send-system", requireApiKey, async (req, res) => {
+    try {
+      const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
+      const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+
+      console.info("[whatsapp] /send-system request body", { to, message_length: message.length });
+
+      if (!to || !message) {
+        return res.status(400).json({
+          ok: false,
+          error: '"to" and "message" are required.',
+        });
+      }
+
+      const result = await sendSystemMessage({ to, message });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to send system WhatsApp message";
+      let status = 500;
+      if (message.includes("not ready")) {
+        status = 503;
+      } else if (message.includes("Invalid recipient phone number") || message.includes("missing message")) {
+        status = 400;
+      }
+      console.error("Failed to handle /send-system request:", error);
       return res.status(status).json({ ok: false, error: message });
     }
   });

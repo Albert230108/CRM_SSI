@@ -29,6 +29,7 @@ class UserUpdate(BaseModel):
 
 class UserRead(UserBase):
     id: int
+    whatsapp_notifications_enabled: bool = False
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

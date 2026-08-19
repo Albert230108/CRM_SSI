@@ -13,6 +13,7 @@ class User(Base):
     phone = Column(String(100), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     is_admin = Column(Boolean, nullable=False, default=False, server_default="false")
+    whatsapp_notifications_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     tenant_status_filter = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

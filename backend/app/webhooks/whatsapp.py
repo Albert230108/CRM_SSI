@@ -21,6 +21,7 @@ from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.attachment_service import link_attachments, store_upload
 from app.services.attachment_storage import max_file_bytes
 from app.services.notification_service import create_notification
+from app.services.notification_whatsapp_service import register_notification_for_whatsapp
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
@@ -645,6 +646,7 @@ def _process_whatsapp_message(
     )
     if not is_history_payload:
         register_inbound_message(db, tenant=tenant, channel="whatsapp")
+        register_notification_for_whatsapp(db)
     db.commit()
     _persist_inbound_attachments(db, payload=payload, tenant_id=tenant.id, communication_id=inbound_communication.id)
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)

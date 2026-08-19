@@ -11,6 +11,7 @@ type UserRow = {
   phone: string | null
   is_active: boolean
   is_admin: boolean
+  whatsapp_notifications_enabled: boolean
   created_at: string
 }
 
@@ -115,6 +116,9 @@ export default function AdminSettings() {
   const [savingForwardToEmail, setSavingForwardToEmail] = useState(false)
   const [forwardToEmailMessage, setForwardToEmailMessage] = useState('')
   const [draftDebounceSeconds, setDraftDebounceSeconds] = useState(120)
+  const [notificationWhatsappDebounceSeconds, setNotificationWhatsappDebounceSeconds] = useState(120)
+  const [savingNotificationWhatsappDebounce, setSavingNotificationWhatsappDebounce] = useState(false)
+  const [notificationWhatsappDebounceMessage, setNotificationWhatsappDebounceMessage] = useState('')
   const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
   const [plannerDefaultMode, setPlannerDefaultMode] = useState<'off' | 'manual' | 'auto'>('off')
   const [dailyTokenCap, setDailyTokenCap] = useState(0)
@@ -155,6 +159,7 @@ export default function AdminSettings() {
         const data = await adminSettingsResponse.json()
         setForwardToEmail(data.forward_to_email ?? '')
         if (typeof data.ai_draft_debounce_seconds === 'number') setDraftDebounceSeconds(data.ai_draft_debounce_seconds)
+        if (typeof data.notification_whatsapp_debounce_seconds === 'number') setNotificationWhatsappDebounceSeconds(data.notification_whatsapp_debounce_seconds)
         if (typeof data.ai_auto_send_delay_seconds === 'number') setAutoSendDelaySeconds(data.ai_auto_send_delay_seconds)
         if (typeof data.planner_default_mode === 'string') setPlannerDefaultMode(data.planner_default_mode)
         setDailyTokenCap(typeof data.ai_daily_token_cap === 'number' ? data.ai_daily_token_cap : 0)
@@ -240,6 +245,14 @@ export default function AdminSettings() {
 
   const toggleActive = async (userId: number) => {
     const response = await fetch(`${API_BASE_URL}/api/users/${userId}/toggle-active`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (response.ok) await refresh()
+  }
+
+  const toggleWhatsappNotifications = async (userId: number) => {
+    const response = await fetch(`${API_BASE_URL}/api/users/${userId}/toggle-whatsapp-notifications`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
@@ -385,6 +398,30 @@ export default function AdminSettings() {
       setAiDraftTimingMessage('Failed to save AI draft timing')
     } finally {
       setSavingAiDraftTiming(false)
+    }
+  }
+
+  const saveNotificationWhatsappDebounce = async (event: FormEvent) => {
+    event.preventDefault()
+    setNotificationWhatsappDebounceMessage('')
+    setSavingNotificationWhatsappDebounce(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ notification_whatsapp_debounce_seconds: notificationWhatsappDebounceSeconds }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setNotificationWhatsappDebounceMessage(typeof data.detail === 'string' ? data.detail : 'Failed to save WhatsApp notification timing')
+        return
+      }
+      setNotificationWhatsappDebounceSeconds(data.notification_whatsapp_debounce_seconds)
+      setNotificationWhatsappDebounceMessage('Saved')
+    } catch {
+      setNotificationWhatsappDebounceMessage('Failed to save WhatsApp notification timing')
+    } finally {
+      setSavingNotificationWhatsappDebounce(false)
     }
   }
 
@@ -571,6 +608,38 @@ export default function AdminSettings() {
           </p>
           {autoApplyTemplatesMessage ? <p className="mt-1.5 text-sm text-gray-600">{autoApplyTemplatesMessage}</p> : null}
         </div>
+      </section>
+
+      <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
+        <h2 className="text-lg font-semibold text-gray-900">WhatsApp Notification Alerts</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          When a new notification arrives (inbound WhatsApp or email message from a tenant), users with WhatsApp
+          alerts enabled below get a summarized WhatsApp message to their phone. A burst of notifications is batched
+          into a single message once things go quiet for this many seconds.
+        </p>
+        <form onSubmit={saveNotificationWhatsappDebounce} className="mt-3 flex max-w-lg flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="notification-whatsapp-debounce-seconds">
+              Alert debounce (seconds)
+            </label>
+            <input
+              id="notification-whatsapp-debounce-seconds"
+              type="number"
+              min={1}
+              value={notificationWhatsappDebounceSeconds}
+              onChange={(event) => setNotificationWhatsappDebounceSeconds(Number(event.target.value))}
+              className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={savingNotificationWhatsappDebounce}
+            className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+          >
+            {savingNotificationWhatsappDebounce ? 'Saving...' : 'Save'}
+          </button>
+        </form>
+        {notificationWhatsappDebounceMessage ? <p className="mt-2 text-sm text-gray-600">{notificationWhatsappDebounceMessage}</p> : null}
       </section>
 
       <section className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
@@ -780,13 +849,13 @@ export default function AdminSettings() {
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
-                <th className="py-1.5">Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Role</th><th>Created</th><th>Actions</th>
+                <th className="py-1.5">Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Role</th><th>WA Alerts</th><th>Created</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-3 text-center text-gray-400">No users yet</td>
+                  <td colSpan={8} className="py-3 text-center text-gray-400">No users yet</td>
                 </tr>
               ) : (
                 users.map((user) => (
@@ -796,9 +865,11 @@ export default function AdminSettings() {
                     <td>{user.phone ?? '-'}</td>
                     <td>{user.is_active ? 'Active' : 'Inactive'}</td>
                     <td>{user.is_admin ? 'Admin' : 'User'}</td>
+                    <td>{user.whatsapp_notifications_enabled ? 'On' : 'Off'}</td>
                     <td>{new Date(user.created_at).toLocaleString()}</td>
                     <td className="space-x-2 py-2">
                       <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => toggleActive(user.id)} type="button">Toggle active</button>
+                      <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => toggleWhatsappNotifications(user.id)} type="button">Toggle WA alerts</button>
                       <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => sendReset(user.id)} type="button">Send password reset</button>
                       <button
                         className="rounded-lg border border-rose-300 px-3 py-1 text-rose-700 hover:bg-rose-50"

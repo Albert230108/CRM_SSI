@@ -1732,6 +1732,34 @@ async function sendTextMessage(payload) {
   };
 }
 
+async function sendSystemMessage({ to, message, clientOverride, readyOverride }) {
+  const activeClient = clientOverride || client;
+  const isClientReady = readyOverride ?? ready;
+  if (!activeClient || !isClientReady) {
+    throw new Error("WhatsApp client is not ready");
+  }
+
+  const chatId = normalizeRecipient(to);
+  if (!chatId) {
+    throw new Error("Invalid recipient phone number");
+  }
+  if (!message) {
+    throw new Error("System WhatsApp send is missing message");
+  }
+
+  const sentMessage = await activeClient.sendMessage(chatId, message);
+  console.info(JSON.stringify({
+    event: "whatsapp_system_send",
+    message_id: sentMessage?.id?._serialized || null,
+    chat_id: chatId,
+  }));
+
+  return {
+    whatsapp_message_id: sentMessage?.id?._serialized || null,
+    whatsapp_chat_id: chatId,
+  };
+}
+
 async function runHistoryBackfill(options = {}) {
   return backfillAllChats({ ...options, postSyncDelayMs: options.postSyncDelayMs ?? 0 });
 }
@@ -1852,6 +1880,7 @@ module.exports = {
   initializeClient,
   isReady,
   sendTextMessage,
+  sendSystemMessage,
   shutdownClient,
   runHistoryBackfill,
   backfillAllChats,

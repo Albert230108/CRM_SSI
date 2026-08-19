@@ -13,6 +13,10 @@ class AdminSettings(Base):
     # giving staff a window to intervene. Both editable in Admin Settings.
     ai_draft_debounce_seconds = Column(Integer, nullable=False, default=120, server_default="120")
     ai_auto_send_delay_seconds = Column(Integer, nullable=False, default=300, server_default="300")
+    # How long the batched WhatsApp notification alert waits for a burst of new notifications
+    # to go quiet before sending a single summarized message to opted-in staff, mirroring the
+    # ai_draft_debounce_seconds pattern above.
+    notification_whatsapp_debounce_seconds = Column(Integer, nullable=False, default=120, server_default="120")
     # When true, every newly created tenant is automatically linked to all existing shared AI
     # reply templates (see tenants.py create_tenant), instead of starting with none available.
     ai_auto_apply_templates_to_new_tenants = Column(Boolean, nullable=False, default=False, server_default="false")

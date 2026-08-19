@@ -24,6 +24,9 @@ class Notification(Base):
     # notification for a message that arrived hours/days ago, so "how new is this" must be
     # judged from event_at, not created_at.
     event_at = Column(DateTime(timezone=True), nullable=False, index=True, server_default=func.now())
+    # Set once this notification has been included in a sent batched WhatsApp alert, so the
+    # flush job knows what's still pending. NULL means not yet dispatched.
+    whatsapp_dispatched_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class NotificationReadState(Base):

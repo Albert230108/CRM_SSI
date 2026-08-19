@@ -35,6 +35,7 @@ from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.background_jobs import get_job, start_job
 from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_gmail_attachment_bytes
 from app.services.notification_service import create_notification
+from app.services.notification_whatsapp_service import register_notification_for_whatsapp
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
 GMAIL_SCOPES = [
@@ -517,6 +518,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         thread_ref=str(conversation.id),
                     )
                     register_inbound_message(db, tenant=notify_tenant, channel="email", email_thread_id=conversation.id)
+                    register_notification_for_whatsapp(db)
         except IntegrityError:
             continue
 

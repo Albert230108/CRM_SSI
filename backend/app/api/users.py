@@ -150,6 +150,17 @@ def toggle_user_active(user_id: int, db: Session = Depends(get_db), current_user
     return user
 
 
+@router.post("/{user_id}/toggle-whatsapp-notifications", response_model=UserRead, dependencies=[Depends(get_current_admin_user)])
+def toggle_user_whatsapp_notifications(user_id: int, db: Session = Depends(get_db)) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user.whatsapp_notifications_enabled = not user.whatsapp_notifications_enabled
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 @router.delete("/{user_id}", response_model=UserDeleteResult, dependencies=[Depends(get_current_admin_user)])
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)) -> UserDeleteResult:
     user = db.query(User).filter(User.id == user_id).first()

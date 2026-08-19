@@ -11,6 +11,7 @@ def test_get_admin_settings_defaults_to_null(non_admin_client):
         "ai_auto_apply_templates_to_new_tenants": False,
         "planner_default_mode": "off",
         "ai_daily_token_cap": None,
+        "notification_whatsapp_debounce_seconds": 120,
     }
 
 

@@ -39,6 +39,8 @@ def update_admin_settings(payload: AdminSettingsUpdate, db: Session = Depends(ge
         # Omitting the field leaves the cap alone; sending 0 is how the UI clears it, since a
         # null would be indistinguishable from "not included in this partial update".
         settings.ai_daily_token_cap = payload.ai_daily_token_cap or None
+    if payload.notification_whatsapp_debounce_seconds is not None:
+        settings.notification_whatsapp_debounce_seconds = payload.notification_whatsapp_debounce_seconds
     db.commit()
     db.refresh(settings)
     return settings

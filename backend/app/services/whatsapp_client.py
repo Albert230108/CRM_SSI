@@ -169,3 +169,59 @@ async def send_whatsapp_message(payload: dict[str, Any]) -> Any:
             raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned invalid JSON") from exc
     return response.text
 
+
+async def send_system_whatsapp_message(to: str, message: str) -> Any:
+    """Sends a WhatsApp message to an arbitrary phone number, not a tenant conversation.
+
+    Used for batched staff notification alerts. Unlike send_whatsapp_message, this has no
+    tenant_id/endpoint context to route by, so it always targets WHATSAPP_SERVICE_URL directly
+    (there is a single production WhatsApp instance today; per-account routing can be added
+    here if a second instance is ever dedicated to system alerts).
+    """
+    if not WHATSAPP_SERVICE_URL:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge URL is not configured")
+    if not WHATSAPP_API_KEY:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge API key is not configured")
+    if not to:
+        raise WhatsAppBridgeError(status.HTTP_400_BAD_REQUEST, "System WhatsApp send is missing 'to'")
+    if not message:
+        raise WhatsAppBridgeError(status.HTTP_400_BAD_REQUEST, "System WhatsApp send is missing 'message'")
+
+    url = urljoin(WHATSAPP_SERVICE_URL.rstrip("/") + "/", "send-system")
+    timeout = httpx.Timeout(connect=5.0, read=25.0, write=10.0, pool=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                url,
+                headers={"X-API-Key": WHATSAPP_API_KEY},
+                json={"to": to, "message": message},
+            )
+    except httpx.TimeoutException as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge request timed out") from exc
+    except httpx.RequestError as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge is unavailable") from exc
+
+    content_type = response.headers.get("content-type", "")
+    if not response.is_success:
+        error_message = "Failed to send system WhatsApp message"
+        if content_type.startswith("application/json"):
+            try:
+                response_body = response.json()
+            except ValueError as exc:
+                raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned invalid JSON") from exc
+            if isinstance(response_body, dict):
+                error_message = str(response_body.get("error") or response_body.get("detail") or error_message)
+        else:
+            error_message = response.text or error_message
+        status_code = response.status_code if response.status_code in {400, 401, 403, 404} else (
+            status.HTTP_502_BAD_GATEWAY if response.status_code < 500 else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+        raise WhatsAppBridgeError(status_code, error_message)
+
+    if content_type.startswith("application/json"):
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned invalid JSON") from exc
+    return response.text
+

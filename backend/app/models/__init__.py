@@ -14,6 +14,8 @@ from app.models.email_template import EmailTemplate
 from app.models.finance import Finance
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.notification import Notification, NotificationReadState
+from app.models.notification_whatsapp_delivery import NotificationWhatsappDelivery
+from app.models.notification_whatsapp_trigger import NotificationWhatsappTrigger
 from app.models.password_reset import PasswordResetToken
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
