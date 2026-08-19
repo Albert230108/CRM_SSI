@@ -37,6 +37,8 @@ type AgentProfileOption = {
   is_default: boolean
 }
 
+const PAGE_SIZE = 20
+
 const emptySettings = (tenantId: number): TenantAiSettings => ({
   tenant_id: tenantId,
   available_template_ids: [],
@@ -63,6 +65,8 @@ export default function AiTenantSettings() {
   const [loadingSettings, setLoadingSettings] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+
+  const [page, setPage] = useState(0)
 
   const [bulkTenantIds, setBulkTenantIds] = useState<Set<number>>(new Set())
   const [bulkTemplateIds, setBulkTemplateIds] = useState<Set<number>>(new Set())
@@ -94,6 +98,7 @@ export default function AiTenantSettings() {
   useEffect(() => {
     const controller = new AbortController()
     const loadTenants = async () => {
+      setPage(0)
       const params = new URLSearchParams()
       if (searchQuery) params.append('search', searchQuery)
       const response = await fetch(`${API_BASE_URL}/api/tenants?${params}`, {
@@ -102,7 +107,7 @@ export default function AiTenantSettings() {
       })
       if (!response.ok) return
       const data = await response.json()
-      setTenants(Array.isArray(data) ? data.slice(0, 20) : [])
+      setTenants(Array.isArray(data) ? data : [])
     }
     loadTenants().catch(() => undefined)
     return () => controller.abort()
@@ -279,6 +284,13 @@ export default function AiTenantSettings() {
     }
   }
 
+  const pageCount = Math.max(1, Math.ceil(tenants.length / PAGE_SIZE))
+  const clampedPage = Math.min(page, pageCount - 1)
+  const pagedTenants = tenants.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE)
+  const pageFullySelected = pagedTenants.length > 0 && pagedTenants.every((tenant) => bulkTenantIds.has(tenant.id))
+  const pagePartiallySelected = pagedTenants.some((tenant) => bulkTenantIds.has(tenant.id)) && !pageFullySelected
+  const allMatchingSelected = tenants.length > 0 && tenants.every((tenant) => bulkTenantIds.has(tenant.id))
+
   return (
     <main className="mx-auto max-w-4xl px-6 py-4">
       <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
@@ -322,13 +334,16 @@ export default function AiTenantSettings() {
                 <th className="w-8 py-1.5">
                   <input
                     type="checkbox"
-                    aria-label="Select all shown tenants for bulk actions"
-                    checked={tenants.length > 0 && tenants.every((tenant) => bulkTenantIds.has(tenant.id))}
+                    aria-label="Select all tenants on this page for bulk actions"
+                    checked={pageFullySelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = pagePartiallySelected
+                    }}
                     onChange={(event) =>
                       setBulkTenantIds((current) => {
                         const next = new Set(current)
-                        if (event.target.checked) tenants.forEach((tenant) => next.add(tenant.id))
-                        else tenants.forEach((tenant) => next.delete(tenant.id))
+                        if (event.target.checked) pagedTenants.forEach((tenant) => next.add(tenant.id))
+                        else pagedTenants.forEach((tenant) => next.delete(tenant.id))
                         return next
                       })
                     }
@@ -341,7 +356,7 @@ export default function AiTenantSettings() {
               </tr>
             </thead>
             <tbody>
-              {tenants.map((tenant) => (
+              {pagedTenants.map((tenant) => (
                 <tr key={tenant.id} className="border-t border-gray-100">
                   <td className="py-1.5">
                     <input
@@ -365,7 +380,7 @@ export default function AiTenantSettings() {
                   </td>
                 </tr>
               ))}
-              {!tenants.length ? (
+              {!pagedTenants.length ? (
                 <tr>
                   <td colSpan={4} className="py-2 text-sm text-gray-500">No tenants found.</td>
                 </tr>
@@ -373,6 +388,58 @@ export default function AiTenantSettings() {
             </tbody>
           </table>
         </div>
+
+        {tenants.length > PAGE_SIZE ? (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
+            <span>
+              Showing {clampedPage * PAGE_SIZE + 1}-{Math.min((clampedPage + 1) * PAGE_SIZE, tenants.length)} of {tenants.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+                disabled={clampedPage === 0}
+                className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span>Page {clampedPage + 1} of {pageCount}</span>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
+                disabled={clampedPage >= pageCount - 1}
+                className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {pageFullySelected && tenants.length > pagedTenants.length && !allMatchingSelected ? (
+          <p className="mt-2 text-xs text-gray-600">
+            All {pagedTenants.length} tenants on this page are selected.{' '}
+            <button
+              type="button"
+              onClick={() => setBulkTenantIds(new Set(tenants.map((tenant) => tenant.id)))}
+              className="font-semibold text-cyan-700 hover:underline"
+            >
+              Select all {tenants.length} tenants matching this search
+            </button>
+          </p>
+        ) : null}
+        {allMatchingSelected && tenants.length > PAGE_SIZE ? (
+          <p className="mt-2 text-xs text-gray-600">
+            All {tenants.length} matching tenants are selected.{' '}
+            <button
+              type="button"
+              onClick={() => setBulkTenantIds(new Set())}
+              className="font-semibold text-cyan-700 hover:underline"
+            >
+              Clear selection
+            </button>
+          </p>
+        ) : null}
 
         <div className="mt-3 border-t border-gray-200 pt-3">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">

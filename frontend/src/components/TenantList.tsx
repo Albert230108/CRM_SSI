@@ -4,10 +4,12 @@ import { computeNights } from '../lib/date'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
+import { useToast } from '../lib/useToast'
 import StatusFilterDropdown from './StatusFilterDropdown'
 import TenantMoreFiltersPopover from './TenantMoreFiltersPopover'
 import TenantContextMenu from './TenantContextMenu'
 import TenantAiTemplatesModal from './TenantAiTemplatesModal'
+import ToastHost from './Toast'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -38,6 +40,8 @@ type ThreadVersion = {
   direction?: string | null
 }
 
+type PlannerMode = 'off' | 'manual' | 'auto-draft' | 'auto-send'
+
 type TenantListProps = {
   selectedTenantId?: number
   reloadSignal?: number
@@ -65,9 +69,12 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [livePollSignal, setLivePollSignal] = useState(0)
   const onNewMessageRef = useRef(onNewMessage)
   const [contextMenu, setContextMenu] = useState<{ tenantId: number; tenantName: string; x: number; y: number } | null>(null)
+  const [contextMenuPlannerMode, setContextMenuPlannerMode] = useState<PlannerMode | null>(null)
+  const [contextMenuPlannerModeLoading, setContextMenuPlannerModeLoading] = useState(false)
   const [aiTemplatesTenant, setAiTemplatesTenant] = useState<{ id: number; name: string } | null>(null)
   const [pinnedTenantIds, setPinnedTenantIds] = useState<number[]>([])
   const listContainerRef = useRef<HTMLDivElement>(null)
+  const { toast, showSuccess, showError, dismiss } = useToast()
 
   useEffect(() => {
     onNewMessageRef.current = onNewMessage
@@ -325,6 +332,44 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
     }
   }
 
+  useEffect(() => {
+    setContextMenuPlannerMode(null)
+    setContextMenuPlannerModeLoading(false)
+  }, [contextMenu?.tenantId])
+
+  const loadContextMenuPlannerMode = async (tenantId: number) => {
+    setContextMenuPlannerModeLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/ai-settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setContextMenuPlannerMode(data.planner_mode ?? 'off')
+      }
+    } finally {
+      setContextMenuPlannerModeLoading(false)
+    }
+  }
+
+  const setTenantPlannerMode = async (tenantId: number, tenantName: string, mode: PlannerMode) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenant-ai-settings/bulk-planner-mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ tenant_ids: [tenantId], planner_mode: mode }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        showError(data?.detail ?? 'Failed to set planner mode')
+        return
+      }
+      showSuccess(`Planner mode set to "${mode}" for ${tenantName}.`)
+    } catch {
+      showError('Failed to set planner mode')
+    }
+  }
+
   const getStatusColor = (status: string | null) => {
     if (!status) return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700' }
     const lowerStatus = status.toLowerCase()
@@ -530,6 +575,10 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           x={contextMenu.x}
           y={contextMenu.y}
           onEditAiTemplates={() => setAiTemplatesTenant({ id: contextMenu.tenantId, name: contextMenu.tenantName })}
+          onSetPlannerMode={(mode) => setTenantPlannerMode(contextMenu.tenantId, contextMenu.tenantName, mode)}
+          currentPlannerMode={contextMenuPlannerMode}
+          plannerModeLoading={contextMenuPlannerModeLoading}
+          onPlannerMenuOpen={() => loadContextMenuPlannerMode(contextMenu.tenantId)}
           onClose={() => setContextMenu(null)}
         />
       ) : null}
@@ -541,6 +590,8 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           onClose={() => setAiTemplatesTenant(null)}
         />
       ) : null}
+
+      <ToastHost toast={toast} onDismiss={dismiss} />
     </div>
   )
 }
