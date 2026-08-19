@@ -247,7 +247,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
         setError('')
         const params = new URLSearchParams()
         if (searchQuery) params.append('search', searchQuery)
-        if (!searchAllTenants) {
+        if (!searchAllTenants || !searchQuery) {
           params.append('status_filter', 'true')
           selectedStatuses.forEach((status) => params.append('status', status))
           if (selectedResponsible) params.append('responsible', selectedResponsible)
