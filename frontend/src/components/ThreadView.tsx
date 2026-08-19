@@ -1989,23 +1989,23 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       <article
                         key={`email-${messageItem.id}`}
                         data-message-index={entryIndex}
-                        className={`max-w-[92%] rounded-2xl border px-3 py-2 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                        className={`max-w-[92%] rounded-2xl border px-2.5 py-1.5 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
                       >
-                        <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-gray-500">
                           <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
                             {isOutbound ? 'Outbound' : 'Inbound'}
                           </span>
                           {messageItem.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(messageItem.sent_at)}</span>
                         </div>
-                        {messageItem.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
+                        {messageItem.subject ? <p className="mt-1 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
                         {renderMessageBody(messageItem) ? (
                           <div
-                            className="prose prose-sm max-w-none mt-1.5 overflow-x-auto text-sm leading-5 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
+                            className="prose prose-sm max-w-none mt-1 overflow-x-auto text-sm leading-5 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
                             dangerouslySetInnerHTML={renderMessageBody(messageItem)}
                           />
                         ) : (
-                          <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{messageItem.body_text || messageItem.body_display || messageItem.body}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-gray-700">{messageItem.body_text || messageItem.body_display || messageItem.body}</p>
                         )}
                         <AttachmentChips
                           messageId={messageItem.id}
@@ -2217,9 +2217,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             />
             </div>
 
-            <div className="shrink-0 border-t border-gray-200 px-4 py-3">
+            <div className="shrink-0 border-t border-gray-200 px-3 py-2">
               {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
-                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-2.5">
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-email-subject">
                       Subject
@@ -2282,7 +2282,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
-                    rows={4}
+                    rows={2}
                     placeholder="Write your reply..."
                     disabled={replySending}
                     className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
@@ -2342,17 +2342,23 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
               role="dialog"
               aria-modal="true"
               aria-labelledby="whatsapp-block-panel-title"
-              className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+              className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
               style={whatsappBlockSize.style}
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-4 py-2.5">
-                <div className="min-w-0">
-                  <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp</p>
-                  <h3 id="whatsapp-block-panel-title" className="mt-0.5 truncate text-lg font-semibold text-gray-900">
-                    {tenant?.name || 'WhatsApp conversation'}
-                  </h3>
-                  <p className="mt-0.5 text-xs text-gray-500">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                      WhatsApp
+                    </span>
+                    <h3 id="whatsapp-block-panel-title" className="truncate text-sm font-semibold text-gray-900">
+                      {tenant?.name || 'WhatsApp conversation'}
+                    </h3>
+                  </div>
+                  <p className="mt-0.5 truncate text-[11px] text-gray-500">
+                    {selectedWhatsappBlock.message_count === 1 ? '1 message' : `${selectedWhatsappBlock.message_count} messages`}
+                    {' · '}
                     {formatTimestamp(selectedWhatsappBlock.start_at || selectedWhatsappBlock.messages[0]?.created_at || new Date().toISOString())}
                     {selectedWhatsappBlock.end_at ? ` - ${formatTimestamp(selectedWhatsappBlock.end_at)}` : ''}
                   </p>
@@ -2360,24 +2366,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 <button
                   type="button"
                   onClick={() => setSelectedWhatsappBlock(null)}
-                  className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                  className="shrink-0 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
                 >
                   Close
                 </button>
               </div>
 
               <div className="relative min-h-0 flex-1">
-              <div className="absolute inset-0 overflow-y-auto px-4 py-3" data-whatsapp-block-messages>
-                <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
-                    <p className="mt-1 text-sm font-semibold text-gray-900">
-                      {selectedWhatsappBlock.message_count === 1 ? '1 message' : `${selectedWhatsappBlock.message_count} messages`}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-2 mb-2">
+              <div className="absolute inset-0 overflow-y-auto px-3 py-2" data-whatsapp-block-messages>
+                <div className="space-y-1.5 mb-2">
                   {selectedWhatsappBlock.messages.map((blockMessage, blockMessageIndex) => {
                     const isOutbound = blockMessage.direction === 'outbound'
                     const accountKey = getWhatsappMessageAccountKey(blockMessage)
@@ -2386,9 +2383,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       <article
                         key={blockMessage.id}
                         data-message-index={blockMessageIndex}
-                        className={`max-w-[92%] rounded-2xl border px-3 py-2 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
+                        className={`max-w-[92%] rounded-2xl border px-2.5 py-1.5 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                       >
-                        <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-gray-500">
                           <span
                             title={accountKey}
                             className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold ${isOutbound ? palette.outboundBadge : palette.inboundBadge}`}
@@ -2400,8 +2397,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                           {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                           <span>{formatTimestamp(blockMessage.created_at)}</span>
                         </div>
-                        {blockMessage.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
-                        <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
+                        {blockMessage.subject ? <p className="mt-1 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
                         <AttachmentChips
                           messageId={blockMessage.id}
                           attachments={blockMessage.attachments}
@@ -2422,9 +2419,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
               />
               </div>
 
-              <div className="shrink-0 border-t border-gray-200 px-4 py-3">
+              <div className="shrink-0 border-t border-gray-200 px-3 py-2">
                 {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappBlock.block_id ? (
-                  <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+                  <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-2.5">
                     <div className="space-y-1">
                       <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="block-whatsapp-endpoint">
                         WhatsApp account
@@ -2494,7 +2491,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     <textarea
                       value={replyMessage}
                       onChange={(event) => setReplyMessage(event.target.value)}
-                      rows={4}
+                      rows={2}
                       placeholder="Write your reply..."
                       disabled={replySending}
                       className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
@@ -2561,51 +2558,44 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             role="dialog"
             aria-modal="true"
             aria-labelledby="whatsapp-group-modal-title"
-            className="relative flex flex-col rounded-3xl border border-gray-200 bg-white shadow-sm"
+            className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
             style={{ ...whatsappGroupDrag.style, ...whatsappGroupSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
             <div
-              className="flex shrink-0 cursor-move items-start justify-between gap-4 border-b border-gray-200 px-4 py-2.5"
+              className="flex shrink-0 cursor-move items-center justify-between gap-3 border-b border-gray-200 px-3 py-2"
               onPointerDown={whatsappGroupDrag.handlePointerDown}
             >
-              <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.35em] text-emerald-700">WhatsApp Group</p>
-                <h3 id="whatsapp-group-modal-title" className="mt-0.5 truncate text-lg font-semibold text-gray-900">
-                  {tenant?.name || 'WhatsApp conversation'}
-                </h3>
-                <p className="mt-0.5 text-xs text-gray-500">
-                  {formatTimestamp(selectedWhatsappGroup.start_timestamp || selectedWhatsappGroup.messages[0]?.created_at || selectedWhatsappGroup.messages[selectedWhatsappGroup.messages.length - 1]?.created_at || new Date().toISOString())}
-                  {selectedWhatsappGroup.end_timestamp ? ` ? ${formatTimestamp(selectedWhatsappGroup.end_timestamp)}` : ''}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                    WhatsApp
+                  </span>
+                  <h3 id="whatsapp-group-modal-title" className="truncate text-sm font-semibold text-gray-900">
+                    {tenant?.name || 'WhatsApp conversation'}
+                  </h3>
+                </div>
+                <p className="mt-0.5 truncate text-[11px] text-gray-500">
+                  {selectedWhatsappGroup.message_count === 1 ? '1 message' : `${selectedWhatsappGroup.message_count} messages`}
+                  {' · '}
+                  {selectedWhatsappGroup.start_timestamp && selectedWhatsappGroup.end_timestamp
+                    ? `${formatTimestamp(selectedWhatsappGroup.start_timestamp)} - ${formatTimestamp(selectedWhatsappGroup.end_timestamp)}`
+                    : formatTimestamp(selectedWhatsappGroup.start_timestamp || selectedWhatsappGroup.messages[0]?.created_at || selectedWhatsappGroup.messages[selectedWhatsappGroup.messages.length - 1]?.created_at || new Date().toISOString())}
                 </p>
               </div>
               <button
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => setSelectedWhatsappGroup(null)}
-                className="rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                className="shrink-0 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
               >
                 Close
               </button>
             </div>
 
             <div className="relative min-h-0 flex-1">
-            <div className="absolute inset-0 overflow-y-auto px-4 py-3" data-whatsapp-messages>
-              <div className="mb-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.28em] text-emerald-700">Messages</p>
-                  <p className="mt-1 text-sm font-semibold text-gray-900">
-                    {selectedWhatsappGroup.message_count === 1 ? '1 message' : `${selectedWhatsappGroup.message_count} messages`}
-                  </p>
-                </div>
-                <p className="text-xs text-gray-500">
-                  {selectedWhatsappGroup.start_timestamp && selectedWhatsappGroup.end_timestamp
-                    ? `${formatTimestamp(selectedWhatsappGroup.start_timestamp)} - ${formatTimestamp(selectedWhatsappGroup.end_timestamp)}`
-                    : 'Latest timestamp shown above'}
-                </p>
-              </div>
-
-              <div className="space-y-2 mb-2">
+            <div className="absolute inset-0 overflow-y-auto px-3 py-2" data-whatsapp-messages>
+              <div className="space-y-1.5 mb-2">
                 {selectedWhatsappGroup.messages.map((blockMessage, blockMessageIndex) => {
                   const isOutbound = blockMessage.direction === 'outbound'
                   const accountKey = getWhatsappMessageAccountKey(blockMessage)
@@ -2614,9 +2604,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     <article
                       key={blockMessage.id}
                       data-message-index={blockMessageIndex}
-                      className={`max-w-[92%] rounded-2xl border px-3 py-2 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
+                      className={`max-w-[92%] rounded-2xl border px-2.5 py-1.5 ${isOutbound ? palette.outboundBubble : palette.inboundBubble}`}
                     >
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-gray-500">
                         <span
                           title={accountKey}
                           className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold ${isOutbound ? palette.outboundBadge : palette.inboundBadge}`}
@@ -2628,8 +2618,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         {blockMessage.ai_generated ? <AiGeneratedBadge /> : null}
                         <span>{formatTimestamp(blockMessage.created_at)}</span>
                       </div>
-                      {blockMessage.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
-                      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
+                      {blockMessage.subject ? <p className="mt-1 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
                       <AttachmentChips
                         messageId={blockMessage.id}
                         attachments={blockMessage.attachments}
@@ -2649,9 +2639,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
             />
             </div>
 
-            <div className="shrink-0 border-t border-gray-200 px-4 py-3">
+            <div className="shrink-0 border-t border-gray-200 px-3 py-2">
               {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
-                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-2.5">
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-whatsapp-endpoint">
                       WhatsApp account
@@ -2721,7 +2711,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
-                    rows={4}
+                    rows={2}
                     placeholder="Write your reply..."
                     disabled={replySending}
                     className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
