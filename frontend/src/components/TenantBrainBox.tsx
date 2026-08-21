@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -15,6 +15,8 @@ type BrainEntry = {
 
 type TenantBrainBoxProps = {
   tenantId?: number
+  isActive?: boolean
+  onActionsChange?: (actions: ReactNode) => void
 }
 
 const SOURCE_LABEL: Record<BrainEntry['source'], string> = {
@@ -29,7 +31,7 @@ const SOURCE_STYLE: Record<BrainEntry['source'], string> = {
   scanner: 'bg-indigo-50 text-indigo-700',
 }
 
-export default function TenantBrainBox({ tenantId }: TenantBrainBoxProps) {
+export default function TenantBrainBox({ tenantId, isActive = true, onActionsChange }: TenantBrainBoxProps) {
   const token = useAuthStore((state) => state.token)
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
 
@@ -42,6 +44,7 @@ export default function TenantBrainBox({ tenantId }: TenantBrainBoxProps) {
   const [editingContent, setEditingContent] = useState('')
   const [scanning, setScanning] = useState(false)
   const [scanMessage, setScanMessage] = useState('')
+  const [fullscreen, setFullscreen] = useState(false)
 
   const loadEntries = async () => {
     if (!tenantId) return
@@ -65,6 +68,15 @@ export default function TenantBrainBox({ tenantId }: TenantBrainBoxProps) {
     if (tenantId) void loadEntries()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId])
+
+  useEffect(() => {
+    if (!fullscreen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [fullscreen])
 
   const handleAdd = async () => {
     const content = newContent.trim()
@@ -153,22 +165,52 @@ export default function TenantBrainBox({ tenantId }: TenantBrainBoxProps) {
 
   const subtitleMessage = !tenantId ? 'No tenant selected' : loading ? 'Loading...' : ''
 
-  return (
-    <div className="flex h-full w-full min-w-0 flex-col gap-1.5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Tenant Brain</h2>
-          {subtitleMessage ? <p className="mt-1 text-sm text-gray-500">{subtitleMessage}</p> : null}
-        </div>
+  useEffect(() => {
+    if (!isActive || !onActionsChange) return
+    onActionsChange(
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setFullscreen((current) => !current)}
+          aria-label={fullscreen ? 'Exit fullscreen' : 'Open tenant brain fullscreen'}
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Open tenant brain fullscreen'}
+          className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+        >
+          {fullscreen ? 'Exit' : 'Fullscreen'}
+        </button>
         <button
           type="button"
           onClick={handleScan}
           disabled={!tenantId || scanning}
-          className="shrink-0 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {scanning ? 'Scanning...' : 'Generate initial brain'}
         </button>
-      </div>
+      </div>,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen, isActive, scanning, tenantId])
+
+  return (
+    <div
+      className={
+        fullscreen
+          ? 'fixed inset-0 z-50 flex h-screen w-screen min-w-0 flex-col gap-1.5 bg-white p-4'
+          : 'flex h-full w-full min-w-0 flex-col gap-1.5'
+      }
+    >
+      {fullscreen ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setFullscreen(false)}
+            className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+          >
+            Exit fullscreen
+          </button>
+        </div>
+      ) : null}
+      {subtitleMessage ? <p className="text-sm text-gray-500">{subtitleMessage}</p> : null}
 
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
       {scanMessage ? <p className="text-xs text-indigo-600">{scanMessage}</p> : null}

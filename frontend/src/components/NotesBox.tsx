@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
 
@@ -14,9 +14,11 @@ type TenantNotes = {
 type NotesBoxProps = {
   tenantId?: number
   onReady?: (tenantId: number) => void
+  isActive?: boolean
+  onActionsChange?: (actions: ReactNode) => void
 }
 
-export default function NotesBox({ tenantId, onReady }: NotesBoxProps) {
+export default function NotesBox({ tenantId, onReady, isActive = true, onActionsChange }: NotesBoxProps) {
   const token = useAuthStore((state) => state.token)
   const [savedNotes, setSavedNotes] = useState('')
   const [draftNotes, setDraftNotes] = useState('')
@@ -184,34 +186,36 @@ export default function NotesBox({ tenantId, onReady }: NotesBoxProps) {
 
   const subtitleMessage = !tenantId ? 'No tenant selected' : loading ? 'Loading...' : ''
 
-  return (
-    <div className="flex h-full w-full min-w-0 flex-col gap-1.5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Notes</h2>
-          {subtitleMessage ? <p className="mt-1 text-sm text-gray-500">{subtitleMessage}</p> : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {isDirty ? (
-            <button
-              type="button"
-              onClick={handleDiscardDraft}
-              disabled={saving}
-              className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Discard draft
-            </button>
-          ) : null}
+  useEffect(() => {
+    if (!isActive || !onActionsChange) return
+    onActionsChange(
+      <div className="flex shrink-0 items-center gap-2">
+        {isDirty ? (
           <button
             type="button"
-            onClick={handleSave}
-            disabled={!tenantId || !isDirty || saving}
-            className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={handleDiscardDraft}
+            disabled={saving}
+            className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? 'Saving...' : savedFlash ? 'Saved!' : 'Save'}
+            Discard draft
           </button>
-        </div>
-      </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!tenantId || !isDirty || saving}
+          className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving ? 'Saving...' : savedFlash ? 'Saved!' : 'Save'}
+        </button>
+      </div>,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, isDirty, saving, savedFlash, tenantId])
+
+  return (
+    <div className="flex h-full w-full min-w-0 flex-col gap-1.5">
+      {subtitleMessage ? <p className="text-sm text-gray-500">{subtitleMessage}</p> : null}
 
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
       {syncWarning ? <p className="text-sm text-amber-500">{syncWarning}</p> : null}
