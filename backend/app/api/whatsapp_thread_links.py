@@ -14,10 +14,12 @@ from app.schemas.whatsapp_thread_link import (
     ThreadWhatsAppLinkCreate,
     ThreadWhatsAppLinkRead,
     ThreadWhatsAppLinkResyncRead,
+    ThreadWhatsAppResyncAllRead,
     WhatsAppAccountRead,
     WhatsAppChatRead,
     WhatsAppChatResyncResult,
 )
+from app.services.whatsapp_auto_resync import claim_auto_resync_slot
 from app.services.whatsapp_chat_directory import fetch_whatsapp_chats, list_whatsapp_accounts, resync_whatsapp_chat
 from app.services.whatsapp_client import WhatsAppBridgeError
 
@@ -65,6 +67,67 @@ async def _run_resync(external_account_id: str, chat_id: str) -> None:
         logger.info("whatsapp_thread_link_resync_completed external_account_id=%s chat_id=%s result=%s", external_account_id, chat_id, result)
     except WhatsAppBridgeError as exc:
         logger.warning("whatsapp_thread_link_resync_failed external_account_id=%s chat_id=%s error=%s", external_account_id, chat_id, exc)
+
+
+async def _resync_link_and_reconcile(db: Session, thread_id: int, link: TenantChannelEndpoint) -> WhatsAppChatResyncResult:
+    """Resync one linked chat's full history and reconcile existing messages' external_chat_namespace
+    afterward, so they match the timeline filter."""
+    try:
+        raw_result = await resync_whatsapp_chat(link.external_account_id, link.external_chat_namespace)
+        resync_result = WhatsAppChatResyncResult(
+            ok=bool(raw_result.get("ok", True)),
+            fetched=int(raw_result.get("fetched") or 0),
+            imported=int(raw_result.get("imported") or 0),
+            deduped=int(raw_result.get("deduped") or 0),
+            skipped_no_content=int(raw_result.get("skippedNoContent") or 0),
+            failed=int(raw_result.get("failed") or 0),
+        )
+        logger.info(
+            "whatsapp_thread_link_resync_completed thread_id=%s link_id=%s result=%s",
+            thread_id,
+            link.id,
+            raw_result,
+        )
+
+        # After resync, sync external_chat_namespace on existing messages for consistency
+        # with the link's namespace. This ensures messages imported during resync are properly
+        # matched by the timeline filtering logic even if they don't have external_chat_namespace set.
+        if resync_result.ok and link.external_account_id and link.external_chat_namespace:
+            matching_messages = db.query(Communication).filter(
+                Communication.tenant_id == thread_id,
+                Communication.channel == "whatsapp",
+                Communication.external_account_id == link.external_account_id,
+            ).all()
+
+            messages_updated = 0
+            chat_id_lower = link.external_chat_namespace.strip().lower()
+            for msg in matching_messages:
+                msg_identity = (msg.whatsapp_identity_key or msg.whatsapp_chat_id or "").strip().lower()
+                if msg_identity and msg_identity == chat_id_lower:
+                    if msg.external_chat_namespace != link.external_chat_namespace:
+                        msg.external_chat_namespace = link.external_chat_namespace
+                        messages_updated += 1
+
+            if messages_updated > 0:
+                db.commit()
+                logger.info(
+                    "whatsapp_resync_updated_existing_messages thread_id=%s link_id=%s external_account_id=%s chat_id=%s count=%s",
+                    thread_id,
+                    link.id,
+                    link.external_account_id,
+                    link.external_chat_namespace,
+                    messages_updated,
+                )
+    except WhatsAppBridgeError as exc:
+        resync_result = WhatsAppChatResyncResult(ok=False, error=exc.args[0] if exc.args else "Resync failed")
+        logger.warning(
+            "whatsapp_thread_link_resync_failed thread_id=%s link_id=%s error=%s",
+            thread_id,
+            link.id,
+            exc,
+        )
+
+    return resync_result
 
 
 def _find_chat_ids_by_message_history(db: Session, external_account_id: str, search: str) -> set[str]:
@@ -433,62 +496,46 @@ async def resync_thread_whatsapp_link(
         current_user.id,
     )
 
-    try:
-        raw_result = await resync_whatsapp_chat(link.external_account_id, link.external_chat_namespace)
-        resync_result = WhatsAppChatResyncResult(
-            ok=bool(raw_result.get("ok", True)),
-            fetched=int(raw_result.get("fetched") or 0),
-            imported=int(raw_result.get("imported") or 0),
-            deduped=int(raw_result.get("deduped") or 0),
-            skipped_no_content=int(raw_result.get("skippedNoContent") or 0),
-            failed=int(raw_result.get("failed") or 0),
-        )
-        logger.info(
-            "whatsapp_thread_link_resync_completed thread_id=%s link_id=%s result=%s",
-            thread_id,
-            link_id,
-            raw_result,
-        )
-
-        # After resync, sync external_chat_namespace on existing messages for consistency
-        # with the link's namespace. This ensures messages imported during resync are properly
-        # matched by the timeline filtering logic even if they don't have external_chat_namespace set.
-        if resync_result.ok and link.external_account_id and link.external_chat_namespace:
-            matching_messages = db.query(Communication).filter(
-                Communication.tenant_id == thread_id,
-                Communication.channel == "whatsapp",
-                Communication.external_account_id == link.external_account_id,
-            ).all()
-
-            messages_updated = 0
-            chat_id_lower = link.external_chat_namespace.strip().lower()
-            for msg in matching_messages:
-                msg_identity = (msg.whatsapp_identity_key or msg.whatsapp_chat_id or "").strip().lower()
-                if msg_identity and msg_identity == chat_id_lower:
-                    if msg.external_chat_namespace != link.external_chat_namespace:
-                        msg.external_chat_namespace = link.external_chat_namespace
-                        messages_updated += 1
-
-            if messages_updated > 0:
-                db.commit()
-                logger.info(
-                    "whatsapp_resync_updated_existing_messages thread_id=%s link_id=%s external_account_id=%s chat_id=%s count=%s",
-                    thread_id,
-                    link_id,
-                    link.external_account_id,
-                    link.external_chat_namespace,
-                    messages_updated,
-                )
-    except WhatsAppBridgeError as exc:
-        resync_result = WhatsAppChatResyncResult(ok=False, error=exc.args[0] if exc.args else "Resync failed")
-        logger.warning(
-            "whatsapp_thread_link_resync_failed thread_id=%s link_id=%s error=%s",
-            thread_id,
-            link_id,
-            exc,
-        )
-
+    resync_result = await _resync_link_and_reconcile(db, thread_id, link)
     return ThreadWhatsAppLinkResyncRead(link=_to_link_read(link), resync=resync_result)
+
+
+@router.post("/threads/{thread_id}/whatsapp-links/resync-all", response_model=ThreadWhatsAppResyncAllRead)
+async def resync_all_thread_whatsapp_links(
+    thread_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ThreadWhatsAppResyncAllRead:
+    """Auto-resync every actively linked WhatsApp chat for this tenant, throttled to at most
+    once per chat within AUTO_RESYNC_THROTTLE_SECONDS. Called when the tenant's page is opened
+    in the UI; shares its throttle store with the live-inbound-message auto-resync trigger
+    (backend/app/webhooks/whatsapp.py) so opening the page right after a message-triggered
+    resync doesn't redundantly re-fire it.
+    """
+    _get_tenant_or_404(db, thread_id)
+    links = (
+        db.query(TenantChannelEndpoint)
+        .filter(
+            TenantChannelEndpoint.tenant_id == thread_id,
+            TenantChannelEndpoint.channel_type == "whatsapp",
+            TenantChannelEndpoint.is_active.is_(True),
+            TenantChannelEndpoint.unlinked_at.is_(None),
+            TenantChannelEndpoint.external_chat_namespace.isnot(None),
+        )
+        .all()
+    )
+
+    results: list[ThreadWhatsAppLinkResyncRead] = []
+    for link in links:
+        if not claim_auto_resync_slot(link.id):
+            results.append(
+                ThreadWhatsAppLinkResyncRead(link=_to_link_read(link), resync=WhatsAppChatResyncResult(ok=True, throttled=True))
+            )
+            continue
+        resync_result = await _resync_link_and_reconcile(db, thread_id, link)
+        results.append(ThreadWhatsAppLinkResyncRead(link=_to_link_read(link), resync=resync_result))
+
+    return ThreadWhatsAppResyncAllRead(results=results)
 
 
 @router.delete("/threads/{thread_id}/whatsapp-links/{link_id}", response_model=ThreadWhatsAppLinkRead)

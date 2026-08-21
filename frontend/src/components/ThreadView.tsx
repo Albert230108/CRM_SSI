@@ -1140,6 +1140,19 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       return
     }
 
+    if (tenantChanged) {
+      // Auto-resync every linked WhatsApp chat for this tenant on page open, throttled
+      // server-side per chat so re-opening the same tenant shortly after doesn't re-fire it.
+      // Fires alongside the fetches below rather than blocking them; refreshes the grouped
+      // thread once it resolves so anything backfilled shows up without a manual refresh.
+      fetch(`${API_BASE_URL}/api/threads/${tenantId}/whatsapp-links/resync-all`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+        .then((response) => (response.ok ? loadGroupedThread() : undefined))
+        .catch(() => {})
+    }
+
     const controller = new AbortController()
     const activeTenantId = tenantId
 

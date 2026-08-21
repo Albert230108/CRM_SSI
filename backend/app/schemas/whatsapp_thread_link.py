@@ -60,8 +60,13 @@ class WhatsAppChatResyncResult(BaseModel):
     skipped_no_content: int = 0
     failed: int = 0
     error: str | None = None
+    throttled: bool = False
 
 
 class ThreadWhatsAppLinkResyncRead(BaseModel):
     link: ThreadWhatsAppLinkRead
     resync: WhatsAppChatResyncResult
+
+
+class ThreadWhatsAppResyncAllRead(BaseModel):
+    results: list[ThreadWhatsAppLinkResyncRead]

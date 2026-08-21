@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from app.core.dependencies import get_db
 from app.core.phone_normalization import phone_match_candidates
 from app.core.whatsapp_identity import get_canonical_whatsapp_identity
+from app.database import SessionLocal
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
@@ -27,6 +28,7 @@ from app.services.notification_service import create_notification
 from app.services.notification_whatsapp_service import register_notification_for_whatsapp
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
+from app.services.whatsapp_auto_resync import auto_resync_tenant_endpoints
 from app.services.whatsapp_client import WhatsAppBridgeError, send_system_whatsapp_message
 from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound_communication, resolve_whatsapp_outbound_tenant
 
@@ -504,11 +506,27 @@ def _find_existing_inbound_whatsapp_communication(
     return duplicate_query.filter(Communication.message == message, Communication.created_at == created_at).first()
 
 
+def _trigger_auto_resync(tenant_id: int) -> None:
+    """Fire-and-forget: resync all of a tenant's linked WhatsApp chats after a genuine live
+    inbound message, throttled per chat. Runs as a FastAPI background task, after the
+    triggering request's own DB session has already closed, so it opens its own session.
+    """
+    db = SessionLocal()
+    try:
+        summary = asyncio.run(auto_resync_tenant_endpoints(db, tenant_id))
+        logger.info("whatsapp_auto_resync_on_inbound_message tenant_id=%s summary=%s", tenant_id, summary)
+    except Exception:
+        logger.exception("whatsapp_auto_resync_on_inbound_message_failed tenant_id=%s", tenant_id)
+    finally:
+        db.close()
+
+
 def _process_whatsapp_message(
     db: Session,
     payload: dict[str, Any],
     request_headers: dict[str, str],
     query_params: dict[str, str],
+    background_tasks: BackgroundTasks | None = None,
 ) -> WhatsAppWebhookResponse:
     """Route, dedupe, and persist a single WhatsApp webhook message payload.
 
@@ -682,13 +700,17 @@ def _process_whatsapp_message(
         register_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
         register_brain_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
         register_notification_for_whatsapp(db)
+        if background_tasks is not None:
+            background_tasks.add_task(_trigger_auto_resync, tenant.id)
     db.commit()
     _persist_inbound_attachments(db, payload=payload, tenant_id=tenant.id, communication_id=inbound_communication.id)
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)
 
 
 @router.post("", response_model=WhatsAppWebhookResponse)
-async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> WhatsAppWebhookResponse | JSONResponse:
+async def whatsapp_webhook(
+    request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+) -> WhatsAppWebhookResponse | JSONResponse:
     payload = await request.json()
     if not isinstance(payload, dict):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
@@ -701,7 +723,9 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)) -> W
     # threadpool (like FastAPI does automatically for a `def` route) instead of inline in this
     # coroutine, so its blocking DB I/O doesn't stall the single event loop for every other
     # concurrent request (login, tenant loads, etc.) on this worker.
-    return await run_in_threadpool(_process_whatsapp_message, db, payload, dict(request.headers), dict(request.query_params))
+    return await run_in_threadpool(
+        _process_whatsapp_message, db, payload, dict(request.headers), dict(request.query_params), background_tasks
+    )
 
 
 class WhatsAppBackfillBatchResponse(BaseModel):
