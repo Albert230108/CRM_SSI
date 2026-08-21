@@ -5,7 +5,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.user import User
 from app.services import ai_draft_notification_service
-from app.services.ai_draft_notification_service import notify_admins_of_new_draft
+from app.services.ai_draft_notification_service import notify_admins_of_new_draft, notify_admins_of_redraft
 
 
 def _create_tenant(db_session, **overrides):
@@ -202,3 +202,76 @@ def test_skips_when_draft_already_resolved(db_session, monkeypatch):
     notify_admins_of_new_draft(db_session, draft)
 
     assert sent_calls == []
+
+
+def test_redraft_resets_existing_approval_request_and_resends_same_code(db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-notify-redraft-1")
+    _create_ai_settings(db_session, tenant)
+    recipient = _create_user(db_session, email="draft-redraft-user@example.com")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id="edi-crm-whatsapp"))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant, generated_text="Original text.")
+
+    # First notification round, then the recipient responds - simulating the state right
+    # before a REDO reply regenerates the draft in place.
+    sent_calls = _patch_send(monkeypatch)
+    notify_admins_of_new_draft(db_session, draft)
+    request = db_session.query(AiAutoDraftApprovalRequest).one()
+
+    draft.generated_text = "Regenerated, shorter text."
+    sent_calls.clear()
+
+    notify_admins_of_redraft(db_session, draft)
+
+    assert len(sent_calls) == 1
+    to, message, external_account_id = sent_calls[0]
+    assert to == recipient.phone
+    assert external_account_id == "edi-crm-whatsapp"
+    assert "Regenerated, shorter text." in message
+    assert f"YES-{draft.id}" in message
+    assert f"NO-{draft.id}" in message
+    assert f"REDO-{draft.id}" in message
+
+    # Same row reused (no unique-constraint violation), reset back to unresponded.
+    assert db_session.query(AiAutoDraftApprovalRequest).count() == 1
+    db_session.refresh(request)
+    assert request.responded_at is None
+    assert request.response is None
+
+
+def test_redraft_creates_row_for_newly_opted_in_recipient(db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-notify-redraft-2")
+    _create_ai_settings(db_session, tenant)
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id="edi-crm-whatsapp"))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+
+    sent_calls = _patch_send(monkeypatch)
+
+    # No approval requests exist yet for this draft - notify_admins_of_redraft must still work.
+    new_recipient = _create_user(db_session, email="draft-redraft-new@example.com")
+
+    notify_admins_of_redraft(db_session, draft)
+
+    assert len(sent_calls) == 1
+    request = db_session.query(AiAutoDraftApprovalRequest).one()
+    assert request.user_id == new_recipient.id
+    assert request.responded_at is None
+
+
+def test_redraft_does_not_gate_on_planner_mode_or_status(db_session, monkeypatch):
+    # notify_admins_of_redraft is only called right after a successful regenerate, where the
+    # tenant's planner_mode and the draft's status are already known-good, so unlike
+    # notify_admins_of_new_draft it must not re-check them.
+    tenant = _create_tenant(db_session, booking_id="B-notify-redraft-3")
+    _create_ai_settings(db_session, tenant, planner_mode="auto-send")
+    _create_user(db_session)
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id="edi-crm-whatsapp"))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant, status="needs_review")
+
+    sent_calls = _patch_send(monkeypatch)
+
+    notify_admins_of_redraft(db_session, draft)
+
+    assert len(sent_calls) == 1

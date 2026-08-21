@@ -6,7 +6,7 @@ from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.services import ai_auto_draft_service
+from app.services import ai_auto_draft_service, ai_draft_notification_service
 from app.webhooks import whatsapp as whatsapp_webhook_module
 
 NOTIFICATION_ACCOUNT_ID = "edi-crm-whatsapp"
@@ -372,6 +372,145 @@ def test_reply_on_wrong_external_account_falls_through(client, db_session, monke
 
     db_session.refresh(draft)
     assert draft.status == "pending"
+
+
+def test_redo_reply_regenerates_draft_in_place_and_rebroadcasts(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-approval-webhook-redo-1")
+    user = _create_user(db_session, email="approval-webhook-redo-1@example.com", phone="+31611120001")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+    approval_request = _create_approval_request(db_session, draft, user)
+
+    regenerate_calls = []
+
+    def fake_regenerate(db, draft_arg, instructions):
+        regenerate_calls.append((draft_arg.id, instructions))
+        draft_arg.generated_text = "Shorter reply, deposit mentioned."
+        draft_arg.status = "pending"
+        return draft_arg
+
+    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", fake_regenerate)
+
+    broadcast_calls = []
+
+    async def fake_broadcast_send(to, message, external_account_id=None):
+        broadcast_calls.append((to, message, external_account_id))
+        return {}
+
+    monkeypatch.setattr(ai_draft_notification_service, "send_system_whatsapp_message", fake_broadcast_send)
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message=f"REDO-{draft.id} make it shorter and mention the deposit")
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "staff draft approval handled"
+    assert regenerate_calls == [(draft.id, "make it shorter and mention the deposit")]
+
+    # Direct reply to the requester is a short acknowledgement, not the full re-broadcast.
+    assert "Redoing" in sent_calls[0][1]
+
+    # The regenerated draft was broadcast to the (single) opted-in admin under the same code.
+    assert len(broadcast_calls) == 1
+    to, message, external_account_id = broadcast_calls[0]
+    assert to == user.phone
+    assert external_account_id == NOTIFICATION_ACCOUNT_ID
+    assert "Shorter reply, deposit mentioned." in message
+    assert f"YES-{draft.id}" in message
+    assert f"NO-{draft.id}" in message
+    assert f"REDO-{draft.id}" in message
+
+    db_session.refresh(draft)
+    assert draft.status == "pending"
+    assert draft.generated_text == "Shorter reply, deposit mentioned."
+
+    db_session.refresh(approval_request)
+    assert approval_request.responded_at is None
+    assert approval_request.response is None
+
+
+def test_redo_reply_without_instructions_asks_for_them(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-approval-webhook-redo-2")
+    user = _create_user(db_session, email="approval-webhook-redo-2@example.com", phone="+31611120002")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+    _create_approval_request(db_session, draft, user)
+
+    regenerate_calls = []
+    monkeypatch.setattr(
+        ai_auto_draft_service,
+        "regenerate_draft_via_planner",
+        lambda db, draft_arg, instructions: regenerate_calls.append(instructions),
+    )
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message=f"REDO-{draft.id}")
+
+    assert response.status_code == 200
+    assert "include what to change" in sent_calls[0][1]
+    assert regenerate_calls == []
+
+    db_session.refresh(draft)
+    assert draft.status == "pending"
+
+
+def test_redo_reply_on_already_resolved_draft_reports_status(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-approval-webhook-redo-3")
+    user = _create_user(db_session, email="approval-webhook-redo-3@example.com", phone="+31611120003")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant, status="sent")
+    _create_approval_request(
+        db_session, draft, user, responded_at=datetime.now(timezone.utc), response="YES"
+    )
+
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message=f"REDO-{draft.id} make it warmer")
+
+    assert response.status_code == 200
+    assert "Already handled" in sent_calls[0][1]
+
+
+def test_redo_then_yes_still_works_after_reset(client, db_session, monkeypatch):
+    # Confirms the approval-request reset done by a REDO doesn't break the normal YES/NO path
+    # for the same code afterward.
+    tenant = _create_tenant(db_session, booking_id="B-approval-webhook-redo-4")
+    user = _create_user(db_session, email="approval-webhook-redo-4@example.com", phone="+31611120004")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+    _create_approval_request(db_session, draft, user)
+
+    def fake_regenerate(db, draft_arg, instructions):
+        draft_arg.generated_text = "Revised text."
+        draft_arg.status = "pending"
+        return draft_arg
+
+    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", fake_regenerate)
+
+    async def fake_broadcast_send(to, message, external_account_id=None):
+        return {}
+
+    monkeypatch.setattr(ai_draft_notification_service, "send_system_whatsapp_message", fake_broadcast_send)
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    redo_response = _post_reply(client, sender=user.phone, message=f"REDO-{draft.id} shorter please")
+    assert redo_response.status_code == 200
+
+    def fake_send_scheduled_draft(db, draft_arg):
+        draft_arg.status = "sent"
+        return True
+
+    monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
+
+    yes_response = _post_reply(client, sender=user.phone, message=f"YES-{draft.id}")
+    assert yes_response.status_code == 200
+    assert "Sent to" in sent_calls[-1][1]
+
+    db_session.refresh(draft)
+    assert draft.status == "sent"
 
 
 def test_reply_without_code_falls_through(client, db_session, monkeypatch):

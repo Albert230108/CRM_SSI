@@ -41,18 +41,45 @@ def _with_quoted_original(generated_text: str, original_text: str | None) -> str
     return f'Replying to: "{original}"\n\n{generated_text}'
 
 
+def _planner_draft_status_and_schedule(
+    db: Session,
+    *,
+    channel: str,
+    planner_mode: str,
+    ai_settings: TenantAiSettings,
+    result,
+) -> tuple[str, datetime | None]:
+    """Shared status/schedule decision for a planner-produced draft.
+
+    A draft the checker never approved is stored as `needs_review` so staff still see it, but it
+    is deliberately kept out of the auto-send path regardless of the tenant's auto_send setting.
+    Same for any draft generated under "auto-draft" mode: even an approved one never auto-sends.
+    """
+    auto_send_enabled = planner_mode == "auto-send" and (
+        (ai_settings.auto_send_email if channel == "email" else ai_settings.auto_send_whatsapp)
+        and result.auto_send_allowed
+    )
+
+    if result.status == STATUS_NEEDS_REVIEW and not result.auto_send_allowed:
+        status_value = "needs_review"
+    else:
+        status_value = "pending_auto_send" if auto_send_enabled else "pending"
+
+    scheduled_send_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=_auto_send_delay_seconds(db))
+        if status_value == "pending_auto_send"
+        else None
+    )
+    return status_value, scheduled_send_at
+
+
 def _generate_draft_via_planner(
     db: Session,
     trigger: AiAutoDraftTrigger,
     tenant: Tenant,
     ai_settings: TenantAiSettings,
 ) -> AiAutoDraft | None:
-    """Auto-draft/auto-send drafting: the planner chooses the template instead of the tenant default.
-
-    A draft the checker never approved is stored as `needs_review` so staff still see it, but it
-    is deliberately kept out of the auto-send path regardless of the tenant's auto_send setting.
-    Same for any draft generated under "auto-draft" mode: even an approved one never auto-sends.
-    """
+    """Auto-draft/auto-send drafting: the planner chooses the template instead of the tenant default."""
     planner_mode = ai_settings.planner_mode or "off"
     inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel)
     result = ai_agent_orchestrator.run_planner_loop(
@@ -74,17 +101,9 @@ def _generate_draft_via_planner(
 
     generated_text = _with_quoted_original(result.generated_text, inbound_text)
 
-    # "auto-draft" mode always lands the draft in the AI Drafts tab for a human to send - it must
-    # never be scheduled to auto-send, regardless of the tenant's auto_send toggles.
-    auto_send_enabled = planner_mode == "auto-send" and (
-        (ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp)
-        and result.auto_send_allowed
+    status_value, scheduled_send_at = _planner_draft_status_and_schedule(
+        db, channel=trigger.channel, planner_mode=planner_mode, ai_settings=ai_settings, result=result
     )
-
-    if result.status == STATUS_NEEDS_REVIEW and not result.auto_send_allowed:
-        status_value = "needs_review"
-    else:
-        status_value = "pending_auto_send" if auto_send_enabled else "pending"
 
     draft = AiAutoDraft(
         tenant_id=tenant.id,
@@ -94,15 +113,67 @@ def _generate_draft_via_planner(
         whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
         generated_text=generated_text,
         status=status_value,
-        scheduled_send_at=(
-            datetime.now(timezone.utc) + timedelta(seconds=_auto_send_delay_seconds(db))
-        )
-        if status_value == "pending_auto_send"
-        else None,
+        scheduled_send_at=scheduled_send_at,
         agent_run_id=result.run_id,
         checker_feedback=result.checker_feedback,
     )
     db.add(draft)
+    return draft
+
+
+def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, instructions: str) -> AiAutoDraft | None:
+    """Re-runs the planner/drafter/checker loop for an existing draft, folding in admin
+    instructions from a "REDO-{id} <instructions>" reply, and updates the draft in place.
+
+    Returns None (without mutating `draft`) if the tenant/settings can't be resolved or the
+    planner produces nothing, so a failed redo leaves the original draft intact and still
+    actionable. Never leaves a redo in `pending_auto_send`: the admin explicitly asked for a
+    change, so it always needs a fresh human look before sending.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == draft.tenant_id).first()
+    if tenant is None:
+        return None
+
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
+    if ai_settings is None:
+        return None
+
+    planner_mode = ai_settings.planner_mode or "off"
+    inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, draft.channel)
+    result = ai_agent_orchestrator.run_planner_loop(
+        db,
+        tenant=tenant,
+        channel=draft.channel,
+        mode=planner_mode,
+        inbound_text=inbound_text,
+        operator_note=instructions,
+    )
+    if not result.generated_text:
+        logger.info(
+            "Redo planner produced no draft draft_id=%s tenant_id=%s channel=%s status=%s reason=%s",
+            draft.id,
+            tenant.id,
+            draft.channel,
+            result.status,
+            result.escalation_reason,
+        )
+        return None
+
+    generated_text = _with_quoted_original(result.generated_text, inbound_text)
+
+    status_value, _scheduled_send_at = _planner_draft_status_and_schedule(
+        db, channel=draft.channel, planner_mode=planner_mode, ai_settings=ai_settings, result=result
+    )
+    # A redo never auto-sends, regardless of what the fresh checker pass would have allowed.
+    if status_value == "pending_auto_send":
+        status_value = "pending"
+
+    draft.generated_text = generated_text
+    draft.template_id = result.template_id
+    draft.status = status_value
+    draft.scheduled_send_at = None
+    draft.agent_run_id = result.run_id
+    draft.checker_feedback = result.checker_feedback
     return draft
 
 

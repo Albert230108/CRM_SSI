@@ -13,12 +13,16 @@ from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import ai_auto_draft_service
+from app.services import ai_draft_notification_service
 
 logger = logging.getLogger(__name__)
 
 _CODE_PATTERN = re.compile(r"\b(YES|NO)[-\s]?(\d+)\b", re.IGNORECASE)
 # A reply that is nothing but a yes/no, which carries no draft id of its own.
 _BARE_PATTERN = re.compile(r"^\s*(yes|no|y|n)\s*[.!]*\s*$", re.IGNORECASE)
+# REDO carries free-text instructions after the code, so it's matched against the whole
+# message rather than as a \b-delimited token like YES/NO.
+_REDO_PATTERN = re.compile(r"^\s*REDO[-\s]?(\d+)\s*[:\-]?\s*(.*)$", re.IGNORECASE | re.DOTALL)
 
 PENDING_STATUSES = ("pending", "needs_review")
 
@@ -121,6 +125,47 @@ def _already_handled_reply(db: Session, draft: AiAutoDraft) -> str:
     )
 
 
+def _handle_redo_reply(
+    db: Session,
+    *,
+    user: User,
+    redo_match: re.Match[str],
+    outcome,
+) -> AdminReplyOutcome:
+    """Handles a "REDO-{id} <instructions>" reply: regenerates the draft in place and
+    re-broadcasts it to every opted-in admin under the same code.
+    """
+    draft_id = int(redo_match.group(1))
+    instructions = redo_match.group(2).strip()
+    if not instructions:
+        return outcome(f"Please include what to change, e.g. REDO-{draft_id} make it shorter.")
+
+    approval_request = (
+        db.query(AiAutoDraftApprovalRequest)
+        .filter(AiAutoDraftApprovalRequest.ai_auto_draft_id == draft_id, AiAutoDraftApprovalRequest.user_id == user.id)
+        .first()
+    )
+    if approval_request is None:
+        return outcome(f"No pending draft notification found for that code (REDO-{draft_id}).")
+
+    draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
+    if draft is None:
+        return outcome("That draft no longer exists.")
+
+    if draft.status not in PENDING_STATUSES:
+        return outcome(_already_handled_reply(db, draft))
+
+    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, instructions)
+    if regenerated is None:
+        return outcome(
+            f"⚠️ Redo failed — planner produced no draft. Try again or reply NO-{draft_id} to dismiss."
+        )
+
+    db.commit()
+    ai_draft_notification_service.notify_admins_of_redraft(db, regenerated)
+    return outcome("🔄 Redoing draft with your notes…")
+
+
 def try_handle_admin_reply(
     db: Session,
     *,
@@ -167,6 +212,10 @@ def try_handle_admin_reply(
 
     def outcome(reply_text: str) -> AdminReplyOutcome:
         return AdminReplyOutcome(reply_text=reply_text, reply_to_phone=reply_to_phone)
+
+    redo_match = _REDO_PATTERN.match(text or "")
+    if redo_match:
+        return _handle_redo_reply(db, user=user, redo_match=redo_match, outcome=outcome)
 
     match = _CODE_PATTERN.search(text or "")
     bare_match = None if match else _BARE_PATTERN.match(text or "")
