@@ -483,3 +483,42 @@ def test_profile_history_channel_filter_is_applied(db_session, fake_gemini):
     )
 
     assert "across WhatsApp" in fake.calls[0]["prompt"]
+
+
+def test_planner_receives_inbound_email_body_in_prompt(db_session, fake_gemini):
+    """Regression: the planner must see the latest inbound email in its ctx_inbound block."""
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+    inbound_message = "Can I check in early at 2pm instead of 3pm?"
+    fake = fake_gemini([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text=inbound_message
+    )
+
+    # The inbound message must appear in the planner prompt for decision-making context.
+    planner_prompt = fake.calls[0]["prompt"]
+    assert inbound_message in planner_prompt
+
+
+def test_checker_receives_inbound_email_body_in_prompt(db_session, fake_gemini):
+    """Regression: the checker must see the latest inbound email in its ctx_inbound block."""
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+    inbound_message = "Can I check in early at 2pm instead of 3pm?"
+    fake = fake_gemini([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text=inbound_message
+    )
+
+    # The inbound message must appear in the checker prompt to validate the draft against context.
+    # fake.calls[2] is the checker call (0=planner, 1=drafter, 2=checker)
+    checker_prompt = fake.calls[2]["prompt"]
+    assert inbound_message in checker_prompt
