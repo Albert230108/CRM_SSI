@@ -159,6 +159,7 @@ def _load_tenant_conversations(db: Session, tenant_id: int, tenant_email_fallbac
         .join(TenantConversationLink, TenantConversationLink.conversation_id == Conversation.id)
         .filter(TenantConversationLink.tenant_id == tenant_id)
         .filter(TenantConversationLink.unlinked_at.is_(None))
+        .filter(TenantConversationLink.is_visible.is_(True))
         .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.id.desc())
         .all()
     )

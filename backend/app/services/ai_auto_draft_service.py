@@ -29,10 +29,11 @@ def _auto_send_delay_seconds(db: Session) -> int:
 
 
 def _with_quoted_original(generated_text: str, original_text: str | None) -> str:
-    """Prefix a WhatsApp auto-draft with the inbound message it's answering.
+    """Prefix an auto-draft with the inbound message it's answering.
 
-    WhatsApp sends in this stack have no native quoted-reply support, so the only way to show
-    what the AI is responding to is textually, inside the draft itself.
+    Neither the WhatsApp send path nor email replies carry a distinct "message being answered"
+    marker once the draft leaves this service, so the only way to show that link is textually,
+    inside the draft itself.
     """
     original = (original_text or "").strip()
     if not original:
@@ -71,9 +72,7 @@ def _generate_draft_via_planner(
         )
         return None
 
-    generated_text = result.generated_text
-    if trigger.channel == "whatsapp":
-        generated_text = _with_quoted_original(generated_text, inbound_text)
+    generated_text = _with_quoted_original(result.generated_text, inbound_text)
 
     # "auto-draft" mode always lands the draft in the AI Drafts tab for a human to send - it must
     # never be scheduled to auto-send, regardless of the tenant's auto_send toggles.
@@ -146,9 +145,8 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
         blocks=blocks,
         agent_instructions=agent_instructions,
     )
-    if trigger.channel == "whatsapp":
-        inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, "whatsapp")
-        generated_text = _with_quoted_original(generated_text, inbound_text)
+    inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel)
+    generated_text = _with_quoted_original(generated_text, inbound_text)
 
     auto_send_enabled = ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp
     draft = AiAutoDraft(

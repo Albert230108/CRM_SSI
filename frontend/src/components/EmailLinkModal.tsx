@@ -19,6 +19,16 @@ type TenantEmailLink = {
   updated_at: string
 }
 
+type SharedThread = {
+  conversation_id: number
+  tenant_id: number
+  is_visible: boolean
+  subject: string | null
+  matched_email: string | null
+  last_message_at: string | null
+  shared_with_other_tenants: boolean
+}
+
 type EmailLinkModalProps = {
   open: boolean
   tenantId: number
@@ -83,6 +93,10 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
   const [saving, setSaving] = useState(false)
   const [confirmingUnlinkId, setConfirmingUnlinkId] = useState<number | null>(null)
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
+  const [sharedThreads, setSharedThreads] = useState<SharedThread[]>([])
+  const [autoAdd, setAutoAdd] = useState(true)
+  const [autoAddSaving, setAutoAddSaving] = useState(false)
+  const [togglingConversationId, setTogglingConversationId] = useState<number | null>(null)
   const drag = useDraggablePosition()
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
@@ -119,6 +133,37 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
     }
 
     loadLinks()
+
+    const loadSharedThreads = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/shared-threads`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        })
+        if (!response.ok) return
+        const data: SharedThread[] = await readJsonSafely(response)
+        setSharedThreads(Array.isArray(data) ? data : [])
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+      }
+    }
+    loadSharedThreads()
+
+    const loadAutoAdd = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/auto-add-threads`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        })
+        if (!response.ok) return
+        const data: { tenant_id: number; auto_add: boolean } = await readJsonSafely(response)
+        if (typeof data?.auto_add === 'boolean') setAutoAdd(data.auto_add)
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+      }
+    }
+    loadAutoAdd()
+
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tenantId, token])
@@ -139,6 +184,68 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
     if (!response.ok) return
     const data: TenantEmailLink[] = await readJsonSafely(response)
     setLinks(Array.isArray(data) ? data : [])
+  }
+
+  const reloadSharedThreads = async () => {
+    const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/shared-threads`, { headers: authHeaders })
+    if (!response.ok) return
+    const data: SharedThread[] = await readJsonSafely(response)
+    setSharedThreads(Array.isArray(data) ? data : [])
+  }
+
+  const handleToggleAutoAdd = async () => {
+    if (autoAddSaving) return
+    const next = !autoAdd
+    try {
+      setAutoAddSaving(true)
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/auto-add-threads`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeaders ?? {}),
+        },
+        body: JSON.stringify({ auto_add: next }),
+      })
+      if (!response.ok) {
+        const payload = await readJsonSafely(response)
+        throw new Error(getErrorMessage(payload, 'Failed to update auto-add preference'))
+      }
+      setAutoAdd(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update auto-add preference')
+    } finally {
+      setAutoAddSaving(false)
+    }
+  }
+
+  const handleToggleThreadVisibility = async (thread: SharedThread) => {
+    if (togglingConversationId) return
+    const nextVisible = !thread.is_visible
+    try {
+      setTogglingConversationId(thread.conversation_id)
+      setError('')
+      const response = await fetch(
+        `${API_BASE_URL}/api/tenants/${tenantId}/conversations/${thread.conversation_id}/visibility`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authHeaders ?? {}),
+          },
+          body: JSON.stringify({ is_visible: nextVisible }),
+        }
+      )
+      if (!response.ok) {
+        const payload = await readJsonSafely(response)
+        throw new Error(getErrorMessage(payload, 'Failed to update thread visibility'))
+      }
+      await reloadSharedThreads()
+      onChanged?.()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update thread visibility')
+    } finally {
+      setTogglingConversationId(null)
+    }
   }
 
   const submitEmail = async (confirmConflict: boolean) => {
@@ -240,6 +347,26 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
           {error ? <p className="mb-3 text-sm text-rose-500">{error}</p> : null}
 
+          <div className="mb-3 flex items-center justify-between rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2.5">
+            <div>
+              <p className="text-sm font-medium text-gray-900">Auto-add new shared threads</p>
+              <p className="text-xs text-gray-500">
+                When on, new Gmail threads matched to this tenant's shared emails show up automatically.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={autoAddSaving}
+              onClick={handleToggleAutoAdd}
+              aria-pressed={autoAdd}
+              className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition disabled:opacity-50 ${
+                autoAdd ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
+              }`}
+            >
+              {autoAdd ? 'On' : 'Off'}
+            </button>
+          </div>
+
           <div className="space-y-2">
             {linksLoading ? <p className="text-sm text-gray-500">Loading linked emails...</p> : null}
             {!linksLoading && activeLinks.length === 0 ? (
@@ -247,6 +374,9 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
             ) : null}
             {activeLinks.map((link) => {
               const statusLabel = syncStatusLabel(link.beds24_sync_status)
+              const sharedThreadsForEmail = sharedThreads.filter(
+                (thread) => thread.shared_with_other_tenants && thread.matched_email === link.email
+              )
               return (
                 <div key={link.id} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
                   <p className="truncate text-sm font-semibold text-gray-900">{link.email}</p>
@@ -282,9 +412,73 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
                       </button>
                     )}
                   </div>
+
+                  {sharedThreadsForEmail.length > 0 ? (
+                    <div className="mt-2.5 space-y-1.5 border-t border-emerald-200 pt-2">
+                      <p className="text-xs font-medium text-gray-600">
+                        This email is shared with another tenant — choose which threads show here:
+                      </p>
+                      {sharedThreadsForEmail.map((thread) => (
+                        <div
+                          key={thread.conversation_id}
+                          className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5"
+                        >
+                          <span className="truncate text-xs text-gray-700">{thread.subject || '(no subject)'}</span>
+                          <button
+                            type="button"
+                            disabled={togglingConversationId === thread.conversation_id}
+                            onClick={() => handleToggleThreadVisibility(thread)}
+                            className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold transition disabled:opacity-50 ${
+                              thread.is_visible ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
+                            }`}
+                          >
+                            {thread.is_visible ? 'Visible' : 'Hidden'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               )
             })}
+
+            {(() => {
+              // Threads shared via the tenant's primary Beds24 email (not one of the manually
+              // linked secondary addresses above) still need a place to toggle visibility --
+              // otherwise a shared primary-email thread would never surface a control at all.
+              const unmatchedSharedThreads = sharedThreads.filter(
+                (thread) => thread.shared_with_other_tenants && !activeLinks.some((link) => link.email === thread.matched_email)
+              )
+              if (unmatchedSharedThreads.length === 0) return null
+              return (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <p className="text-xs font-medium text-gray-700">Other shared threads (primary email)</p>
+                  <div className="mt-1.5 space-y-1.5">
+                    {unmatchedSharedThreads.map((thread) => (
+                      <div
+                        key={thread.conversation_id}
+                        className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5"
+                      >
+                        <span className="truncate text-xs text-gray-700">
+                          {thread.subject || '(no subject)'}
+                          {thread.matched_email ? ` — ${thread.matched_email}` : ''}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={togglingConversationId === thread.conversation_id}
+                          onClick={() => handleToggleThreadVisibility(thread)}
+                          className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold transition disabled:opacity-50 ${
+                            thread.is_visible ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
+                          }`}
+                        >
+                          {thread.is_visible ? 'Visible' : 'Hidden'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
 
             <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2.5">
               <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Add email</p>

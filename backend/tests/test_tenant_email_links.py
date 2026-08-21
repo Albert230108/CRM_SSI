@@ -251,6 +251,67 @@ def test_relink_same_email_same_tenant_is_idempotent(user_client, db_session):
     assert len(links) == 1
 
 
+def test_get_auto_add_threads_defaults_true(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-auto-add-default")
+    response = user_client.get(f"/api/tenants/{tenant.id}/auto-add-threads")
+    assert response.status_code == 200
+    assert response.json() == {"tenant_id": tenant.id, "auto_add": True}
+
+
+def test_auto_add_threads_toggle_persists(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-auto-add-toggle")
+
+    response = user_client.patch(f"/api/tenants/{tenant.id}/auto-add-threads", json={"auto_add": False})
+    assert response.status_code == 200
+    assert response.json() == {"tenant_id": tenant.id, "auto_add": False}
+
+    db_session.refresh(tenant)
+    assert tenant.auto_add_shared_email_threads is False
+
+
+def test_shared_threads_lists_visibility_and_shared_flag(user_client, db_session):
+    tenant_a = create_tenant(db_session, name="Tenant A", booking_id="B-shared-threads-a")
+    tenant_b = create_tenant(db_session, name="Tenant B", booking_id="B-shared-threads-b")
+
+    conversation_id = _make_conversation_matched_to_email(db_session, tenant_a.id, "shared@example.com", "thread-list-1")
+    from app.models.tenant_conversation_link import TenantConversationLink
+
+    db_session.add(TenantConversationLink(tenant_id=tenant_b.id, conversation_id=conversation_id, matched_email="shared@example.com"))
+    db_session.commit()
+
+    response = user_client.get(f"/api/tenants/{tenant_a.id}/shared-threads")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["conversation_id"] == conversation_id
+    assert body[0]["is_visible"] is True
+    assert body[0]["shared_with_other_tenants"] is True
+
+
+def test_update_conversation_visibility_hides_and_reveals_thread(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-visibility-toggle")
+    conversation_id = _make_conversation_matched_to_email(db_session, tenant.id, "guest@example.com", "thread-visibility-1")
+
+    hide_response = user_client.patch(
+        f"/api/tenants/{tenant.id}/conversations/{conversation_id}/visibility", json={"is_visible": False}
+    )
+    assert hide_response.status_code == 200
+    assert hide_response.json()["is_visible"] is False
+    assert hide_response.json()["shared_with_other_tenants"] is False
+
+    show_response = user_client.patch(
+        f"/api/tenants/{tenant.id}/conversations/{conversation_id}/visibility", json={"is_visible": True}
+    )
+    assert show_response.status_code == 200
+    assert show_response.json()["is_visible"] is True
+
+
+def test_update_conversation_visibility_404_for_unlinked_conversation(user_client, db_session):
+    tenant = create_tenant(db_session, booking_id="B-visibility-404")
+    response = user_client.patch(f"/api/tenants/{tenant.id}/conversations/999999/visibility", json={"is_visible": False})
+    assert response.status_code == 404
+
+
 def test_permissions_require_authentication(client_without_webhook_secret, db_session):
     from app.core.dependencies import get_current_user as real_get_current_user
 

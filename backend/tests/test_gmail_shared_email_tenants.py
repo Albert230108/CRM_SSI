@@ -241,3 +241,68 @@ def test_tenant_matched_when_primary_email_has_different_case():
         cleanup_db.commit()
     finally:
         cleanup_db.close()
+
+
+def test_new_link_respects_tenant_auto_add_preference():
+    """A tenant with auto_add_shared_email_threads=False must still get linked to a newly
+    matched conversation (it keeps access/history), but the link starts hidden (is_visible=False)
+    until manually toggled on -- versus the default (auto_add=True) tenant, whose link stays
+    visible like before this preference existed.
+    """
+    shared_email = "auto-add-pref@example.com"
+
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(email_address="auto-add-account@example.com", is_active=True)
+        default_tenant = Tenant(name="Default Tenant", email=shared_email, booking_id="booking-auto-add-default")
+        opted_out_tenant = Tenant(
+            name="Opted Out Tenant",
+            email=shared_email,
+            booking_id="booking-auto-add-off",
+            auto_add_shared_email_threads=False,
+        )
+        setup_db.add_all([account, default_tenant, opted_out_tenant])
+        setup_db.commit()
+        account_id = account.id
+        default_tenant_id = default_tenant.id
+        opted_out_tenant_id = opted_out_tenant.id
+    finally:
+        setup_db.close()
+
+    thread = {"id": "thread-auto-add-pref", "messages": [_message("auto-add-msg-1", shared_email)]}
+    db = SessionLocal()
+    try:
+        account_obj = db.get(GmailAccount, account_id)
+        conversation = gmail_integration._upsert_thread(db, account_obj, thread)
+        assert conversation is not None
+        db.commit()
+        conversation_id = conversation.id
+
+        default_link = (
+            db.query(TenantConversationLink)
+            .filter(TenantConversationLink.tenant_id == default_tenant_id, TenantConversationLink.conversation_id == conversation_id)
+            .first()
+        )
+        opted_out_link = (
+            db.query(TenantConversationLink)
+            .filter(TenantConversationLink.tenant_id == opted_out_tenant_id, TenantConversationLink.conversation_id == conversation_id)
+            .first()
+        )
+        assert default_link is not None and default_link.is_visible is True
+        assert opted_out_link is not None and opted_out_link.is_visible is False
+    finally:
+        db.close()
+
+    cleanup_db = SessionLocal()
+    try:
+        cleanup_db.query(Notification).filter(
+            Notification.tenant_id.in_([default_tenant_id, opted_out_tenant_id])
+        ).delete(synchronize_session=False)
+        cleanup_db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete()
+        cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
+        cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(Tenant).filter(Tenant.id.in_([default_tenant_id, opted_out_tenant_id])).delete(synchronize_session=False)
+        cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+        cleanup_db.commit()
+    finally:
+        cleanup_db.close()

@@ -280,9 +280,8 @@ def test_whatsapp_draft_unquoted_when_no_inbound_message(db_session, monkeypatch
     assert draft.generated_text == "Auto draft."
 
 
-def test_email_draft_is_never_quoted(db_session, monkeypatch):
-    """Quoting is WhatsApp-only: an email auto-draft must stay exactly the generated text,
-    even when there is an inbound message the planner resolved as context."""
+def test_email_draft_also_quotes_the_inbound_message(db_session, monkeypatch):
+    """Quoting applies to email auto-drafts too, not just WhatsApp."""
     tenant, template = _setup(db_session)
     monkeypatch.setattr(
         ai_agent_orchestrator.gemini_client,
@@ -297,7 +296,7 @@ def test_email_draft_is_never_quoted(db_session, monkeypatch):
     draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
     db_session.commit()
 
-    assert draft.generated_text == "Auto draft."
+    assert draft.generated_text == 'Replying to: "Is the room still available?"\n\nAuto draft.'
 
 
 def test_manual_ai_plan_endpoint_returns_the_final_text(user_client, db_session, monkeypatch):

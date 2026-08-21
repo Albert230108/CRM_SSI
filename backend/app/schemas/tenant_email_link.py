@@ -40,3 +40,27 @@ class TenantEmailLinkDeleteRead(BaseModel):
     link: TenantEmailLinkRead
     deleted_conversations: int = 0
     shared_conversations_unlinked: int = 0
+
+
+class TenantConversationVisibilityUpdate(BaseModel):
+    is_visible: bool
+
+
+class TenantConversationVisibilityRead(BaseModel):
+    conversation_id: int
+    tenant_id: int
+    is_visible: bool
+    subject: str | None = None
+    matched_email: str | None = None
+    last_message_at: datetime | None = None
+    shared_with_other_tenants: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TenantAutoAddThreadsUpdate(BaseModel):
+    auto_add: bool
+
+
+class TenantAutoAddThreadsRead(BaseModel):
+    tenant_id: int
+    auto_add: bool

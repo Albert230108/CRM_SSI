@@ -8,10 +8,21 @@ from sqlalchemy.orm import Session
 
 from app.api.gmail_integration import sync_email_across_gmail_accounts
 from app.core.dependencies import get_current_user, get_db
+from app.models.gmail_integration import Conversation
 from app.models.tenant import Tenant
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
-from app.schemas.tenant_email_link import TenantEmailLinkCreate, TenantEmailLinkCreateRead, TenantEmailLinkDeleteRead, TenantEmailLinkRead
+from app.schemas.tenant_email_link import (
+    TenantAutoAddThreadsRead,
+    TenantAutoAddThreadsUpdate,
+    TenantConversationVisibilityRead,
+    TenantConversationVisibilityUpdate,
+    TenantEmailLinkCreate,
+    TenantEmailLinkCreateRead,
+    TenantEmailLinkDeleteRead,
+    TenantEmailLinkRead,
+)
 from app.services.background_jobs import start_job
 from app.services.beds24_client import BEDS24_EMAIL_INFO_CODE, add_booking_info_item, delete_booking_info_item, get_booking_info_items
 from app.services.tenant_conversation_links import remove_conversations_for_matched_email
@@ -215,3 +226,142 @@ async def delete_tenant_email_link(
         deleted_conversations=deleted_conversations,
         shared_conversations_unlinked=shared_conversations_unlinked,
     )
+
+
+@router.get("/tenants/{tenant_id}/shared-threads", response_model=list[TenantConversationVisibilityRead])
+def get_tenant_shared_threads(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[TenantConversationVisibilityRead]:
+    """List every Gmail conversation linked to this tenant, with whether it's also linked to
+    another tenant -- the "Manage emails" UI only needs to offer the visibility toggle for
+    threads that are genuinely shared, since a tenant's own unshared threads have nothing to
+    hide from.
+    """
+    _get_tenant_or_404(db, tenant_id)
+    links = (
+        db.query(TenantConversationLink)
+        .filter(TenantConversationLink.tenant_id == tenant_id, TenantConversationLink.unlinked_at.is_(None))
+        .all()
+    )
+    if not links:
+        return []
+
+    conversation_ids = [link.conversation_id for link in links]
+    conversations_by_id = {
+        conversation.id: conversation
+        for conversation in db.query(Conversation).filter(Conversation.id.in_(conversation_ids)).all()
+    }
+    shared_conversation_ids = {
+        row[0]
+        for row in db.query(TenantConversationLink.conversation_id)
+        .filter(
+            TenantConversationLink.conversation_id.in_(conversation_ids),
+            TenantConversationLink.tenant_id != tenant_id,
+            TenantConversationLink.unlinked_at.is_(None),
+        )
+        .distinct()
+        .all()
+    }
+
+    result = []
+    for link in links:
+        conversation = conversations_by_id.get(link.conversation_id)
+        result.append(
+            TenantConversationVisibilityRead(
+                conversation_id=link.conversation_id,
+                tenant_id=tenant_id,
+                is_visible=link.is_visible,
+                subject=conversation.subject if conversation else None,
+                matched_email=link.matched_email,
+                last_message_at=conversation.last_message_at if conversation else None,
+                shared_with_other_tenants=link.conversation_id in shared_conversation_ids,
+            )
+        )
+    return result
+
+
+@router.patch("/tenants/{tenant_id}/conversations/{conversation_id}/visibility", response_model=TenantConversationVisibilityRead)
+def update_tenant_conversation_visibility(
+    tenant_id: int,
+    conversation_id: int,
+    payload: TenantConversationVisibilityUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantConversationVisibilityRead:
+    _get_tenant_or_404(db, tenant_id)
+    link = (
+        db.query(TenantConversationLink)
+        .filter(
+            TenantConversationLink.tenant_id == tenant_id,
+            TenantConversationLink.conversation_id == conversation_id,
+            TenantConversationLink.unlinked_at.is_(None),
+        )
+        .first()
+    )
+    if link is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active thread link not found")
+
+    link.is_visible = payload.is_visible
+    db.commit()
+    db.refresh(link)
+
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    shared_with_other_tenants = (
+        db.query(TenantConversationLink)
+        .filter(
+            TenantConversationLink.conversation_id == conversation_id,
+            TenantConversationLink.tenant_id != tenant_id,
+            TenantConversationLink.unlinked_at.is_(None),
+        )
+        .first()
+        is not None
+    )
+
+    logger.info(
+        "tenant_conversation_visibility_updated tenant_id=%s conversation_id=%s is_visible=%s actor_user_id=%s",
+        tenant_id,
+        conversation_id,
+        link.is_visible,
+        current_user.id,
+    )
+    return TenantConversationVisibilityRead(
+        conversation_id=conversation_id,
+        tenant_id=tenant_id,
+        is_visible=link.is_visible,
+        subject=conversation.subject if conversation else None,
+        matched_email=link.matched_email,
+        last_message_at=conversation.last_message_at if conversation else None,
+        shared_with_other_tenants=shared_with_other_tenants,
+    )
+
+
+@router.get("/tenants/{tenant_id}/auto-add-threads", response_model=TenantAutoAddThreadsRead)
+def get_tenant_auto_add_threads(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantAutoAddThreadsRead:
+    tenant = _get_tenant_or_404(db, tenant_id)
+    return TenantAutoAddThreadsRead(tenant_id=tenant_id, auto_add=tenant.auto_add_shared_email_threads)
+
+
+@router.patch("/tenants/{tenant_id}/auto-add-threads", response_model=TenantAutoAddThreadsRead)
+def update_tenant_auto_add_threads(
+    tenant_id: int,
+    payload: TenantAutoAddThreadsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantAutoAddThreadsRead:
+    tenant = _get_tenant_or_404(db, tenant_id)
+    tenant.auto_add_shared_email_threads = payload.auto_add
+    db.commit()
+
+    logger.info(
+        "tenant_auto_add_threads_updated tenant_id=%s auto_add=%s actor_user_id=%s",
+        tenant_id,
+        payload.auto_add,
+        current_user.id,
+    )
+    return TenantAutoAddThreadsRead(tenant_id=tenant_id, auto_add=tenant.auto_add_shared_email_threads)

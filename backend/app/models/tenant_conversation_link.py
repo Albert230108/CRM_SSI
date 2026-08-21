@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, func, text
 
 from app.database import Base
 
@@ -23,6 +23,7 @@ class TenantConversationLink(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False, index=True)
     source = Column(String(50), nullable=False, server_default="email_match")
     matched_email = Column(String(255), nullable=True)
+    is_visible = Column(Boolean, nullable=False, server_default=text("true"))
     unlinked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

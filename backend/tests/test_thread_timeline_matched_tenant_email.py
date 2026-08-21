@@ -65,3 +65,21 @@ def test_matched_tenant_email_falls_back_to_tenant_email_when_unrecorded(db_sess
     thread_item = next(item for item in timeline.items if item.type == "email_thread")
 
     assert thread_item.matched_tenant_email == "primary@example.com"
+
+
+def test_hidden_thread_is_excluded_from_timeline(db_session):
+    tenant = Tenant(name="Tenant C", email="shared@example.com", booking_id="B-matched-email-3")
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+
+    conversation = _make_conversation(db_session, tenant, "thread-matched-3")
+    db_session.add(
+        TenantConversationLink(tenant_id=tenant.id, conversation_id=conversation.id, matched_email="shared@example.com", is_visible=False)
+    )
+    db_session.commit()
+
+    timeline = build_tenant_thread_timeline(db_session, tenant.id)
+    thread_items = [item for item in timeline.items if item.type == "email_thread"]
+
+    assert thread_items == []

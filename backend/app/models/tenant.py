@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, JSON, Numeric, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, Numeric, String, Text, func, text
 
 from app.database import Base
 
@@ -40,6 +40,7 @@ class Tenant(Base):
     booking_status = Column(String(100), nullable=True)
     name = Column(String(255), nullable=False, index=True)
     responsible_comm = Column(Text, nullable=True)
+    auto_add_shared_email_threads = Column(Boolean, nullable=False, server_default=text("true"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

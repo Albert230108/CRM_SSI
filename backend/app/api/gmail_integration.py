@@ -346,7 +346,7 @@ def _find_tenant_for_message(db: Session, headers: dict[str, str], account_email
 
 
 def _ensure_tenant_conversation_link(
-    db: Session, tenant_id: int, conversation_id: int, matched_email: str | None, source: str = "email_match"
+    db: Session, tenant_id: int, conversation_id: int, matched_email: str | None, source: str = "email_match", is_visible: bool = True
 ) -> None:
     existing = (
         db.query(TenantConversationLink)
@@ -367,6 +367,7 @@ def _ensure_tenant_conversation_link(
                     conversation_id=conversation_id,
                     matched_email=matched_email,
                     source=source,
+                    is_visible=is_visible,
                 )
             )
     except IntegrityError:
@@ -546,7 +547,11 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
 
     for matched_tenant, matched_address in matched_tenants.values():
         _ensure_tenant_conversation_link(
-            db, matched_tenant.id, conversation.id, matched_email=matched_address
+            db,
+            matched_tenant.id,
+            conversation.id,
+            matched_email=matched_address,
+            is_visible=matched_tenant.auto_add_shared_email_threads,
         )
 
     return conversation
@@ -1095,6 +1100,7 @@ def get_tenant_conversations(tenant_id: int, db: Session = Depends(get_db), curr
         .join(TenantConversationLink, TenantConversationLink.conversation_id == Conversation.id)
         .filter(TenantConversationLink.tenant_id == tenant_id)
         .filter(TenantConversationLink.unlinked_at.is_(None))
+        .filter(TenantConversationLink.is_visible.is_(True))
         .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.id.desc())
         .all()
     )
