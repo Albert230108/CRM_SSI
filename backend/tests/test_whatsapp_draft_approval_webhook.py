@@ -256,9 +256,7 @@ def test_lid_reply_matches_when_canonical_identity_is_the_crm_number(client, db_
     assert draft.status == "sent"
 
 
-def test_bare_yes_resolves_single_outstanding_draft(client, db_session, monkeypatch):
-    # Replying just "yes" is the natural thing to type; with exactly one draft waiting it is
-    # unambiguous and must work rather than being silently ignored.
+def test_bare_yes_never_sends_single_outstanding_draft(client, db_session, monkeypatch):
     tenant = _create_tenant(db_session, booking_id="B-approval-webhook-bare")
     user = _create_user(db_session, email="approval-webhook-bare@example.com", phone="+31611118888")
     db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
@@ -266,19 +264,20 @@ def test_bare_yes_resolves_single_outstanding_draft(client, db_session, monkeypa
     draft = _create_draft(db_session, tenant)
     _create_approval_request(db_session, draft, user)
 
-    def fake_send_scheduled_draft(db, draft_arg):
-        draft_arg.status = "sent"
-        return True
+    def fail_if_called(db, draft_arg):
+        raise AssertionError("bare yes must not send a draft")
 
-    monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
+    monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fail_if_called)
     sent_calls = _patch_confirmation_send(monkeypatch)
 
     response = _post_reply(client, sender=user.phone, message="yes")
 
     assert response.status_code == 200
-    assert "Sent to" in sent_calls[0][1]
+    assert sent_calls[0][0] == user.phone
+    assert f"YES-{draft.id}" in sent_calls[0][1]
+    assert "Please reply" in sent_calls[0][1]
     db_session.refresh(draft)
-    assert draft.status == "sent"
+    assert draft.status == "pending"
 
 
 def test_bare_yes_with_multiple_outstanding_asks_for_disambiguation(client, db_session, monkeypatch):
