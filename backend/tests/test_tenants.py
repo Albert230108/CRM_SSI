@@ -9,6 +9,8 @@ from app.models.notification import Notification, NotificationReadState
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
+from app.models.tenant_email_address import TenantEmailAddress
+from app.models.tenant_notes_history import TenantNotesHistory
 from app.models.user import User
 
 
@@ -63,6 +65,45 @@ def test_delete_tenant_with_endpoints_deletes_endpoints_too(client, db_session):
     assert response.status_code == 204
     assert db_session.query(Tenant).filter(Tenant.id == tenant.id).first() is None
     assert db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == tenant.id).count() == 0
+
+
+def test_delete_tenant_with_notes_history_succeeds(client, db_session):
+    tenant = create_tenant(db_session, name='Tenant Delete D', booking_id='DEL-D')
+    db_session.add(TenantNotesHistory(tenant_id=tenant.id, old_value=None, new_value='note', source='manual'))
+    db_session.commit()
+
+    response = client.delete(f'/api/tenants/{tenant.id}')
+
+    assert response.status_code == 204
+    assert db_session.query(Tenant).filter(Tenant.id == tenant.id).first() is None
+    assert db_session.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant.id).count() == 0
+
+
+def test_delete_tenant_with_email_address_succeeds(client, db_session):
+    tenant = create_tenant(db_session, name='Tenant Delete E', booking_id='DEL-E')
+    db_session.add(TenantEmailAddress(tenant_id=tenant.id, email='tenant-e@example.com'))
+    db_session.commit()
+
+    response = client.delete(f'/api/tenants/{tenant.id}')
+
+    assert response.status_code == 204
+    assert db_session.query(Tenant).filter(Tenant.id == tenant.id).first() is None
+    assert db_session.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant.id).count() == 0
+
+
+def test_delete_tenant_with_conversation_link_succeeds(client, db_session):
+    tenant = create_tenant(db_session, name='Tenant Delete F', booking_id='DEL-F')
+    conversation = Conversation(provider='gmail', provider_thread_id='thread-delete-f-1', subject='Question')
+    db_session.add(conversation)
+    db_session.flush()
+    db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=conversation.id, source='email_match'))
+    db_session.commit()
+
+    response = client.delete(f'/api/tenants/{tenant.id}')
+
+    assert response.status_code == 204
+    assert db_session.query(Tenant).filter(Tenant.id == tenant.id).first() is None
+    assert db_session.query(TenantConversationLink).filter(TenantConversationLink.tenant_id == tenant.id).count() == 0
 
 
 def test_delete_nonexistent_tenant_returns_404(client):

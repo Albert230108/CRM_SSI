@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_db
 from app.models.finance import Finance as FinanceRecord
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.tenant_phone_alias import TenantPhoneAlias
 from app.models.user import User
 from app.schemas.finance import Finance as FinanceSchema, FinanceItem
@@ -649,11 +650,14 @@ def delete_tenant(
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    delete_tenant_channel_endpoints(db, tenant_id)
-    db.query(TenantPhoneAlias).filter(TenantPhoneAlias.tenant_id == tenant_id).delete(synchronize_session=False)
-    db.flush()
-    db.delete(tenant)
     try:
+        delete_tenant_channel_endpoints(db, tenant_id)
+        db.query(TenantPhoneAlias).filter(TenantPhoneAlias.tenant_id == tenant_id).delete(synchronize_session=False)
+        db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant_id).delete(synchronize_session=False)
+        db.query(TenantConversationLink).filter(TenantConversationLink.tenant_id == tenant_id).delete(synchronize_session=False)
+        db.query(TenantNotesHistory).filter(TenantNotesHistory.tenant_id == tenant_id).delete(synchronize_session=False)
+        db.flush()
+        db.delete(tenant)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
