@@ -254,13 +254,15 @@ def try_handle_admin_reply(
         decision = match.group(1).upper()
         draft_id = int(match.group(2))
     else:
-        # A bare "yes"/"no" is the natural thing to type, so resolve it against whatever this
-        # user still has outstanding rather than ignoring it. Only safe when exactly one draft
-        # is waiting; otherwise the reply is genuinely ambiguous and must be disambiguated.
+        # Never send a draft from a bare "yes". Require the explicit draft code so an approval
+        # cannot target the wrong draft as the number of outstanding drafts changes.
         decision = "YES" if bare_match.group(1).lower().startswith("y") else "NO"
         outstanding = _outstanding_requests_for_user(db, user.id)
         if not outstanding:
             return outcome("You have no AI drafts waiting for approval right now.")
+        if decision == "YES" and len(outstanding) == 1:
+            draft_id = outstanding[0][0].ai_auto_draft_id
+            return outcome(f"Please reply YES-{draft_id} to send that draft.")
         if len(outstanding) > 1:
             listed = "\n".join(
                 f"- {decision}-{request.ai_auto_draft_id} ({tenant_name})"
