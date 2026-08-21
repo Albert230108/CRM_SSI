@@ -500,3 +500,59 @@ def test_inbound_whatsapp_fallback_enabled_still_requires_chat_for_migrated_endp
     assert payload["routing_strategy"] == "missing_chat_identity"
     assert payload["unresolved_reason"] == "missing_chat_identity"
     assert payload["tenant_id"] is None
+
+def test_webhook_token_resolution_reports_matched_endpoint_id(db_session):
+    tenant = create_tenant(db_session, name="Tenant Endpoint ID Webhook Token", booking_id="B-endpoint-id-1")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="client-endpoint-id",
+        webhook_token="route-token-endpoint-id",
+        signing_secret="secret-endpoint-id",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    result = resolve_tenant_for_inbound_channel(db_session, {"webhook_token": "route-token-endpoint-id"}, {}, {})
+    assert result.matched_endpoint_id == endpoint.id
+
+
+def test_exact_chat_endpoint_resolution_reports_matched_endpoint_id(db_session):
+    tenant = create_tenant(db_session, name="Tenant Endpoint ID Exact", booking_id="B-endpoint-id-2")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="31900000099@c.us",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    result = resolve_tenant_for_inbound_channel(
+        db_session,
+        {
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "external_chat_namespace": "31900000099@c.us",
+        },
+        {},
+        {},
+    )
+    assert result.strategy == "exact_chat_endpoint"
+    assert result.matched_endpoint_id == endpoint.id
+
+
+def test_explicit_tenant_id_resolution_reports_no_matched_endpoint_id(db_session):
+    # Regression guard: strategies that don't go through a chat endpoint lookup (explicit
+    # tenant_id, phone matching, legacy inference) must leave matched_endpoint_id None rather
+    # than pointing at an arbitrary row - only the endpoint-lookup strategies should set it.
+    tenant = create_tenant(db_session, name="Tenant Endpoint ID Explicit", booking_id="B-endpoint-id-3")
+
+    result = resolve_tenant_for_inbound_channel(db_session, {"tenant_id": tenant.id}, {}, {})
+    assert result.tenant is not None
+    assert result.strategy == "explicit_tenant_id"
+    assert result.matched_endpoint_id is None

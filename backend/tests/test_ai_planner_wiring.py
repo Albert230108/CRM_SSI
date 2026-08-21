@@ -354,6 +354,18 @@ def _step_prompt(db_session, run_id, stage):
     return step.prompt
 
 
+def _step_prompts(db_session, run_id, stage):
+    from app.models.ai_agent_run import AiAgentRunStep
+
+    steps = (
+        db_session.query(AiAgentRunStep)
+        .filter(AiAgentRunStep.run_id == run_id, AiAgentRunStep.stage == stage)
+        .order_by(AiAgentRunStep.step_index)
+        .all()
+    )
+    return [step.prompt for step in steps]
+
+
 def test_planner_prompt_reproduces_the_built_in_wording_by_default(db_session, monkeypatch):
     """Regression: a profile with no prompt_blocks overrides must produce exactly the wording
     that used to be hardcoded, so this change is a no-op for every profile created before it."""
@@ -481,3 +493,123 @@ def test_resolve_drafter_context_returns_built_in_defaults_with_no_pinned_profil
 
     assert blocks == ai_prompt_blocks.DEFAULTS_BY_ROLE["drafter"]
     assert instructions is None
+
+
+def _brain_section(db_session, path, title, content):
+    from app.models.brain_section import BrainSection
+
+    section = BrainSection(path=path, slug=path.rsplit(".", 1)[-1], title=title, content=content)
+    db_session.add(section)
+    db_session.commit()
+    db_session.refresh(section)
+    return section
+
+
+def _link_template_brain_section(db_session, template, section):
+    from app.models.ai_reply_template import AiReplyTemplateBrainSection
+
+    db_session.add(AiReplyTemplateBrainSection(template_id=template.id, brain_section_id=section.id))
+    db_session.commit()
+
+
+def test_checker_sees_the_same_resolved_sections_the_drafter_used(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual")
+    section = _brain_section(db_session, "policies.checkin", "Check-in", "Check-in is at 3pm.")
+    _link_template_brain_section(db_session, template, section)
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}]),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="When can I check in?"
+    )
+    db_session.commit()
+
+    drafter_prompt = _step_prompt(db_session, result.run_id, "drafter")
+    checker_prompt = _step_prompt(db_session, result.run_id, "checker")
+    assert "Check-in is at 3pm." in drafter_prompt
+    assert "Check-in is at 3pm." in checker_prompt
+    assert "## Knowledge Base Index" in checker_prompt
+    assert "policies.checkin" in checker_prompt
+
+
+def test_checker_without_include_brain_index_gets_no_brain_content(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual")
+    section = _brain_section(db_session, "policies.checkin", "Check-in", "Check-in is at 3pm.")
+    _link_template_brain_section(db_session, template, section)
+    checker_profile = db_session.query(AiAgentProfile).filter(AiAgentProfile.role == "checker").one()
+    checker_profile.include_brain_index = False
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}]),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="When can I check in?"
+    )
+    db_session.commit()
+
+    checker_prompt = _step_prompt(db_session, result.run_id, "checker")
+    assert "Check-in is at 3pm." not in checker_prompt
+    assert "## Knowledge Base Index" not in checker_prompt
+
+
+def test_checker_requesting_a_missing_section_triggers_a_redraft_with_it_included(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual", max_redraft_attempts=1)
+    missing = _brain_section(db_session, "policies.pets", "Pets", "Pets are not allowed.")
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate(
+            [
+                _plan(template.id),
+                "Draft one.",
+                {"passed": False, "feedback": "Missing pet policy.", "extra_brain_sections": ["policies.pets"]},
+                "Draft two, no pets allowed.",
+                {"passed": True, "feedback": ""},
+            ]
+        ),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Can I bring my dog?"
+    )
+    db_session.commit()
+
+    drafter_prompts = _step_prompts(db_session, result.run_id, "drafter")
+    checker_prompts = _step_prompts(db_session, result.run_id, "checker")
+    assert len(drafter_prompts) == 2
+    assert len(checker_prompts) == 2
+    assert "Pets are not allowed." not in drafter_prompts[0]
+    assert "Pets are not allowed." not in checker_prompts[0]
+    assert "Pets are not allowed." in drafter_prompts[1]
+    assert "Pets are not allowed." in checker_prompts[1]
+    assert result.checker_passed is True
+
+
+def test_checker_approving_while_naming_extra_sections_does_not_force_a_redraft(db_session, monkeypatch):
+    tenant, template = _setup(db_session, planner_mode="manual", max_redraft_attempts=1)
+    _brain_section(db_session, "policies.pets", "Pets", "Pets are not allowed.")
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate(
+            [
+                _plan(template.id),
+                "Draft one.",
+                {"passed": True, "feedback": "", "extra_brain_sections": ["policies.pets"]},
+            ]
+        ),
+    )
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Can I bring my dog?"
+    )
+    db_session.commit()
+
+    assert result.checker_passed is True
+    assert result.attempts == 1

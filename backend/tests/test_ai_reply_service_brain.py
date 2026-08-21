@@ -129,6 +129,33 @@ def test_extra_paths_append_after_the_templates_own_sections(db_session):
     assert prompt.count("## Wifi") == 1
 
 
+def test_pre_resolved_knowledge_content_skips_db_resolution(db_session, monkeypatch):
+    """A caller (e.g. the planner loop's redraft attempts) can pass already-resolved text to
+    avoid re-rendering the same brain paths from the DB on every attempt."""
+    tenant = _tenant(db_session)
+    section = _section(db_session, "wifi", "Wifi", "Network SSI, password guest2026.")
+    template = _template(db_session)
+    template.brain_links = [AiReplyTemplateBrainSection(brain_section_id=section.id, position=0)]
+    db_session.commit()
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("_build_knowledge_base should not be called when knowledge_content is supplied")
+
+    monkeypatch.setattr(ai_reply_service, "_build_knowledge_base", _boom)
+
+    prompt = ai_reply_service.assemble_prompt(
+        db_session,
+        tenant=tenant,
+        template=template,
+        channel="email",
+        rough_draft=None,
+        knowledge_content="Pre-resolved override text.",
+    )
+
+    assert "1b. Knowledge Base\nPre-resolved override text." in prompt
+    assert "Network SSI" not in prompt
+
+
 def test_unknown_extra_path_is_ignored(db_session):
     tenant = _tenant(db_session)
     template = _template(db_session)

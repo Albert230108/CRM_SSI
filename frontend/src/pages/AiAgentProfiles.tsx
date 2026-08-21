@@ -374,9 +374,9 @@ export default function AiAgentProfiles() {
               <label className="flex items-center gap-2 text-sm text-gray-700">
                 <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} /> Internal notes
               </label>
-              {form.role === 'planner' ? (
+              {form.role === 'planner' || form.role === 'checker' ? (
                 <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} /> Brain index
+                  <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} /> {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
                 </label>
               ) : null}
             </div>

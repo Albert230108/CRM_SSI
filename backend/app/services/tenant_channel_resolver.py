@@ -20,6 +20,11 @@ class RoutingResult:
     matched_value: str | None = None
     matched_field: str | None = None
     unresolved_reason: str | None = None
+    # The specific TenantChannelEndpoint (the manual chat link) this inbound message matched,
+    # when the strategy resolved through one. Threaded onto the auto-draft trigger so a later
+    # auto-send knows exactly which chat to reply in, instead of guessing when a tenant has
+    # more than one active WhatsApp endpoint.
+    matched_endpoint_id: int | None = None
 
 
 def _first_non_empty(*values: Any) -> str | None:
@@ -220,7 +225,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
             tenant = db.query(Tenant).filter(Tenant.id == endpoint.tenant_id).first()
             if tenant:
                 logger.info("Resolved inbound tenant by webhook_token tenant_id=%s", tenant.id)
-                return RoutingResult(tenant=tenant, strategy="webhook_token", matched_value=endpoint.webhook_token, matched_field="webhook_token")
+                return RoutingResult(tenant=tenant, strategy="webhook_token", matched_value=endpoint.webhook_token, matched_field="webhook_token", matched_endpoint_id=endpoint.id)
 
     logger.info("Inbound WhatsApp normalized phone candidates: %s", inbound_phone_candidates)
     if provider and external_account_id:
@@ -248,6 +253,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                         strategy="exact_chat_endpoint",
                         matched_value=chat_identity,
                         matched_field="provider+external_account_id+external_chat_namespace",
+                        matched_endpoint_id=endpoint.id,
                     )
 
             # Fallback: Try normalized chat identity matching (handles @lid vs @c.us variants).
@@ -275,6 +281,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                         strategy="normalized_chat_endpoint",
                         matched_value=chat_identity,
                         matched_field="provider+external_account_id+normalized_chat_id",
+                        matched_endpoint_id=normalized_endpoint.id,
                     )
 
             if active_endpoints_for_account:
@@ -313,6 +320,7 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
                                     strategy="account_identity_fallback",
                                     matched_value=external_account_id,
                                     matched_field="provider+external_account_id",
+                                    matched_endpoint_id=endpoint.id,
                                 )
 
                         logger.warning(

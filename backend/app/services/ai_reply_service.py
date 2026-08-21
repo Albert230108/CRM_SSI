@@ -210,6 +210,7 @@ def assemble_prompt(
     channel: str,
     rough_draft: str | None,
     extra_brain_section_paths: list[str] | None = None,
+    knowledge_content: str | None = None,
     previous_draft: str | None = None,
     reviewer_feedback: str | None = None,
     blocks: dict[str, str] | None = None,
@@ -248,7 +249,11 @@ def assemble_prompt(
     if sections_content:
         parts.append(ai_prompt_blocks.join(text["sections"], sections_content))
 
-    knowledge_content = _build_knowledge_base(db, template, tenant, extra_brain_section_paths)
+    knowledge_content = (
+        knowledge_content
+        if knowledge_content is not None
+        else _build_knowledge_base(db, template, tenant, extra_brain_section_paths)
+    )
     if knowledge_content:
         parts.append(ai_prompt_blocks.join(text["knowledge"], knowledge_content))
 

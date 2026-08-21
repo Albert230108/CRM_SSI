@@ -80,3 +80,46 @@ def test_backfill_payload_does_not_register_a_trigger(client, db_session):
     assert response.status_code == 200
 
     assert db_session.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.tenant_id == tenant.id).count() == 0
+
+
+def test_live_inbound_with_ambiguous_endpoints_still_captures_matched_endpoint(client, db_session):
+    # Regression for the production bug: a tenant with two active WhatsApp endpoints on the
+    # same account used to leave AiAutoDraftTrigger.whatsapp_endpoint_id NULL, so the later
+    # auto-send couldn't tell which chat to reply in and silently failed. The inbound webhook
+    # matches one specific endpoint by exact chat identity - that id must now reach the trigger.
+    tenant = _create_tenant(db_session, booking_id="B-ai-trigger-ambiguous")
+    _create_whatsapp_endpoint(db_session, tenant.id, external_account_id="edi-crm-whatsapp")
+    matched_endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="99988877766@c.us",
+        is_active=True,
+    )
+    db_session.add(matched_endpoint)
+    db_session.add(TenantAiSettings(tenant_id=tenant.id, auto_draft_whatsapp=True))
+    db_session.commit()
+
+    response = client.post(
+        "/webhooks/whatsapp",
+        json={
+            "direction": "inbound",
+            "provider": "whatsapp-service",
+            "external_account_id": "edi-crm-whatsapp",
+            "sender": "+99988877766",
+            "sender_normalized": "99988877766",
+            "whatsapp_chat_id": "99988877766@c.us",
+            "whatsapp_message_id": "msg-ai-trigger-ambiguous",
+            "timestamp": 1710000000,
+            "message": "Live inbound message on the second chat",
+        },
+    )
+    assert response.status_code == 200
+
+    trigger = (
+        db_session.query(AiAutoDraftTrigger)
+        .filter(AiAutoDraftTrigger.tenant_id == tenant.id)
+        .one()
+    )
+    assert trigger.whatsapp_endpoint_id == matched_endpoint.id

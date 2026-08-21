@@ -675,7 +675,7 @@ def _process_whatsapp_message(
         thread_ref=str(inbound_communication.id),
     )
     if not is_history_payload:
-        register_inbound_message(db, tenant=tenant, channel="whatsapp")
+        register_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
         register_notification_for_whatsapp(db)
     db.commit()
     _persist_inbound_attachments(db, payload=payload, tenant_id=tenant.id, communication_id=inbound_communication.id)

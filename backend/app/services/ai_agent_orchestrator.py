@@ -69,6 +69,7 @@ CHECKER_SCHEMA = {
         "passed": {"type": "boolean"},
         "feedback": {"type": "string"},
         "issues": {"type": "array", "items": {"type": "string"}},
+        "extra_brain_sections": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["passed", "feedback"],
 }
@@ -354,6 +355,8 @@ def _build_checker_prompt(
     draft: str,
     inbound_text: str | None,
     plan_instructions: str,
+    knowledge: str,
+    brain_index: str,
 ) -> str:
     """Assemble the checker prompt from this profile's editable blocks. See _build_planner_prompt."""
     text = ai_prompt_blocks.resolve_blocks(profile, CHECKER_ROLE)
@@ -373,6 +376,15 @@ def _build_checker_prompt(
 
     if plan_instructions.strip():
         parts.append(ai_prompt_blocks.join(text["plan_instructions"], plan_instructions.strip()))
+
+    if profile.include_brain_index:
+        # The resolved sections the draft was actually written from, so the checker reviews
+        # against the same policy text the drafter saw, plus the cheap title/path index so it
+        # can name anything else it needs - full text is only ever resolved for named paths.
+        if knowledge.strip():
+            parts.append(ai_prompt_blocks.join(text["knowledge"], knowledge.strip()))
+        if brain_index.strip():
+            parts.append(ai_prompt_blocks.join(text["brain_index"], brain_index.strip()))
 
     parts += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text, blocks=text)
     parts.append(ai_prompt_blocks.join(text["draft"], draft))
@@ -481,6 +493,16 @@ def run_planner_loop(
     # The operator's own words lead, so a manual run never has its intent overwritten by the plan.
     drafter_instruction = "\n\n".join(part for part in [(operator_note or "").strip(), plan_instructions] if part)
 
+    # Titles/paths only, no section bodies - cheap enough to give the checker every run so it
+    # can name a missing section instead of guessing. Computed once; doesn't change mid-run.
+    brain_index_text = (
+        brain_service.build_brain_index(db)
+        if checker_profile is not None and checker_profile.include_brain_index
+        else ""
+    )
+    knowledge_content = ""
+    resolved_for: tuple[str, ...] | None = None
+
     # One initial draft plus the configured number of redrafts. `or` is deliberately avoided:
     # max_redraft_attempts=0 means "no redrafts", not "unset".
     redrafts = checker_profile.max_redraft_attempts if checker_profile is not None else None
@@ -492,6 +514,11 @@ def run_planner_loop(
 
     for attempt in range(1, max_attempts + 1):
         run.attempts = attempt
+        # Re-resolve only when the checker (or the planner) has added a path since the last
+        # attempt - otherwise every redraft would re-render the same sections from the DB.
+        if resolved_for != tuple(extra_sections):
+            knowledge_content = ai_reply_service._build_knowledge_base(db, template, tenant, extra_sections)
+            resolved_for = tuple(extra_sections)
         draft_prompt = ai_reply_service.assemble_prompt(
             db,
             tenant=tenant,
@@ -499,6 +526,7 @@ def run_planner_loop(
             channel=channel,
             rough_draft=drafter_instruction or None,
             extra_brain_section_paths=extra_sections,
+            knowledge_content=knowledge_content,
             previous_draft=rejected_draft,
             reviewer_feedback=feedback,
             blocks=drafter_blocks,
@@ -529,6 +557,8 @@ def run_planner_loop(
             draft=draft_text,
             inbound_text=inbound_text,
             plan_instructions=drafter_instruction,
+            knowledge=knowledge_content,
+            brain_index=brain_index_text,
         )
         try:
             checker_result = gemini_client.generate(
@@ -562,6 +592,11 @@ def run_planner_loop(
             feedback = None
             rejected_draft = None
             break
+        # A rejection may name sections it needed but didn't have; the next attempt's drafter
+        # and checker prompts both pick these up via the resolved-set check above.
+        for path in [str(p) for p in (verdict.get("extra_brain_sections") or [])]:
+            if path and path not in extra_sections:
+                extra_sections.append(path)
         feedback = str(verdict.get("feedback") or "").strip() or "The reviewer rejected the draft."
         issues = [str(issue).strip() for issue in (verdict.get("issues") or []) if str(issue).strip()]
         if issues:

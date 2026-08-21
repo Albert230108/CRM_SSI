@@ -182,6 +182,31 @@ CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
         default="## What The Draft Was Asked To Do",
     ),
     PromptBlock(
+        key="knowledge",
+        label="Knowledge base heading",
+        help=(
+            "Sits above the resolved brain sections the draft was actually written from, so the "
+            "checker reviews against the same policy text the drafter saw. Only emitted when "
+            "'Include brain index' is on and there is at least one resolved section."
+        ),
+        default="## Knowledge Base (used to write this draft)",
+    ),
+    PromptBlock(
+        key="brain_index",
+        label="Knowledge base index framing",
+        help=(
+            "Sits above the brain's table of contents (titles/paths only, no section text). Lets the "
+            "checker name a section it needs that the draft didn't already include. Only emitted "
+            "when 'Include brain index' is on."
+        ),
+        default=(
+            "## Knowledge Base Index\n"
+            "If properly reviewing this draft requires information from a section not already shown "
+            "above under \"Knowledge Base\", list its path in `extra_brain_sections`. The reply will "
+            "be rewritten with that section included and you will review it again."
+        ),
+    ),
+    PromptBlock(
         key="draft",
         label="Draft heading",
         help="Sits above the draft reply being reviewed.",
@@ -191,14 +216,16 @@ CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
         key="output",
         label="Output instruction",
         help=(
-            "Emitted last. Reword freely, but keep the field names - passed, feedback, issues - "
-            "because the response schema in code enforces them."
+            "Emitted last. Reword freely, but keep the field names - passed, feedback, issues, "
+            "extra_brain_sections - because the response schema in code enforces them."
         ),
         default=(
             "## Output\n"
             "Return JSON only. Set `passed` to true only if the draft can be sent as-is. When it "
             "cannot, `feedback` must be specific enough for the writer to fix it in one pass, and "
-            "`issues` should list each problem separately."
+            "`issues` should list each problem separately. Set `extra_brain_sections` to the paths of "
+            "any additional knowledge-base sections you need to properly review this draft - leave it "
+            "empty if the sections already shown are enough."
         ),
     ),
 ) + _context_blocks(include_inbound=True)
