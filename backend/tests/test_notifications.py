@@ -9,6 +9,7 @@ from app.models.gmail_integration import Conversation, ConversationMessage, Gmai
 from app.models.notification import Notification
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
 
 USER_ONE = User(id=101, email="notif-user-one@example.com", password_hash="x", is_active=True, is_admin=False)
@@ -16,10 +17,14 @@ USER_TWO = User(id=102, email="notif-user-two@example.com", password_hash="x", i
 
 
 def create_tenant(db_session, name="Tenant A", booking_id="B-notif-1", email=None):
-    tenant = Tenant(name=name, booking_id=booking_id, email=email)
+    tenant = Tenant(name=name, booking_id=booking_id)
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
+    if email:
+        # Inbound mail reaches a tenant only via an active CRM_EMAIL link.
+        db_session.add(TenantEmailAddress(tenant_id=tenant.id, email=email, is_active=True))
+        db_session.commit()
     return tenant
 
 

@@ -100,7 +100,9 @@ def test_full_booking_detail_still_updates_fields(db_session):
 
     assert tenant.first_name == "John"
     assert tenant.last_name == "Smith"
-    assert tenant.email == "john@example.com"
+    # Beds24's main email is deliberately not synced onto the tenant any more: CRM_EMAIL
+    # links are the only authoritative address source.
+    assert tenant.email == "jane@example.com"
     assert tenant.phone == "+9876543210"
     assert tenant.mobile == "+9876543211"
     assert tenant.city == "Porto"

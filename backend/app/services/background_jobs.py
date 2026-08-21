@@ -51,12 +51,16 @@ def start_job(kind: str, awaitable: Awaitable[Any], job_id: str | None = None) -
             result = await awaitable
             _jobs[job_id]["result"] = result
             _jobs[job_id]["status"] = "done"
+        except asyncio.CancelledError:
+            # cancel_job has already recorded the terminal state; don't overwrite it.
+            raise
         except Exception as exc:
             logger.exception("Background job %s (%s) failed", job_id, kind)
             _jobs[job_id]["error"] = str(exc)
             _jobs[job_id]["status"] = "error"
         finally:
-            _jobs[job_id]["completed_at"] = datetime.now(timezone.utc)
+            if _jobs.get(job_id, {}).get("completed_at") is None:
+                _jobs[job_id]["completed_at"] = datetime.now(timezone.utc)
 
     task = asyncio.create_task(_run())
     _jobs[job_id]["_task"] = task
@@ -81,6 +85,29 @@ def update_job_progress(job_id: str, **fields: Any) -> None:
         return
     progress = job.setdefault("progress", {})
     progress.update(fields)
+
+
+def cancel_job(job_id: str) -> bool:
+    """Cancel a running job and mark it terminal, returning whether anything was cancelled.
+
+    An operator's escape hatch for a job whose work has wedged: without this, a job stuck in
+    `running` keeps `find_running_job` returning its id forever, so the single-flight guard
+    refuses every subsequent run until the process restarts.
+
+    Note the cancellation only reaches the coroutine, not work already handed to a thread -
+    a blocked thread keeps running until its own timeout fires. What this guarantees is that
+    the *job* stops being reported as in-flight.
+    """
+    job = _jobs.get(job_id)
+    if job is None or job.get("status") != "running":
+        return False
+    task = job.get("_task")
+    if task is not None:
+        task.cancel()
+    job["status"] = "cancelled"
+    job["error"] = "Cancelled by operator"
+    job["completed_at"] = datetime.now(timezone.utc)
+    return True
 
 
 def find_running_job(kind: str) -> str | None:

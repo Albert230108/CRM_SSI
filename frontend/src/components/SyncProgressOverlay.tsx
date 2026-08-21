@@ -4,7 +4,13 @@ import type { SyncProgress } from '../store/syncStore'
 type SyncProgressOverlayProps = {
   active: boolean
   progress?: SyncProgress
+  onDismiss?: () => void
 }
+
+// How long a run may go without finishing before the overlay offers a way out. A normal full
+// sync is ~2 minutes; past this the run is far more likely wedged than slow, and the overlay
+// covers the entire viewport, so there has to be an escape that isn't "reload the tab".
+const STUCK_AFTER_MS = 5 * 60 * 1000
 
 const COMPLETE_HOLD_MS = 500
 
@@ -27,10 +33,20 @@ function computePercent(progress: SyncProgress | undefined): number {
   return Math.min(99, completedSlices + withinSlice)
 }
 
-export default function SyncProgressOverlay({ active, progress }: SyncProgressOverlayProps) {
+export default function SyncProgressOverlay({ active, progress, onDismiss }: SyncProgressOverlayProps) {
   const [visible, setVisible] = useState(false)
   const [displayPercent, setDisplayPercent] = useState(0)
+  const [stuck, setStuck] = useState(false)
   const wasActiveRef = useRef(false)
+
+  useEffect(() => {
+    if (!active) {
+      setStuck(false)
+      return
+    }
+    const timeoutId = window.setTimeout(() => setStuck(true), STUCK_AFTER_MS)
+    return () => window.clearTimeout(timeoutId)
+  }, [active])
 
   useEffect(() => {
     if (active && !wasActiveRef.current) {
@@ -78,6 +94,18 @@ export default function SyncProgressOverlay({ active, progress }: SyncProgressOv
         <p className="text-sm text-gray-600">
           Step {progress.phase_index} of {progress.phases_total}
         </p>
+      ) : null}
+      {stuck && onDismiss ? (
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-sm text-gray-600">This sync is taking longer than expected.</p>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Stop waiting
+          </button>
+        </div>
       ) : null}
     </div>
   )

@@ -1093,7 +1093,10 @@ async def _import_tenant(
     first_name = (data.first_name or "").strip() or None
     last_name = (data.last_name or "").strip() or None
     name = (data.name or "").strip() or booking_id
-    email = (data.email or "").strip() or None
+    # Parsed but deliberately not persisted onto the tenant: CRM_EMAIL links are the only
+    # authoritative email source now, and an operator adds one explicitly via "Manage emails".
+    # Kept in the request contract so the import preview can keep showing the Beds24 address.
+    email = (data.email or "").strip() or None  # noqa: F841 - see comment above
     phone = (data.phone or "").strip() or None
     mobile = (data.mobile or "").strip() or None
     check_in = (data.check_in or "").strip() or None
@@ -1111,7 +1114,6 @@ async def _import_tenant(
             booking_id=booking_id,
             first_name=first_name,
             last_name=last_name,
-            email=email,
             phone=phone,
             mobile=mobile,
             check_in=check_in,
@@ -1157,7 +1159,6 @@ async def _import_tenant(
         tenant = existing
         tenant.first_name = first_name
         tenant.last_name = last_name
-        tenant.email = email
         tenant.phone = phone
         tenant.mobile = mobile
         tenant.check_in = check_in

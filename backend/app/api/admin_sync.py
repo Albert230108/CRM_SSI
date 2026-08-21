@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
+import asyncio
 import logging
 import uuid
 
@@ -19,9 +20,9 @@ from app.database import SessionLocal
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.services.background_jobs import find_running_job, get_job, start_job, update_job_progress
+from app.services.background_jobs import cancel_job, find_running_job, get_job, start_job, update_job_progress
 from app.services.beds24_client import get_bookings
-from app.services.tenant_email_change import handle_tenant_email_change
+from app.services.tenant_email_sync import sync_tenant_email_addresses_from_beds24
 from app.services.tenant_notes_history import SOURCE_BEDS24_SYNC_ALL, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services.thread_timeline_service import build_tenant_thread_timeline
@@ -42,9 +43,15 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     fields = _extract_guest_fields(booking)
     tenant.first_name = fields.get("first_name") or tenant.first_name
     tenant.last_name = fields.get("last_name") or tenant.last_name
-    old_email = tenant.email
-    tenant.email = fields.get("email") or tenant.email
-    handle_tenant_email_change(db, tenant, old_email, tenant.email)
+    # Beds24's main guest email is no longer authoritative: it is whatever address the OTA
+    # forwarded, which is frequently an alias that never reaches the guest. The CRM_EMAIL info
+    # items are the single source of truth now, so this sync reconciles those instead of
+    # touching tenant.email. get_bookings() already requested includeInfoItems=true, so this
+    # costs no extra round-trip. Previously only the live webhook did this, which meant a
+    # CRM_EMAIL added in Beds24 never reached the CRM outside a booking event.
+    info_items = booking.get("infoItems")
+    if isinstance(info_items, list):
+        sync_tenant_email_addresses_from_beds24(db, tenant, info_items)
     tenant.phone = fields.get("phone") or tenant.phone
     tenant.mobile = fields.get("mobile") or tenant.mobile
     tenant.check_in = fields.get("check_in") or tenant.check_in
@@ -106,14 +113,25 @@ async def _sync_beds24(db: Session, changed_by_user_id: int | None = None, tenan
     return updated
 
 
-async def _sync_emails(db: Session, tenant_ids: list[int] | None = None) -> int:
+async def _sync_emails(
+    db: Session,
+    tenant_ids: list[int] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
     accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
     imported = 0
-    for account in accounts:
+    if progress is not None:
+        progress(0, len(accounts))
+    for index, account in enumerate(accounts, start=1):
         # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
         # per account) with no yield points of its own. Looping it inline here would monopolize
         # this worker's event loop for every other concurrent request until all accounts finished.
         imported += await run_in_threadpool(_sync_gmail_account, db, account, tenant_ids)
+        # Reported per account rather than per thread: this is the longest phase by far, and
+        # without any counter the overlay sat on a frozen bar for its whole duration, which is
+        # indistinguishable from being stuck.
+        if progress is not None:
+            progress(index, len(accounts))
     return imported
 
 
@@ -241,6 +259,10 @@ class SyncAllRequest(BaseModel):
 
 
 SYNC_ALL_JOB_KIND = "admin_sync_all"
+# Generous: a real full run is ~2 minutes, dominated by Gmail. This is a backstop against a
+# wedged connection, not a performance budget.
+EMAIL_PHASE_TIMEOUT_SECONDS = 900
+
 _SYNC_ALL_PHASES = ("beds24", "email", "whatsapp", "threads")
 
 
@@ -285,7 +307,19 @@ async def _run_sync_all(job_id: str, user_id: int | None, tenant_ids: list[int] 
 
         _phase("email")
         try:
-            summary["emails_imported"] = await _sync_emails(db, tenant_ids)
+            # Bounded so a Gmail call that stalls past its own socket timeout can still never
+            # strand the whole job in "running" - the remaining phases run and the job reaches
+            # a terminal state, with the timeout recorded as a partial failure.
+            summary["emails_imported"] = await asyncio.wait_for(
+                _sync_emails(db, tenant_ids, progress=lambda current, total: _phase("email", current, total)),
+                timeout=EMAIL_PHASE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            db.rollback()
+            logger.warning("sync-all email phase timed out after %ss job_id=%s", EMAIL_PHASE_TIMEOUT_SECONDS, job_id)
+            summary["partial_failures"].append(
+                {"step": "email", "error": f"Timed out after {EMAIL_PHASE_TIMEOUT_SECONDS}s"}
+            )
         except Exception as exc:
             db.rollback()
             logger.exception("sync-all email phase failed job_id=%s", job_id)
@@ -361,6 +395,20 @@ async def sync_all(
         job_id=job_id,
     )
     return {"job_id": job_id, "status": "running", "already_running": False}
+
+
+@router.post("/sync-all/{job_id}/cancel")
+async def cancel_sync_all(job_id: str, current_user: User = Depends(get_current_admin_user)) -> dict[str, Any]:
+    """Stop reporting a wedged sync-all as in-flight so a new run can be started.
+
+    The underlying Gmail work may still be winding down in its worker thread; this releases
+    the single-flight guard and the client's blocking progress overlay.
+    """
+    if get_job(job_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
+    cancelled = cancel_job(job_id)
+    logger.info("sync-all cancel requested job_id=%s cancelled=%s user_id=%s", job_id, cancelled, getattr(current_user, "id", None))
+    return {"job_id": job_id, "cancelled": cancelled}
 
 
 @router.get("/sync-all/{job_id}")

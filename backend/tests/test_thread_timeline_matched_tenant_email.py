@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.thread_timeline_service import build_tenant_thread_timeline
 
@@ -51,11 +52,14 @@ def test_matched_tenant_email_surfaces_from_conversation_link(db_session):
     assert thread_item.matched_tenant_email == "secondary@example.com"
 
 
-def test_matched_tenant_email_falls_back_to_tenant_email_when_unrecorded(db_session):
-    tenant = Tenant(name="Tenant B", email="primary@example.com", booking_id="B-matched-email-2")
+def test_matched_tenant_email_falls_back_to_linked_email_when_unrecorded(db_session):
+    """A link with no recorded matched_email displays the tenant's CRM_EMAIL address."""
+    tenant = Tenant(name="Tenant B", booking_id="B-matched-email-2")
     db_session.add(tenant)
     db_session.commit()
     db_session.refresh(tenant)
+    db_session.add(TenantEmailAddress(tenant_id=tenant.id, email="primary@example.com", is_active=True))
+    db_session.commit()
 
     conversation = _make_conversation(db_session, tenant, "thread-matched-2")
     db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=conversation.id, matched_email=None))

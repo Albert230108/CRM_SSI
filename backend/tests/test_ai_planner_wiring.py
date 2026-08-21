@@ -357,7 +357,7 @@ def test_ai_plan_maps_gemini_failure_to_502(user_client, db_session, monkeypatch
     assert response.status_code == 502
 
 
-def test_runs_api_exposes_the_planner_decision(client, db_session, monkeypatch):
+def test_runs_api_exposes_the_planner_decision(non_admin_client, db_session, monkeypatch):
     tenant, template = _setup(db_session, planner_mode="manual")
     monkeypatch.setattr(
         ai_agent_orchestrator.gemini_client,
@@ -369,12 +369,12 @@ def test_runs_api_exposes_the_planner_decision(client, db_session, monkeypatch):
     )
     db_session.commit()
 
-    listing = client.get("/api/ai-agent-runs").json()
+    listing = non_admin_client.get("/api/ai-agent-runs").json()
     assert [run["id"] for run in listing] == [result.run_id]
     assert listing[0]["tenant_name"] == "Wired Tenant"
     assert listing[0]["final_template_name"] == "Late check-in"
 
-    detail = client.get(f"/api/ai-agent-runs/{result.run_id}").json()
+    detail = non_admin_client.get(f"/api/ai-agent-runs/{result.run_id}").json()
     assert [step["stage"] for step in detail["steps"]] == ["planner", "drafter", "checker"]
     assert detail["steps"][0]["parsed"]["reasoning"] == "Guest asked about arrival."
     assert detail["final_text"] == "Draft."
@@ -382,7 +382,7 @@ def test_runs_api_exposes_the_planner_decision(client, db_session, monkeypatch):
     assert detail["template_names"] == {str(template.id): "Late check-in"}
 
 
-def test_runs_api_resolves_names_for_rejected_alternatives(client, db_session, monkeypatch):
+def test_runs_api_resolves_names_for_rejected_alternatives(non_admin_client, db_session, monkeypatch):
     """Regression: the planner log used to show only raw template ids, never names."""
     tenant, template = _setup(db_session, planner_mode="manual")
     other_template = AiReplyTemplate(
@@ -408,14 +408,14 @@ def test_runs_api_resolves_names_for_rejected_alternatives(client, db_session, m
     )
     db_session.commit()
 
-    detail = client.get(f"/api/ai-agent-runs/{result.run_id}").json()
+    detail = non_admin_client.get(f"/api/ai-agent-runs/{result.run_id}").json()
     assert detail["template_names"] == {
         str(template.id): "Late check-in",
         str(other_template.id): "Early check-in",
     }
 
 
-def test_runs_api_filters_by_status(client, db_session):
+def test_runs_api_filters_by_status(non_admin_client, db_session):
     tenant = Tenant(name="Filter Tenant", booking_id="B-filter-1")
     db_session.add(tenant)
     db_session.commit()
@@ -423,8 +423,8 @@ def test_runs_api_filters_by_status(client, db_session):
     db_session.add(AiAgentRun(tenant_id=tenant.id, channel="email", mode="auto", status="needs_review"))
     db_session.commit()
 
-    assert len(client.get("/api/ai-agent-runs?status=needs_review").json()) == 1
-    assert len(client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}").json()) == 2
+    assert len(non_admin_client.get("/api/ai-agent-runs?status=needs_review").json()) == 1
+    assert len(non_admin_client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}").json()) == 2
 
 
 def _step_prompt(db_session, run_id, stage):

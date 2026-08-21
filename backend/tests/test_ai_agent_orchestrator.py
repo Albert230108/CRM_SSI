@@ -522,3 +522,49 @@ def test_checker_receives_inbound_email_body_in_prompt(db_session, fake_gemini):
     # fake.calls[2] is the checker call (0=planner, 1=drafter, 2=checker)
     checker_prompt = fake.calls[2]["prompt"]
     assert inbound_message in checker_prompt
+
+
+def test_drafter_receives_inbound_email_body_in_prompt(db_session, fake_gemini):
+    """Regression: the drafter used to get no ctx_inbound block at all.
+
+    With a template that doesn't include history, the guest's message reached the drafter
+    through no route whatsoever, so it wrote the reply having never read the question.
+    """
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    assert not template.include_history, "this test is only meaningful without history"
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+    inbound_message = "Can I check in early at 2pm instead of 3pm?"
+    fake = fake_gemini([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text=inbound_message
+    )
+
+    # fake.calls[1] is the drafter call (0=planner, 1=drafter, 2=checker).
+    assert inbound_message in fake.calls[1]["prompt"]
+
+
+def test_checker_receives_the_template_the_planner_chose(db_session, fake_gemini):
+    """The checker must be able to tell whether the draft followed its template."""
+    tenant = _tenant(db_session)
+    template = _template(db_session, description="Planner-only: pick me for late arrivals.")
+    template.guidelines = "Always confirm the exact arrival time back to the guest."
+    db_session.commit()
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+    fake = fake_gemini([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Arriving late"
+    )
+
+    checker_prompt = fake.calls[2]["prompt"]
+    assert template.name in checker_prompt
+    assert "Always confirm the exact arrival time back to the guest." in checker_prompt
+    assert "You are a helpful host." in checker_prompt  # the template's sections
+    # `description` tells the planner when to *pick* a template; it is not review criteria.
+    assert "Planner-only: pick me for late arrivals." not in checker_prompt

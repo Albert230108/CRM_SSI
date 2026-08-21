@@ -65,7 +65,7 @@ export default function App() {
                     <Route path="/settings/ai-tenants" element={<AiTenantSettings />} />
                     <Route path="/settings/brain" element={<BrainSections />} />
                     <Route path="/settings/ai-agents" element={<AiAgentProfiles />} />
-                    <Route path="/ai-runs" element={<ProtectedRoute adminOnly><AiAgentRuns /></ProtectedRoute>} />
+                    <Route path="/ai-runs" element={<ProtectedRoute><AiAgentRuns /></ProtectedRoute>} />
                     <Route path="/ai-drafts" element={<AiPendingDrafts />} />
                     <Route path="/ai-payload-preview" element={<AiPayloadPreview />} />
                     <Route

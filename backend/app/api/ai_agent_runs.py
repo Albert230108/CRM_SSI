@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin_user, get_db
+from app.core.dependencies import get_current_user, get_db
 from app.models.ai_agent_run import AiAgentRun
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.tenant import Tenant
@@ -43,7 +43,7 @@ def list_agent_runs(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[AiAgentRunRead]:
     query = db.query(AiAgentRun)
     if tenant_id is not None:
@@ -69,7 +69,7 @@ def list_agent_runs(
 def get_agent_run(
     run_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_user),
 ) -> AiAgentRunDetail:
     run = db.query(AiAgentRun).filter(AiAgentRun.id == run_id).first()
     if run is None:

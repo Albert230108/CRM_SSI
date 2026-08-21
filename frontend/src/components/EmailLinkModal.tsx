@@ -26,6 +26,8 @@ type SharedThread = {
   subject: string | null
   matched_email: string | null
   last_message_at: string | null
+  preview_text: string | null
+  last_message_direction: string | null
   shared_with_other_tenants: boolean
 }
 
@@ -80,6 +82,9 @@ async function readJsonSafely(response: Response) {
 function syncStatusLabel(status: string) {
   if (status === 'synced') return { text: 'Synced to Beds24', className: 'text-emerald-700' }
   if (status === 'failed') return { text: 'Beds24 sync failed', className: 'text-rose-600' }
+  // Backfilled links were migrated from the old Beds24 main-email field and have never been
+  // written to the booking, so they need pushing explicitly rather than looking in-progress.
+  if (status === 'not_synced') return { text: 'Not on the Beds24 booking', className: 'text-amber-700' }
   return { text: 'Syncing to Beds24...', className: 'text-gray-500' }
 }
 
@@ -97,6 +102,10 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
   const [autoAdd, setAutoAdd] = useState(true)
   const [autoAddSaving, setAutoAddSaving] = useState(false)
   const [togglingConversationId, setTogglingConversationId] = useState<number | null>(null)
+  // Thread lists collapse by default: a long-staying tenant accumulates dozens of threads,
+  // and the linked-email cards are the primary content of this modal.
+  const [expandedThreadGroups, setExpandedThreadGroups] = useState<Record<string, boolean>>({})
+  const [pushingLinkId, setPushingLinkId] = useState<number | null>(null)
   const drag = useDraggablePosition()
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
@@ -248,6 +257,98 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
     }
   }
 
+  const handlePushToBeds24 = async (link: TenantEmailLink) => {
+    if (pushingLinkId) return
+    try {
+      setPushingLinkId(link.id)
+      setError('')
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/email-links/${link.id}/sync-beds24`, {
+        method: 'POST',
+        headers: authHeaders,
+      })
+      if (!response.ok) {
+        const payload = await readJsonSafely(response)
+        throw new Error(getErrorMessage(payload, 'Failed to push this email to Beds24'))
+      }
+      await reloadLinks()
+      onChanged?.()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to push this email to Beds24')
+    } finally {
+      setPushingLinkId(null)
+    }
+  }
+
+  const toggleThreadGroup = (groupKey: string) => {
+    setExpandedThreadGroups((current) => ({ ...current, [groupKey]: !current[groupKey] }))
+  }
+
+  const renderThreadRow = (thread: SharedThread) => {
+    const directionLabel =
+      thread.last_message_direction === 'outbound'
+        ? 'Sent'
+        : thread.last_message_direction === 'inbound'
+          ? 'Received'
+          : null
+    return (
+      <div key={thread.conversation_id} className="rounded-xl border border-gray-200 bg-white px-2.5 py-1.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium text-gray-800">
+              {thread.subject || '(no subject)'}
+              {thread.shared_with_other_tenants ? (
+                <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                  Shared
+                </span>
+              ) : null}
+            </p>
+            {thread.preview_text ? (
+              <p className="mt-0.5 truncate text-xs text-gray-500">
+                {directionLabel ? <span className="font-medium text-gray-600">{directionLabel}: </span> : null}
+                {thread.preview_text}
+              </p>
+            ) : null}
+            {thread.last_message_at ? (
+              <p className="mt-0.5 text-[11px] text-gray-400">{formatDisplayDate(thread.last_message_at)}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            disabled={togglingConversationId === thread.conversation_id}
+            onClick={() => handleToggleThreadVisibility(thread)}
+            className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold transition disabled:opacity-50 ${
+              thread.is_visible ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
+            }`}
+          >
+            {thread.is_visible ? 'Visible' : 'Hidden'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const renderThreadGroup = (groupKey: string, threads: SharedThread[]) => {
+    if (threads.length === 0) return null
+    const expanded = Boolean(expandedThreadGroups[groupKey])
+    const hiddenCount = threads.filter((thread) => !thread.is_visible).length
+    return (
+      <div className="mt-2.5 border-t border-emerald-200 pt-2">
+        <button
+          type="button"
+          onClick={() => toggleThreadGroup(groupKey)}
+          className="flex w-full items-center justify-between gap-2 text-left"
+        >
+          <span className="text-xs font-medium text-gray-600">
+            {threads.length} {threads.length === 1 ? 'thread' : 'threads'}
+            {hiddenCount > 0 ? ` — ${hiddenCount} hidden` : ''}
+          </span>
+          <span className="text-xs text-gray-400">{expanded ? '▾' : '▸'}</span>
+        </button>
+        {expanded ? <div className="mt-1.5 space-y-1.5">{threads.map(renderThreadRow)}</div> : null}
+      </div>
+    )
+  }
+
   const submitEmail = async (confirmConflict: boolean) => {
     const trimmed = email.trim()
     if (!trimmed) return
@@ -374,9 +475,7 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
             ) : null}
             {activeLinks.map((link) => {
               const statusLabel = syncStatusLabel(link.beds24_sync_status)
-              const sharedThreadsForEmail = sharedThreads.filter(
-                (thread) => thread.shared_with_other_tenants && thread.matched_email === link.email
-              )
+              const threadsForEmail = sharedThreads.filter((thread) => thread.matched_email === link.email)
               return (
                 <div key={link.id} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
                   <p className="truncate text-sm font-semibold text-gray-900">{link.email}</p>
@@ -411,71 +510,35 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
                         Unlink
                       </button>
                     )}
+                    {link.beds24_sync_status !== 'synced' && bookingId ? (
+                      <button
+                        type="button"
+                        disabled={pushingLinkId === link.id}
+                        onClick={() => handlePushToBeds24(link)}
+                        className="rounded-lg border border-cyan-200 bg-white px-2 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                      >
+                        {pushingLinkId === link.id ? 'Pushing...' : 'Push to Beds24'}
+                      </button>
+                    ) : null}
                   </div>
 
-                  {sharedThreadsForEmail.length > 0 ? (
-                    <div className="mt-2.5 space-y-1.5 border-t border-emerald-200 pt-2">
-                      <p className="text-xs font-medium text-gray-600">
-                        This email is shared with another tenant — choose which threads show here:
-                      </p>
-                      {sharedThreadsForEmail.map((thread) => (
-                        <div
-                          key={thread.conversation_id}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5"
-                        >
-                          <span className="truncate text-xs text-gray-700">{thread.subject || '(no subject)'}</span>
-                          <button
-                            type="button"
-                            disabled={togglingConversationId === thread.conversation_id}
-                            onClick={() => handleToggleThreadVisibility(thread)}
-                            className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold transition disabled:opacity-50 ${
-                              thread.is_visible ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
-                            }`}
-                          >
-                            {thread.is_visible ? 'Visible' : 'Hidden'}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
+                  {renderThreadGroup(`email-${link.id}`, threadsForEmail)}
                 </div>
               )
             })}
 
             {(() => {
-              // Threads shared via the tenant's primary Beds24 email (not one of the manually
-              // linked secondary addresses above) still need a place to toggle visibility --
-              // otherwise a shared primary-email thread would never surface a control at all.
-              const unmatchedSharedThreads = sharedThreads.filter(
-                (thread) => thread.shared_with_other_tenants && !activeLinks.some((link) => link.email === thread.matched_email)
+              // Threads whose matched_email is not one of the linked addresses above (e.g. a
+              // thread matched before the address was unlinked) still need a toggle, or there
+              // would be no way to hide them at all.
+              const unmatchedThreads = sharedThreads.filter(
+                (thread) => !activeLinks.some((link) => link.email === thread.matched_email)
               )
-              if (unmatchedSharedThreads.length === 0) return null
+              if (unmatchedThreads.length === 0) return null
               return (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5">
-                  <p className="text-xs font-medium text-gray-700">Other shared threads (primary email)</p>
-                  <div className="mt-1.5 space-y-1.5">
-                    {unmatchedSharedThreads.map((thread) => (
-                      <div
-                        key={thread.conversation_id}
-                        className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5"
-                      >
-                        <span className="truncate text-xs text-gray-700">
-                          {thread.subject || '(no subject)'}
-                          {thread.matched_email ? ` — ${thread.matched_email}` : ''}
-                        </span>
-                        <button
-                          type="button"
-                          disabled={togglingConversationId === thread.conversation_id}
-                          onClick={() => handleToggleThreadVisibility(thread)}
-                          className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold transition disabled:opacity-50 ${
-                            thread.is_visible ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
-                          }`}
-                        >
-                          {thread.is_visible ? 'Visible' : 'Hidden'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-xs font-medium text-gray-700">Other threads</p>
+                  {renderThreadGroup('unmatched', unmatchedThreads)}
                 </div>
               )
             })()}

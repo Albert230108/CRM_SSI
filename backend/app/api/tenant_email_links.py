@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.gmail_integration import sync_email_across_gmail_accounts
 from app.core.dependencies import get_current_user, get_db
-from app.models.gmail_integration import Conversation
+from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant_email_address import TenantEmailAddress
@@ -116,21 +116,7 @@ async def create_tenant_email_link(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This email could not be linked") from exc
     db.refresh(new_link)
 
-    # Push to Beds24 so the CRM link and the booking's info items stay consistent. A failure here
-    # does not undo the CRM-side link — it's recorded via beds24_sync_status so it can be retried,
-    # since the CRM link is still useful (e.g. for Gmail matching) even if Beds24 is unreachable.
-    try:
-        info_item = await add_booking_info_item(tenant.booking_id, BEDS24_EMAIL_INFO_CODE, email)
-        new_link.beds24_info_item_id = str(info_item["id"]) if info_item and info_item.get("id") is not None else None
-        new_link.beds24_sync_status = "synced" if info_item else "failed"
-    except HTTPException as exc:
-        logger.warning(
-            "tenant_email_link_beds24_sync_failed tenant_id=%s email=%s error=%s",
-            tenant_id,
-            email,
-            exc.detail,
-        )
-        new_link.beds24_sync_status = "failed"
+    await _push_link_to_beds24(tenant, new_link)
     db.commit()
     db.refresh(new_link)
 
@@ -228,16 +214,79 @@ async def delete_tenant_email_link(
     )
 
 
+async def _push_link_to_beds24(tenant: Tenant, link: TenantEmailAddress) -> None:
+    """Write `link` to its booking as a CRM_EMAIL info item and record the outcome.
+
+    A failure never undoes the CRM-side link - it is recorded via beds24_sync_status so it can
+    be retried, since the link is still what drives Gmail matching even when Beds24 is
+    unreachable. Does not commit; the caller owns the transaction.
+    """
+    try:
+        info_item = await add_booking_info_item(tenant.booking_id, BEDS24_EMAIL_INFO_CODE, link.email)
+        link.beds24_info_item_id = str(info_item["id"]) if info_item and info_item.get("id") is not None else None
+        link.beds24_sync_status = "synced" if info_item else "failed"
+    except HTTPException as exc:
+        logger.warning(
+            "tenant_email_link_beds24_sync_failed tenant_id=%s email=%s error=%s",
+            link.tenant_id,
+            link.email,
+            exc.detail,
+        )
+        link.beds24_sync_status = "failed"
+
+
+@router.post("/tenants/{tenant_id}/email-links/{link_id}/sync-beds24", response_model=TenantEmailLinkRead)
+async def sync_email_link_to_beds24(
+    tenant_id: int,
+    link_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TenantEmailLinkRead:
+    """Push one CRM_EMAIL link to its Beds24 booking on demand.
+
+    Backfilled links (and any link whose original push failed) exist in the CRM without a
+    matching info item on the booking. This is the explicit, per-link operator action that
+    reconciles them - deliberately not done in bulk, since each call writes to a live booking.
+    """
+    tenant = _get_tenant_or_404(db, tenant_id)
+    link = (
+        db.query(TenantEmailAddress)
+        .filter(TenantEmailAddress.id == link_id, TenantEmailAddress.tenant_id == tenant_id)
+        .first()
+    )
+    if link is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email link not found")
+    if not link.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email link is not active")
+    if not tenant.booking_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant has no Beds24 booking to sync to")
+
+    await _push_link_to_beds24(tenant, link)
+    db.commit()
+    db.refresh(link)
+    logger.info(
+        "tenant_email_link_beds24_manual_sync tenant_id=%s email=%s status=%s actor_user_id=%s",
+        tenant_id,
+        link.email,
+        link.beds24_sync_status,
+        current_user.id,
+    )
+    return link
+
+
 @router.get("/tenants/{tenant_id}/shared-threads", response_model=list[TenantConversationVisibilityRead])
 def get_tenant_shared_threads(
     tenant_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[TenantConversationVisibilityRead]:
-    """List every Gmail conversation linked to this tenant, with whether it's also linked to
-    another tenant -- the "Manage emails" UI only needs to offer the visibility toggle for
-    threads that are genuinely shared, since a tenant's own unshared threads have nothing to
-    hide from.
+    """List every Gmail conversation linked to this tenant, with a last-message preview and
+    whether it's also linked to another tenant.
+
+    The "Manage emails" UI offers a visibility toggle on every thread, not just genuinely
+    shared ones: an operator who wants a thread off a tenant's timeline needs that control
+    to exist regardless of why the thread is noisy. `shared_with_other_tenants` is still
+    reported so the UI can flag the threads where hiding has cross-tenant consequences.
     """
     _get_tenant_or_404(db, tenant_id)
     links = (
@@ -265,9 +314,25 @@ def get_tenant_shared_threads(
         .all()
     }
 
+    # Newest message per conversation in one pass, so the list renders a real "last
+    # sent/received" preview without an N+1 query per thread.
+    latest_by_conversation: dict[int, ConversationMessage] = {}
+    for message in (
+        db.query(ConversationMessage)
+        .filter(ConversationMessage.conversation_id.in_(conversation_ids))
+        .order_by(ConversationMessage.sent_at.asc(), ConversationMessage.id.asc())
+        .all()
+    ):
+        latest_by_conversation[message.conversation_id] = message
+
     result = []
     for link in links:
         conversation = conversations_by_id.get(link.conversation_id)
+        latest = latest_by_conversation.get(link.conversation_id)
+        preview_source = (latest.body if latest is not None else None) or (
+            conversation.preview_text if conversation else None
+        )
+        preview_text = " ".join((preview_source or "").split())[:200] or None
         result.append(
             TenantConversationVisibilityRead(
                 conversation_id=link.conversation_id,
@@ -276,6 +341,8 @@ def get_tenant_shared_threads(
                 subject=conversation.subject if conversation else None,
                 matched_email=link.matched_email,
                 last_message_at=conversation.last_message_at if conversation else None,
+                preview_text=preview_text,
+                last_message_direction=latest.direction if latest is not None else None,
                 shared_with_other_tenants=link.conversation_id in shared_conversation_ids,
             )
         )

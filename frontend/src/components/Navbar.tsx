@@ -95,6 +95,24 @@ export default function Navbar() {
     useNotesDraftStore.getState().guardNavigation(logout)
   }
 
+  // Escape hatch for a wedged run. Cancelling server-side matters as much as clearing the
+  // overlay: while the job is still reported as running, the single-flight guard refuses to
+  // start a new sync. A failed cancel (e.g. non-admin) must still free the UI.
+  const handleAbandonSync = async () => {
+    const jobId = syncJobId
+    setSyncJob(null)
+    setSyncRunning(false)
+    if (!jobId) return
+    try {
+      await fetch(`${API_BASE_URL}/api/admin/sync-all/${jobId}/cancel`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+    } catch {
+      // Best effort: the UI is already unblocked.
+    }
+  }
+
   // sync-all is a backend job: the POST only hands back a job id, so completion is observed
   // by polling. Keyed on syncJobId (which lives in syncStore) so a run started before a route
   // change is picked back up when Navbar remounts, rather than being abandoned mid-flight.
@@ -253,7 +271,7 @@ export default function Navbar() {
         </div>
       </header>
 
-      <SyncProgressOverlay active={syncRunning} progress={syncProgress} />
+      <SyncProgressOverlay active={syncRunning} progress={syncProgress} onDismiss={handleAbandonSync} />
 
       <ImportModal
         open={importModalOpen}

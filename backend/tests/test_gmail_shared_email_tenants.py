@@ -13,6 +13,16 @@ def _encode(text: str) -> str:
     return base64.urlsafe_b64encode(text.encode("utf-8")).decode("utf-8")
 
 
+def _link_email(db, tenant_id: int, email: str) -> None:
+    """Make `tenant_id` reachable at `email`.
+
+    Matching is by CRM_EMAIL link only now, so setting Tenant.email no longer routes any
+    mail; these tests express reachability the way the product does.
+    """
+    db.add(TenantEmailAddress(tenant_id=tenant_id, email=email, is_active=True))
+    db.commit()
+
+
 def _message(message_id: str, from_address: str) -> dict:
     return {
         "id": message_id,
@@ -44,6 +54,7 @@ def test_two_tenants_sharing_an_email_both_keep_conversation_link():
         setup_db.commit()
         account_id = account.id
         old_tenant_id = old_tenant.id
+        _link_email(setup_db, old_tenant_id, shared_email)
     finally:
         setup_db.close()
 
@@ -67,6 +78,7 @@ def test_two_tenants_sharing_an_email_both_keep_conversation_link():
         db.add(new_tenant)
         db.commit()
         new_tenant_id = new_tenant.id
+        _link_email(db, new_tenant_id, shared_email)
     finally:
         db.close()
 
@@ -123,6 +135,7 @@ def test_two_tenants_sharing_an_email_both_keep_conversation_link():
             ConversationMessage.conversation_id == conversation_id
         ).delete()
         cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id.in_([old_tenant_id, new_tenant_id])).delete(synchronize_session=False)
         cleanup_db.query(Tenant).filter(Tenant.id.in_([old_tenant_id, new_tenant_id])).delete(
             synchronize_session=False
         )
@@ -147,8 +160,8 @@ def test_tenant_matched_via_secondary_linked_email():
         setup_db.commit()
         account_id = account.id
         tenant_id = tenant.id
-        setup_db.add(TenantEmailAddress(tenant_id=tenant_id, email=secondary_email, is_active=True))
-        setup_db.commit()
+        _link_email(setup_db, tenant_id, primary_email)
+        _link_email(setup_db, tenant_id, secondary_email)
     finally:
         setup_db.close()
 
@@ -183,6 +196,7 @@ def test_tenant_matched_via_secondary_linked_email():
         cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
         cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
         cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant_id).delete()
+        cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant_id).delete(synchronize_session=False)
         cleanup_db.query(Tenant).filter(Tenant.id == tenant_id).delete()
         cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
         cleanup_db.commit()
@@ -207,6 +221,7 @@ def test_tenant_matched_when_primary_email_has_different_case():
         setup_db.commit()
         account_id = account.id
         tenant_id = tenant.id
+        _link_email(setup_db, tenant_id, mixed_case_email)
     finally:
         setup_db.close()
 
@@ -236,6 +251,7 @@ def test_tenant_matched_when_primary_email_has_different_case():
         cleanup_db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete()
         cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
         cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant_id).delete(synchronize_session=False)
         cleanup_db.query(Tenant).filter(Tenant.id == tenant_id).delete()
         cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
         cleanup_db.commit()
@@ -266,6 +282,8 @@ def test_new_link_respects_tenant_auto_add_preference():
         account_id = account.id
         default_tenant_id = default_tenant.id
         opted_out_tenant_id = opted_out_tenant.id
+        _link_email(setup_db, default_tenant_id, shared_email)
+        _link_email(setup_db, opted_out_tenant_id, shared_email)
     finally:
         setup_db.close()
 
@@ -301,6 +319,7 @@ def test_new_link_respects_tenant_auto_add_preference():
         cleanup_db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete()
         cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
         cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id.in_([default_tenant_id, opted_out_tenant_id])).delete(synchronize_session=False)
         cleanup_db.query(Tenant).filter(Tenant.id.in_([default_tenant_id, opted_out_tenant_id])).delete(synchronize_session=False)
         cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
         cleanup_db.commit()

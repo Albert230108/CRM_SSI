@@ -322,3 +322,82 @@ def test_permissions_require_authentication(client_without_webhook_secret, db_se
         json={"email": "guest@example.com"},
     )
     assert response.status_code == 401
+
+
+def test_shared_threads_includes_unshared_threads_with_a_preview(user_client, db_session):
+    """Every linked thread gets a visibility toggle, not just genuinely shared ones.
+
+    The Manage emails UI used to filter its list down to shared_with_other_tenants, so a
+    tenant whose threads were all its own had no way to hide a noisy one at all.
+    """
+    tenant = create_tenant(db_session, name="Solo Tenant", booking_id="B-unshared-threads")
+    conversation_id = _make_conversation_matched_to_email(
+        db_session, tenant.id, "solo@example.com", "thread-unshared-1"
+    )
+
+    response = user_client.get(f"/api/tenants/{tenant.id}/shared-threads")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert len(body) == 1
+    thread = body[0]
+    assert thread["conversation_id"] == conversation_id
+    assert thread["shared_with_other_tenants"] is False
+    # Preview of the last message, so a collapsed thread row is still identifiable.
+    assert thread["preview_text"] == "Hi"
+    assert thread["last_message_direction"] == "inbound"
+
+
+def test_sync_link_to_beds24_pushes_a_backfilled_link(user_client, db_session):
+    """Backfilled links exist in the CRM without a matching info item on the booking."""
+    from app.models.tenant_email_address import TenantEmailAddress
+
+    tenant = create_tenant(db_session, name="Backfilled Tenant", booking_id="B-push-beds24")
+    link = TenantEmailAddress(
+        tenant_id=tenant.id,
+        email="backfilled@example.com",
+        source="beds24_backfill",
+        beds24_sync_status="not_synced",
+        is_active=True,
+    )
+    db_session.add(link)
+    db_session.commit()
+    db_session.refresh(link)
+
+    with patch(
+        "app.api.tenant_email_links.add_booking_info_item",
+        new=AsyncMock(return_value={"id": 4321}),
+    ) as mocked:
+        response = user_client.post(f"/api/tenants/{tenant.id}/email-links/{link.id}/sync-beds24")
+
+    assert response.status_code == 200
+    assert response.json()["beds24_sync_status"] == "synced"
+    mocked.assert_awaited_once()
+    db_session.refresh(link)
+    assert link.beds24_info_item_id == "4321"
+
+
+def test_sync_link_to_beds24_records_failure_without_unlinking(user_client, db_session):
+    from fastapi import HTTPException
+
+    from app.models.tenant_email_address import TenantEmailAddress
+
+    tenant = create_tenant(db_session, name="Failing Push Tenant", booking_id="B-push-fails")
+    link = TenantEmailAddress(
+        tenant_id=tenant.id, email="failing@example.com", beds24_sync_status="not_synced", is_active=True
+    )
+    db_session.add(link)
+    db_session.commit()
+    db_session.refresh(link)
+
+    with patch(
+        "app.api.tenant_email_links.add_booking_info_item",
+        new=AsyncMock(side_effect=HTTPException(status_code=502, detail="Beds24 unreachable")),
+    ):
+        response = user_client.post(f"/api/tenants/{tenant.id}/email-links/{link.id}/sync-beds24")
+
+    assert response.status_code == 200
+    assert response.json()["beds24_sync_status"] == "failed"
+    db_session.refresh(link)
+    # The CRM-side link still drives Gmail matching, so it must survive a Beds24 outage.
+    assert link.is_active is True

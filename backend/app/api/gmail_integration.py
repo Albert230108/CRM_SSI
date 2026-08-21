@@ -14,6 +14,8 @@ from fastapi.responses import RedirectResponse, Response
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
+import google_auth_httplib2
+import httplib2
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from jose import jwt
@@ -35,6 +37,7 @@ from app.services.ai_draft_trigger_service import register_inbound_message
 from app.services.tenant_brain_trigger_service import register_inbound_message as register_brain_inbound_message
 from app.services.background_jobs import get_job, start_job
 from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_gmail_attachment_bytes
+from app.services.html_text import html_to_text
 from app.services.notification_service import create_notification
 from app.services.notification_whatsapp_service import register_notification_for_whatsapp
 
@@ -139,8 +142,22 @@ def _account_credentials(account: GmailAccount) -> Credentials:
     return credentials
 
 
+# Gmail calls are made from a worker thread with no deadline of its own, so a connection
+# that stalls without being reset would block that thread forever: the sync-all job never
+# leaves "running", its full-screen progress overlay never clears, and the single-flight
+# guard then reports the dead job on every later click. googleapiclient builds an httplib2
+# client with no socket timeout by default, so one has to be supplied explicitly. Matches
+# the timeout convention already used for Beds24 (services/beds24_client.py).
+GMAIL_HTTP_TIMEOUT_SECONDS = 60
+
+
 def _build_service(credentials: Credentials) -> Any:
-    return build("gmail", "v1", credentials=credentials, cache_discovery=False)
+    authorized_http = google_auth_httplib2.AuthorizedHttp(
+        credentials, http=httplib2.Http(timeout=GMAIL_HTTP_TIMEOUT_SECONDS)
+    )
+    # `http` and `credentials` are mutually exclusive: the credentials now ride on the
+    # authorized http object instead.
+    return build("gmail", "v1", http=authorized_http, cache_discovery=False)
 
 
 def _build_service_for_account(account: GmailAccount) -> Any:
@@ -252,6 +269,17 @@ def _extract_html(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _message_body_text(payload: dict[str, Any]) -> str:
+    """The readable text of a Gmail message, whichever part carries it.
+
+    A sender's client is free to ship `text/html` alone. Falling back to a rendering of
+    that HTML keeps the stored body non-empty, which everything downstream depends on:
+    an empty body reduced the AI prompts to just the subject line and dropped the
+    "Message To Answer" block from the planner and checker entirely.
+    """
+    return _extract_text(payload) or html_to_text(_extract_html(payload))
+
+
 def _extract_attachments(payload: dict[str, Any]) -> list[dict[str, Any]]:
     attachments: list[dict[str, Any]] = []
     for part in payload.get("parts") or []:
@@ -304,6 +332,17 @@ def _email_address(raw_value: str | None) -> str | None:
     return email.strip().lower() if email else raw_value.strip().lower()
 
 
+def _primary_linked_email(db: Session, tenant_id: int) -> str | None:
+    """The tenant's first active CRM_EMAIL link, used where a display address is needed."""
+    return (
+        db.query(TenantEmailAddress.email)
+        .filter(TenantEmailAddress.tenant_id == tenant_id, TenantEmailAddress.is_active.is_(True))
+        .order_by(TenantEmailAddress.id.asc())
+        .limit(1)
+        .scalar()
+    )
+
+
 def _find_tenants_for_message(db: Session, headers: dict[str, str], account_email: str) -> list[tuple[Tenant, str]]:
     # Multiple tenants can share the same email address (e.g. duplicate bookings for the
     # same guest). Every matching tenant must be returned so the conversation can be linked
@@ -320,16 +359,15 @@ def _find_tenants_for_message(db: Session, headers: dict[str, str], account_emai
         for candidate in raw_value.split(","):
             address = _email_address(candidate)
             if address and address != account_email.lower():
-                # address is always lowercased by _email_address above, but Tenant.email is
-                # stored as-received from Beds24/manual entry (no case normalization) - compare
-                # case-insensitively so a mixed-case guest email still matches incoming headers.
-                for tenant in db.query(Tenant).filter(func.lower(Tenant.email) == address).all():
-                    if tenant.id not in seen_ids:
-                        seen_ids.add(tenant.id)
-                        matches.append((tenant, address))
+                # Matching is by explicit CRM_EMAIL link only. Tenant.email holds whatever
+                # address Beds24 forwarded, which is routinely an OTA alias that belongs to no
+                # guest, so matching on it attached unrelated threads to tenants.
+                # address is lowercased by _email_address above; linked addresses are stored
+                # lowercased by the link endpoint, but compare case-insensitively anyway so a
+                # row written before that normalization still matches.
                 linked_tenant_ids = (
                     db.query(TenantEmailAddress.tenant_id)
-                    .filter(TenantEmailAddress.email == address, TenantEmailAddress.is_active.is_(True))
+                    .filter(func.lower(TenantEmailAddress.email) == address, TenantEmailAddress.is_active.is_(True))
                     .all()
                 )
                 for (linked_tenant_id,) in linked_tenant_ids:
@@ -374,25 +412,6 @@ def _ensure_tenant_conversation_link(
     except IntegrityError:
         pass
 
-
-
-def _thread_email_candidates(messages: list[dict[str, Any]], account_email: str) -> list[str]:
-    candidates: list[str] = []
-    seen: set[str] = set()
-    account_email = account_email.lower()
-    for message in messages:
-        payload = message.get("payload") or {}
-        headers = _headers_map(payload.get("headers") or [])
-        for field in ("from", "to", "cc", "bcc"):
-            raw_value = headers.get(field)
-            if not raw_value:
-                continue
-            for candidate in raw_value.split(','):
-                address = _email_address(candidate)
-                if address and address != account_email and address not in seen:
-                    seen.add(address)
-                    candidates.append(address)
-    return candidates
 
 
 def _find_existing_conversation_for_thread(db: Session, thread: dict[str, Any]) -> Conversation | None:
@@ -468,7 +487,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
         )
         if comparable_last_message_at is None or sent_at > comparable_last_message_at:
             last_message_at = sent_at
-            latest_preview = _extract_text(payload)[:500] or latest_preview
+            latest_preview = _message_body_text(payload)[:500] or latest_preview
         if not subject:
             subject = headers.get("subject")
 
@@ -482,7 +501,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
         if exists is not None:
             continue
 
-        body_text = _extract_text(payload)
+        body_text = _message_body_text(payload)
         body_html = _extract_html(payload)
         attachments = _extract_attachments(payload)
         recipient_email = _email_address(headers.get("to"))
@@ -531,11 +550,8 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
             # No address could be matched from this sync pass (e.g. re-syncing headers that no
             # longer resolve to any known address) -- fall back to the tenant's primary email
             # since it's the best available guess for which address this conversation belongs to.
-            matched_tenants[existing_tenant.id] = (existing_tenant, existing_tenant.email)
+            matched_tenants[existing_tenant.id] = (existing_tenant, _primary_linked_email(db, existing_tenant.id))
             tenant = tenant or existing_tenant
-    tenant_email_candidates = _thread_email_candidates(messages, account_email)
-    if tenant is not None and not tenant.email and len(tenant_email_candidates) == 1:
-        tenant.email = tenant_email_candidates[0]
 
     conversation.subject = subject
     # Never reassign an already-linked conversation away from its current tenant: the
@@ -817,20 +833,12 @@ def _sync_gmail_account(db: Session, account: GmailAccount, tenant_ids: list[int
     (used by the admin sync-all job when the triggering user has an active tenant filter).
     """
     service = _build_service_for_account(account)
-    tenant_query = db.query(Tenant).filter(Tenant.email.isnot(None))
-    if tenant_ids is not None:
-        tenant_query = tenant_query.filter(Tenant.id.in_(tenant_ids))
-    tenant_emails = {
-        tenant.email.strip().lower()
-        for tenant in tenant_query.all()
-        if tenant.email
-    }
-    # Also search for tenants' secondary/alias emails - a full sync built from Tenant.email
-    # alone would never pick up history that only involves a linked TenantEmailAddress.
+    # Built from CRM_EMAIL links only. Tenant.email is no longer searched: it carries OTA
+    # alias addresses that match unrelated mail, and it is no longer the tenant's real address.
     alias_query = db.query(TenantEmailAddress.email).filter(TenantEmailAddress.is_active.is_(True))
     if tenant_ids is not None:
         alias_query = alias_query.filter(TenantEmailAddress.tenant_id.in_(tenant_ids))
-    tenant_emails |= {email.strip().lower() for (email,) in alias_query.all() if email}
+    tenant_emails = {email.strip().lower() for (email,) in alias_query.all() if email}
     query_parts = [f'"{email}"' for email in sorted(tenant_emails)]
     query = " OR ".join(query_parts) if query_parts else None
     threads = _list_all_matching_threads(service, query) if query else []
@@ -1030,7 +1038,7 @@ def _backfill_message_bodies(db: Session) -> dict[str, int]:
         payload = gmail_message.get("payload") or {}
         scanned += 1
 
-        body_text = _extract_text(payload)
+        body_text = _message_body_text(payload)
         body_html = _extract_html(payload)
         attachments = _extract_attachments(payload)
         changed = False

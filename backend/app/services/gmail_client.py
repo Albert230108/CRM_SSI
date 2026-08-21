@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
@@ -101,12 +102,10 @@ def _find_tenant(db: Session, headers: list[dict[str, Any]]) -> Tenant | None:
             break
     if not email:
         return None
-    tenant = db.query(Tenant).filter(Tenant.email == email).first()
-    if tenant is not None:
-        return tenant
+    # CRM_EMAIL links only - Tenant.email is no longer an authoritative address.
     linked = (
         db.query(TenantEmailAddress)
-        .filter(TenantEmailAddress.email == email, TenantEmailAddress.is_active.is_(True))
+        .filter(func.lower(TenantEmailAddress.email) == email.strip().lower(), TenantEmailAddress.is_active.is_(True))
         .first()
     )
     if linked is not None:

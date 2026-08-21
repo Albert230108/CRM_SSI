@@ -65,8 +65,11 @@ def test_sync_gmail_account_paginates_beyond_first_page_of_threads(db_session, m
     silently dropped everything past the first page on every manual sync / admin sync-all /
     bootstrap resync."""
     account = GmailAccount(email_address="full-sync-account@example.com", is_active=True)
-    tenant = Tenant(name="Paginated Tenant", email="guest@example.com", booking_id="booking-paginated")
+    tenant = Tenant(name="Paginated Tenant", booking_id="booking-paginated")
     db_session.add_all([account, tenant])
+    db_session.commit()
+    # Reachability comes from the CRM_EMAIL link, which is what the search query is built from.
+    db_session.add(TenantEmailAddress(tenant_id=tenant.id, email="guest@example.com", is_active=True))
     db_session.commit()
 
     fake_service = _FakeThreadsService(
@@ -97,14 +100,16 @@ def test_sync_gmail_account_paginates_beyond_first_page_of_threads(db_session, m
 
 
 def test_sync_gmail_account_includes_active_secondary_email_in_query(db_session, monkeypatch):
-    """Regression test: the full-sync search query used to be built only from Tenant.email,
-    so a tenant whose relevant mail only involves a linked secondary/alias TenantEmailAddress
-    would never be searched for by the periodic full sync."""
+    """The full-sync search query covers every active CRM_EMAIL link a tenant has, not just
+    the first one."""
     account = GmailAccount(email_address="alias-sync-account@example.com", is_active=True)
-    tenant = Tenant(name="Alias Tenant", email="primary@example.com", booking_id="booking-alias-tenant")
+    tenant = Tenant(name="Alias Tenant", booking_id="booking-alias-tenant")
     db_session.add_all([account, tenant])
     db_session.commit()
-    db_session.add(TenantEmailAddress(tenant_id=tenant.id, email="alias@example.com", is_active=True))
+    db_session.add_all([
+        TenantEmailAddress(tenant_id=tenant.id, email="primary@example.com", is_active=True),
+        TenantEmailAddress(tenant_id=tenant.id, email="alias@example.com", is_active=True),
+    ])
     db_session.commit()
 
     fake_service = _FakeThreadsService(list_pages=[{"threads": []}], threads_by_id={})

@@ -209,6 +209,7 @@ def assemble_prompt(
     template: AiReplyTemplate,
     channel: str,
     rough_draft: str | None,
+    inbound_text: str | None = None,
     extra_brain_section_paths: list[str] | None = None,
     knowledge_content: str | None = None,
     previous_draft: str | None = None,
@@ -220,8 +221,8 @@ def assemble_prompt(
 
     Fixed order: the drafter profile's preamble and instructions, then 0. guidelines, 1. template
     text/subprompts, 1b. knowledge base (brain sections), 2. message history (all channels),
-    3. Beds24 info (booking + payments + notes), 4. the user's typed text, 5. the previous draft on
-    a redraft round, 6. reviewer feedback on that redraft round. Each present group is prefixed
+    3. Beds24 info (booking + payments + notes), the guest message being answered, 4. the user's
+    typed text, 5. the previous draft on a redraft round, 6. reviewer feedback on that round. Each present group is prefixed
     with its label so the numbering is visible directly in the payload, not just in the template
     editor UI. Those labels are not hardcoded: they come from `blocks`, so an operator can reword
     or delete any of them (a label resolving to an empty string emits the content on its own).
@@ -272,6 +273,13 @@ def assemble_prompt(
     if beds24_group:
         parts.append(ai_prompt_blocks.join(text["beds24"], "\n\n".join(beds24_group)))
 
+    # The guest's actual message, emitted regardless of `template.include_history`. The
+    # drafter used to receive this only as a side effect of history being switched on, so a
+    # history-less template had it writing a reply it had never read the question for.
+    inbound_message = (inbound_text or "").strip()
+    if inbound_message:
+        parts.append(ai_prompt_blocks.join(text["ctx_inbound"], inbound_message))
+
     user_message = (rough_draft or "").strip()
     if user_message:
         parts.append(ai_prompt_blocks.join(text["user_instruction"], user_message))
@@ -294,6 +302,7 @@ def build_prompt_and_generate(
     template: AiReplyTemplate,
     channel: str,
     rough_draft: str | None,
+    inbound_text: str | None = None,
     extra_brain_section_paths: list[str] | None = None,
     reviewer_feedback: str | None = None,
     blocks: dict[str, str] | None = None,
@@ -305,6 +314,7 @@ def build_prompt_and_generate(
         template=template,
         channel=channel,
         rough_draft=rough_draft,
+        inbound_text=inbound_text,
         extra_brain_section_paths=extra_brain_section_paths,
         reviewer_feedback=reviewer_feedback,
         blocks=blocks,

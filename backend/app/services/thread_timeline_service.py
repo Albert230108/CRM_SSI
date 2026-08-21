@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.attachment_service import attachments_for_communications, attachments_for_conversation_messages
@@ -478,7 +479,16 @@ def build_tenant_thread_timeline(db: Session, tenant_id: int) -> MixedTimelineRe
         raise ValueError("Tenant not found")
 
     ai_generated_email_timestamps = _load_ai_generated_email_timestamps(db, tenant_id)
-    conversations = _load_tenant_conversations(db, tenant_id, tenant_email_fallback=tenant.email)
+    # Display fallback for a link that recorded no matched_email. Sourced from the tenant's
+    # CRM_EMAIL links rather than tenant.email, which is no longer a real address.
+    primary_linked_email = (
+        db.query(TenantEmailAddress.email)
+        .filter(TenantEmailAddress.tenant_id == tenant_id, TenantEmailAddress.is_active.is_(True))
+        .order_by(TenantEmailAddress.id.asc())
+        .limit(1)
+        .scalar()
+    )
+    conversations = _load_tenant_conversations(db, tenant_id, tenant_email_fallback=primary_linked_email)
     whatsapp_messages = _load_tenant_whatsapp(db, tenant_id)
     thread_windows = _build_thread_windows(conversations)
 

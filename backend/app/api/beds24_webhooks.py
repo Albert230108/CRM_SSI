@@ -21,7 +21,6 @@ from app.models.tenant import Tenant
 from app.schemas.beds24_webhook_log import Beds24WebhookLogRead
 from app.services.beds24_client import get_booking_info_items
 from app.services.beds24_service import fetch_booking_with_invoice
-from app.services.tenant_email_change import handle_tenant_email_change
 from app.services.tenant_email_sync import sync_tenant_email_addresses_from_beds24
 from app.services.tenant_notes_history import SOURCE_BEDS24_WEBHOOK, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
@@ -185,9 +184,10 @@ async def _process_beds24_booking_event(
         tenant.name = fields.get("name") or booking_id
         tenant.first_name = fields.get("first_name")
         tenant.last_name = fields.get("last_name")
-        old_email = tenant.email
-        tenant.email = fields.get("email")
-        handle_tenant_email_change(db, tenant, old_email, tenant.email)
+        # Beds24's main guest email is no longer authoritative: it is whatever address the OTA
+        # forwarded, which is frequently an alias that never reaches the guest. The CRM_EMAIL info
+        # item, surfaced as a TenantEmailAddress link, is the single source of truth now, so this
+        # sync deliberately leaves tenant.email alone.
         tenant.phone = fields.get("phone")
         tenant.mobile = fields.get("mobile")
         tenant.check_in = fields.get("check_in")

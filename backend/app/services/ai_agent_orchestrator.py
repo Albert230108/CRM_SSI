@@ -357,6 +357,7 @@ def _build_checker_prompt(
     plan_instructions: str,
     knowledge: str,
     brain_index: str,
+    template: AiReplyTemplate | None = None,
 ) -> str:
     """Assemble the checker prompt from this profile's editable blocks. See _build_planner_prompt."""
     text = ai_prompt_blocks.resolve_blocks(profile, CHECKER_ROLE)
@@ -385,6 +386,20 @@ def _build_checker_prompt(
             parts.append(ai_prompt_blocks.join(text["knowledge"], knowledge.strip()))
         if brain_index.strip():
             parts.append(ai_prompt_blocks.join(text["brain_index"], brain_index.strip()))
+
+    if template is not None:
+        # Rendered with the drafter's own builders so the checker reviews against exactly the
+        # text the drafter was given, not a paraphrase of it. `template.description` is
+        # deliberately excluded: it describes when to *pick* this template and is planner-only.
+        template_parts = [f"Template: {template.name}"]
+        guidelines = ai_reply_service._build_guidelines_content(db, template, tenant)
+        if guidelines.strip():
+            template_parts.append(guidelines.strip())
+        sections = ai_reply_service._build_sections_prompt(db, template, tenant)
+        if sections.strip():
+            template_parts.append(sections.strip())
+        if len(template_parts) > 1:
+            parts.append(ai_prompt_blocks.join(text["template"], "\n\n".join(template_parts)))
 
     parts += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text, blocks=text)
     parts.append(ai_prompt_blocks.join(text["draft"], draft))
@@ -525,6 +540,7 @@ def run_planner_loop(
             template=template,
             channel=channel,
             rough_draft=drafter_instruction or None,
+            inbound_text=inbound_text,
             extra_brain_section_paths=extra_sections,
             knowledge_content=knowledge_content,
             previous_draft=rejected_draft,
@@ -559,6 +575,7 @@ def run_planner_loop(
             plan_instructions=drafter_instruction,
             knowledge=knowledge_content,
             brain_index=brain_index_text,
+            template=template,
         )
         try:
             checker_result = gemini_client.generate(

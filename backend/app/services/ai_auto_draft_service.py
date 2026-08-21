@@ -203,16 +203,17 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
     blocks, agent_instructions = ai_agent_orchestrator.resolve_drafter_context(
         db, ai_settings.drafter_profile_id
     )
+    inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel)
     generated_text = ai_reply_service.build_prompt_and_generate(
         db,
         tenant=tenant,
         template=template,
         channel=trigger.channel,
         rough_draft=None,
+        inbound_text=inbound_text,
         blocks=blocks,
         agent_instructions=agent_instructions,
     )
-    inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel)
 
     auto_send_enabled = ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp
     draft = AiAutoDraft(

@@ -78,9 +78,6 @@ export default function AiPendingDrafts() {
                   {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
-                {draft.quoted_context ? (
-                  <p className="mt-1.5 text-xs italic text-gray-400">{draft.quoted_context}</p>
-                ) : null}
                 <p className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
               </div>
             </div>

@@ -34,8 +34,10 @@ def stub_phases(monkeypatch):
         calls["beds24"] += 1
         return 3
 
-    async def fake_emails(db, tenant_ids=None):
+    async def fake_emails(db, tenant_ids=None, progress=None):
         calls["email"] += 1
+        if progress is not None:
+            progress(1, 1)
         return 5
 
     async def fake_whatsapp(db, tenant_ids=None):
@@ -125,7 +127,7 @@ def test_sync_all_is_single_flight(non_admin_client, monkeypatch):
 
 
 def test_sync_all_phase_failure_is_reported_not_fatal(non_admin_client, stub_phases, monkeypatch):
-    async def failing_emails(db, tenant_ids=None):
+    async def failing_emails(db, tenant_ids=None, progress=None):
         raise RuntimeError("gmail exploded")
 
     monkeypatch.setattr(admin_sync, "_sync_emails", failing_emails)

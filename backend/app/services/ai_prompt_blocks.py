@@ -207,6 +207,20 @@ CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
         ),
     ),
     PromptBlock(
+        key="template",
+        label="Template heading",
+        help=(
+            "Sits above the goal, guidelines and template text the planner picked for this "
+            "reply, so the checker can tell whether the draft actually followed it. Omitted "
+            "when the template has no guidelines or sections."
+        ),
+        default=(
+            "## Template The Draft Was Written From\n"
+            "The draft was asked to follow this template. Treat a draft that ignores its "
+            "instructions as failing review, and say which instruction was missed."
+        ),
+    ),
+    PromptBlock(
         key="draft",
         label="Draft heading",
         help="Sits above the draft reply being reviewed.",
@@ -221,7 +235,8 @@ CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
         ),
         default=(
             "## Output\n"
-            "Return JSON only. Set `passed` to true only if the draft can be sent as-is. When it "
+            "Return JSON only. Set `passed` to true only if the draft can be sent as-is and follows "
+            "the template it was written from. When it "
             "cannot, `feedback` must be specific enough for the writer to fix it in one pass, and "
             "`issues` should list each problem separately. Set `extra_brain_sections` to the paths of "
             "any additional knowledge-base sections you need to properly review this draft - leave it "
@@ -299,7 +314,7 @@ DRAFTER_BLOCKS: tuple[PromptBlock, ...] = (
             "every point is addressed. Output only the corrected reply."
         ),
     ),
-) + _context_blocks(include_inbound=False)
+) + _context_blocks(include_inbound=True)
 
 
 BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {

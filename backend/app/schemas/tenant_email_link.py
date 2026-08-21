@@ -53,6 +53,8 @@ class TenantConversationVisibilityRead(BaseModel):
     subject: str | None = None
     matched_email: str | None = None
     last_message_at: datetime | None = None
+    preview_text: str | None = None
+    last_message_direction: str | None = None
     shared_with_other_tenants: bool
     model_config = ConfigDict(from_attributes=True)
 

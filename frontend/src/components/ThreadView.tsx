@@ -979,9 +979,6 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
           {draft.status === 'pending_auto_send' ? 'AI draft - sending automatically soon' : 'Pending AI draft'}
         </p>
-        {draft.quoted_context ? (
-          <p className="mt-1.5 text-xs italic text-gray-400">{draft.quoted_context}</p>
-        ) : null}
         <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draft.generated_text}</p>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           <button

@@ -1129,6 +1129,7 @@ def generate_tenant_ai_draft(
             template=template,
             channel=channel,
             rough_draft=payload.rough_draft,
+            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
             blocks=blocks,
             agent_instructions=agent_instructions,
         )
@@ -1217,6 +1218,7 @@ def preview_tenant_ai_draft(
         template=template,
         channel=channel,
         rough_draft=payload.rough_draft,
+        inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
         blocks=blocks,
         agent_instructions=agent_instructions,
     )

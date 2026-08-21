@@ -3,10 +3,12 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.phone_normalization import phone_match_candidates
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services.tenant_phone_aliases import get_tenant_phone_identity_maps
 
@@ -387,7 +389,17 @@ def resolve_tenant_for_inbound_channel(db: Session, payload: dict[str, Any], req
     for email_key in ("tenant_email", "email", "customer_email"):
         value = _first_non_empty(payload.get(email_key), query_params.get(email_key))
         if value:
-            tenant = db.query(Tenant).filter(Tenant.email == value).first()
+            # Resolved through the tenant's CRM_EMAIL links, the only authoritative
+            # email-to-tenant mapping.
+            linked = (
+                db.query(TenantEmailAddress)
+                .filter(
+                    func.lower(TenantEmailAddress.email) == str(value).strip().lower(),
+                    TenantEmailAddress.is_active.is_(True),
+                )
+                .first()
+            )
+            tenant = db.query(Tenant).filter(Tenant.id == linked.tenant_id).first() if linked else None
             if tenant:
                 logger.info("Resolved inbound tenant by legacy_email_inference")
                 return RoutingResult(tenant=tenant, strategy=f"legacy_email:{email_key}", matched_value=value, matched_field=email_key)
