@@ -28,6 +28,18 @@ def _auto_send_delay_seconds(db: Session) -> int:
     return settings.ai_auto_send_delay_seconds if settings is not None else 300
 
 
+def _with_quoted_original(generated_text: str, original_text: str | None) -> str:
+    """Prefix a WhatsApp auto-draft with the inbound message it's answering.
+
+    WhatsApp sends in this stack have no native quoted-reply support, so the only way to show
+    what the AI is responding to is textually, inside the draft itself.
+    """
+    original = (original_text or "").strip()
+    if not original:
+        return generated_text
+    return f'Replying to: "{original}"\n\n{generated_text}'
+
+
 def _generate_draft_via_planner(
     db: Session,
     trigger: AiAutoDraftTrigger,
@@ -41,12 +53,13 @@ def _generate_draft_via_planner(
     Same for any draft generated under "auto-draft" mode: even an approved one never auto-sends.
     """
     planner_mode = ai_settings.planner_mode or "off"
+    inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel)
     result = ai_agent_orchestrator.run_planner_loop(
         db,
         tenant=tenant,
         channel=trigger.channel,
         mode=planner_mode,
-        inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel),
+        inbound_text=inbound_text,
     )
     if not result.generated_text:
         logger.info(
@@ -57,6 +70,10 @@ def _generate_draft_via_planner(
             result.escalation_reason,
         )
         return None
+
+    generated_text = result.generated_text
+    if trigger.channel == "whatsapp":
+        generated_text = _with_quoted_original(generated_text, inbound_text)
 
     # "auto-draft" mode always lands the draft in the AI Drafts tab for a human to send - it must
     # never be scheduled to auto-send, regardless of the tenant's auto_send toggles.
@@ -76,7 +93,7 @@ def _generate_draft_via_planner(
         template_id=result.template_id,
         email_thread_id=trigger.email_thread_id,
         whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
-        generated_text=result.generated_text,
+        generated_text=generated_text,
         status=status_value,
         scheduled_send_at=(
             datetime.now(timezone.utc) + timedelta(seconds=_auto_send_delay_seconds(db))
@@ -129,6 +146,9 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
         blocks=blocks,
         agent_instructions=agent_instructions,
     )
+    if trigger.channel == "whatsapp":
+        inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, "whatsapp")
+        generated_text = _with_quoted_original(generated_text, inbound_text)
 
     auto_send_enabled = ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp
     draft = AiAutoDraft(

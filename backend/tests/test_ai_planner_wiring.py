@@ -219,6 +219,87 @@ def test_planner_mode_off_keeps_the_existing_default_template_path(db_session, m
     assert draft.agent_run_id is None
 
 
+def test_whatsapp_planner_draft_quotes_the_inbound_message(db_session, monkeypatch):
+    """Regression: a WhatsApp auto-draft must restate the guest message it's answering,
+    since this stack has no native WhatsApp quoted-reply support to show that link otherwise."""
+    tenant, template = _setup(db_session)
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Yes, still available.", {"passed": True, "feedback": ""}]),
+    )
+    monkeypatch.setattr(
+        ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "Is the room still available?"
+    )
+    trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="whatsapp", trigger_at=datetime.now(timezone.utc))
+
+    draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert draft is not None
+    assert draft.generated_text == 'Replying to: "Is the room still available?"\n\nYes, still available.'
+
+
+def test_whatsapp_default_template_draft_quotes_the_inbound_message(db_session, monkeypatch):
+    """Same quoting must apply on the legacy default-template path, not just the planner path."""
+    tenant, template = _setup(db_session, planner_mode="off")
+    settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).one()
+    settings.default_whatsapp_template_id = template.id
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_auto_draft_service.ai_reply_service.gemini_client,
+        "generate_text_flat",
+        lambda prompt: "Yes, still available.",
+    )
+    monkeypatch.setattr(
+        ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "Is the room still available?"
+    )
+    trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="whatsapp", trigger_at=datetime.now(timezone.utc))
+
+    draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert draft.generated_text == 'Replying to: "Is the room still available?"\n\nYes, still available.'
+
+
+def test_whatsapp_draft_unquoted_when_no_inbound_message(db_session, monkeypatch):
+    """No inbound WhatsApp message on file must not leave a dangling empty quote block."""
+    tenant, template = _setup(db_session)
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Auto draft.", {"passed": True, "feedback": ""}]),
+    )
+    monkeypatch.setattr(ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: None)
+    trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="whatsapp", trigger_at=datetime.now(timezone.utc))
+
+    draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert draft.generated_text == "Auto draft."
+
+
+def test_email_draft_is_never_quoted(db_session, monkeypatch):
+    """Quoting is WhatsApp-only: an email auto-draft must stay exactly the generated text,
+    even when there is an inbound message the planner resolved as context."""
+    tenant, template = _setup(db_session)
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate([_plan(template.id), "Auto draft.", {"passed": True, "feedback": ""}]),
+    )
+    monkeypatch.setattr(
+        ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "Is the room still available?"
+    )
+    trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert draft.generated_text == "Auto draft."
+
+
 def test_manual_ai_plan_endpoint_returns_the_final_text(user_client, db_session, monkeypatch):
     tenant, template = _setup(db_session, planner_mode="manual")
     monkeypatch.setattr(
