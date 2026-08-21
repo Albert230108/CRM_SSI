@@ -2797,6 +2797,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           tenantName={tenant?.name}
           bookingId={tenant?.booking_id ?? undefined}
           onClose={() => setShowEmailLinkModal(false)}
+          onChanged={loadGroupedThread}
           onSyncStarted={handleEmailSyncStarted}
         />
       ) : null}
