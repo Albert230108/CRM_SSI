@@ -21,6 +21,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.background_jobs import find_running_job, get_job, start_job, update_job_progress
 from app.services.beds24_client import get_bookings
+from app.services.tenant_email_change import handle_tenant_email_change
 from app.services.tenant_notes_history import SOURCE_BEDS24_SYNC_ALL, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services.thread_timeline_service import build_tenant_thread_timeline
@@ -41,7 +42,9 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     fields = _extract_guest_fields(booking)
     tenant.first_name = fields.get("first_name") or tenant.first_name
     tenant.last_name = fields.get("last_name") or tenant.last_name
+    old_email = tenant.email
     tenant.email = fields.get("email") or tenant.email
+    handle_tenant_email_change(db, tenant, old_email, tenant.email)
     tenant.phone = fields.get("phone") or tenant.phone
     tenant.mobile = fields.get("mobile") or tenant.mobile
     tenant.check_in = fields.get("check_in") or tenant.check_in

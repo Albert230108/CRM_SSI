@@ -8,14 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.api.gmail_integration import sync_email_across_gmail_accounts
 from app.core.dependencies import get_current_user, get_db
-from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
-from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
 from app.schemas.tenant_email_link import TenantEmailLinkCreate, TenantEmailLinkCreateRead, TenantEmailLinkDeleteRead, TenantEmailLinkRead
 from app.services.background_jobs import start_job
 from app.services.beds24_client import BEDS24_EMAIL_INFO_CODE, add_booking_info_item, delete_booking_info_item, get_booking_info_items
+from app.services.tenant_conversation_links import remove_conversations_for_matched_email
 
 router = APIRouter(tags=["tenant-email-links"])
 logger = logging.getLogger(__name__)
@@ -142,51 +141,6 @@ async def create_tenant_email_link(
     return TenantEmailLinkCreateRead(link=TenantEmailLinkRead.model_validate(new_link), gmail_sync_job_id=gmail_sync_job_id)
 
 
-def _remove_conversations_for_matched_email(db: Session, tenant_id: int, email: str) -> tuple[int, int]:
-    """Hard-delete every conversation this tenant's link to `email` matched, since unlinking an
-    email means its message history should no longer be attached to this tenant. A conversation
-    also linked to a *different* tenant is left alone (only this tenant's link is removed) --
-    deleting it would erase that other tenant's history too. Returns
-    (conversations_deleted, conversations_only_unlinked).
-    """
-    now = datetime.now(timezone.utc)
-    conversation_links = (
-        db.query(TenantConversationLink)
-        .filter(
-            TenantConversationLink.tenant_id == tenant_id,
-            TenantConversationLink.matched_email == email,
-            TenantConversationLink.unlinked_at.is_(None),
-        )
-        .all()
-    )
-
-    deleted = 0
-    unlinked_shared = 0
-    for conversation_link in conversation_links:
-        conversation_id = conversation_link.conversation_id
-        other_tenant_has_active_link = (
-            db.query(TenantConversationLink)
-            .filter(
-                TenantConversationLink.conversation_id == conversation_id,
-                TenantConversationLink.tenant_id != tenant_id,
-                TenantConversationLink.unlinked_at.is_(None),
-            )
-            .first()
-            is not None
-        )
-        if other_tenant_has_active_link:
-            conversation_link.unlinked_at = now
-            unlinked_shared += 1
-            continue
-
-        db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete(synchronize_session=False)
-        db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete(synchronize_session=False)
-        db.query(Conversation).filter(Conversation.id == conversation_id).delete(synchronize_session=False)
-        deleted += 1
-
-    return deleted, unlinked_shared
-
-
 @router.delete("/tenants/{tenant_id}/email-links/{link_id}", response_model=TenantEmailLinkDeleteRead)
 async def delete_tenant_email_link(
     tenant_id: int,
@@ -243,7 +197,7 @@ async def delete_tenant_email_link(
             )
             link.beds24_sync_status = "failed"
 
-    deleted_conversations, shared_conversations_unlinked = _remove_conversations_for_matched_email(db, tenant_id, link.email)
+    deleted_conversations, shared_conversations_unlinked = remove_conversations_for_matched_email(db, tenant_id, link.email)
 
     db.commit()
     db.refresh(link)
