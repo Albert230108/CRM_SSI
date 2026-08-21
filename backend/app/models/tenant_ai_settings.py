@@ -25,4 +25,7 @@ class TenantAiSettings(Base):
     planner_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     checker_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     drafter_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
+    # Independent of planner_mode: whether the debounced brain-writer step runs for this tenant.
+    brain_writer_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    brain_writer_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

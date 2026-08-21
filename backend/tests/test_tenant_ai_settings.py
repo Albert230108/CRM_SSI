@@ -47,6 +47,10 @@ def test_get_creates_default_settings_row(non_admin_client, db_session):
         "planner_profile_id": None,
         "checker_profile_id": None,
         "drafter_profile_id": None,
+        # Independent of planner_mode - also opt-in, so a tenant nobody has configured never
+        # gets automatic brain updates.
+        "brain_writer_enabled": False,
+        "brain_writer_profile_id": None,
     }
 
 

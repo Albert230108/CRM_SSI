@@ -35,6 +35,9 @@ from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel
 from app.services.tenant_notes_history import SOURCE_BEDS24_IMPORT, SOURCE_MANUAL, set_tenant_notes
 from app.models.tenant_notes_history import TenantNotesHistory
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
+from app.models.tenant_brain_entry import TenantBrainEntry
+from app.models.tenant_brain_entry_history import TenantBrainEntryHistory
+from app.services import tenant_brain_service
 
 router = APIRouter(tags=["tenants"])
 logger = logging.getLogger(__name__)
@@ -639,6 +642,186 @@ def get_tenant_notes_history(
         }
         for entry, email in rows
     ]
+
+
+class TenantBrainEntryRead(BaseModel):
+    id: int
+    content: str
+    source: str
+    created_by_user_id: Optional[int] = None
+    created_by_email: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+def _brain_entry_to_dict(entry: TenantBrainEntry, email: Optional[str]) -> dict:
+    return {
+        "id": entry.id,
+        "content": entry.content,
+        "source": entry.source,
+        "created_by_user_id": entry.created_by_user_id,
+        "created_by_email": email,
+        "created_at": entry.created_at,
+        "updated_at": entry.updated_at,
+    }
+
+
+@router.get("/tenants/{tenant_id}/brain", response_model=list[TenantBrainEntryRead])
+def get_tenant_brain_entries(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    rows = (
+        db.query(TenantBrainEntry, User.email)
+        .outerjoin(User, User.id == TenantBrainEntry.created_by_user_id)
+        .filter(TenantBrainEntry.tenant_id == tenant_id)
+        .order_by(TenantBrainEntry.created_at.desc(), TenantBrainEntry.id.desc())
+        .all()
+    )
+    return [_brain_entry_to_dict(entry, email) for entry, email in rows]
+
+
+class TenantBrainEntryCreate(BaseModel):
+    content: str
+
+
+@router.post("/tenants/{tenant_id}/brain", response_model=TenantBrainEntryRead, status_code=status.HTTP_201_CREATED)
+def create_tenant_brain_entry(
+    tenant_id: int,
+    payload: TenantBrainEntryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    entry = tenant_brain_service.add_entry(
+        db, tenant, payload.content, source=tenant_brain_service.SOURCE_MANUAL, changed_by_user_id=current_user.id
+    )
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content is required")
+    db.commit()
+    db.refresh(entry)
+    return _brain_entry_to_dict(entry, current_user.email)
+
+
+class TenantBrainEntryUpdate(BaseModel):
+    content: str
+
+
+@router.patch("/tenants/{tenant_id}/brain/{entry_id}", response_model=TenantBrainEntryRead)
+def update_tenant_brain_entry(
+    tenant_id: int,
+    entry_id: int,
+    payload: TenantBrainEntryUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    entry = (
+        db.query(TenantBrainEntry)
+        .filter(TenantBrainEntry.id == entry_id, TenantBrainEntry.tenant_id == tenant_id)
+        .first()
+    )
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brain entry not found")
+
+    tenant_brain_service.update_entry(db, entry, payload.content, changed_by_user_id=current_user.id)
+    db.commit()
+    db.refresh(entry)
+    email = db.query(User.email).filter(User.id == entry.created_by_user_id).scalar() if entry.created_by_user_id else None
+    return _brain_entry_to_dict(entry, email)
+
+
+@router.delete("/tenants/{tenant_id}/brain/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_tenant_brain_entry(
+    tenant_id: int,
+    entry_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    entry = (
+        db.query(TenantBrainEntry)
+        .filter(TenantBrainEntry.id == entry_id, TenantBrainEntry.tenant_id == tenant_id)
+        .first()
+    )
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brain entry not found")
+
+    tenant_brain_service.delete_entry(db, entry, changed_by_user_id=current_user.id)
+    db.commit()
+
+
+class TenantBrainEntryHistoryEntry(BaseModel):
+    id: int
+    entry_id: Optional[int] = None
+    action: str
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    source: str
+    changed_by_user_id: Optional[int] = None
+    changed_by_email: Optional[str] = None
+    changed_at: datetime
+
+
+@router.get("/tenants/{tenant_id}/brain/history", response_model=list[TenantBrainEntryHistoryEntry])
+def get_tenant_brain_history(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    rows = (
+        db.query(TenantBrainEntryHistory, User.email)
+        .outerjoin(User, User.id == TenantBrainEntryHistory.changed_by_user_id)
+        .filter(TenantBrainEntryHistory.tenant_id == tenant_id)
+        .order_by(TenantBrainEntryHistory.changed_at.desc(), TenantBrainEntryHistory.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": entry.id,
+            "entry_id": entry.entry_id,
+            "action": entry.action,
+            "old_value": entry.old_value,
+            "new_value": entry.new_value,
+            "source": entry.source,
+            "changed_by_user_id": entry.changed_by_user_id,
+            "changed_by_email": email,
+            "changed_at": entry.changed_at,
+        }
+        for entry, email in rows
+    ]
+
+
+@router.post("/tenants/{tenant_id}/brain/scan", response_model=list[TenantBrainEntryRead])
+def scan_tenant_brain(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Runs a one-off LLM scan over the tenant's available history to prefill the brain.
+
+    Synchronous and explicit - only ever runs when a user clicks "Generate initial brain",
+    never automatically, so there is no surprise LLM cost on tenants nobody has opted in.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    entries = tenant_brain_service.scan_tenant_history(db, tenant, user_id=current_user.id)
+    db.commit()
+    for entry in entries:
+        db.refresh(entry)
+    return [_brain_entry_to_dict(entry, current_user.email) for entry in entries]
 
 
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)

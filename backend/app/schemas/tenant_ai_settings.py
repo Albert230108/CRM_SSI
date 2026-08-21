@@ -18,6 +18,9 @@ class TenantAiSettingsRead(BaseModel):
     planner_profile_id: int | None = None
     checker_profile_id: int | None = None
     drafter_profile_id: int | None = None
+    # Independent of planner_mode - whether the debounced tenant-brain writer runs for this tenant.
+    brain_writer_enabled: bool = False
+    brain_writer_profile_id: int | None = None
 
 
 class TenantAiSettingsUpdate(BaseModel):
@@ -32,6 +35,8 @@ class TenantAiSettingsUpdate(BaseModel):
     planner_profile_id: int | None = None
     checker_profile_id: int | None = None
     drafter_profile_id: int | None = None
+    brain_writer_enabled: bool = False
+    brain_writer_profile_id: int | None = None
 
 
 class BulkTenantAiTemplateAssignment(BaseModel):

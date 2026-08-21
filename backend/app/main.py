@@ -34,7 +34,8 @@ from app.database import SessionLocal
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.gmail_integration import GmailAccount
-from app.services import ai_auto_draft_service
+from app.models.tenant_brain_trigger import TenantBrainTrigger
+from app.services import ai_auto_draft_service, tenant_brain_service
 from app.services.ai_draft_notification_service import notify_admins_of_new_draft
 from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
 from app.webhooks.gmail import router as gmail_webhook_router
@@ -192,6 +193,30 @@ def _run_due_ai_auto_sends_once() -> None:
         db.close()
 
 
+def _run_due_tenant_brain_triggers_once() -> None:
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        due_triggers = db.query(TenantBrainTrigger).filter(TenantBrainTrigger.trigger_at <= now).all()
+        for trigger in due_triggers:
+            trigger_id = trigger.id
+            try:
+                tenant_brain_service.generate_brain_update_for_trigger(db, trigger)
+            except Exception:
+                db.rollback()
+                logger.exception("Tenant brain update generation failed trigger_id=%s", trigger_id)
+            finally:
+                # Always consume the trigger, whether generation succeeded or failed - a
+                # permanently-broken trigger must not retry every cycle forever; a new inbound
+                # message will register a fresh trigger anyway.
+                db.query(TenantBrainTrigger).filter(TenantBrainTrigger.id == trigger_id).delete()
+                db.commit()
+    except Exception:
+        logger.exception("Tenant brain scheduler loop failed to load due triggers")
+    finally:
+        db.close()
+
+
 def _run_due_notification_whatsapp_batch_once() -> None:
     db = SessionLocal()
     try:
@@ -208,6 +233,7 @@ async def _ai_draft_scheduler_forever() -> None:
         await asyncio.sleep(AI_DRAFT_SCHEDULER_INTERVAL_SECONDS)
         await asyncio.to_thread(_run_due_ai_draft_triggers_once)
         await asyncio.to_thread(_run_due_ai_auto_sends_once)
+        await asyncio.to_thread(_run_due_tenant_brain_triggers_once)
         await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
 
 

@@ -7,6 +7,9 @@ CHECKER_ROLE = "checker"
 # The drafter writes the reply itself. Its profile carries prompt text only - the model,
 # sampling and context budget for a draft still come from the reply template.
 DRAFTER_ROLE = "drafter"
+# Decides, independently of the planner, whether the latest message is worth remembering
+# long-term for this tenant. Runs on its own debounced trigger - see tenant_brain_service.py.
+BRAIN_WRITER_ROLE = "brain_writer"
 
 
 class AiAgentProfile(Base):
@@ -21,7 +24,7 @@ class AiAgentProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False, index=True)  # planner | checker | drafter
+    role = Column(String(20), nullable=False, index=True)  # planner | checker | drafter | brain_writer
     # Exactly one profile per role is the fallback used by tenants that have not pinned one.
     is_default = Column(Boolean, nullable=False, default=False, server_default="false")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")

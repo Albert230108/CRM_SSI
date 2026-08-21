@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import ColumnResizeHandle from '../components/ColumnResizeHandle'
 import FinanceBox from '../components/FinanceBox'
-import NotesBox from '../components/NotesBox'
+import TenantNotesPanel from '../components/TenantNotesPanel'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
 import ThreadView from '../components/ThreadView'
@@ -346,7 +346,7 @@ export default function Dashboard() {
             <div className="flex min-h-0 flex-1 flex-col gap-1.5">
               <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-sm">
                 <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
-                  <NotesBox tenantId={selectedTenantId} onReady={handleNotesReady} />
+                  <TenantNotesPanel tenantId={selectedTenantId} onReady={handleNotesReady} />
                 </div>
                 <TileLoadingOverlay active={isSwitchingTenant} />
               </section>

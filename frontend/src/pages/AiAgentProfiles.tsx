@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-export type AgentRole = 'planner' | 'checker' | 'drafter'
+export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer'
 
 export type AiAgentProfile = {
   id: number
@@ -91,6 +91,8 @@ export default function AiAgentProfiles() {
     planner: [],
     checker: [],
     drafter: [],
+    // brain_writer has no editable prompt-block registry - see the loadPromptBlocks effect.
+    brain_writer: [],
   })
   const [form, setForm] = useState<ProfileForm | null>(null)
   const [saving, setSaving] = useState(false)
@@ -108,6 +110,8 @@ export default function AiAgentProfiles() {
   }, [load])
 
   useEffect(() => {
+    // brain_writer has no editable prompt-block registry (server only serves it for these three
+    // roles) - its profile still carries instructions/model/context settings via the plain form.
     const roles: AgentRole[] = ['planner', 'checker', 'drafter']
     const loadPromptBlocks = async () => {
       const entries = await Promise.all(
@@ -231,9 +235,9 @@ export default function AiAgentProfiles() {
                         </span>
                         {role === 'planner' ? (
                           <span className="rounded-full bg-gray-100 px-2 py-0.5">min conf {profile.min_confidence}</span>
-                        ) : (
+                        ) : role === 'checker' ? (
                           <span className="rounded-full bg-gray-100 px-2 py-0.5">{profile.max_redraft_attempts} redrafts</span>
-                        )}
+                        ) : null}
                         {profile.escalate_keywords.length ? (
                           <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">
                             {profile.escalate_keywords.length} escalation keyword(s)
@@ -286,6 +290,7 @@ export default function AiAgentProfiles() {
       {renderRole('planner', 'Planner profiles', 'Chooses the template, the knowledge to pull in, and the instruction for the drafter.')}
       {renderRole('checker', 'Checker profiles', 'Reviews each draft. It never rewrites the text itself — it only approves or gives feedback.')}
       {renderRole('drafter', 'Drafter profiles', 'Writes the reply itself. Prompt text only — model, sampling and context still come from the reply template.')}
+      {renderRole('brain_writer', 'Brain writer profiles', 'Decides, independently of the planner, whether an inbound message is worth remembering long-term for a tenant.')}
 
       {form ? (
         <section className={`mt-4 ${CARD}`}>
@@ -447,7 +452,7 @@ export default function AiAgentProfiles() {
           ) : null}
 
           {(['structure', 'context'] as const).map((group) => {
-            const defs = promptBlockDefs[form.role].filter((def) => def.group === group)
+            const defs = (promptBlockDefs[form.role] ?? []).filter((def) => def.group === group)
             if (!defs.length) return null
             return (
               <div key={group} className="mt-3">

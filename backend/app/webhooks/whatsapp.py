@@ -20,6 +20,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services.ai_draft_approval_service import try_handle_admin_reply
 from app.services.ai_draft_trigger_service import register_inbound_message
+from app.services.tenant_brain_trigger_service import register_inbound_message as register_brain_inbound_message
 from app.services.attachment_service import link_attachments, store_upload
 from app.services.attachment_storage import max_file_bytes
 from app.services.notification_service import create_notification
@@ -679,6 +680,7 @@ def _process_whatsapp_message(
     )
     if not is_history_payload:
         register_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
+        register_brain_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
         register_notification_for_whatsapp(db)
     db.commit()
     _persist_inbound_attachments(db, payload=payload, tenant_id=tenant.id, communication_id=inbound_communication.id)

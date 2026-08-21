@@ -28,12 +28,14 @@ type TenantAiSettings = {
   planner_profile_id: number | null
   checker_profile_id: number | null
   drafter_profile_id: number | null
+  brain_writer_enabled: boolean
+  brain_writer_profile_id: number | null
 }
 
 type AgentProfileOption = {
   id: number
   name: string
-  role: 'planner' | 'checker' | 'drafter'
+  role: 'planner' | 'checker' | 'drafter' | 'brain_writer'
   is_default: boolean
 }
 
@@ -52,6 +54,8 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
   planner_profile_id: null,
   checker_profile_id: null,
   drafter_profile_id: null,
+  brain_writer_enabled: false,
+  brain_writer_profile_id: null,
 })
 
 export default function AiTenantSettings() {
@@ -725,6 +729,46 @@ export default function AiTenantSettings() {
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'drafter').map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-2.5">
+                <p className="text-sm font-semibold text-gray-900">Tenant Brain</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  Independent of Planner &amp; Checker mode above: when enabled, a lightweight step
+                  reviews each inbound message and, if it reveals something durable worth
+                  remembering about this tenant, adds it to the Tenant Brain tab next to Notes.
+                </p>
+                <label className="mt-2 flex items-center gap-2 text-sm text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={settings.brain_writer_enabled}
+                    onChange={(event) =>
+                      setSettings((current) => (current ? { ...current, brain_writer_enabled: event.target.checked } : current))
+                    }
+                  />
+                  Enable automatic brain updates for this tenant
+                </label>
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="brain-writer-profile">
+                    Brain writer profile
+                  </label>
+                  <select
+                    id="brain-writer-profile"
+                    value={settings.brain_writer_profile_id ?? ''}
+                    disabled={!settings.brain_writer_enabled}
+                    onChange={(event) =>
+                      setSettings((current) =>
+                        current ? { ...current, brain_writer_profile_id: event.target.value ? Number(event.target.value) : null } : current,
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                  >
+                    <option value="">Use the default</option>
+                    {agentProfiles.filter((profile) => profile.role === 'brain_writer').map((profile) => (
                       <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
                     ))}
                   </select>
