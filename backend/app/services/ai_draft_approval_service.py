@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import asyncio
 import logging
 import re
 
@@ -14,6 +15,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import ai_auto_draft_service
 from app.services import ai_draft_notification_service
+from app.services.whatsapp_client import WhatsAppBridgeError
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,10 @@ class AdminReplyOutcome:
     original notification was successfully delivered to.
     """
 
-    reply_text: str
+    # None means the caller already sent everything the requester needs to see (e.g. a REDO
+    # whose acknowledgement and redone-draft broadcast were already sent directly) - the webhook
+    # must not send a further confirmation in that case.
+    reply_text: str | None
     reply_to_phone: str | None
 
 
@@ -129,6 +134,7 @@ def _handle_redo_reply(
     db: Session,
     *,
     user: User,
+    external_account_id: str,
     redo_match: re.Match[str],
     outcome,
 ) -> AdminReplyOutcome:
@@ -155,6 +161,19 @@ def _handle_redo_reply(
     if draft.status not in PENDING_STATUSES:
         return outcome(_already_handled_reply(db, draft))
 
+    # Regenerating runs the full planner/drafter/checker loop, which can take several seconds -
+    # acknowledge the request up front so it arrives before the redone draft, not after it.
+    phone = (user.phone or "").strip()
+    if phone:
+        try:
+            asyncio.run(
+                ai_draft_notification_service.send_system_whatsapp_message(
+                    to=phone, message="🔄 Redoing draft with your notes…", external_account_id=external_account_id
+                )
+            )
+        except WhatsAppBridgeError:
+            logger.exception("Failed to send redo acknowledgement user_id=%s draft_id=%s", user.id, draft_id)
+
     regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, instructions)
     if regenerated is None:
         return outcome(
@@ -163,7 +182,9 @@ def _handle_redo_reply(
 
     db.commit()
     ai_draft_notification_service.notify_admins_of_redraft(db, regenerated)
-    return outcome("🔄 Redoing draft with your notes…")
+    # The acknowledgement above already told the requester a redo is in progress, and the
+    # broadcast just sent them the regenerated draft under the same code - nothing more to say.
+    return AdminReplyOutcome(reply_text=None, reply_to_phone=None)
 
 
 def try_handle_admin_reply(
@@ -215,7 +236,9 @@ def try_handle_admin_reply(
 
     redo_match = _REDO_PATTERN.match(text or "")
     if redo_match:
-        return _handle_redo_reply(db, user=user, redo_match=redo_match, outcome=outcome)
+        return _handle_redo_reply(
+            db, user=user, external_account_id=notification_account_id, redo_match=redo_match, outcome=outcome
+        )
 
     match = _CODE_PATTERN.search(text or "")
     bare_match = None if match else _BARE_PATTERN.match(text or "")

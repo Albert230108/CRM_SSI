@@ -220,8 +220,10 @@ def test_planner_mode_off_keeps_the_existing_default_template_path(db_session, m
 
 
 def test_whatsapp_planner_draft_quotes_the_inbound_message(db_session, monkeypatch):
-    """Regression: a WhatsApp auto-draft must restate the guest message it's answering,
-    since this stack has no native WhatsApp quoted-reply support to show that link otherwise."""
+    """Regression: a WhatsApp auto-draft must record the guest message it's answering for staff
+    to see, since this stack has no native WhatsApp quoted-reply support to show that link
+    otherwise - but that framing must stay out of generated_text, which is what actually gets
+    sent to the guest."""
     tenant, template = _setup(db_session)
     monkeypatch.setattr(
         ai_agent_orchestrator.gemini_client,
@@ -237,7 +239,8 @@ def test_whatsapp_planner_draft_quotes_the_inbound_message(db_session, monkeypat
     db_session.commit()
 
     assert draft is not None
-    assert draft.generated_text == 'Replying to: "Is the room still available?"\n\nYes, still available.'
+    assert draft.generated_text == "Yes, still available."
+    assert draft.quoted_context == 'Replying to: "Is the room still available?"'
 
 
 def test_whatsapp_default_template_draft_quotes_the_inbound_message(db_session, monkeypatch):
@@ -260,7 +263,8 @@ def test_whatsapp_default_template_draft_quotes_the_inbound_message(db_session, 
     draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
     db_session.commit()
 
-    assert draft.generated_text == 'Replying to: "Is the room still available?"\n\nYes, still available.'
+    assert draft.generated_text == "Yes, still available."
+    assert draft.quoted_context == 'Replying to: "Is the room still available?"'
 
 
 def test_whatsapp_draft_unquoted_when_no_inbound_message(db_session, monkeypatch):
@@ -278,6 +282,7 @@ def test_whatsapp_draft_unquoted_when_no_inbound_message(db_session, monkeypatch
     db_session.commit()
 
     assert draft.generated_text == "Auto draft."
+    assert draft.quoted_context is None
 
 
 def test_email_draft_also_quotes_the_inbound_message(db_session, monkeypatch):
@@ -296,7 +301,8 @@ def test_email_draft_also_quotes_the_inbound_message(db_session, monkeypatch):
     draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
     db_session.commit()
 
-    assert draft.generated_text == 'Replying to: "Is the room still available?"\n\nAuto draft.'
+    assert draft.generated_text == "Auto draft."
+    assert draft.quoted_context == 'Replying to: "Is the room still available?"'
 
 
 def test_manual_ai_plan_endpoint_returns_the_final_text(user_client, db_session, monkeypatch):

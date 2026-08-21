@@ -10,6 +10,7 @@ class AiAutoDraftRead(BaseModel):
     channel: str
     template_id: int | None = None
     generated_text: str
+    quoted_context: str | None = None
     status: str
     scheduled_send_at: datetime | None = None
     created_at: datetime

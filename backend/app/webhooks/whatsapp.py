@@ -586,20 +586,23 @@ def _process_whatsapp_message(
             sender_identities=(sender, whatsapp_identity.raw_chat_id, external_chat_namespace),
         )
         if admin_reply is not None:
-            confirmation_to = admin_reply.reply_to_phone or sender
-            try:
-                asyncio.run(
-                    send_system_whatsapp_message(
-                        to=confirmation_to,
-                        message=admin_reply.reply_text,
-                        external_account_id=external_account_id or None,
+            # None means the handler already sent everything the requester needs to see (e.g. a
+            # REDO's own acknowledgement + redone-draft broadcast) - sending here would duplicate it.
+            if admin_reply.reply_text is not None:
+                confirmation_to = admin_reply.reply_to_phone or sender
+                try:
+                    asyncio.run(
+                        send_system_whatsapp_message(
+                            to=confirmation_to,
+                            message=admin_reply.reply_text,
+                            external_account_id=external_account_id or None,
+                        )
                     )
-                )
-                logger.warning(
-                    "Staff draft reply handled to=%s reply=%r", confirmation_to, admin_reply.reply_text[:200]
-                )
-            except WhatsAppBridgeError:
-                logger.exception("Failed to send staff draft approval confirmation to=%s", confirmation_to)
+                    logger.warning(
+                        "Staff draft reply handled to=%s reply=%r", confirmation_to, admin_reply.reply_text[:200]
+                    )
+                except WhatsAppBridgeError:
+                    logger.exception("Failed to send staff draft approval confirmation to=%s", confirmation_to)
             return WhatsAppWebhookResponse(ok=True, tenant_id=None, message="staff draft approval handled")
 
     resolved = resolve_tenant_for_inbound_channel(db, payload, request_headers, query_params)

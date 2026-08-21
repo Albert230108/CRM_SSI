@@ -1,9 +1,10 @@
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services import ai_agent_orchestrator, ai_auto_draft_service
 from app.services.ai_agent_orchestrator import PlannerRunResult
-from app.services.ai_auto_draft_service import regenerate_draft_via_planner
+from app.services.ai_auto_draft_service import regenerate_draft_via_planner, send_scheduled_draft
 
 
 def _create_tenant(db_session, **overrides):
@@ -154,3 +155,47 @@ def test_regenerate_returns_none_when_ai_settings_missing(db_session, monkeypatc
     result = regenerate_draft_via_planner(db_session, draft, "try again")
 
     assert result is None
+
+
+def test_sending_a_whatsapp_draft_never_includes_the_quoted_context(db_session, monkeypatch):
+    # Regression: "Replying to: ..." must stay admin-facing only (quoted_context) - it must
+    # never appear in what's actually sent to the guest via generated_text.
+    tenant = _create_tenant(db_session, booking_id="B-regen-draft-send")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="31612345678@c.us",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+    draft = _create_draft(
+        db_session,
+        tenant,
+        whatsapp_endpoint_id=endpoint.id,
+        generated_text="Yes, still available!",
+        quoted_context='Replying to: "Is the room still available?"',
+    )
+
+    sent_messages = []
+
+    async def fake_send_whatsapp_message(payload):
+        sent_messages.append(payload["message"])
+        return {}
+
+    def fake_persist(db, **kwargs):
+        class _Result:
+            communication = type("_Communication", (), {"id": 1})()
+
+        return _Result()
+
+    monkeypatch.setattr(ai_auto_draft_service, "send_whatsapp_message", fake_send_whatsapp_message)
+    monkeypatch.setattr(ai_auto_draft_service, "persist_whatsapp_outbound_communication", fake_persist)
+
+    sent = send_scheduled_draft(db_session, draft)
+
+    assert sent is True
+    assert sent_messages == ["Yes, still available!"]
+    assert "Replying to" not in sent_messages[0]

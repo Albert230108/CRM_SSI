@@ -23,8 +23,11 @@ def _build_message(*, tenant_name: str, draft: AiAutoDraft) -> str:
     else:
         header = "🤖 " + header
 
+    quoted_context = (draft.quoted_context or "").strip()
+    quoted_block = f"{quoted_context}\n\n" if quoted_context else ""
+
     return (
-        f'{header}\n\n"{text}"\n\n'
+        f'{header}\n\n{quoted_block}"{text}"\n\n'
         f"Reply YES-{draft.id} to send\n"
         f"Reply NO-{draft.id} to dismiss\n"
         f"Reply REDO-{draft.id} <what to change> to regenerate"

@@ -30,6 +30,7 @@ def _to_read(db: Session, draft: AiAutoDraft) -> AiAutoDraftRead:
         channel=draft.channel,
         template_id=draft.template_id,
         generated_text=draft.generated_text,
+        quoted_context=draft.quoted_context,
         status=draft.status,
         scheduled_send_at=draft.scheduled_send_at,
         created_at=draft.created_at,

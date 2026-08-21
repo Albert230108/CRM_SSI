@@ -407,12 +407,17 @@ def test_redo_reply_regenerates_draft_in_place_and_rebroadcasts(client, db_sessi
     assert response.json()["message"] == "staff draft approval handled"
     assert regenerate_calls == [(draft.id, "make it shorter and mention the deposit")]
 
-    # Direct reply to the requester is a short acknowledgement, not the full re-broadcast.
-    assert "Redoing" in sent_calls[0][1]
+    # The webhook's own confirmation send is skipped entirely for a successful redo - the
+    # acknowledgement and the redone-draft broadcast (both below) already cover it, and the
+    # acknowledgement must be the first thing sent so it lands before the regenerated draft.
+    assert sent_calls == []
+    assert len(broadcast_calls) == 2
+    ack_to, ack_message, ack_account = broadcast_calls[0]
+    assert ack_to == user.phone
+    assert ack_account == NOTIFICATION_ACCOUNT_ID
+    assert "Redoing" in ack_message
 
-    # The regenerated draft was broadcast to the (single) opted-in admin under the same code.
-    assert len(broadcast_calls) == 1
-    to, message, external_account_id = broadcast_calls[0]
+    to, message, external_account_id = broadcast_calls[1]
     assert to == user.phone
     assert external_account_id == NOTIFICATION_ACCOUNT_ID
     assert "Shorter reply, deposit mentioned." in message

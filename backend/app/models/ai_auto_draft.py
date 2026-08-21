@@ -13,6 +13,10 @@ class AiAutoDraft(Base):
     email_thread_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
     whatsapp_endpoint_id = Column(Integer, ForeignKey("tenant_channel_endpoints.id", ondelete="SET NULL"), nullable=True)
     generated_text = Column(Text, nullable=False)
+    # The inbound message this draft answers, framed for human display only (e.g. "Replying to:
+    # ..."). Never concatenated into generated_text - that column is exactly what gets sent to
+    # the tenant, so the quoted context must live separately or it leaks into the outbound message.
+    quoted_context = Column(Text, nullable=True)
     # pending -> pending_auto_send -> sent, or pending -> dismissed / used_as_manual_seed.
     # A draft superseded by a fresher one (new inbound message before it was acted on) moves to
     # "superseded" rather than being deleted, so the automatic pipeline keeps a full audit trail.

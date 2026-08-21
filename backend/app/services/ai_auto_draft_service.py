@@ -28,17 +28,15 @@ def _auto_send_delay_seconds(db: Session) -> int:
     return settings.ai_auto_send_delay_seconds if settings is not None else 300
 
 
-def _with_quoted_original(generated_text: str, original_text: str | None) -> str:
-    """Prefix an auto-draft with the inbound message it's answering.
-
-    Neither the WhatsApp send path nor email replies carry a distinct "message being answered"
-    marker once the draft leaves this service, so the only way to show that link is textually,
-    inside the draft itself.
+def _build_quoted_context(original_text: str | None) -> str | None:
+    """The inbound message a draft answers, framed for human display (e.g. in the WhatsApp
+    approval ping or the AI Drafts page) - never appended to generated_text, since that column
+    is exactly what gets sent to the tenant and must stay free of this framing.
     """
     original = (original_text or "").strip()
     if not original:
-        return generated_text
-    return f'Replying to: "{original}"\n\n{generated_text}'
+        return None
+    return f'Replying to: "{original}"'
 
 
 def _planner_draft_status_and_schedule(
@@ -99,8 +97,6 @@ def _generate_draft_via_planner(
         )
         return None
 
-    generated_text = _with_quoted_original(result.generated_text, inbound_text)
-
     status_value, scheduled_send_at = _planner_draft_status_and_schedule(
         db, channel=trigger.channel, planner_mode=planner_mode, ai_settings=ai_settings, result=result
     )
@@ -111,7 +107,8 @@ def _generate_draft_via_planner(
         template_id=result.template_id,
         email_thread_id=trigger.email_thread_id,
         whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
-        generated_text=generated_text,
+        generated_text=result.generated_text,
+        quoted_context=_build_quoted_context(inbound_text),
         status=status_value,
         scheduled_send_at=scheduled_send_at,
         agent_run_id=result.run_id,
@@ -159,8 +156,6 @@ def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, instructions: 
         )
         return None
 
-    generated_text = _with_quoted_original(result.generated_text, inbound_text)
-
     status_value, _scheduled_send_at = _planner_draft_status_and_schedule(
         db, channel=draft.channel, planner_mode=planner_mode, ai_settings=ai_settings, result=result
     )
@@ -168,7 +163,8 @@ def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, instructions: 
     if status_value == "pending_auto_send":
         status_value = "pending"
 
-    draft.generated_text = generated_text
+    draft.generated_text = result.generated_text
+    draft.quoted_context = _build_quoted_context(inbound_text)
     draft.template_id = result.template_id
     draft.status = status_value
     draft.scheduled_send_at = None
@@ -217,7 +213,6 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
         agent_instructions=agent_instructions,
     )
     inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel)
-    generated_text = _with_quoted_original(generated_text, inbound_text)
 
     auto_send_enabled = ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp
     draft = AiAutoDraft(
@@ -227,6 +222,7 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
         email_thread_id=trigger.email_thread_id,
         whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
         generated_text=generated_text,
+        quoted_context=_build_quoted_context(inbound_text),
         status="pending_auto_send" if auto_send_enabled else "pending",
         scheduled_send_at=(datetime.now(timezone.utc) + timedelta(seconds=_auto_send_delay_seconds(db))) if auto_send_enabled else None,
     )
