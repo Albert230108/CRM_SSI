@@ -71,8 +71,10 @@ class _FakeGemini:
         self.responses = list(responses)
         self.calls = []
 
-    def __call__(self, prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
-        self.calls.append({"prompt": prompt, "model": model, "schema": response_schema})
+    def __call__(
+        self, prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None, file_parts=None
+    ):
+        self.calls.append({"prompt": prompt, "model": model, "schema": response_schema, "file_parts": file_parts})
         if not self.responses:
             raise AssertionError("The loop made more model calls than the test provided responses for")
         payload = self.responses.pop(0)

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, JSON, String, Text, func
 
 from app.database import Base
 
@@ -27,6 +27,19 @@ class GmailAccount(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = (
+        # Rows with a NULL provider_account_id are excluded from this uniqueness check by
+        # ordinary SQL NULL semantics (NULL is never equal to NULL), not a partial-index
+        # predicate -- new rows always set provider_account_id, so this is the scope that
+        # matters for closing the sync race this guards against.
+        Index(
+            "uq_conversations_provider_account_thread",
+            "provider",
+            "provider_account_id",
+            "provider_thread_id",
+            unique=True,
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     provider = Column(String(50), nullable=False, index=True)

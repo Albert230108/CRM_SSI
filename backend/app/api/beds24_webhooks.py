@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -13,14 +14,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.gmail_integration import sync_email_across_gmail_accounts
 from app.api.tenants import ROOM_ID_MAPPING, _extract_guest_fields
 from app.core.dependencies import get_current_admin_user, get_db
 from app.models.beds24_webhook_log import Beds24WebhookLog
 from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.schemas.beds24_webhook_log import Beds24WebhookLogRead
+from app.services.background_jobs import start_job
 from app.services.beds24_client import get_booking_info_items
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.tenant_ai_template_provisioning import apply_default_planner_mode
 from app.services.tenant_email_sync import sync_tenant_email_addresses_from_beds24
 from app.services.tenant_notes_history import SOURCE_BEDS24_WEBHOOK, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
@@ -180,6 +184,7 @@ async def _process_beds24_booking_event(
             tenant = Tenant(booking_id=booking_id, name=fields.get("name") or booking_id)
             db.add(tenant)
             db.flush()
+            apply_default_planner_mode(db, tenant.id)
 
         tenant.name = fields.get("name") or booking_id
         tenant.first_name = fields.get("first_name")
@@ -263,9 +268,10 @@ async def _process_beds24_booking_event(
                     )
                 )
 
+        newly_linked_emails: list[str] = []
         try:
             info_items = await get_booking_info_items(booking_id)
-            sync_tenant_email_addresses_from_beds24(db, tenant, info_items)
+            newly_linked_emails = sync_tenant_email_addresses_from_beds24(db, tenant, info_items)
         except Exception:
             # Info-item sync is best-effort: a Beds24 read hiccup here must not abort the
             # tenant/finance upsert this webhook is otherwise committing below.
@@ -279,6 +285,13 @@ async def _process_beds24_booking_event(
         log.result_message = "tenant upserted"
         log.processed_at = datetime.now(timezone.utc)
         db.commit()
+
+        # Search Gmail history for any address the CRM_EMAIL reconciliation above just linked,
+        # so past messages surface in this tenant's thread instead of only future ones. Fired
+        # after both commits so the background job's own DB session can see the new link.
+        for email in newly_linked_emails:
+            start_job("gmail_sync_email", asyncio.to_thread(sync_email_across_gmail_accounts, email))
+
         return {"status": "ok", "booking_id": booking_id}
     except Exception as exc:
         db.rollback()

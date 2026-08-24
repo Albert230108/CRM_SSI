@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { computeNights } from '../lib/date'
+import { useSearchAllTenantsPreference } from '../lib/displayPreferences'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
@@ -63,7 +64,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const statusesInitializedRef = useRef(false)
   const [selectedResponsible, setSelectedResponsible] = useState<string | null>(null)
   const [selectedDirection, setSelectedDirection] = useState<string | null>(null)
-  const [searchAllTenants, setSearchAllTenants] = useState(false)
+  const [searchAllTenants, setSearchAllTenants] = useSearchAllTenantsPreference()
   const [sortByMessage, setSortByMessage] = useState(true)
   const [sortDesc, setSortDesc] = useState(true)
   const [livePollSignal, setLivePollSignal] = useState(0)
@@ -418,7 +419,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           </div>
           <button
             type="button"
-            onClick={() => setSearchAllTenants((current) => !current)}
+            onClick={() => setSearchAllTenants(!searchAllTenants)}
             aria-pressed={searchAllTenants}
             title={searchAllTenants ? 'Searching all tenants — click to search filtered view only' : 'Searching filtered view — click to search all tenants'}
             className={[

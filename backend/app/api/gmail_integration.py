@@ -455,8 +455,26 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
             provider_account_id=account.id,
             provider_thread_id=thread_id,
         )
-        db.add(conversation)
-        db.flush()
+        try:
+            # A concurrent sync (e.g. a Pub/Sub push notification racing the catch-up poller, or
+            # an overlapping manual "Sync All") can create the same (provider,
+            # provider_account_id, provider_thread_id) row between the lookup above and this
+            # insert. The savepoint confines that failure to just this insert; re-querying below
+            # picks up whichever row won the race instead of leaving this sync's messages
+            # stranded on an orphaned duplicate that never surfaces in the tenant's thread.
+            with db.begin_nested():
+                db.add(conversation)
+                db.flush()
+        except IntegrityError:
+            conversation = (
+                db.query(Conversation)
+                .filter(Conversation.provider == PROVIDER_GMAIL)
+                .filter(Conversation.provider_account_id == account.id)
+                .filter(Conversation.provider_thread_id == thread_id)
+                .first()
+            )
+            if conversation is None:
+                raise
     else:
         if conversation.provider != PROVIDER_GMAIL:
             conversation.provider = PROVIDER_GMAIL
@@ -473,40 +491,48 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
 
     for message in messages:
         payload = message.get("payload") or {}
-        headers = _headers_map(payload.get("headers") or [])
-        sender_email = _email_address(headers.get("from"))
-        message_tenants = _find_tenants_for_message(db, headers, account_email)
-        for matched_tenant, matched_address in message_tenants:
-            matched_tenants.setdefault(matched_tenant.id, (matched_tenant, matched_address))
-        tenant = tenant or (message_tenants[0][0] if message_tenants else None)
-        sent_at = _parse_internal_date(message.get("internalDate"))
-        # SQLite drops tzinfo on round-trip, so a conversation's stored last_message_at can
-        # come back naive on a later sync while sent_at (freshly parsed) is always aware.
-        comparable_last_message_at = (
-            last_message_at.replace(tzinfo=timezone.utc) if last_message_at is not None and last_message_at.tzinfo is None else last_message_at
-        )
-        if comparable_last_message_at is None or sent_at > comparable_last_message_at:
-            last_message_at = sent_at
-            latest_preview = _message_body_text(payload)[:500] or latest_preview
-        if not subject:
-            subject = headers.get("subject")
-
-        provider_message_id = str(message.get("id") or "")
-        exists = (
-            db.query(ConversationMessage)
-            .filter(ConversationMessage.provider == PROVIDER_GMAIL)
-            .filter(ConversationMessage.provider_message_id == provider_message_id)
-            .first()
-        )
-        if exists is not None:
+        if "DRAFT" in (message.get("labelIds") or []):
+            # threads().get(format="full") includes a live draft's underlying message. Gmail
+            # assigns it a new message id on every edit/save, so without this it would dodge the
+            # provider_message_id dedup check below and be re-inserted as a new "sent" message on
+            # every save. Current draft content is already surfaced separately via
+            # list_thread_drafts()/"Check for AI draft" - this would just be a stale duplicate.
             continue
 
-        body_text = _message_body_text(payload)
-        body_html = _extract_html(payload)
-        attachments = _extract_attachments(payload)
-        recipient_email = _email_address(headers.get("to"))
-        direction = _message_direction(message, sender_email, account_email)
         try:
+            headers = _headers_map(payload.get("headers") or [])
+            sender_email = _email_address(headers.get("from"))
+            message_tenants = _find_tenants_for_message(db, headers, account_email)
+            for matched_tenant, matched_address in message_tenants:
+                matched_tenants.setdefault(matched_tenant.id, (matched_tenant, matched_address))
+            tenant = tenant or (message_tenants[0][0] if message_tenants else None)
+            sent_at = _parse_internal_date(message.get("internalDate"))
+            # SQLite drops tzinfo on round-trip, so a conversation's stored last_message_at can
+            # come back naive on a later sync while sent_at (freshly parsed) is always aware.
+            comparable_last_message_at = (
+                last_message_at.replace(tzinfo=timezone.utc) if last_message_at is not None and last_message_at.tzinfo is None else last_message_at
+            )
+            if comparable_last_message_at is None or sent_at > comparable_last_message_at:
+                last_message_at = sent_at
+                latest_preview = _message_body_text(payload)[:500] or latest_preview
+            if not subject:
+                subject = headers.get("subject")
+
+            provider_message_id = str(message.get("id") or "")
+            exists = (
+                db.query(ConversationMessage)
+                .filter(ConversationMessage.provider == PROVIDER_GMAIL)
+                .filter(ConversationMessage.provider_message_id == provider_message_id)
+                .first()
+            )
+            if exists is not None:
+                continue
+
+            body_text = _message_body_text(payload)
+            body_html = _extract_html(payload)
+            attachments = _extract_attachments(payload)
+            recipient_email = _email_address(headers.get("to"))
+            direction = _message_direction(message, sender_email, account_email)
             # A concurrent sync (background poller vs. manual "sync all") can insert this
             # same provider_message_id between our exists-check above and this insert. The
             # savepoint confines that failure to just this message instead of rolling back
@@ -542,6 +568,19 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                     register_brain_inbound_message(db, tenant=notify_tenant, channel="email", email_thread_id=conversation.id)
                     register_notification_for_whatsapp(db)
         except IntegrityError:
+            continue
+        except Exception:
+            # A single malformed message (the thread's original message is often structured
+            # very differently than a plain-text reply - full OTA relay headers, calendar
+            # invites, forwarded/rfc822 parts) must not take every other message in this thread
+            # down with it: the caller advances its sync cursor past this thread regardless of
+            # whether we raise, so letting an exception escape here would permanently lose every
+            # message in `messages` we hadn't gotten to yet, not just this one.
+            logger.exception(
+                "Failed to process Gmail message during thread sync, skipping it thread_id=%s message_id=%s",
+                thread_id,
+                message.get("id"),
+            )
             continue
 
     if not matched_tenants and conversation.tenant_id is not None:

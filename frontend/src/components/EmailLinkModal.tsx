@@ -406,6 +406,7 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
       }
       setConfirmingUnlinkId(null)
       await reloadLinks()
+      await reloadSharedThreads()
       onChanged?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to unlink email')

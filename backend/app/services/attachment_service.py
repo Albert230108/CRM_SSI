@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -109,6 +110,34 @@ def load_outbound_attachments(
             )
         )
     return result
+
+
+GEMINI_INLINE_MIME_TYPES = {
+    "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif",
+    "application/pdf",
+}
+
+
+def max_gemini_inline_bytes() -> int:
+    return int(os.getenv("GEMINI_ATTACHMENT_MAX_INLINE_BYTES", str(15 * 1024 * 1024)))
+
+
+@dataclass(frozen=True)
+class MultimodalAttachments:
+    eligible: list[OutboundAttachment]
+    skipped: list[str]  # human-readable "filename (reason)" for anything excluded
+
+
+def select_for_multimodal(attachments: list[OutboundAttachment]) -> MultimodalAttachments:
+    eligible, skipped = [], []
+    for att in attachments:
+        if att.mime_type not in GEMINI_INLINE_MIME_TYPES:
+            skipped.append(f"{att.filename} (unsupported type for AI: {att.mime_type})")
+        elif len(att.content) > max_gemini_inline_bytes():
+            skipped.append(f"{att.filename} (too large for AI preview)")
+        else:
+            eligible.append(att)
+    return MultimodalAttachments(eligible=eligible, skipped=skipped)
 
 
 def link_attachments(

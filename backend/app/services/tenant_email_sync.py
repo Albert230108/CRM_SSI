@@ -10,7 +10,7 @@ from app.services.beds24_client import BEDS24_EMAIL_INFO_CODE
 BEDS24_LINK_SOURCE = "beds24"
 
 
-def sync_tenant_email_addresses_from_beds24(db: Session, tenant: Tenant, info_items: list[dict[str, Any]]) -> None:
+def sync_tenant_email_addresses_from_beds24(db: Session, tenant: Tenant, info_items: list[dict[str, Any]]) -> list[str]:
     """Reconcile this tenant's linked emails against the booking's current Beds24 info items.
 
     Beds24 is treated as authoritative for its own CRM_EMAIL info items: an item present there
@@ -19,6 +19,10 @@ def sync_tenant_email_addresses_from_beds24(db: Session, tenant: Tenant, info_it
     webhook). An item that disappears from Beds24 gets unlinked here too, but only for links we
     know were actually confirmed there (has a beds24_info_item_id) -- a link still pending sync
     isn't touched, since we never confirmed it existed in Beds24 in the first place.
+
+    Returns the emails that were newly linked by this call (not ones already linked whose
+    beds24_info_item_id was merely backfilled), so callers can trigger a Gmail history sync for
+    just the addresses that actually need one.
     """
     current_ids_by_email: dict[str, str] = {}
     for item in info_items:
@@ -43,6 +47,7 @@ def sync_tenant_email_addresses_from_beds24(db: Session, tenant: Tenant, info_it
             link.unlinked_at = now
             link.beds24_sync_status = "synced"
 
+    newly_linked: list[str] = []
     for email, info_item_id in current_ids_by_email.items():
         existing = existing_by_email.get(email)
         if existing is not None:
@@ -60,3 +65,6 @@ def sync_tenant_email_addresses_from_beds24(db: Session, tenant: Tenant, info_it
                 is_active=True,
             )
         )
+        newly_linked.append(email)
+
+    return newly_linked

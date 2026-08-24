@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app.api.gmail_integration import _sync_gmail_account
+from app.api.gmail_integration import _sync_gmail_account, sync_email_across_gmail_accounts
 from app.api.tenants import _extract_guest_fields
 from app.core.dependencies import get_current_admin_user, get_current_user, get_db
 from app.database import SessionLocal
@@ -39,7 +39,7 @@ def _to_int(value: Any) -> int:
         return 0
 
 
-def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, Any], changed_by_user_id: int | None = None) -> None:
+def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, Any], changed_by_user_id: int | None = None) -> list[str]:
     fields = _extract_guest_fields(booking)
     tenant.first_name = fields.get("first_name") or tenant.first_name
     tenant.last_name = fields.get("last_name") or tenant.last_name
@@ -50,8 +50,9 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     # costs no extra round-trip. Previously only the live webhook did this, which meant a
     # CRM_EMAIL added in Beds24 never reached the CRM outside a booking event.
     info_items = booking.get("infoItems")
+    newly_linked_emails: list[str] = []
     if isinstance(info_items, list):
-        sync_tenant_email_addresses_from_beds24(db, tenant, info_items)
+        newly_linked_emails = sync_tenant_email_addresses_from_beds24(db, tenant, info_items)
     tenant.phone = fields.get("phone") or tenant.phone
     tenant.mobile = fields.get("mobile") or tenant.mobile
     tenant.check_in = fields.get("check_in") or tenant.check_in
@@ -82,10 +83,12 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     room_id = fields.get("room_id")
     tenant.room_id = room_id if room_id is not None else tenant.room_id
     sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
+    return newly_linked_emails
 
 
 async def _sync_beds24(db: Session, changed_by_user_id: int | None = None, tenant_ids: list[int] | None = None) -> int:
     updated = 0
+    newly_linked_emails: list[str] = []
     bookings = await get_bookings()
     for booking in bookings:
         booking_id = str(booking.get("id") or "").strip()
@@ -102,14 +105,24 @@ async def _sync_beds24(db: Session, changed_by_user_id: int | None = None, tenan
         # No per-booking detail re-fetch: get_bookings() already requested includeInfoItems=true,
         # so each list item carries the same fields the single-booking endpoint would return.
         # Re-fetching cost one sequential HTTPS round-trip per tenant for identical data.
-        _update_tenant_from_beds24(
-            db,
-            tenant,
-            booking,
-            changed_by_user_id=changed_by_user_id,
+        newly_linked_emails.extend(
+            _update_tenant_from_beds24(
+                db,
+                tenant,
+                booking,
+                changed_by_user_id=changed_by_user_id,
+            )
         )
         updated += 1
     db.commit()
+
+    # Search Gmail history for any address a CRM_EMAIL reconciliation above just linked, so past
+    # messages surface in the tenant's thread instead of only future ones. Fired once after the
+    # commit above (not per-tenant mid-loop) so the background jobs' own DB sessions can see the
+    # new links, and so this loop's existing single-commit transaction shape is unchanged.
+    for email in newly_linked_emails:
+        start_job("gmail_sync_email", asyncio.to_thread(sync_email_across_gmail_accounts, email))
+
     return updated
 
 

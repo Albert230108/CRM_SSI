@@ -226,7 +226,7 @@ describe('ThreadView Draft with AI', () => {
 
     const [, requestInit] = planSpy.mock.calls[0]
     // The planner picks its own template, so only the channel and the operator's text go up.
-    expect(JSON.parse((requestInit as RequestInit).body as string)).toEqual({ channel: 'whatsapp', rough_draft: 'mention the lockbox' })
+    expect(JSON.parse((requestInit as RequestInit).body as string)).toEqual({ channel: 'whatsapp', rough_draft: 'mention the lockbox', attachment_ids: [] })
   })
 
   it('warns when the planner returns a draft the checker never approved', async () => {

@@ -34,7 +34,7 @@ from app.models.gmail_integration import ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant_ai_settings import TenantAiSettings
-from app.services import ai_prompt_blocks, ai_reply_service, brain_service, gemini_client
+from app.services import ai_prompt_blocks, ai_reply_service, attachment_service, brain_service, gemini_client
 from app.services.thread_timeline_service import load_tenant_whatsapp_messages
 
 logger = logging.getLogger(__name__)
@@ -418,6 +418,7 @@ def run_planner_loop(
     mode: str,
     inbound_text: str | None = None,
     operator_note: str | None = None,
+    attachments: list[attachment_service.OutboundAttachment] | None = None,
     user_id: int | None = None,
 ) -> PlannerRunResult:
     """Plan, draft and review a reply. Adds an AiAgentRun to the session but does not commit."""
@@ -458,6 +459,19 @@ def run_planner_loop(
         recorder.finish(STATUS_ESCALATED, escalation_reason="token_cap")
         return PlannerRunResult(status=STATUS_ESCALATED, run_id=run.id, escalation_reason="token_cap")
 
+    file_parts: list[gemini_client.FilePart] = []
+    if attachments:
+        selection = attachment_service.select_for_multimodal(attachments)
+        file_parts = [
+            gemini_client.FilePart(data=att.content, mime_type=att.mime_type)
+            for att in selection.eligible
+        ]
+        if selection.skipped:
+            logger.info(
+                "Planner run tenant_id=%s skipped attachment(s) for AI: %s",
+                tenant.id, "; ".join(selection.skipped),
+            )
+
     catalogue, allowed_template_ids = _template_catalogue(db, tenant.id)
     planner_prompt = _build_planner_prompt(
         db,
@@ -475,6 +489,7 @@ def run_planner_loop(
             temperature=planner_profile.temperature,
             max_output_tokens=planner_profile.max_output_tokens,
             response_schema=PLANNER_SCHEMA,
+            file_parts=file_parts or None,
         )
     except gemini_client.GeminiClientError as exc:
         recorder.record("planner", prompt=planner_prompt, error=str(exc), model=planner_profile.model)
@@ -549,7 +564,7 @@ def run_planner_loop(
             agent_instructions=drafter_instructions,
         )
         try:
-            draft_result = gemini_client.generate(draft_prompt)
+            draft_result = gemini_client.generate(draft_prompt, file_parts=file_parts or None)
         except gemini_client.GeminiClientError as exc:
             recorder.record("drafter", prompt=draft_prompt, error=str(exc))
             recorder.finish(STATUS_FAILED, escalation_reason="drafter_error", final_template_id=template.id)
@@ -584,6 +599,7 @@ def run_planner_loop(
                 temperature=checker_profile.temperature,
                 max_output_tokens=checker_profile.max_output_tokens,
                 response_schema=CHECKER_SCHEMA,
+                file_parts=file_parts or None,
             )
         except gemini_client.GeminiClientError as exc:
             recorder.record("checker", prompt=checker_prompt, error=str(exc), model=checker_profile.model)

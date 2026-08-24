@@ -4,7 +4,7 @@ docker compose exec backend alembic heads
 docker compose exec backend alembic current
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic current
-sudo docker compose up --build -d
+docker compose up --build -d
 
 journalctl -u crm-whatsapp -f
 journalctl -u crm-whatsapp-2 -f

@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from app.services import attachment_storage
+from app.services import attachment_service, attachment_storage
 
 
 @pytest.fixture(autouse=True)
@@ -64,3 +64,34 @@ def test_guess_mime_uses_declared_then_falls_back():
     assert attachment_storage.guess_mime("a.pdf", "application/custom") == "application/custom"
     assert attachment_storage.guess_mime("a.pdf", None) == "application/pdf"
     assert attachment_storage.guess_mime("noext", None) == "application/octet-stream"
+
+
+def _outbound(filename: str, mime_type: str, content: bytes) -> attachment_service.OutboundAttachment:
+    return attachment_service.OutboundAttachment(
+        attachment_id=1, filename=filename, mime_type=mime_type, content=content
+    )
+
+
+def test_select_for_multimodal_accepts_supported_types():
+    attachments = [
+        _outbound("photo.png", "image/png", b"x"),
+        _outbound("scan.pdf", "application/pdf", b"y"),
+    ]
+    selection = attachment_service.select_for_multimodal(attachments)
+    assert selection.eligible == attachments
+    assert selection.skipped == []
+
+
+def test_select_for_multimodal_skips_unsupported_mime_type():
+    attachments = [_outbound("notes.txt", "text/plain", b"hello")]
+    selection = attachment_service.select_for_multimodal(attachments)
+    assert selection.eligible == []
+    assert selection.skipped == ["notes.txt (unsupported type for AI: text/plain)"]
+
+
+def test_select_for_multimodal_skips_oversized_file(monkeypatch):
+    monkeypatch.setenv("GEMINI_ATTACHMENT_MAX_INLINE_BYTES", "10")
+    attachments = [_outbound("big.png", "image/png", b"x" * 11)]
+    selection = attachment_service.select_for_multimodal(attachments)
+    assert selection.eligible == []
+    assert selection.skipped == ["big.png (too large for AI preview)"]

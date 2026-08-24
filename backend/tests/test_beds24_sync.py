@@ -72,3 +72,49 @@ def test_sync_skips_creating_tenant_when_allow_create_false(db_session, monkeypa
     )
     assert result is None
     assert db_session.query(Tenant).filter(Tenant.booking_id == "SYNC-NEW-CANCEL").first() is None
+
+
+def test_sync_seeds_planner_default_for_a_newly_created_tenant(db_session, monkeypatch):
+    """Regression test: sync_tenant_from_beds24_booking (the Quotation Manager's "send to
+    Beds24" resync path) is one of the two tenant-creation paths that used to skip
+    apply_default_planner_mode entirely, so a tenant created this way stayed stuck on "off"
+    even when Admin Settings had a non-off planner default configured.
+    """
+    from app.models.admin_settings import AdminSettings
+    from app.models.tenant_ai_settings import TenantAiSettings
+
+    db_session.add(AdminSettings(planner_default_mode="auto-draft"))
+    db_session.commit()
+
+    monkeypatch.setattr(beds24_sync, "fetch_booking_with_invoice", fake_booking_fetch)
+
+    tenant = asyncio.run(beds24_sync.sync_tenant_from_beds24_booking(db_session, "SYNC-PLANNER-DEFAULT"))
+    db_session.commit()
+
+    settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
+    assert settings is not None
+    assert settings.planner_mode == "auto-draft"
+
+
+def test_sync_does_not_retrofit_planner_mode_for_an_existing_tenant(db_session, monkeypatch):
+    """An existing tenant's planner_mode must never be overwritten by a later sync - switching
+    the admin default cannot silently start drafting for bookings already in flight, and an
+    operator may have deliberately turned the planner off for this specific tenant.
+    """
+    from app.models.admin_settings import AdminSettings
+    from app.models.tenant_ai_settings import TenantAiSettings
+
+    db_session.add(AdminSettings(planner_default_mode="auto-draft"))
+    existing = Tenant(booking_id="SYNC-PLANNER-EXISTING", name="Old Name")
+    db_session.add(existing)
+    db_session.commit()
+    db_session.add(TenantAiSettings(tenant_id=existing.id, planner_mode="off"))
+    db_session.commit()
+
+    monkeypatch.setattr(beds24_sync, "fetch_booking_with_invoice", fake_booking_fetch)
+
+    asyncio.run(beds24_sync.sync_tenant_from_beds24_booking(db_session, "SYNC-PLANNER-EXISTING"))
+    db_session.commit()
+
+    settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == existing.id).first()
+    assert settings.planner_mode == "off"

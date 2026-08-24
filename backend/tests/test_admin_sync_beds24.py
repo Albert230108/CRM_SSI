@@ -7,6 +7,7 @@ _update_tenant_from_beds24 must not overwrite existing tenant fields with blanks
 because a given payload lacks them.
 """
 
+import asyncio
 from decimal import Decimal
 
 import pytest
@@ -131,3 +132,46 @@ async def test_sync_beds24_does_not_refetch_each_booking(db_session, monkeypatch
     assert updated == 1
     assert tenant.first_name == "Updated"
     assert tenant.last_name == "Guest"
+
+
+def test_sync_beds24_triggers_gmail_sync_for_newly_linked_crm_email(db_session, monkeypatch):
+    """Regression test: CRM_EMAIL info items reconciled by admin "Sync All" used to be linked
+    without ever triggering a Gmail history sync for the newly-linked address, unlike the manual
+    "Manage emails" flow which always has. Assert the job fires once, after Sync All's single
+    commit for the whole run.
+    """
+    tenant = create_populated_tenant(db_session, booking_id="B-crm-email-syncall")
+
+    async def fake_get_bookings():
+        return [
+            {
+                "id": "B-crm-email-syncall",
+                "firstName": "Jane",
+                "lastName": "Doe",
+                "infoItems": [{"id": 777, "code": "CRM_EMAIL", "text": "syncall-guest@example.com"}],
+            }
+        ]
+
+    monkeypatch.setattr(admin_sync, "get_bookings", fake_get_bookings)
+
+    started_jobs = []
+
+    def fake_start_job(kind, awaitable, job_id=None):
+        started_jobs.append((kind, awaitable))
+        awaitable.close()
+        return "fake-job-id"
+
+    monkeypatch.setattr(admin_sync, "start_job", fake_start_job)
+    monkeypatch.setattr(admin_sync, "sync_email_across_gmail_accounts", lambda email: None)
+
+    updated = asyncio.run(admin_sync._sync_beds24(db_session, changed_by_user_id=None))
+
+    assert updated == 1
+    assert len(started_jobs) == 1
+    assert started_jobs[0][0] == "gmail_sync_email"
+
+    # A second run with the same already-linked address must not fire another sync job.
+    started_jobs.clear()
+    updated = asyncio.run(admin_sync._sync_beds24(db_session, changed_by_user_id=None))
+    assert updated == 1
+    assert started_jobs == []

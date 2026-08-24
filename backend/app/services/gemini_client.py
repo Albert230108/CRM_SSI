@@ -34,6 +34,14 @@ class GenerationResult:
     latency_ms: int
 
 
+@dataclass(frozen=True)
+class FilePart:
+    """One inline file to attach to a Gemini call alongside the text prompt."""
+
+    data: bytes
+    mime_type: str
+
+
 def _get_client() -> Any:
     global _client
     if _client is None:
@@ -79,6 +87,7 @@ def generate(
     temperature: float | None = None,
     max_output_tokens: int | None = None,
     response_schema: dict | None = None,
+    file_parts: list[FilePart] | None = None,
 ) -> GenerationResult:
     """Single flat-prompt call with per-call model/sampling overrides and optional JSON output.
 
@@ -99,12 +108,16 @@ def generate(
         config_kwargs["response_json_schema"] = response_schema
     config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
+    contents: str | list[Any] = prompt
+    if file_parts:
+        contents = [prompt] + [types.Part.from_bytes(data=fp.data, mime_type=fp.mime_type) for fp in file_parts]
+
     last_error: Exception | None = None
     for attempt in range(2):
         started = time.monotonic()
         try:
             response = client.models.generate_content(
-                model=resolved_model, contents=prompt, config=config
+                model=resolved_model, contents=contents, config=config
             )
         except Exception as exc:
             raise GeminiClientError(f"Gemini generation failed: {exc}") from exc

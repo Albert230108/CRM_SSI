@@ -15,7 +15,7 @@ def test_sync_creates_link_for_new_beds24_info_item(db_session):
     tenant = create_tenant(db_session, booking_id="B-sync-create")
     info_items = [{"id": 111, "code": "CRM_EMAIL", "text": "guest@example.com"}]
 
-    sync_tenant_email_addresses_from_beds24(db_session, tenant, info_items)
+    newly_linked = sync_tenant_email_addresses_from_beds24(db_session, tenant, info_items)
     db_session.commit()
 
     links = db_session.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant.id).all()
@@ -25,6 +25,25 @@ def test_sync_creates_link_for_new_beds24_info_item(db_session):
     assert links[0].beds24_sync_status == "synced"
     assert links[0].source == "beds24"
     assert links[0].is_active is True
+    assert newly_linked == ["guest@example.com"]
+
+
+def test_sync_does_not_report_an_already_linked_email_as_newly_linked(db_session):
+    """Regression test: a repeat sync of an address that's already linked (only backfilling its
+    beds24_info_item_id, if that was missing) must not be reported as newly linked - callers use
+    this return value to decide whether to kick off a fresh Gmail history search, and re-searching
+    on every sync of an address the CRM has already searched would be wasted work.
+    """
+    tenant = create_tenant(db_session, booking_id="B-sync-not-new")
+    info_items = [{"id": 999, "code": "CRM_EMAIL", "text": "guest@example.com"}]
+
+    first_pass = sync_tenant_email_addresses_from_beds24(db_session, tenant, info_items)
+    db_session.commit()
+    assert first_pass == ["guest@example.com"]
+
+    second_pass = sync_tenant_email_addresses_from_beds24(db_session, tenant, info_items)
+    db_session.commit()
+    assert second_pass == []
 
 
 def test_sync_creates_link_even_when_already_linked_to_another_tenant(db_session):

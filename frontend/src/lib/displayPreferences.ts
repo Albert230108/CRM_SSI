@@ -102,3 +102,46 @@ export function useRelativeTimestampsFirstPreference(): [boolean, (value: boolea
 
   return [relativeTimestampsFirst, update]
 }
+
+const SEARCH_ALL_TENANTS_PREFIX = 'crm_ssi.search-all-tenants.'
+
+function searchAllTenantsKeyFor(userKey: string): string {
+  return `${SEARCH_ALL_TENANTS_PREFIX}${userKey}`
+}
+
+export function loadSearchAllTenantsPreference(userKey: string): boolean {
+  try {
+    return window.localStorage.getItem(searchAllTenantsKeyFor(userKey)) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function saveSearchAllTenantsPreference(userKey: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(searchAllTenantsKeyFor(userKey), value ? 'true' : 'false')
+  } catch {
+    // Storage may be unavailable (private browsing, quota exceeded, etc). Keep using the in-memory value.
+  }
+}
+
+/** Per-user "search all tenants" toggle in the tenant list, backed by localStorage. Falls back to off when no user is signed in. */
+export function useSearchAllTenantsPreference(): [boolean, (value: boolean) => void] {
+  const user = useAuthStore((state) => state.user)
+  const userKey = getUserPreferenceKey(user)
+  const [searchAllTenants, setSearchAllTenants] = useState(false)
+
+  useEffect(() => {
+    setSearchAllTenants(userKey ? loadSearchAllTenantsPreference(userKey) : false)
+  }, [userKey])
+
+  const update = useCallback(
+    (value: boolean) => {
+      setSearchAllTenants(value)
+      if (userKey) saveSearchAllTenantsPreference(userKey, value)
+    },
+    [userKey],
+  )
+
+  return [searchAllTenants, update]
+}

@@ -116,6 +116,7 @@ class AiDraftPreviewResponse(BaseModel):
 class AiPlanRequest(BaseModel):
     channel: str
     rough_draft: str | None = None
+    attachment_ids: list[int] = []
 
 
 class AiPlanResponse(BaseModel):
@@ -1169,6 +1170,15 @@ def run_tenant_ai_planner(
         )
 
     try:
+        outbound_attachments = load_outbound_attachments(
+            db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel=channel
+        )
+    except AttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except AttachmentLimitExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
+
+    try:
         result = ai_agent_orchestrator.run_planner_loop(
             db,
             tenant=tenant,
@@ -1176,6 +1186,7 @@ def run_tenant_ai_planner(
             mode="manual",
             inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
             operator_note=payload.rough_draft,
+            attachments=outbound_attachments,
             user_id=current_user.id,
         )
     except GeminiClientError as exc:

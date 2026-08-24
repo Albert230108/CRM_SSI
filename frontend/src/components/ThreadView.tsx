@@ -1062,6 +1062,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           channel: replyTarget.type,
           // Whatever is already in the box is the operator's intent, so it leads the plan.
           rough_draft: replyMessage.trim() || null,
+          attachment_ids: currentReplyAttachmentIds,
         }),
       })
       const data = await response.json().catch(() => null)

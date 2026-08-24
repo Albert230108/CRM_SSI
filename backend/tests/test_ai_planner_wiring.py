@@ -29,7 +29,9 @@ def user_client(client):
 def _fake_generate(responses):
     queue = list(responses)
 
-    def _generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+    def _generate(
+        prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None, file_parts=None
+    ):
         payload = queue.pop(0)
         if isinstance(payload, Exception):
             raise payload
