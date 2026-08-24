@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import * as anime from 'animejs'
 import { computeNights } from '../lib/date'
 import { useSearchAllTenantsPreference } from '../lib/displayPreferences'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
@@ -13,6 +14,27 @@ import TenantAiTemplatesModal from './TenantAiTemplatesModal'
 import ToastHost from './Toast'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+const TENANT_ROW_ENTRY_OFFSET_PX = 8
+const TENANT_ROW_ENTRY_DURATION_MS = 280
+const TENANT_ROW_ENTRY_STAGGER_MS = 45
+const PREFERS_REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
+
+function usePrefersReducedMotion() {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
+    window.matchMedia(PREFERS_REDUCED_MOTION_QUERY).matches,
+  )
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(PREFERS_REDUCED_MOTION_QUERY)
+    const updatePreference = () => setPrefersReducedMotion(mediaQuery.matches)
+
+    updatePreference()
+    mediaQuery.addEventListener('change', updatePreference)
+    return () => mediaQuery.removeEventListener('change', updatePreference)
+  }, [])
+
+  return prefersReducedMotion
+}
 
 type Tenant = {
   id: number
@@ -75,6 +97,9 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [aiTemplatesTenant, setAiTemplatesTenant] = useState<{ id: number; name: string } | null>(null)
   const [pinnedTenantIds, setPinnedTenantIds] = useState<number[]>([])
   const listContainerRef = useRef<HTMLDivElement>(null)
+  const prefersReducedMotion = usePrefersReducedMotion()
+  const [isAnimatingRows, setIsAnimatingRows] = useState(false)
+  const lastAnimatedTenantIdsRef = useRef('')
   const { toast, showSuccess, showError, dismiss } = useToast()
 
   useEffect(() => {
@@ -300,6 +325,60 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
     return [...pinned, ...unpinned]
   }, [tenants, pinnedTenantIds])
 
+  const sortedTenantIdsSignature = useMemo(() => sortedTenants.map((tenant) => tenant.id).join(','), [sortedTenants])
+
+  useLayoutEffect(() => {
+    if (loading || error || sortedTenants.length === 0) return
+    if (sortedTenantIdsSignature === lastAnimatedTenantIdsRef.current) return
+
+    lastAnimatedTenantIdsRef.current = sortedTenantIdsSignature
+    if (prefersReducedMotion) {
+      setIsAnimatingRows(false)
+      return
+    }
+
+    setIsAnimatingRows(true)
+  }, [error, loading, prefersReducedMotion, sortedTenants.length, sortedTenantIdsSignature])
+
+  useEffect(() => {
+    if (!isAnimatingRows) return
+
+    const container = listContainerRef.current
+    if (!container) {
+      setIsAnimatingRows(false)
+      return
+    }
+
+    const targets = Array.from(container.querySelectorAll<HTMLElement>('[data-tenant-row="true"]'))
+    if (targets.length === 0) {
+      setIsAnimatingRows(false)
+      return
+    }
+
+    if (prefersReducedMotion) {
+      setIsAnimatingRows(false)
+      return
+    }
+
+    let active = true
+    anime.remove(targets)
+    anime.animate(targets, {
+      opacity: [0, 1],
+      translateY: [TENANT_ROW_ENTRY_OFFSET_PX, 0],
+      duration: TENANT_ROW_ENTRY_DURATION_MS,
+      delay: anime.stagger(TENANT_ROW_ENTRY_STAGGER_MS, { from: 'first' }),
+      ease: 'out(2)',
+      onComplete: () => {
+        if (active) setIsAnimatingRows(false)
+      },
+    })
+
+    return () => {
+      active = false
+      anime.remove(targets)
+    }
+  }, [isAnimatingRows, prefersReducedMotion, sortedTenantIdsSignature])
+
   const handleListKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
     if (sortedTenants.length === 0) return
@@ -489,8 +568,10 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
                   e.preventDefault()
                   setContextMenu({ tenantId: tenant.id, tenantName: tenant.name, x: e.clientX, y: e.clientY })
                 }}
+                data-tenant-row="true"
                 className={[
                   'w-full rounded-xl border p-2.5 text-left transition',
+                  isAnimatingRows ? 'tenant-row-entering' : '',
                   active ? `border-cyan-500 ${colors.bg} shadow-sm` : `${colors.border} ${colors.bg} hover:opacity-75`,
                 ].join(' ')}
               >

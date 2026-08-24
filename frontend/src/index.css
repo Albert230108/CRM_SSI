@@ -11,3 +11,11 @@ body,
 body {
   @apply bg-gray-50 text-gray-900 antialiased;
 }
+
+@layer components {
+  .tenant-row-entering {
+    opacity: 0;
+    transform: translateY(8px);
+    will-change: opacity, transform;
+  }
+}
