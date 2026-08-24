@@ -8,6 +8,7 @@ type ToastCardProps = {
   tone: ToastTone
   durationMs: number
   children: ReactNode
+  className?: string
 }
 
 const TONE_CLASSES: Record<ToastTone, { card: string; bar: string; fill: string }> = {
@@ -37,7 +38,7 @@ function usePrefersReducedMotion() {
   return prefersReducedMotion
 }
 
-export default function ToastCard({ toastKey, tone, durationMs, children }: ToastCardProps) {
+export default function ToastCard({ toastKey, tone, durationMs, children, className = 'w-80' }: ToastCardProps) {
   const classes = TONE_CLASSES[tone]
   const prefersReducedMotion = usePrefersReducedMotion()
   const cardRef = useRef<HTMLDivElement | null>(null)
@@ -67,7 +68,7 @@ export default function ToastCard({ toastKey, tone, durationMs, children }: Toas
   }, [prefersReducedMotion, toastKey])
 
   return (
-    <div ref={cardRef} className={['w-80 overflow-hidden rounded-2xl border shadow-lg', classes.card].join(' ')}>
+    <div ref={cardRef} className={[className, 'overflow-hidden rounded-2xl border shadow-lg', classes.card].join(' ')}>
       <div className="px-4 py-3 text-sm">{children}</div>
       <div className={['h-1 w-full', classes.bar].join(' ')}>
         <div

@@ -7,6 +7,7 @@ import { useResizableSize } from '../hooks/useResizableSize'
 import LinkChatModal from './LinkChatModal'
 import FirstWhatsAppMessageModal from './FirstWhatsAppMessageModal'
 import EmailLinkModal from './EmailLinkModal'
+import TenantBrainQuickChat from './TenantBrainQuickChat'
 import ToastCard from './ToastCard'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
 import { MAX_EMAIL_TOTAL_BYTES, formatBytes } from '../lib/attachmentLimits'
@@ -1949,15 +1950,16 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   return (
     <div className="flex h-full min-h-0 min-h-[680px] flex-col">
       <div className="border-b border-gray-200 px-4 py-3">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
-            <p className="mt-1 text-sm text-gray-500">
+        <div className="flex flex-col gap-3 xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(22rem,34rem)_auto] xl:items-center xl:gap-4">
+          <div className="min-w-0">
+            <h2 className="truncate text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
+            <p className="mt-1 truncate text-sm text-gray-500">
               {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' � ') : 'Select a tenant'}
             </p>
           </div>
+          {tenantId ? <TenantBrainQuickChat tenantId={tenantId} /> : null}
           {tenantId ? (
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2 xl:justify-self-end">
               <button
                 type="button"
                 onClick={() => setShowFirstMessageModal(true)}

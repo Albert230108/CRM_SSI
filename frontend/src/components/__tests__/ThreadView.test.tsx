@@ -28,6 +28,7 @@ function jsonResponse(body: unknown, ok = true) {
 function buildFetchMock(links: unknown[]) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
+    if (url.includes('/memory-qa')) return jsonResponse([])
     if (url.includes('/api/tenants/7')) return jsonResponse(TENANT)
     if (url.includes('/grouped-thread')) return jsonResponse({ tenant_id: 7, tenant_name: TENANT.name, items: [] })
     if (url.includes('/whatsapp-endpoints')) return jsonResponse([])
@@ -67,6 +68,7 @@ describe('ThreadView WhatsApp link UX', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
   })
 
+
   it('renders existing links inside the modal, not below the thread', async () => {
     vi.stubGlobal('fetch', buildFetchMock([ACTIVE_LINK]))
     const user = userEvent.setup()
@@ -79,6 +81,50 @@ describe('ThreadView WhatsApp link UX', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText(ACTIVE_LINK.chat_id)).toBeInTheDocument()
     expect(screen.getAllByText(ACTIVE_LINK.chat_id)).toHaveLength(1)
+  })
+
+  it('opens the fullscreen tenant brain panel from the inline composer', async () => {
+    vi.stubGlobal('fetch', buildFetchMock([]))
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={7} />)
+
+    await user.click(await screen.findByRole('button', { name: 'Fullscreen' }))
+    expect(await screen.findByText("Fullscreen chat with this tenant's context loaded.")).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Exit fullscreen' }))
+    expect(screen.queryByText("Fullscreen chat with this tenant's context loaded.")).not.toBeInTheDocument()
+  })
+
+  it('sends a tenant brain question from the inline header composer', async () => {
+    const qaHistory: Array<{ id: number; role: 'user' | 'assistant'; content: string; created_at: string }> = []
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/memory-qa')) {
+        if ((init?.method ?? 'GET') === 'POST') {
+          const body = JSON.parse((init?.body as string) || '{}') as { question?: string }
+          const assistantMessage = { id: qaHistory.length + 2, role: 'assistant' as const, content: 'Check-in is at 3pm.', created_at: '2026-07-20T11:00:00Z' }
+          qaHistory.push({ id: qaHistory.length + 1, role: 'user', content: body.question || '', created_at: '2026-07-20T10:59:00Z' }, assistantMessage)
+          return jsonResponse(assistantMessage)
+        }
+        return jsonResponse(qaHistory)
+      }
+      if (url.includes('/api/tenants/7')) return jsonResponse(TENANT)
+      if (url.includes('/grouped-thread')) return jsonResponse({ tenant_id: 7, tenant_name: TENANT.name, items: [] })
+      if (url.includes('/whatsapp-endpoints')) return jsonResponse([])
+      if (url.match(/\/whatsapp-links$/)) return jsonResponse([])
+      return jsonResponse({ detail: `unhandled ${url}` }, false)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={7} />)
+
+    const input = await screen.findByPlaceholderText('Ask about this tenant...')
+    await user.type(input, 'What time is check-in?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText('Check-in is at 3pm.')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalled()
   })
 })
 
