@@ -24,6 +24,23 @@ const { resolveOutboundTenantOwnership } = require("./outboundResolution");
 const { createForwardedMessageCache } = require("./forwardedMessageCache");
 const { buildWhatsAppIdentityCandidates, getCanonicalWhatsAppIdentity, normalizeWhatsAppChatId, normalizeWhatsAppPhone } = require("./whatsappIdentity");
 
+// whatsapp-web.js's own `framenavigated` listener (Client.js) re-calls inject() on every page
+// navigation with no guard against an in-flight navigation destroying the execution context
+// mid-evaluate. That throws inside an unguarded async event handler -> unhandled rejection ->
+// this whole process gets killed by Node, and systemd then kills the Chrome subprocess mid-write,
+// corrupting the LocalAuth session and forcing a fresh QR scan every time. The page itself is
+// fine (WhatsApp Web settles and the next navigation event re-injects successfully), so this
+// specific, known-transient error is logged and ignored instead of crashing the process.
+process.on("unhandledRejection", (error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("Execution context was destroyed")) {
+    console.warn("Ignored transient WhatsApp page-navigation race:", message);
+    return;
+  }
+  console.error("Unhandled rejection:", error);
+  process.exit(1);
+});
+
 let client = null;
 let ready = false;
 let initializingPromise = null;

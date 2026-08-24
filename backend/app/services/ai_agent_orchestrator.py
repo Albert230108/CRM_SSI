@@ -307,6 +307,8 @@ def _build_planner_prompt(
     channel: str,
     inbound_text: str | None,
     operator_note: str | None,
+    attachment_count: int = 0,
+    attachment_names: str = "",
 ) -> str:
     """Assemble the planner prompt from this profile's editable blocks.
 
@@ -340,6 +342,11 @@ def _build_planner_prompt(
     if note:
         parts.append(ai_prompt_blocks.join(text["operator_note"], note))
 
+    if attachment_count:
+        attachment_block = (text["attachment_instruction"] or "").strip()
+        if attachment_block:
+            parts.append(ai_prompt_blocks.fill(attachment_block, count=attachment_count, names=attachment_names))
+
     output = (text["output"] or "").strip()
     if output:
         parts.append(output)
@@ -358,6 +365,8 @@ def _build_checker_prompt(
     knowledge: str,
     brain_index: str,
     template: AiReplyTemplate | None = None,
+    attachment_count: int = 0,
+    attachment_names: str = "",
 ) -> str:
     """Assemble the checker prompt from this profile's editable blocks. See _build_planner_prompt."""
     text = ai_prompt_blocks.resolve_blocks(profile, CHECKER_ROLE)
@@ -403,6 +412,11 @@ def _build_checker_prompt(
 
     parts += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text, blocks=text)
     parts.append(ai_prompt_blocks.join(text["draft"], draft))
+
+    if attachment_count:
+        attachment_block = (text["attachment_instruction"] or "").strip()
+        if attachment_block:
+            parts.append(ai_prompt_blocks.fill(attachment_block, count=attachment_count, names=attachment_names))
 
     output = (text["output"] or "").strip()
     if output:
@@ -460,12 +474,28 @@ def run_planner_loop(
         return PlannerRunResult(status=STATUS_ESCALATED, run_id=run.id, escalation_reason="token_cap")
 
     file_parts: list[gemini_client.FilePart] = []
+    # attachment_count/attachment_names feed the editable "attachment_instruction" prompt block
+    # (ai_prompt_blocks.py, one per role) via each builder below - not just passed as inline file
+    # parts, so every stage is explicitly told the attachments exist and is expected to use them.
+    # Since _RunRecorder.record() logs exactly the prompt string that was sent, the resolved,
+    # filled-in instruction also lands directly in the run's audit trail with no separate
+    # bookkeeping, and an operator can reword or clear the instruction per role like any other
+    # prompt block.
+    attachment_count = 0
+    attachment_names = ""
     if attachments:
         selection = attachment_service.select_for_multimodal(attachments)
-        file_parts = [
-            gemini_client.FilePart(data=att.content, mime_type=att.mime_type)
-            for att in selection.eligible
-        ]
+        if selection.eligible:
+            file_parts = [
+                gemini_client.FilePart(data=att.content, mime_type=att.mime_type)
+                for att in selection.eligible
+            ]
+            attachment_count = len(selection.eligible)
+            attachment_names = ", ".join(f"{att.filename} ({att.mime_type})" for att in selection.eligible)
+            logger.info(
+                "Planner run tenant_id=%s forwarding attachment(s) to AI: %s",
+                tenant.id, attachment_names,
+            )
         if selection.skipped:
             logger.info(
                 "Planner run tenant_id=%s skipped attachment(s) for AI: %s",
@@ -481,6 +511,8 @@ def run_planner_loop(
         channel=channel,
         inbound_text=inbound_text,
         operator_note=operator_note,
+        attachment_count=attachment_count,
+        attachment_names=attachment_names,
     )
     try:
         planner_result = gemini_client.generate(
@@ -562,6 +594,8 @@ def run_planner_loop(
             reviewer_feedback=feedback,
             blocks=drafter_blocks,
             agent_instructions=drafter_instructions,
+            attachment_count=attachment_count,
+            attachment_names=attachment_names,
         )
         try:
             draft_result = gemini_client.generate(draft_prompt, file_parts=file_parts or None)
@@ -591,6 +625,8 @@ def run_planner_loop(
             knowledge=knowledge_content,
             brain_index=brain_index_text,
             template=template,
+            attachment_count=attachment_count,
+            attachment_names=attachment_names,
         )
         try:
             checker_result = gemini_client.generate(

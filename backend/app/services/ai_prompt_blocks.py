@@ -28,6 +28,12 @@ _LANGUAGE_DEFAULT = (
     "The reply must be written in the same language the guest used in their latest message."
 )
 _INSTRUCTIONS_HEADER_DEFAULT = "## Your Instructions"
+_ATTACHMENT_INSTRUCTION_DEFAULT = (
+    "## Attachments\n"
+    "The operator attached {count} file(s) to this request, included below as inline "
+    "attachments: {names}. Review their actual visual/document content and factor it into "
+    "your response where relevant."
+)
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,15 @@ PLANNER_BLOCKS: tuple[PromptBlock, ...] = (
         ),
     ),
     PromptBlock(
+        key="attachment_instruction",
+        label="Attachment instruction",
+        help=(
+            "Only emitted when the operator's staged attachment(s) are being forwarded to the AI. "
+            "{count} and {names} are replaced with how many files were attached and their name/type list."
+        ),
+        default=_ATTACHMENT_INSTRUCTION_DEFAULT,
+    ),
+    PromptBlock(
         key="output",
         label="Output instruction",
         help=(
@@ -227,6 +242,15 @@ CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
         default="## Draft To Review",
     ),
     PromptBlock(
+        key="attachment_instruction",
+        label="Attachment instruction",
+        help=(
+            "Only emitted when the operator's staged attachment(s) were forwarded to the AI. "
+            "{count} and {names} are replaced with how many files were attached and their name/type list."
+        ),
+        default=_ATTACHMENT_INSTRUCTION_DEFAULT,
+    ),
+    PromptBlock(
         key="output",
         label="Output instruction",
         help=(
@@ -313,6 +337,15 @@ DRAFTER_BLOCKS: tuple[PromptBlock, ...] = (
             "A reviewer rejected your previous draft for the reasons below. Rewrite the reply so that "
             "every point is addressed. Output only the corrected reply."
         ),
+    ),
+    PromptBlock(
+        key="attachment_instruction",
+        label="Attachment instruction",
+        help=(
+            "Only emitted when the operator's staged attachment(s) are being forwarded to the AI. "
+            "{count} and {names} are replaced with how many files were attached and their name/type list."
+        ),
+        default=_ATTACHMENT_INSTRUCTION_DEFAULT,
     ),
 ) + _context_blocks(include_inbound=True)
 

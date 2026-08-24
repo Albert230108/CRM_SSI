@@ -9,7 +9,7 @@ from app.models.brain_section import BrainSection
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
-from app.services import ai_agent_orchestrator, gemini_client
+from app.services import ai_agent_orchestrator, attachment_service, gemini_client
 
 
 def _tenant(db_session, **overrides):
@@ -141,6 +141,72 @@ def test_happy_path_completes_on_first_check(db_session, fake_gemini):
     assert run.total_prompt_tokens == 30 and run.total_output_tokens == 15
     stages = [step.stage for step in run.steps]
     assert stages == ["planner", "drafter", "checker"]
+
+
+def test_attachments_reach_every_stage_as_file_parts_and_an_explicit_instruction(db_session, fake_gemini):
+    """Regression test: an eligible attachment must not just ride along as an inline file part -
+    every stage's prompt needs an explicit instruction telling the model it's there and that it
+    should actually be used, and since the run's audit trail (AiAgentRunStep.prompt) stores
+    exactly the prompt string that was sent, that instruction must show up there too - an
+    operator auditing the run afterward should be able to see that an attachment was involved
+    without digging through server logs.
+    """
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+    fake = fake_gemini([_plan(template.id), "Here's the reply.", {"passed": True, "feedback": ""}])
+
+    attachment = attachment_service.OutboundAttachment(
+        attachment_id=1, filename="damage-photo.png", mime_type="image/png", content=b"fake-png-bytes"
+    )
+
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session,
+        tenant=tenant,
+        channel="email",
+        mode="manual",
+        inbound_text="See attached.",
+        attachments=[attachment],
+    )
+    db_session.commit()
+
+    assert len(fake.calls) == 3
+    for call in fake.calls:
+        assert call["file_parts"] == [gemini_client.FilePart(data=b"fake-png-bytes", mime_type="image/png")]
+        assert "damage-photo.png (image/png)" in call["prompt"]
+
+    run = db_session.query(AiAgentRun).filter(AiAgentRun.id == result.run_id).one()
+    for step in run.steps:
+        assert "damage-photo.png (image/png)" in step.prompt
+
+
+def test_unsupported_attachment_is_skipped_and_not_sent_to_the_model(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+    fake = fake_gemini([_plan(template.id), "Here's the reply.", {"passed": True, "feedback": ""}])
+
+    attachment = attachment_service.OutboundAttachment(
+        attachment_id=2, filename="notes.txt", mime_type="text/plain", content=b"hello"
+    )
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session,
+        tenant=tenant,
+        channel="email",
+        mode="manual",
+        inbound_text="See attached.",
+        attachments=[attachment],
+    )
+    db_session.commit()
+
+    for call in fake.calls:
+        assert call["file_parts"] is None
+        assert "notes.txt" not in call["prompt"]
 
 
 def test_planner_reasoning_and_alternatives_are_persisted(db_session, fake_gemini):

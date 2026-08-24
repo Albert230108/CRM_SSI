@@ -216,6 +216,8 @@ def assemble_prompt(
     reviewer_feedback: str | None = None,
     blocks: dict[str, str] | None = None,
     agent_instructions: str | None = None,
+    attachment_count: int = 0,
+    attachment_names: str = "",
 ) -> str:
     """Build the exact, single flat prompt string sent to Gemini.
 
@@ -291,6 +293,11 @@ def assemble_prompt(
     feedback = (reviewer_feedback or "").strip()
     if feedback:
         parts.append(ai_prompt_blocks.join(text["reviewer_feedback"], feedback))
+
+    if attachment_count:
+        attachment_block = (text["attachment_instruction"] or "").strip()
+        if attachment_block:
+            parts.append(ai_prompt_blocks.fill(attachment_block, count=attachment_count, names=attachment_names))
 
     return "\n\n".join(part for part in parts if part.strip())
 
