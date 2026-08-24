@@ -14,7 +14,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services import ai_agent_orchestrator, ai_reply_service
-from app.services.email_outbound_persistence import persist_gmail_outbound_message
+from app.services.email_outbound_persistence import is_own_mailbox_address, persist_gmail_outbound_message
 from app.services.gmail_client import build_gmail_credentials, send_gmail_reply
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
 from app.services.whatsapp_client import send_whatsapp_message
@@ -264,6 +264,9 @@ def _send_email_draft(db: Session, draft: AiAutoDraft) -> bool:
                     in_reply_to_message_id = str(header.get("value", "")).strip()
                 elif str(header.get("name", "")).lower() == "references":
                     references = str(header.get("value", "")).strip()
+    if is_own_mailbox_address(db, to_email):
+        logger.warning("Resolved recipient %s for draft_id=%s is one of our own Gmail mailboxes; refusing to send", to_email, draft.id)
+        to_email = None
     if not to_email:
         logger.warning("Cannot auto-send email draft: no recipient resolved draft_id=%s", draft.id)
         return False

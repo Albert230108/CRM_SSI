@@ -31,7 +31,7 @@ from app.services.attachment_service import (
     store_upload,
 )
 from app.services.attachment_storage import max_message_bytes
-from app.services.email_outbound_persistence import persist_gmail_outbound_message
+from app.services.email_outbound_persistence import is_own_mailbox_address, persist_gmail_outbound_message
 from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_gmail_attachment_bytes
 from app.services.gemini_client import GeminiClientError
 from app.services.gmail_client import GMAIL_SCOPES, build_gmail_credentials, build_gmail_service_for_account, list_thread_drafts, send_gmail_forward, send_gmail_reply
@@ -698,6 +698,13 @@ async def send_tenant_communication(
             elif messages.direction == "outbound" and messages.recipient_email:
                 to_email = messages.recipient_email
 
+        if is_own_mailbox_address(db, to_email):
+            logger.warning(
+                "Resolved recipient %s for conversation_id=%s is one of our own Gmail mailboxes; refusing to send",
+                to_email,
+                conversation.id,
+            )
+            to_email = None
         if not to_email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot determine recipient email for this thread")
 

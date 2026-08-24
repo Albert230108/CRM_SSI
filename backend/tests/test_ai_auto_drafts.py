@@ -205,6 +205,55 @@ def test_send_now_failure_leaves_draft_pending_and_returns_502(non_admin_client,
     assert draft.sent_communication_id is None
 
 
+def test_send_now_rejects_when_latest_reply_points_to_our_own_mailbox(non_admin_client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    account = GmailAccount(email_address="inbox-own-mailbox@example.com", is_active=True)
+    sibling_account = GmailAccount(email_address="info@shortstayinn.com", is_active=True)
+    db_session.add_all([account, sibling_account])
+    db_session.flush()
+    conversation = Conversation(provider="gmail", provider_account_id=account.id, provider_thread_id="thread-own-mailbox", subject="Hi")
+    db_session.add(conversation)
+    db_session.flush()
+    db_session.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider="gmail",
+            provider_message_id="msg-own-mailbox",
+            direction="outbound",
+            sender_email=account.email_address,
+            recipient_email=sibling_account.email_address,
+            subject="Re: Hi",
+            body="Forwarded internally",
+            sent_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+    )
+    db_session.commit()
+
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="email",
+        email_thread_id=conversation.id,
+        generated_text="Check-in is at 3pm",
+        status="pending",
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service, "build_gmail_credentials", lambda account: object())
+    monkeypatch.setattr(
+        ai_auto_draft_service,
+        "send_gmail_reply",
+        lambda credentials, **kwargs: (_ for _ in ()).throw(AssertionError("send_gmail_reply should not be called")),
+    )
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
+    assert response.status_code == 502
+
+    db_session.refresh(draft)
+    assert draft.status == "pending"
+    assert draft.sent_communication_id is None
+
+
 def test_send_now_rejects_already_sent_draft(non_admin_client, db_session):
     tenant = _create_tenant(db_session)
     draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft", status="sent")

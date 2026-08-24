@@ -67,6 +67,33 @@ def _normalize_amount(item: dict) -> Decimal:
     value = item.get("amount") or item.get("value") or item.get("total") or 0
     return Decimal(str(value))
 
+
+def _latest_active_email_by_tenant_id(db: Session, tenant_ids: list[int]) -> dict[int, str]:
+    if not tenant_ids:
+        return {}
+
+    from sqlalchemy import func
+
+    ranked = (
+        db.query(
+            TenantEmailAddress.tenant_id.label("tenant_id"),
+            TenantEmailAddress.email.label("email"),
+            TenantEmailAddress.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=TenantEmailAddress.tenant_id,
+                order_by=(TenantEmailAddress.created_at.desc(), TenantEmailAddress.id.desc()),
+            )
+            .label("rn"),
+        )
+        .filter(TenantEmailAddress.tenant_id.in_(tenant_ids))
+        .filter(TenantEmailAddress.is_active.is_(True))
+        .filter(TenantEmailAddress.unlinked_at.is_(None))
+        .subquery()
+    )
+    return {row.tenant_id: row.email for row in db.query(ranked).filter(ranked.c.rn == 1).all()}
+
+
 ROOM_ID_MAPPING = {
     "House": 271050,
     "Studio 1": 262377,
@@ -422,6 +449,7 @@ def list_tenants(
     # this is 2 queries total regardless of how many tenants there are.
     last_comm_by_tenant_id: dict[int, tuple[datetime, str, str]] = {}
     last_email_by_tenant_id: dict[int, tuple[datetime, str]] = {}
+    email_by_tenant_id: dict[int, str] = {}
     if tenant_ids:
         from sqlalchemy import func
 
@@ -461,6 +489,7 @@ def list_tenants(
         )
         for row in db.query(email_ranked).filter(email_ranked.c.rn == 1).all():
             last_email_by_tenant_id[row.tenant_id] = (row.sent_at, row.direction)
+        email_by_tenant_id = _latest_active_email_by_tenant_id(db, tenant_ids)
 
     unread_by_tenant_id: dict[int, int] = {}
     if tenant_ids and current_user is not None:
@@ -489,6 +518,7 @@ def list_tenants(
             candidates.append((last_email[0], "email", last_email[1]))
 
         tenant_dict = TenantRead.from_orm(tenant).model_dump()
+        tenant_dict["email"] = tenant.email or email_by_tenant_id.get(tenant.id)
         if candidates:
             last_date, last_channel, last_direction = max(candidates, key=lambda c: c[0])
             tenant_dict["last_message_date"] = last_date
@@ -530,11 +560,13 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
 
 
 @router.get("/tenants/{tenant_id}", response_model=TenantRead)
-def get_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Tenant:
+def get_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> TenantRead:
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    return tenant
+    tenant_dict = TenantRead.from_orm(tenant).model_dump()
+    tenant_dict["email"] = tenant.email or _latest_active_email_by_tenant_id(db, [tenant.id]).get(tenant.id)
+    return TenantRead(**tenant_dict)
 
 
 class TenantNotesUpdate(BaseModel):

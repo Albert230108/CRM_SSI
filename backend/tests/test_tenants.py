@@ -106,6 +106,29 @@ def test_delete_tenant_with_email_address_succeeds(client, db_session):
     assert db_session.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id == tenant.id).count() == 0
 
 
+def test_tenant_email_api_prefers_legacy_column_and_falls_back_to_linked_email(user_client, db_session):
+    tenant_linked_only = create_tenant(db_session, name="Linked Only Tenant", booking_id="EMAIL-LINKED")
+    db_session.add(TenantEmailAddress(tenant_id=tenant_linked_only.id, email="linked-only@example.com", is_active=True))
+
+    tenant_legacy = create_tenant(db_session, name="Legacy Tenant", booking_id="EMAIL-LEGACY")
+    tenant_legacy.email = "legacy@example.com"
+    db_session.add(TenantEmailAddress(tenant_id=tenant_legacy.id, email="linked-wins@example.com", is_active=True))
+    db_session.commit()
+
+    detail_linked = user_client.get(f"/api/tenants/{tenant_linked_only.id}")
+    assert detail_linked.status_code == 200
+    assert detail_linked.json()["email"] == "linked-only@example.com"
+
+    detail_legacy = user_client.get(f"/api/tenants/{tenant_legacy.id}")
+    assert detail_legacy.status_code == 200
+    assert detail_legacy.json()["email"] == "legacy@example.com"
+
+    listing = user_client.get("/api/tenants").json()
+    by_id = {item["id"]: item for item in listing}
+    assert by_id[tenant_linked_only.id]["email"] == "linked-only@example.com"
+    assert by_id[tenant_legacy.id]["email"] == "legacy@example.com"
+
+
 def test_delete_tenant_with_conversation_link_succeeds(client, db_session):
     tenant = create_tenant(db_session, name='Tenant Delete F', booking_id='DEL-F')
     conversation = Conversation(provider='gmail', provider_thread_id='thread-delete-f-1', subject='Question')

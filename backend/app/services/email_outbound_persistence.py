@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
@@ -8,6 +9,18 @@ from app.models.gmail_integration import Conversation, ConversationMessage, Gmai
 from app.services.attachment_service import link_attachments
 
 PROVIDER_GMAIL = "gmail"
+
+
+def is_own_mailbox_address(db: Session, email: str | None) -> bool:
+    normalized = (email or "").strip().lower()
+    if not normalized:
+        return False
+    return (
+        db.query(GmailAccount.id)
+        .filter(func.lower(GmailAccount.email_address) == normalized)
+        .first()
+        is not None
+    )
 
 
 def persist_gmail_outbound_message(
