@@ -21,6 +21,7 @@ export default function AiPendingDrafts() {
   const navigate = useNavigate()
   const [drafts, setDrafts] = useState<AiAutoDraftItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [sendErrors, setSendErrors] = useState<Record<number, string>>({})
 
   const loadDrafts = useCallback(async () => {
     if (!token) return
@@ -52,6 +53,29 @@ export default function AiPendingDrafts() {
       method: 'PUT',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
+    await loadDrafts()
+  }
+
+  const sendNow = async (draft: AiAutoDraftItem) => {
+    setSendErrors((prev) => {
+      const next = { ...prev }
+      delete next[draft.id]
+      return next
+    })
+    const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/send-now`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (!response.ok) {
+      let detail = 'Failed to send draft.'
+      try {
+        const body = await response.json()
+        if (typeof body?.detail === 'string') detail = body.detail
+      } catch {
+        // response had no JSON body; keep the default message
+      }
+      setSendErrors((prev) => ({ ...prev, [draft.id]: detail }))
+    }
     await loadDrafts()
   }
 
@@ -100,12 +124,20 @@ export default function AiPendingDrafts() {
               ) : null}
               <button
                 type="button"
+                onClick={() => sendNow(draft)}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+              >
+                Send
+              </button>
+              <button
+                type="button"
                 onClick={() => dismiss(draft)}
                 className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
               >
                 Dismiss
               </button>
             </div>
+            {sendErrors[draft.id] ? <p className="mt-1.5 text-xs text-red-600">{sendErrors[draft.id]}</p> : null}
           </div>
         ))}
       </div>

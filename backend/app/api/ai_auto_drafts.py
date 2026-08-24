@@ -6,6 +6,7 @@ from app.models.ai_auto_draft import AiAutoDraft
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.ai_auto_draft import AiAutoDraftRead
+from app.services import ai_auto_draft_service
 
 router = APIRouter(prefix="/ai-auto-drafts", tags=["ai-auto-drafts"])
 
@@ -97,6 +98,23 @@ def mark_ai_auto_draft_used(
     draft = _get_draft(db, draft_id)
     draft.status = "used_as_manual_seed"
     draft.scheduled_send_at = None
+    db.commit()
+    db.refresh(draft)
+    return _to_read(db, draft)
+
+
+@router.put("/{draft_id}/send-now", response_model=AiAutoDraftRead)
+def send_ai_auto_draft_now(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiAutoDraftRead:
+    draft = _get_draft(db, draft_id)
+    if draft.status not in DEFAULT_STATUSES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Draft is not in a sendable state")
+    sent = ai_auto_draft_service.send_scheduled_draft(db, draft)
+    if not sent:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send draft")
     db.commit()
     db.refresh(draft)
     return _to_read(db, draft)

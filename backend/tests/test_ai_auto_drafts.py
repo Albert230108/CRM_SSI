@@ -1,7 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.models.ai_auto_draft import AiAutoDraft
+from app.models.communication import Communication
+from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
+from app.services import ai_auto_draft_service
 
 
 def _create_tenant(db_session, **overrides):
@@ -106,3 +109,106 @@ def test_cancel_auto_send_is_a_no_op_when_not_scheduled(non_admin_client, db_ses
     response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/cancel-auto-send")
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
+
+
+def test_send_now_sends_pending_draft_and_marks_sent(non_admin_client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    account = GmailAccount(email_address="inbox-send-now@example.com", is_active=True)
+    db_session.add(account)
+    db_session.flush()
+    conversation = Conversation(provider="gmail", provider_account_id=account.id, provider_thread_id="thread-send-now", subject="Hi")
+    db_session.add(conversation)
+    db_session.flush()
+    db_session.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider="gmail",
+            provider_message_id="msg-send-now",
+            direction="inbound",
+            sender_email="tenant-send-now@example.com",
+            subject="Hi",
+            body="When is check-in?",
+            sent_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+    )
+    db_session.commit()
+
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="email",
+        email_thread_id=conversation.id,
+        generated_text="Check-in is at 3pm",
+        status="pending",
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service, "build_gmail_credentials", lambda account: object())
+    monkeypatch.setattr(ai_auto_draft_service, "send_gmail_reply", lambda credentials, **kwargs: {"id": "gmail-msg-id"})
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "sent"
+
+    db_session.refresh(draft)
+    assert draft.sent_communication_id is not None
+    communication = db_session.query(Communication).filter(Communication.id == draft.sent_communication_id).first()
+    assert communication.ai_generated is True
+
+
+def test_send_now_failure_leaves_draft_pending_and_returns_502(non_admin_client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    account = GmailAccount(email_address="inbox-send-now-fail@example.com", is_active=True)
+    db_session.add(account)
+    db_session.flush()
+    conversation = Conversation(provider="gmail", provider_account_id=account.id, provider_thread_id="thread-send-now-fail", subject="Hi")
+    db_session.add(conversation)
+    db_session.flush()
+    db_session.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider="gmail",
+            provider_message_id="msg-send-now-fail",
+            direction="inbound",
+            sender_email="tenant-send-now-fail@example.com",
+            subject="Hi",
+            body="When is check-in?",
+            sent_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+    )
+    db_session.commit()
+
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="email",
+        email_thread_id=conversation.id,
+        generated_text="Check-in is at 3pm",
+        status="pending",
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service, "build_gmail_credentials", lambda account: object())
+
+    def failing_send(credentials, **kwargs):
+        raise RuntimeError("gmail api down")
+
+    monkeypatch.setattr(ai_auto_draft_service, "send_gmail_reply", failing_send)
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
+    assert response.status_code == 502
+
+    db_session.refresh(draft)
+    assert draft.status == "pending"
+    assert draft.sent_communication_id is None
+
+
+def test_send_now_rejects_already_sent_draft(non_admin_client, db_session):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft", status="sent")
+    db_session.add(draft)
+    db_session.commit()
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
+    assert response.status_code == 409
