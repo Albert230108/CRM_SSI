@@ -19,6 +19,7 @@ from app.models.memory_suggestion import (
 )
 from app.models.tenant import Tenant
 from app.models.tenant_brain_entry import TenantBrainEntry
+from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant_brain_field_value import TenantBrainFieldValue
 from app.models.user import User
 from app.models.working_memory_rule import STATUS_ACTIVE, WorkingMemoryRule
@@ -281,3 +282,42 @@ def test_approve_endpoint_rejects_already_reviewed_suggestion(user_client, db_se
     response = user_client.post(f"/api/memory-suggestions/{suggestion.id}/approve")
 
     assert response.status_code == 409
+
+
+def test_process_redo_request_log_creates_rule_suggestion_and_marks_processed(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True))
+    db_session.commit()
+
+    log_entry = RedoRequestLog(tenant_id=tenant.id, channel="crm", what="make this more flexible", why="guest may change dates")
+    db_session.add(log_entry)
+    db_session.commit()
+    db_session.refresh(log_entry)
+
+    monkeypatch.setattr(
+        memory_redo_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "suggestions": [
+                    {
+                        "kind": KIND_RULE_ADD,
+                        "condition_text": "Guest asks to reschedule",
+                        "action_text": "Offer one flexible date change",
+                        "reasoning": "This is a durable policy tweak.",
+                    }
+                ]
+            }
+        ),
+    )
+
+    created = memory_redo_service.process_redo_request_log(db_session, log_entry.id)
+    db_session.commit()
+
+    assert len(created) == 1
+    db_session.refresh(log_entry)
+    assert log_entry.processed_at is not None
+    assert log_entry.memory_redo_run_id is not None
+    suggestion = created[0]
+    assert suggestion.kind == KIND_RULE_ADD
+    assert suggestion.source_redo_log_id == log_entry.id

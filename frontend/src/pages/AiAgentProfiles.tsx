@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer'
+export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'memory_redo'
 
 export type AiAgentProfile = {
   id: number
@@ -91,8 +91,9 @@ export default function AiAgentProfiles() {
     planner: [],
     checker: [],
     drafter: [],
-    // brain_writer has no editable prompt-block registry - see the loadPromptBlocks effect.
+    // brain_writer and memory_redo have no editable prompt-block registry - see the loadPromptBlocks effect.
     brain_writer: [],
+    memory_redo: [],
   })
   const [form, setForm] = useState<ProfileForm | null>(null)
   const [saving, setSaving] = useState(false)
@@ -110,8 +111,9 @@ export default function AiAgentProfiles() {
   }, [load])
 
   useEffect(() => {
-    // brain_writer has no editable prompt-block registry (server only serves it for these three
-    // roles) - its profile still carries instructions/model/context settings via the plain form.
+    // brain_writer and memory_redo have no editable prompt-block registry (server only serves it
+    // for these three roles) - their profiles still carry instructions/model/context settings via
+    // the plain form.
     const roles: AgentRole[] = ['planner', 'checker', 'drafter']
     const loadPromptBlocks = async () => {
       const entries = await Promise.all(
@@ -271,7 +273,7 @@ export default function AiAgentProfiles() {
       <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
       <div className="mt-1.5 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Planner &amp; Checker Profiles</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">AI Agent Profiles</h1>
           <p className="mt-1.5 text-sm text-gray-500">
             The planner reads a conversation and decides which template to use and what the reply must cover. The
             checker proof-reads the result and either approves it or sends it back with feedback. One profile per
@@ -291,6 +293,7 @@ export default function AiAgentProfiles() {
       {renderRole('checker', 'Checker profiles', 'Reviews each draft. It never rewrites the text itself — it only approves or gives feedback.')}
       {renderRole('drafter', 'Drafter profiles', 'Writes the reply itself. Prompt text only — model, sampling and context still come from the reply template.')}
       {renderRole('brain_writer', 'Brain writer profiles', 'Decides, independently of the planner, whether an inbound message is worth remembering long-term for a tenant.')}
+      {renderRole('memory_redo', 'Redo log agent profiles', 'Reads redo logs and suggests durable rule changes for review.')}
 
       {form ? (
         <section className={`mt-4 ${CARD}`}>

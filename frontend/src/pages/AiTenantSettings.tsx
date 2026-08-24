@@ -35,7 +35,7 @@ type TenantAiSettings = {
 type AgentProfileOption = {
   id: number
   name: string
-  role: 'planner' | 'checker' | 'drafter' | 'brain_writer'
+  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'memory_redo'
   is_default: boolean
 }
 

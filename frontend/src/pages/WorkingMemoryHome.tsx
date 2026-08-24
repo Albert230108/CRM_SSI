@@ -11,6 +11,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const TABS: SettingsTab[] = [
   { id: 'rules', label: 'Rules' },
   { id: 'fields', label: 'Field Schema' },
+  { id: 'availability', label: 'Availability' },
   { id: 'suggestions', label: 'Pending Suggestions' },
   { id: 'redo-log', label: 'Redo Log' },
 ]
@@ -301,6 +302,53 @@ function FieldsTab({ showSuccess, showError }: { showSuccess: (m: string) => voi
   )
 }
 
+
+// -------------------------------------------------------------------------------- Availability tab
+
+function AvailabilityTab({ showError }: { showError: (m: string) => void }) {
+  const authHeaders = useAuthHeaders()
+  const [summary, setSummary] = useState('')
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    ;(async () => {
+      setLoading(true)
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/beds24-availability`, { headers: authHeaders })
+        if (!response.ok) throw new Error()
+        const data = await response.json()
+        setSummary(data.summary_text ?? '')
+        setRefreshedAt(data.refreshed_at ?? null)
+      } catch {
+        showError('Failed to load availability')
+      } finally {
+        setLoading(false)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
+      <h2 className="text-lg font-semibold text-gray-900">Availability</h2>
+      <p className="mt-1 text-sm text-gray-500">Beds24 room availability is shown here as working memory, not in the tenant brain.</p>
+      <div className="mt-3">
+        {loading ? (
+          <p className="text-sm text-gray-500">Loading...</p>
+        ) : summary ? (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <p className="whitespace-pre-wrap text-sm text-gray-800">{summary}</p>
+            {refreshedAt ? <p className="mt-2 text-xs text-gray-500">Refreshed {new Date(refreshedAt).toLocaleString()}</p> : null}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">No availability data on file.</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
 // -------------------------------------------------------------------------------- Suggestions tab
 
 type MemorySuggestion = {
@@ -384,7 +432,6 @@ function SuggestionsTab({ showSuccess, showError }: { showSuccess: (m: string) =
                 <div className="min-w-0">
                   {suggestion.tenant_name ? <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{suggestion.tenant_name}</p> : null}
                   <p className="text-gray-900">{describeSuggestion(suggestion)}</p>
-                  {suggestion.reasoning ? <p className="mt-1 text-xs text-gray-500">{suggestion.reasoning}</p> : null}
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <button type="button" onClick={() => review(suggestion.id, 'approve')} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
@@ -419,20 +466,24 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
   const authHeaders = useAuthHeaders()
   const [requests, setRequests] = useState<RedoRequest[]>([])
   const [loading, setLoading] = useState(true)
+  const [replaying, setReplaying] = useState(false)
+  const [replayMessage, setReplayMessage] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/redo-requests`, { headers: authHeaders })
+      if (!response.ok) throw new Error()
+      setRequests(await response.json())
+    } catch {
+      showError('Failed to load the redo log')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    ;(async () => {
-      setLoading(true)
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/redo-requests`, { headers: authHeaders })
-        if (!response.ok) throw new Error()
-        setRequests(await response.json())
-      } catch {
-        showError('Failed to load the redo log')
-      } finally {
-        setLoading(false)
-      }
-    })()
+    void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -440,6 +491,32 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
     <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
       <h2 className="text-lg font-semibold text-gray-900">Redo Log</h2>
       <p className="mt-1 text-sm text-gray-500">Every redo request, from WhatsApp or the CRM, whether or not it succeeded.</p>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={async () => {
+            if (replaying) return
+            setReplaying(true)
+            setReplayMessage('')
+            try {
+              const response = await fetch(`${API_BASE_URL}/api/redo-requests/replay-pending`, { method: 'POST', headers: authHeaders })
+              const data = await response.json().catch(() => null)
+              if (!response.ok) throw new Error(data?.detail ?? 'Failed to replay redo logs')
+              setReplayMessage(`Replayed ${data.processed} redo request(s); ${data.remaining} still pending.`)
+              await load()
+            } catch (error) {
+              showError(error instanceof Error ? error.message : 'Failed to replay redo logs')
+            } finally {
+              setReplaying(false)
+            }
+          }}
+          className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100 disabled:opacity-50"
+          disabled={replaying}
+        >
+          {replaying ? 'Replaying...' : 'Replay pending logs'}
+        </button>
+        {replayMessage ? <p className="text-xs text-gray-500">{replayMessage}</p> : null}
+      </div>
       <div className="mt-3 overflow-x-auto">
         {loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
@@ -490,6 +567,7 @@ export default function WorkingMemoryHome() {
       <SettingsSidebarLayout title="Working Memory" subtitle="Rules, structured fields, and AI-suggested changes" tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
         {activeTab === 'rules' ? <RulesTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'fields' ? <FieldsTab showSuccess={showSuccess} showError={showError} /> : null}
+        {activeTab === 'availability' ? <AvailabilityTab showError={showError} /> : null}
         {activeTab === 'suggestions' ? <SuggestionsTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'redo-log' ? <RedoLogTab showError={showError} /> : null}
       </SettingsSidebarLayout>

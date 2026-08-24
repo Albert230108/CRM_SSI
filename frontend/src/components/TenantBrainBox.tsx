@@ -62,7 +62,6 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
   const [fieldDrafts, setFieldDrafts] = useState<Record<number, string>>({})
   const [savingFieldId, setSavingFieldId] = useState<number | null>(null)
 
-  const [availability, setAvailability] = useState('')
 
   const [qaMessages, setQaMessages] = useState<MemoryQaMessage[]>([])
   const [qaQuestion, setQaQuestion] = useState('')
@@ -96,16 +95,6 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
     }
   }
 
-  const loadAvailability = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/beds24-availability`, { headers: authHeaders })
-      if (!response.ok) return
-      const data = await response.json()
-      setAvailability(data.summary_text ?? '')
-    } catch {
-      // Same as above - non-critical.
-    }
-  }
 
   const loadQaHistory = async () => {
     if (!tenantId) return
@@ -130,7 +119,6 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
       void loadFields()
       void loadQaHistory()
     }
-    void loadAvailability()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId])
 
@@ -372,12 +360,6 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
           </div>
         ) : null}
 
-        {availability ? (
-          <div className="rounded-xl border border-gray-200 bg-white p-2">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Availability</p>
-            <p className="whitespace-pre-wrap text-xs text-gray-700">{availability}</p>
-          </div>
-        ) : null}
 
         {!tenantId ? null : !loading && entries.length === 0 ? (
           <p className="text-sm text-gray-400">Nothing remembered yet.</p>

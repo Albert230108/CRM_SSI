@@ -1293,21 +1293,12 @@ def redo_tenant_ai_planner(
     )
     db.commit()
 
-    if result.generated_text:
-        try:
-            memory_redo_service.propose_updates(
-                db,
-                tenant=tenant,
-                generated_text=result.generated_text,
-                channel=channel,
-                what=what,
-                why=why,
-                redo_log_id=log_entry.id,
-            )
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.exception("Memory redo suggestion generation failed tenant_id=%s", tenant_id)
+    try:
+        memory_redo_service.process_redo_request_log(db, log_entry.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Memory redo suggestion generation failed tenant_id=%s", tenant_id)
 
     return AiPlanResponse(
         status=result.status,

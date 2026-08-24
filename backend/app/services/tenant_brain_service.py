@@ -261,8 +261,6 @@ def _build_prompt(
         parts.append(ai_reply_service._build_payments_context(db, tenant))
     if profile.include_notes:
         parts.append(ai_reply_service._build_notes_context(tenant))
-    if profile.include_availability:
-        parts.append(ai_reply_service._build_availability_context(db))
     if inbound_text:
         parts.append(ai_prompt_blocks.join("## Latest Inbound Message", inbound_text))
 

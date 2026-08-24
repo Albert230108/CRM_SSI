@@ -29,3 +29,10 @@ def log_redo_request(
     db.add(entry)
     db.flush()
     return entry
+
+
+def list_unprocessed(db: Session, limit: int | None = None) -> list[RedoRequestLog]:
+    query = db.query(RedoRequestLog).filter(RedoRequestLog.processed_at.is_(None)).order_by(RedoRequestLog.created_at.asc(), RedoRequestLog.id.asc())
+    if limit is not None:
+        query = query.limit(limit)
+    return query.all()

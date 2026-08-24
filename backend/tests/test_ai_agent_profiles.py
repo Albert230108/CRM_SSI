@@ -240,3 +240,11 @@ def test_a_checker_profile_id_is_rejected_as_a_drafter_pin(client, db_session):
     )
     assert response.status_code == 200
     assert response.json()["drafter_profile_id"] is None
+
+
+def test_memory_redo_role_is_listed_and_filterable(client):
+    client.post("/api/ai-agent-profiles", json=_payload(name="Redo", role="memory_redo"))
+    response = client.get("/api/ai-agent-profiles", params={"role": "memory_redo"})
+    assert response.status_code == 200
+    roles = {profile["role"] for profile in response.json()}
+    assert roles == {"memory_redo"}
