@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -8,8 +9,12 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+logger = logging.getLogger(__name__)
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+_MAX_OUTPUT_TOKENS_RETRY_CEILING = 8192
 
 _client: Any | None = None
 
@@ -113,6 +118,7 @@ def generate(
         contents = [prompt] + [types.Part.from_bytes(data=fp.data, mime_type=fp.mime_type) for fp in file_parts]
 
     last_error: Exception | None = None
+    last_truncated = False
     for attempt in range(2):
         started = time.monotonic()
         try:
@@ -127,14 +133,35 @@ def generate(
         if not text:
             raise GeminiClientError("Gemini returned an empty response")
 
+        candidates = getattr(response, "candidates", None) or []
+        finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        truncated = finish_reason is not None and "MAX_TOKENS" in str(finish_reason)
+
         parsed: dict | None = None
         if response_schema is not None:
             try:
                 parsed = _extract_json(text)
             except (ValueError, json.JSONDecodeError) as exc:
                 last_error = exc
+                last_truncated = truncated
+                current_cap = config_kwargs.get("max_output_tokens")
+                if truncated:
+                    logger.warning(
+                        "Gemini response truncated at max_output_tokens=%s (finish_reason=MAX_TOKENS)%s",
+                        current_cap,
+                        "; retrying with a higher cap" if attempt == 0 and current_cap else " on retry",
+                    )
                 if attempt == 0:
+                    if truncated and current_cap:
+                        new_cap = min(current_cap * 2, _MAX_OUTPUT_TOKENS_RETRY_CEILING)
+                        config_kwargs["max_output_tokens"] = new_cap
+                        config = types.GenerateContentConfig(**config_kwargs)
                     continue
+                if last_truncated:
+                    raise GeminiClientError(
+                        f"Gemini response was truncated (max_output_tokens too low) and could not "
+                        f"be parsed as JSON: {exc}"
+                    ) from exc
                 raise GeminiClientError(f"Gemini returned unparseable JSON: {exc}") from exc
 
         usage = getattr(response, "usage_metadata", None)
@@ -147,4 +174,9 @@ def generate(
             latency_ms=latency_ms,
         )
 
+    if last_truncated:
+        raise GeminiClientError(
+            f"Gemini response was truncated (max_output_tokens too low) and could not be "
+            f"parsed as JSON: {last_error}"
+        )
     raise GeminiClientError(f"Gemini returned unparseable JSON: {last_error}")
