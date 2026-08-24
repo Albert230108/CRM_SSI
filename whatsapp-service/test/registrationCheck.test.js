@@ -83,6 +83,36 @@ test('require_registered_recipient true fetches and returns the contact display 
   assert.equal(result.whatsapp_contact_name, 'Mario Rossi');
 });
 
+test('require_registered_recipient true retries once after a transient No LID send failure', async () => {
+  const contactLookups = [];
+  const calls = [];
+  let sendCount = 0;
+  const client = {
+    calls,
+    getNumberId: async () => ({ _serialized: '31612345678@c.us' }),
+    getContactById: async (chatId) => {
+      contactLookups.push(chatId);
+      return { pushname: 'Mario Rossi' };
+    },
+    sendMessage: async (chatId, content, options) => {
+      sendCount += 1;
+      calls.push({ chatId, content, options: options ?? null });
+      if (sendCount === 1) {
+        throw new Error('No LID for user');
+      }
+      return { id: { _serialized: `wamid.sent-${sendCount}` } };
+    },
+  };
+
+  const result = await sendTextMessage(basePayload(client, { require_registered_recipient: true }));
+
+  assert.equal(contactLookups.length, 3);
+  assert.deepEqual(contactLookups.slice(0, 2), ['31612345678@c.us', '31612345678@c.us']);
+  assert.equal(calls.length, 2);
+  assert.equal(result.whatsapp_message_id, 'wamid.sent-2');
+  assert.equal(result.whatsapp_contact_name, 'Mario Rossi');
+});
+
 test('a contact name lookup failure is swallowed and does not fail the send', async () => {
   const client = fakeClient({ registered: true });
   client.getContactById = async () => {

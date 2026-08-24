@@ -24,20 +24,45 @@ const { resolveOutboundTenantOwnership } = require("./outboundResolution");
 const { createForwardedMessageCache } = require("./forwardedMessageCache");
 const { buildWhatsAppIdentityCandidates, getCanonicalWhatsAppIdentity, normalizeWhatsAppChatId, normalizeWhatsAppPhone } = require("./whatsappIdentity");
 
+function getWhatsAppTransientNavigationErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function shouldIgnoreWhatsAppTransientNavigationError(error) {
+  const message = getWhatsAppTransientNavigationErrorMessage(error);
+  return (
+    message.includes("Execution context was destroyed") ||
+    message.includes("Attempted to use detached Frame")
+  );
+}
+
+function logIgnoredWhatsAppTransientNavigationError(prefix, error) {
+  console.warn(prefix, getWhatsAppTransientNavigationErrorMessage(error));
+}
+
 // whatsapp-web.js's own `framenavigated` listener (Client.js) re-calls inject() on every page
 // navigation with no guard against an in-flight navigation destroying the execution context
-// mid-evaluate. That throws inside an unguarded async event handler -> unhandled rejection ->
-// this whole process gets killed by Node, and systemd then kills the Chrome subprocess mid-write,
-// corrupting the LocalAuth session and forcing a fresh QR scan every time. The page itself is
-// fine (WhatsApp Web settles and the next navigation event re-injects successfully), so this
-// specific, known-transient error is logged and ignored instead of crashing the process.
+// mid-evaluate. That throws inside an unguarded async event handler -> unhandled rejection or
+// uncaught exception -> this whole process gets killed by Node, and systemd then kills the Chrome
+// subprocess mid-write, corrupting the LocalAuth session and forcing a fresh QR scan every time.
+// The page itself is fine (WhatsApp Web settles and the next navigation event re-injects
+// successfully), so this specific, known-transient error is logged and ignored instead of
+// crashing the process.
 process.on("unhandledRejection", (error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("Execution context was destroyed")) {
-    console.warn("Ignored transient WhatsApp page-navigation race:", message);
+  if (shouldIgnoreWhatsAppTransientNavigationError(error)) {
+    logIgnoredWhatsAppTransientNavigationError("Ignored transient WhatsApp page-navigation race:", error);
     return;
   }
   console.error("Unhandled rejection:", error);
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  if (shouldIgnoreWhatsAppTransientNavigationError(error)) {
+    logIgnoredWhatsAppTransientNavigationError("Ignored transient WhatsApp page-navigation race:", error);
+    return;
+  }
+  console.error("Uncaught exception:", error);
   process.exit(1);
 });
 
@@ -1696,33 +1721,89 @@ async function sendTextMessage(payload) {
   if (identity.canonicalChatId) {
     pendingOutboundTenantByIdentityKey.set(identity.canonicalChatId, tenantId || null);
   }
-  const sent = [];
 
-  // A caption only renders on the media it rides along with, so it's only used when there is
-  // exactly one attachment. With several, the text would be buried in the first item (and
-  // some types - audio/ptt, stickers - drop captions entirely), so it goes out on its own.
-  if (attachments.length === 1 && message) {
-    const attachment = attachments[0];
-    const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.filename);
-    sent.push({
-      message: await activeClient.sendMessage(chatId, media, { caption: message }),
-      kind: "media",
-      attachment_index: 0,
-    });
-  } else {
-    if (message) {
-      sent.push({ message: await activeClient.sendMessage(chatId, message), kind: "text", attachment_index: null });
+  async function warmUpRecipientIdentity() {
+    if (typeof activeClient.getContactById === "function") {
+      try {
+        await activeClient.getContactById(chatId);
+        return;
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: "whatsapp_outbound_identity_warmup_contact_failed",
+          chat_id: chatId,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
     }
-    for (let index = 0; index < attachments.length; index += 1) {
-      const attachment = attachments[index];
-      const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.filename);
-      sent.push({
-        message: await activeClient.sendMessage(chatId, media),
-        kind: "media",
-        attachment_index: index,
-      });
+
+    if (typeof activeClient.getChatById === "function") {
+      try {
+        await activeClient.getChatById(chatId);
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: "whatsapp_outbound_identity_warmup_chat_failed",
+          chat_id: chatId,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
     }
   }
+
+  const isNoLidForUserError = (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes("No LID for user");
+  };
+
+  async function sendOnce() {
+    const sent = [];
+
+    // A caption only renders on the media it rides along with, so it's only used when there is
+    // exactly one attachment. With several, the text would be buried in the first item (and
+    // some types - audio/ptt, stickers - drop captions entirely), so it goes out on its own.
+    if (attachments.length === 1 && message) {
+      const attachment = attachments[0];
+      const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.filename);
+      sent.push({
+        message: await activeClient.sendMessage(chatId, media, { caption: message }),
+        kind: "media",
+        attachment_index: 0,
+      });
+    } else {
+      if (message) {
+        sent.push({ message: await activeClient.sendMessage(chatId, message), kind: "text", attachment_index: null });
+      }
+      for (let index = 0; index < attachments.length; index += 1) {
+        const attachment = attachments[index];
+        const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.filename);
+        sent.push({
+          message: await activeClient.sendMessage(chatId, media),
+          kind: "media",
+          attachment_index: index,
+        });
+      }
+    }
+
+    return sent;
+  }
+
+  const firstMessageFlow = payload?.require_registered_recipient === true;
+  let sent;
+
+  if (firstMessageFlow) {
+    await warmUpRecipientIdentity();
+  }
+
+  try {
+    sent = await sendOnce();
+  } catch (error) {
+    if (!firstMessageFlow || !isNoLidForUserError(error)) {
+      throw error;
+    }
+
+    await warmUpRecipientIdentity();
+    sent = await sendOnce();
+  }
+
 
   // WhatsApp resolves the chat we actually land in independently of the id we requested by -
   // a contact whose account uses @lid may still be reached by sending to their plain @c.us
