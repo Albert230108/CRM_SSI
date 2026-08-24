@@ -1,4 +1,8 @@
+import logging
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
@@ -6,7 +10,9 @@ from app.models.ai_auto_draft import AiAutoDraft
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.ai_auto_draft import AiAutoDraftRead
-from app.services import ai_auto_draft_service
+from app.services import ai_auto_draft_service, memory_redo_service, redo_request_log_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai-auto-drafts", tags=["ai-auto-drafts"])
 
@@ -101,6 +107,49 @@ def mark_ai_auto_draft_used(
     db.commit()
     db.refresh(draft)
     return _to_read(db, draft)
+
+
+class AiAutoDraftRedoRequest(BaseModel):
+    what: str
+    why: Optional[str] = None
+
+
+@router.put("/{draft_id}/redo", response_model=AiAutoDraftRead)
+def redo_ai_auto_draft(
+    draft_id: int,
+    payload: AiAutoDraftRedoRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiAutoDraftRead:
+    """The CRM counterpart to the WhatsApp "REDO-{id} what: ... why: ..." staff reply - same
+    underlying regenerate_draft_via_planner call, reached from the thread view instead."""
+    draft = _get_draft(db, draft_id)
+    what = payload.what.strip()
+    if not what:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="what is required")
+    why = (payload.why or "").strip() or None
+    instructions = f"What: {what}" + (f"\nWhy: {why}" if why else "")
+
+    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, instructions)
+    if regenerated is None:
+        redo_request_log_service.log_redo_request(
+            db, ai_auto_draft_id=draft_id, tenant_id=draft.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id
+        )
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Redo failed - planner produced no draft")
+
+    log_entry = redo_request_log_service.log_redo_request(
+        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id
+    )
+    db.commit()
+    db.refresh(regenerated)
+    try:
+        memory_redo_service.propose_updates_from_redo(db, regenerated, what, why, redo_log_id=log_entry.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Memory redo suggestion generation failed draft_id=%s", draft_id)
+    return _to_read(db, regenerated)
 
 
 @router.put("/{draft_id}/send-now", response_model=AiAutoDraftRead)

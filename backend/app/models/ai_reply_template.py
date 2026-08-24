@@ -58,6 +58,7 @@ class AiReplyTemplate(Base):
     include_beds24 = Column(Boolean, nullable=False, default=False, server_default="false")
     include_payments = Column(Boolean, nullable=False, default=False, server_default="false")
     include_notes = Column(Boolean, nullable=False, default=False, server_default="false")
+    include_availability = Column(Boolean, nullable=False, default=False, server_default="false")
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

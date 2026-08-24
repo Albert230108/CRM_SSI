@@ -603,6 +603,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const [plannerNotice, setPlannerNotice] = useState('')
   const [aiDraftError, setAiDraftError] = useState('')
   const [pendingAutoDrafts, setPendingAutoDrafts] = useState<AiAutoDraftItem[]>([])
+  const [redoOpenDraftId, setRedoOpenDraftId] = useState<number | null>(null)
+  const [redoWhat, setRedoWhat] = useState('')
+  const [redoWhy, setRedoWhy] = useState('')
+  const [redoSubmitting, setRedoSubmitting] = useState(false)
+  const [plannerRedoOpen, setPlannerRedoOpen] = useState(false)
+  const [plannerRedoWhat, setPlannerRedoWhat] = useState('')
+  const [plannerRedoWhy, setPlannerRedoWhy] = useState('')
+  const [plannerRedoSubmitting, setPlannerRedoSubmitting] = useState(false)
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThreadItem | null>(null)
   const [threadTargetNotFound, setThreadTargetNotFound] = useState(false)
   const [emailNavIndex, setEmailNavIndex] = useState(0)
@@ -971,6 +979,27 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
     await loadPendingAutoDrafts()
   }
 
+  const submitRedo = async (draft: AiAutoDraftItem) => {
+    const what = redoWhat.trim()
+    if (!what || redoSubmitting) return
+    try {
+      setRedoSubmitting(true)
+      const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/redo`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ what, why: redoWhy.trim() || null }),
+      })
+      if (response.ok) {
+        setRedoOpenDraftId(null)
+        setRedoWhat('')
+        setRedoWhy('')
+      }
+      await loadPendingAutoDrafts()
+    } finally {
+      setRedoSubmitting(false)
+    }
+  }
+
   const renderPendingAutoDraftBanner = (channel: 'email' | 'whatsapp') => {
     const draft = pendingAutoDraftForChannel(channel)
     if (!draft) return null
@@ -999,10 +1028,114 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           ) : null}
           <button
             type="button"
+            onClick={() => {
+              setRedoOpenDraftId((current) => (current === draft.id ? null : draft.id))
+              setRedoWhat('')
+              setRedoWhy('')
+            }}
+            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+          >
+            Redo
+          </button>
+          <button
+            type="button"
             onClick={() => dismissAutoDraft(draft)}
             className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
           >
             Dismiss
+          </button>
+        </div>
+        {redoOpenDraftId === draft.id ? (
+          <div className="mt-1.5 space-y-1.5 rounded-lg border border-gray-200 bg-white p-1.5">
+            <input
+              type="text"
+              value={redoWhat}
+              onChange={(event) => setRedoWhat(event.target.value)}
+              placeholder="What to change (required)"
+              className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+            />
+            <input
+              type="text"
+              value={redoWhy}
+              onChange={(event) => setRedoWhy(event.target.value)}
+              placeholder="Why (optional)"
+              className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+            />
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => submitRedo(draft)}
+                disabled={!redoWhat.trim() || redoSubmitting}
+                className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {redoSubmitting ? 'Redoing...' : 'Submit redo'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRedoOpenDraftId(null)}
+                className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  const renderPlannerRedoButton = () => {
+    if (!plannerEnabled) return null
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setPlannerRedoOpen((current) => !current)
+          setPlannerRedoWhat('')
+          setPlannerRedoWhy('')
+        }}
+        disabled={plannerRunning}
+        title="Re-run the planner with an explicit change note"
+        className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Redo
+      </button>
+    )
+  }
+
+  const renderPlannerRedoForm = () => {
+    if (!plannerRedoOpen) return null
+    return (
+      <div className="space-y-1.5 rounded-lg border border-gray-200 bg-gray-50 p-1.5">
+        <input
+          type="text"
+          value={plannerRedoWhat}
+          onChange={(event) => setPlannerRedoWhat(event.target.value)}
+          placeholder="What to change (required)"
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+        />
+        <input
+          type="text"
+          value={plannerRedoWhy}
+          onChange={(event) => setPlannerRedoWhy(event.target.value)}
+          placeholder="Why (optional)"
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+        />
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={handlePlannerRedo}
+            disabled={!plannerRedoWhat.trim() || plannerRedoSubmitting}
+            className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {plannerRedoSubmitting ? 'Redoing...' : 'Submit redo'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlannerRedoOpen(false)}
+            className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-white"
+          >
+            Cancel
           </button>
         </div>
       </div>
@@ -1086,6 +1219,53 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       setAiDraftError(err instanceof Error ? err.message : 'Failed to run the planner')
     } finally {
       setPlannerRunning(false)
+    }
+  }
+
+  const handlePlannerRedo = async () => {
+    const what = plannerRedoWhat.trim()
+    if (!tenantId || !replyTarget || !what || plannerRedoSubmitting) return
+    try {
+      setPlannerRedoSubmitting(true)
+      setAiDraftError('')
+      setPlannerNotice('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-plan/redo`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          channel: replyTarget.type,
+          what,
+          why: plannerRedoWhy.trim() || null,
+          attachment_ids: currentReplyAttachmentIds,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Failed to redo the planner draft')
+      }
+      if (!data?.generated_text) {
+        setPlannerNotice(
+          data?.status === 'escalated'
+            ? `The planner stopped and flagged this for a human${data.escalation_reason ? ` (${data.escalation_reason})` : ''}.`
+            : 'The planner decided no reply was needed.',
+        )
+        return
+      }
+      setReplyMessage(data.generated_text)
+      if (data.template_id) setSelectedAiTemplateId(String(data.template_id))
+      if (data.status === 'needs_review') {
+        setPlannerNotice('The reviewer never approved this draft - read it carefully before sending.')
+      }
+      setPlannerRedoOpen(false)
+      setPlannerRedoWhat('')
+      setPlannerRedoWhy('')
+    } catch (err) {
+      setAiDraftError(err instanceof Error ? err.message : 'Failed to redo the planner draft')
+    } finally {
+      setPlannerRedoSubmitting(false)
     }
   }
 
@@ -2280,6 +2460,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         {plannerRunning ? 'Planning...' : 'Run planner'}
                       </button>
                     ) : null}
+                    {renderPlannerRedoButton()}
                     <button
                       type="button"
                       onClick={handlePreviewAiPayload}
@@ -2294,6 +2475,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                   </div>
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
+                  {renderPlannerRedoForm()}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}
@@ -2489,6 +2671,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                           {plannerRunning ? 'Planning...' : 'Run planner'}
                         </button>
                       ) : null}
+                      {renderPlannerRedoButton()}
                       <button
                         type="button"
                         onClick={handlePreviewAiPayload}
@@ -2503,6 +2686,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     </div>
                     {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                     {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
+                    {renderPlannerRedoForm()}
                     <textarea
                       value={replyMessage}
                       onChange={(event) => setReplyMessage(event.target.value)}
@@ -2709,6 +2893,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                         {plannerRunning ? 'Planning...' : 'Run planner'}
                       </button>
                     ) : null}
+                    {renderPlannerRedoButton()}
                     <button
                       type="button"
                       onClick={handlePreviewAiPayload}
@@ -2723,6 +2908,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                   </div>
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
+                  {renderPlannerRedoForm()}
                   <textarea
                     value={replyMessage}
                     onChange={(event) => setReplyMessage(event.target.value)}

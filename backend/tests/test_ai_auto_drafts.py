@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.services import ai_auto_draft_service
 
@@ -212,3 +213,59 @@ def test_send_now_rejects_already_sent_draft(non_admin_client, db_session):
 
     response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
     assert response.status_code == 409
+
+
+def test_redo_regenerates_draft_and_logs_the_request(non_admin_client, db_session, monkeypatch):
+    """The CRM counterpart to the WhatsApp REDO reply - reached from the thread view's inline
+    draft banner instead of a WhatsApp text reply."""
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="whatsapp", generated_text="Hi there!", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    def fake_regenerate(db, draft_arg, instructions):
+        assert instructions == "What: make it shorter\nWhy: they already asked yesterday"
+        draft_arg.generated_text = "Shorter reply."
+        draft_arg.status = "pending"
+        return draft_arg
+
+    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", fake_regenerate)
+
+    response = non_admin_client.put(
+        f"/api/ai-auto-drafts/{draft.id}/redo",
+        json={"what": "make it shorter", "why": "they already asked yesterday"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["generated_text"] == "Shorter reply."
+
+    log_entry = db_session.query(RedoRequestLog).filter(RedoRequestLog.ai_auto_draft_id == draft.id).one()
+    assert log_entry.channel == "crm"
+    assert log_entry.what == "make it shorter"
+    assert log_entry.why == "they already asked yesterday"
+
+
+def test_redo_requires_what(non_admin_client, db_session):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="whatsapp", generated_text="Hi there!", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/redo", json={"what": "   "})
+
+    assert response.status_code == 400
+
+
+def test_redo_logs_failed_attempt_when_planner_produces_nothing(non_admin_client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="whatsapp", generated_text="Hi there!", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", lambda db, draft_arg, instructions: None)
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/redo", json={"what": "make it warmer"})
+
+    assert response.status_code == 502
+    log_entry = db_session.query(RedoRequestLog).filter(RedoRequestLog.ai_auto_draft_id == draft.id).one()
+    assert log_entry.what == "make it warmer"

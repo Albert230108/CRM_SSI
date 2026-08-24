@@ -359,6 +359,70 @@ def test_ai_plan_maps_gemini_failure_to_502(user_client, db_session, monkeypatch
     assert response.status_code == 502
 
 
+# --- manual "Run planner" redo (reply box, no AiAutoDraft involved) ------------------------
+
+
+def test_ai_plan_redo_returns_regenerated_text_and_logs_the_request(user_client, db_session, monkeypatch):
+    from app.models.redo_request_log import RedoRequestLog
+
+    tenant, template = _setup(db_session, planner_mode="manual")
+    captured_prompts = []
+
+    def _fake_generate_capturing(responses):
+        inner = _fake_generate(responses)
+
+        def _generate(prompt, **kwargs):
+            captured_prompts.append(prompt)
+            return inner(prompt, **kwargs)
+
+        return _generate
+
+    monkeypatch.setattr(
+        ai_agent_orchestrator.gemini_client,
+        "generate",
+        _fake_generate_capturing([_plan(template.id), "Redone draft.", {"passed": True, "feedback": ""}]),
+    )
+
+    response = user_client.put(
+        f"/api/communications/tenants/{tenant.id}/ai-plan/redo",
+        json={"channel": "email", "what": "make it shorter", "why": "guest already knows the basics"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["generated_text"] == "Redone draft."
+    assert body["run_id"] is not None
+
+    # The combined What/Why instructions reach the planner as the operator note.
+    assert "What: make it shorter" in captured_prompts[0]
+    assert "Why: guest already knows the basics" in captured_prompts[0]
+
+    log_entry = db_session.query(RedoRequestLog).filter(RedoRequestLog.tenant_id == tenant.id).one()
+    assert log_entry.channel == "crm"
+    assert log_entry.what == "make it shorter"
+    assert log_entry.why == "guest already knows the basics"
+    assert log_entry.ai_agent_run_id == body["run_id"]
+    assert log_entry.ai_auto_draft_id is None
+
+
+def test_ai_plan_redo_requires_what(user_client, db_session):
+    tenant, _ = _setup(db_session, planner_mode="manual")
+    response = user_client.put(
+        f"/api/communications/tenants/{tenant.id}/ai-plan/redo",
+        json={"channel": "email", "what": "   "},
+    )
+    assert response.status_code == 400
+
+
+def test_ai_plan_redo_is_refused_when_the_planner_is_off(user_client, db_session):
+    tenant, _ = _setup(db_session, planner_mode="off")
+    response = user_client.put(
+        f"/api/communications/tenants/{tenant.id}/ai-plan/redo",
+        json={"channel": "email", "what": "make it shorter"},
+    )
+    assert response.status_code == 400
+
+
 def test_runs_api_exposes_the_planner_decision(non_admin_client, db_session, monkeypatch):
     tenant, template = _setup(db_session, planner_mode="manual")
     monkeypatch.setattr(

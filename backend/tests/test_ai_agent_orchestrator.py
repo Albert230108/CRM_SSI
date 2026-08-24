@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -6,9 +7,11 @@ from app.models.ai_agent_profile import AiAgentProfile
 from app.models.ai_agent_run import AiAgentRun, AiAgentRunStep
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.brain_section import BrainSection
+from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.services import ai_agent_orchestrator, attachment_service, gemini_client
 
 
@@ -636,3 +639,25 @@ def test_checker_receives_the_template_the_planner_chose(db_session, fake_gemini
     assert "You are a helpful host." in checker_prompt  # the template's sections
     # `description` tells the planner when to *pick* a template; it is not review criteria.
     assert "Planner-only: pick me for late arrivals." not in checker_prompt
+
+
+def test_latest_inbound_text_ignores_hidden_threads(db_session):
+    """A thread toggled hidden (is_visible=False) must never surface in AI prompts."""
+    tenant = _tenant(db_session)
+    thread = Conversation(provider="gmail", provider_thread_id="thread-hidden-inbound", subject="Hidden")
+    db_session.add(thread)
+    db_session.commit()
+    db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=thread.id, is_visible=False))
+    db_session.add(
+        ConversationMessage(
+            conversation_id=thread.id,
+            provider="gmail",
+            provider_message_id="msg-hidden-inbound",
+            direction="inbound",
+            body="Message from a hidden thread",
+            sent_at=datetime.now(timezone.utc),
+        )
+    )
+    db_session.commit()
+
+    assert ai_agent_orchestrator.latest_inbound_text(db_session, tenant.id, "email") is None

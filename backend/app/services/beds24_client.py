@@ -243,6 +243,43 @@ async def get_bookings() -> list[dict[str, Any]]:
     return all_items
 
 
+async def get_room_availability() -> list[dict[str, Any]]:
+    """Per-room, per-date availability booleans, paginated the same way as get_bookings().
+
+    Each item looks like {"roomId": ..., "propertyId": ..., "name": ..., "availability":
+    {"2026-01-01": true, ...}}. Raw and unsummarized - see beds24_availability_service for the
+    parsing into a human-readable range summary that actually gets used in prompts.
+    """
+    headers = await _async_headers()
+    all_items: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        next_url: str | None = f"{READ_BASE_URL}/inventory/rooms/availability"
+        next_params: dict[str, Any] | None = None
+        while next_url:
+            response = await _get_with_retry(client, next_url, next_params)
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                logger.warning("Beds24 availability response invalid JSON url=%s", next_url)
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 availability response was not valid JSON") from exc
+            data = _extract_beds24_data(payload, endpoint="inventory/rooms/availability")
+            if isinstance(data, list):
+                all_items.extend(item for item in data if isinstance(item, dict))
+            elif isinstance(data, dict):
+                sub = data.get("availability") or []
+                all_items.extend(item for item in sub if isinstance(item, dict))
+            else:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Beds24 availability response shape was unexpected")
+            pages = payload.get("pages", {}) if isinstance(payload, dict) else {}
+            if isinstance(pages, dict) and pages.get("nextPageExists") and pages.get("nextPageLink"):
+                next_url = str(pages["nextPageLink"])
+                next_params = None
+                await asyncio.sleep(0.2)
+            else:
+                next_url = None
+    return all_items
+
+
 async def get_booking_detail(booking_id: str) -> dict[str, Any]:
     # Beds24 v2 has no path-parameter form for a single booking: GET /bookings/{id} answers
     # 500 "Could not process request" for every id. The collection endpoint filtered by `id`

@@ -21,7 +21,7 @@ from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
-from app.services import ai_agent_orchestrator, ai_reply_service
+from app.services import ai_agent_orchestrator, ai_reply_service, memory_redo_service, redo_request_log_service
 from app.services.attachment_service import (
     AttachmentLimitExceededError,
     AttachmentNotFoundError,
@@ -116,6 +116,13 @@ class AiDraftPreviewResponse(BaseModel):
 class AiPlanRequest(BaseModel):
     channel: str
     rough_draft: str | None = None
+    attachment_ids: list[int] = []
+
+
+class AiPlanRedoRequest(BaseModel):
+    channel: str
+    what: str
+    why: str | None = None
     attachment_ids: list[int] = []
 
 
@@ -1197,6 +1204,103 @@ def run_tenant_ai_planner(
     # The run log is worth keeping even when the loop declined to draft - that decision is
     # exactly what an operator asking "why didn't it reply?" needs to see.
     db.commit()
+
+    return AiPlanResponse(
+        status=result.status,
+        generated_text=result.generated_text,
+        template_id=result.template_id,
+        run_id=result.run_id,
+        checker_passed=result.checker_passed,
+        checker_feedback=result.checker_feedback,
+        escalation_reason=result.escalation_reason,
+    )
+
+
+@router.put("/tenants/{tenant_id}/ai-plan/redo", response_model=AiPlanResponse)
+def redo_tenant_ai_planner(
+    tenant_id: int,
+    payload: AiPlanRedoRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiPlanResponse:
+    """The reply-box counterpart to the AiAutoDraft redo flow. Re-runs the planner loop with
+    explicit what/why change instructions, logs the request, and proposes memory/rule
+    suggestions the same way as the approval-flow redo - even though there is no persisted
+    AiAutoDraft here, only whatever text the operator was looking at in the reply box.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    channel = (payload.channel or "").strip().lower()
+    if channel not in ("email", "whatsapp"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="channel must be email or whatsapp")
+
+    what = payload.what.strip()
+    if not what:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="what is required")
+    why = (payload.why or "").strip() or None
+
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    if ai_settings is None or (ai_settings.planner_mode or "off") == "off":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The planner is turned off for this tenant.",
+        )
+
+    try:
+        outbound_attachments = load_outbound_attachments(
+            db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel=channel
+        )
+    except AttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except AttachmentLimitExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
+
+    combined_instructions = f"What: {what}" + (f"\nWhy: {why}" if why else "")
+
+    try:
+        result = ai_agent_orchestrator.run_planner_loop(
+            db,
+            tenant=tenant,
+            channel=channel,
+            mode="manual",
+            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
+            operator_note=combined_instructions,
+            attachments=outbound_attachments,
+            user_id=current_user.id,
+        )
+    except GeminiClientError as exc:
+        db.rollback()
+        logger.exception("AI planner redo failed")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    log_entry = redo_request_log_service.log_redo_request(
+        db,
+        tenant_id=tenant.id,
+        channel="crm",
+        what=what,
+        why=why,
+        requested_by_user_id=current_user.id,
+        ai_agent_run_id=result.run_id,
+    )
+    db.commit()
+
+    if result.generated_text:
+        try:
+            memory_redo_service.propose_updates(
+                db,
+                tenant=tenant,
+                generated_text=result.generated_text,
+                channel=channel,
+                what=what,
+                why=why,
+                redo_log_id=log_entry.id,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Memory redo suggestion generation failed tenant_id=%s", tenant_id)
 
     return AiPlanResponse(
         status=result.status,

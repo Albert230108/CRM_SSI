@@ -224,6 +224,50 @@ def test_history_is_channel_wide_not_thread_scoped(db_session, monkeypatch):
     assert "Message from thread B" in captured["prompt"]
 
 
+def test_history_excludes_hidden_threads(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+
+    thread_visible = Conversation(provider="gmail", provider_thread_id="thread-visible", subject="Visible thread")
+    thread_hidden = Conversation(provider="gmail", provider_thread_id="thread-hidden", subject="Hidden thread")
+    db_session.add_all([thread_visible, thread_hidden])
+    db_session.commit()
+    db_session.add_all(
+        [
+            TenantConversationLink(tenant_id=tenant.id, conversation_id=thread_visible.id, is_visible=True),
+            TenantConversationLink(tenant_id=tenant.id, conversation_id=thread_hidden.id, is_visible=False),
+        ]
+    )
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            ConversationMessage(
+                conversation_id=thread_visible.id,
+                provider="gmail",
+                provider_message_id="msg-visible",
+                direction="inbound",
+                body="Message from visible thread",
+                sent_at=now - timedelta(days=2),
+            ),
+            ConversationMessage(
+                conversation_id=thread_hidden.id,
+                provider="gmail",
+                provider_message_id="msg-hidden",
+                direction="inbound",
+                body="Message from hidden thread",
+                sent_at=now - timedelta(days=1),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    captured = _capture_gemini_call(monkeypatch)
+    template = _template(include_history=True, history_message_limit=10)
+    ai_reply_service.build_prompt_and_generate(db_session, tenant=tenant, template=template, channel="email", rough_draft="hi")
+
+    assert "Message from visible thread" in captured["prompt"]
+    assert "Message from hidden thread" not in captured["prompt"]
+
+
 def test_history_respects_message_limit(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     now = datetime.now(timezone.utc)

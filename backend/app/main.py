@@ -8,13 +8,16 @@ from fastapi import FastAPI
 
 from app.api.admin_invites import router as admin_invites_router
 from app.api.admin_settings import router as admin_settings_router
+from app.api.action_items import router as action_items_router
 from app.api.admin_sync import router as admin_sync_router
 from app.api.ai_agent_profiles import router as ai_agent_profiles_router
 from app.api.ai_agent_runs import router as ai_agent_runs_router
 from app.api.ai_auto_drafts import router as ai_auto_drafts_router
 from app.api.ai_reply_templates import router as ai_reply_templates_router
 from app.api.auth import router as auth_router
+from app.api.beds24_availability import router as beds24_availability_router
 from app.api.beds24_webhooks import router as beds24_webhook_router
+from app.api.brain_fields import router as brain_fields_router
 from app.api.brain_sections import router as brain_sections_router
 from app.api.communications import router as communications_router
 from app.api.communication_attachments import router as communication_attachments_router
@@ -22,20 +25,24 @@ from app.api.email_templates import router as email_templates_router
 from app.api.gmail_integration import _catch_up_gmail_account, _start_watch
 from app.api.gmail_integration import router as gmail_integration_router
 from app.api.invites import router as invites_router
+from app.api.memory_qa import router as memory_qa_router
+from app.api.memory_suggestions import router as memory_suggestions_router
 from app.api.notifications import router as notifications_router
 from app.api.quotation import router as quotation_router
+from app.api.redo_requests import router as redo_requests_router
 from app.api.tenants import router as tenants_router
 from app.api.tenant_ai_settings import router as tenant_ai_settings_router
 from app.api.tenant_channel_endpoints import router as tenant_channel_endpoints_router
 from app.api.users import router as users_router
 from app.api.tenant_email_links import router as tenant_email_links_router
 from app.api.whatsapp_thread_links import router as whatsapp_thread_links_router
+from app.api.working_memory_rules import router as working_memory_rules_router
 from app.database import SessionLocal
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant_brain_trigger import TenantBrainTrigger
-from app.services import ai_auto_draft_service, tenant_brain_service
+from app.services import ai_auto_draft_service, beds24_availability_service, tenant_brain_service
 from app.services.ai_draft_notification_service import notify_admins_of_new_draft
 from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
 from app.webhooks.gmail import router as gmail_webhook_router
@@ -228,6 +235,33 @@ def _run_due_notification_whatsapp_batch_once() -> None:
         db.close()
 
 
+BEDS24_AVAILABILITY_REFRESH_INTERVAL_SECONDS = int(os.getenv("BEDS24_AVAILABILITY_REFRESH_INTERVAL_SECONDS", str(30 * 60)))
+_last_beds24_availability_refresh: datetime | None = None
+
+
+async def _maybe_refresh_beds24_availability_once() -> None:
+    """Runs at most once per BEDS24_AVAILABILITY_REFRESH_INTERVAL_SECONDS, piggybacking on the
+    fast AI-draft scheduler tick rather than a separate loop. The actual overlap guard against a
+    slow-running fetch is beds24_availability_service's own `_is_running` flag - this timestamp
+    check is only about not re-checking on every 15-second tick.
+    """
+    global _last_beds24_availability_refresh
+    now = datetime.now(timezone.utc)
+    if (
+        _last_beds24_availability_refresh is not None
+        and (now - _last_beds24_availability_refresh).total_seconds() < BEDS24_AVAILABILITY_REFRESH_INTERVAL_SECONDS
+    ):
+        return
+    _last_beds24_availability_refresh = now
+    db = SessionLocal()
+    try:
+        await beds24_availability_service.refresh_availability_summary(db)
+    except Exception:
+        logger.exception("Beds24 availability refresh failed")
+    finally:
+        db.close()
+
+
 async def _ai_draft_scheduler_forever() -> None:
     while True:
         await asyncio.sleep(AI_DRAFT_SCHEDULER_INTERVAL_SECONDS)
@@ -235,6 +269,7 @@ async def _ai_draft_scheduler_forever() -> None:
         await asyncio.to_thread(_run_due_ai_auto_sends_once)
         await asyncio.to_thread(_run_due_tenant_brain_triggers_once)
         await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
+        await _maybe_refresh_beds24_availability_once()
 
 
 @asynccontextmanager
@@ -281,6 +316,13 @@ app.include_router(whatsapp_thread_links_router, prefix="/api")
 app.include_router(tenant_email_links_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(beds24_webhook_router, prefix="/api")
+app.include_router(beds24_availability_router, prefix="/api")
+app.include_router(brain_fields_router, prefix="/api")
+app.include_router(action_items_router, prefix="/api")
+app.include_router(working_memory_rules_router, prefix="/api")
+app.include_router(memory_suggestions_router, prefix="/api")
+app.include_router(memory_qa_router, prefix="/api")
+app.include_router(redo_requests_router, prefix="/api")
 app.include_router(whatsapp_webhook_router)
 app.include_router(gmail_webhook_router)
 

@@ -4,12 +4,15 @@ import pytest
 
 from app.core.dependencies import get_current_user
 from app.main import app
+from app.models.action_item import ActionItem
 from app.models.ai_agent_profile import BRAIN_WRITER_ROLE, AiAgentProfile
 from app.models.ai_agent_run import AiAgentRun
+from app.models.brain_field_definition import BrainFieldDefinition
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_brain_entry import TenantBrainEntry
 from app.models.tenant_brain_entry_history import TenantBrainEntryHistory
+from app.models.tenant_brain_field_value import TenantBrainFieldValue
 from app.models.tenant_brain_trigger import TenantBrainTrigger
 from app.models.user import User
 from app.services import tenant_brain_service
@@ -263,3 +266,97 @@ def test_scan_endpoint_adds_entries_from_scanner(user_client, db_session, monkey
     body = response.json()
     assert len(body) == 1
     assert body[0]["source"] == "scanner"
+
+
+# --- structured field_values / action_items ------------------------------------------------
+
+
+def test_generate_brain_update_sets_matching_field_value(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_brain_writer(db_session, tenant)
+    field = BrainFieldDefinition(key="pets", label="Pets", ai_instruction="Does the tenant have pets?")
+    db_session.add(field)
+    db_session.commit()
+
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "I'm bringing my dog.")
+    monkeypatch.setattr(
+        tenant_brain_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "should_remember": True,
+                "field_values": [{"key": "pets", "value": "Has a dog"}, {"key": "unknown_key", "value": "ignored"}],
+                "entries": [],
+                "reasoning": "Pet mentioned.",
+            }
+        ),
+    )
+    trigger = TenantBrainTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    tenant_brain_service.generate_brain_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    value = (
+        db_session.query(TenantBrainFieldValue)
+        .filter(TenantBrainFieldValue.tenant_id == tenant.id, TenantBrainFieldValue.field_definition_id == field.id)
+        .one()
+    )
+    assert value.value == "Has a dog"
+    assert value.source == "planner"
+    # The unknown key is silently ignored rather than erroring - no row created for it.
+    assert db_session.query(TenantBrainFieldValue).filter(TenantBrainFieldValue.tenant_id == tenant.id).count() == 1
+
+
+def test_generate_brain_update_ignores_empty_field_value(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_brain_writer(db_session, tenant)
+    field = BrainFieldDefinition(key="pets", label="Pets", ai_instruction="Does the tenant have pets?")
+    db_session.add(field)
+    db_session.commit()
+
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "What time is check-in?")
+    monkeypatch.setattr(
+        tenant_brain_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "should_remember": True,
+                "field_values": [{"key": "pets", "value": ""}],
+                "entries": ["Some other durable fact."],
+                "reasoning": "No pet evidence.",
+            }
+        ),
+    )
+    trigger = TenantBrainTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    tenant_brain_service.generate_brain_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert db_session.query(TenantBrainFieldValue).filter(TenantBrainFieldValue.tenant_id == tenant.id).count() == 0
+
+
+def test_generate_brain_update_creates_ai_action_item(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_brain_writer(db_session, tenant)
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "Please call me back about the invoice.")
+    monkeypatch.setattr(
+        tenant_brain_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "should_remember": True,
+                "action_items": [{"title": "Call tenant about invoice", "description": "", "due_date": ""}],
+                "entries": [],
+                "reasoning": "Explicit callback request.",
+            }
+        ),
+    )
+    trigger = TenantBrainTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    tenant_brain_service.generate_brain_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    item = db_session.query(ActionItem).filter(ActionItem.tenant_id == tenant.id).one()
+    assert item.title == "Call tenant about invoice"
+    assert item.source == "ai"
+    assert item.status == "open"

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -29,14 +30,47 @@ from app.models.tenant_brain_entry_history import (
     TenantBrainEntryHistory,
 )
 from app.models.tenant_brain_trigger import TenantBrainTrigger
-from app.services import ai_agent_orchestrator, ai_prompt_blocks, ai_reply_service, gemini_client
+from app.services import (
+    action_item_service,
+    ai_agent_orchestrator,
+    ai_prompt_blocks,
+    ai_reply_service,
+    brain_field_service,
+    gemini_client,
+)
 
 logger = logging.getLogger(__name__)
 
+# field_values and action_items use an empty string / omitted key to mean "no evidence" rather
+# than a JSON null, since Gemini's structured-output schemas handle plain string properties far
+# more reliably than nullable ones - the writer only upserts entries whose value is non-empty.
 BRAIN_WRITER_SCHEMA = {
     "type": "object",
     "properties": {
         "should_remember": {"type": "boolean"},
+        "field_values": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+                "required": ["key", "value"],
+            },
+        },
+        "action_items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "due_date": {"type": "string"},
+                },
+                "required": ["title"],
+            },
+        },
         "entries": {"type": "array", "items": {"type": "string"}},
         "reasoning": {"type": "string"},
     },
@@ -57,11 +91,30 @@ _SCANNER_PREAMBLE = (
     "questions and one-off logistics that have no bearing on future interactions."
 )
 
+_FIELD_GUARDRAILS = (
+    "## Structured Fields\n"
+    "Below is the schema of fields this CRM tracks per tenant, each with an instruction for "
+    "what evidence to look for, and the tenant's current values. Only include a field in "
+    "`field_values` when the message/history gives direct evidence for it - leave it out "
+    "entirely (or use an empty string) when you are not sure rather than guessing. Never repeat "
+    "a fact in `entries` if it already fits one of these fields."
+)
+
+_ACTION_ITEM_GUARDRAILS = (
+    "## Action Items\n"
+    "Do NOT invent action items. Only add one to `action_items` if the tenant explicitly "
+    "requests a task, or a clear operational follow-up is strictly required by this specific "
+    "message. When in doubt, leave `action_items` empty."
+)
+
 _OUTPUT_INSTRUCTION = (
     "## Output\n"
     "Return JSON only. Set `should_remember` to true only if there is at least one new, durable "
-    "fact worth saving. `entries` is a list of short, standalone facts to add - empty if "
-    "should_remember is false. `reasoning` briefly explains the decision."
+    "fact, field value, or action item worth saving. `field_values` lists only fields you have "
+    "direct evidence for (omit the rest). `action_items` lists only genuinely new tasks (see "
+    "guardrails above - usually empty). `entries` is a list of short, standalone facts to add "
+    "that don't fit a field - empty if should_remember is false. `reasoning` briefly explains "
+    "the decision."
 )
 
 
@@ -155,6 +208,19 @@ def _existing_entries_block(entries: list[TenantBrainEntry]) -> str:
     return ai_prompt_blocks.join("## Already Remembered", body)
 
 
+def _fields_block(db: Session, tenant_id: int) -> str:
+    definitions = brain_field_service.list_definitions(db, active_only=True)
+    if not definitions:
+        return ""
+    values = brain_field_service.get_values_for_tenant(db, tenant_id)
+    lines = []
+    for definition in definitions:
+        current = values.get(definition.id)
+        current_value = current.value if current is not None and current.value else "(not set)"
+        lines.append(f"- key={definition.key} | {definition.label} | look for: {definition.ai_instruction} | current: {current_value}")
+    return ai_prompt_blocks.join(_FIELD_GUARDRAILS, "\n".join(lines))
+
+
 def _build_prompt(
     db: Session,
     tenant: Tenant,
@@ -174,6 +240,11 @@ def _build_prompt(
 
     parts.append(_existing_entries_block(existing_entries))
 
+    fields_block = _fields_block(db, tenant.id)
+    if fields_block:
+        parts.append(fields_block)
+    parts.append(_ACTION_ITEM_GUARDRAILS)
+
     if history_limit:
         parts.append(
             ai_reply_service._build_history_context(
@@ -190,6 +261,8 @@ def _build_prompt(
         parts.append(ai_reply_service._build_payments_context(db, tenant))
     if profile.include_notes:
         parts.append(ai_reply_service._build_notes_context(tenant))
+    if profile.include_availability:
+        parts.append(ai_reply_service._build_availability_context(db))
     if inbound_text:
         parts.append(ai_prompt_blocks.join("## Latest Inbound Message", inbound_text))
 
@@ -262,6 +335,30 @@ def _run_brain_writer(
         entry = add_entry(db, tenant, str(content), source=source)
         if entry is not None:
             added.append(entry)
+
+    definitions_by_key = {d.key: d for d in brain_field_service.list_definitions(db, active_only=True)}
+    for field_value in plan.get("field_values") or []:
+        key = str((field_value or {}).get("key") or "").strip()
+        value = str((field_value or {}).get("value") or "").strip()
+        definition = definitions_by_key.get(key)
+        if definition is None or not value:
+            continue
+        brain_field_service.set_value(db, tenant.id, definition.id, value, source=source)
+
+    for action_item in plan.get("action_items") or []:
+        title = str((action_item or {}).get("title") or "").strip()
+        if not title:
+            continue
+        description = str((action_item or {}).get("description") or "").strip() or None
+        due_date_raw = str((action_item or {}).get("due_date") or "").strip()
+        due_date = None
+        if due_date_raw:
+            try:
+                due_date = date.fromisoformat(due_date_raw)
+            except ValueError:
+                due_date = None
+        action_item_service.create_ai_item(db, tenant.id, title, description, due_date)
+
     run.status = STATUS_COMPLETED
     return added
 

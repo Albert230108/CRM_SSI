@@ -2,7 +2,8 @@ import asyncio
 
 from app.models.finance import Finance
 from app.models.tenant import Tenant
-from app.services import beds24_sync
+from app.models.tenant_brain_entry import TenantBrainEntry
+from app.services import beds24_sync, tenant_brain_service
 
 
 async def fake_booking_fetch(booking_id):
@@ -52,6 +53,46 @@ def test_sync_updates_existing_tenant_and_replaces_finance(db_session, monkeypat
     finances = db_session.query(Finance).filter(Finance.tenant_id == tenant.id).all()
     assert len(finances) == 1
     assert finances[0].description == "Rent"
+
+
+def test_sync_runs_initial_brain_scan_only_on_create(db_session, monkeypatch):
+    """The initial-fill brain scan must fire once when a tenant is first created via Beds24
+    sync, and never again on a later webhook update to that same tenant (a booking-detail
+    change should not re-trigger the initial scan)."""
+    from app.models.ai_agent_profile import BRAIN_WRITER_ROLE, AiAgentProfile
+    from app.services import gemini_client
+
+    db_session.add(AiAgentProfile(name="Default Brain Writer", role=BRAIN_WRITER_ROLE, is_default=True))
+    db_session.commit()
+
+    call_count = {"n": 0}
+
+    def _fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        call_count["n"] += 1
+        return gemini_client.GenerationResult(
+            text="ignored",
+            parsed={"should_remember": True, "entries": ["Booking-only initial fact."], "reasoning": "Initial scan."},
+            model=model or "fake-model",
+            prompt_tokens=1,
+            output_tokens=1,
+            latency_ms=1,
+        )
+
+    monkeypatch.setattr(tenant_brain_service.gemini_client, "generate", _fake_generate)
+    monkeypatch.setattr(beds24_sync, "fetch_booking_with_invoice", fake_booking_fetch)
+
+    tenant = asyncio.run(beds24_sync.sync_tenant_from_beds24_booking(db_session, "SYNC-BRAIN-1"))
+    db_session.commit()
+
+    assert call_count["n"] == 1
+    assert db_session.query(TenantBrainEntry).filter(TenantBrainEntry.tenant_id == tenant.id).count() == 1
+
+    # A repeat sync of the same (now-existing) tenant must not re-trigger the initial scan.
+    asyncio.run(beds24_sync.sync_tenant_from_beds24_booking(db_session, "SYNC-BRAIN-1"))
+    db_session.commit()
+
+    assert call_count["n"] == 1
+    assert db_session.query(TenantBrainEntry).filter(TenantBrainEntry.tenant_id == tenant.id).count() == 1
 
 
 def test_sync_returns_none_when_booking_not_found(db_session, monkeypatch):

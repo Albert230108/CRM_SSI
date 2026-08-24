@@ -204,6 +204,7 @@ def latest_inbound_text(db: Session, tenant_id: int, channel: str) -> str | None
             .filter(
                 TenantConversationLink.tenant_id == tenant_id,
                 TenantConversationLink.unlinked_at.is_(None),
+                TenantConversationLink.is_visible.is_(True),
                 ConversationMessage.direction == "inbound",
             )
             .order_by(ConversationMessage.sent_at.desc(), ConversationMessage.id.desc())
@@ -256,6 +257,8 @@ def _build_context_blocks(
         parts.append(ai_reply_service._build_payments_context(db, tenant, blocks))
     if profile.include_notes:
         parts.append(ai_reply_service._build_notes_context(tenant, blocks))
+    if profile.include_availability:
+        parts.append(ai_reply_service._build_availability_context(db, blocks))
     if inbound_text:
         parts.append(ai_prompt_blocks.join(blocks["ctx_inbound"], inbound_text))
     return parts

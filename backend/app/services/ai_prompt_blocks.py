@@ -76,6 +76,13 @@ def _context_blocks(*, include_inbound: bool) -> tuple[PromptBlock, ...]:
             default="## Internal Notes",
             group=CONTEXT_GROUP,
         ),
+        PromptBlock(
+            key="ctx_availability",
+            label="Availability heading",
+            help="Sits above the parsed Beds24 room/studio availability summary.",
+            default="## Room Availability (Beds24)",
+            group=CONTEXT_GROUP,
+        ),
     ]
     if include_inbound:
         blocks.append(

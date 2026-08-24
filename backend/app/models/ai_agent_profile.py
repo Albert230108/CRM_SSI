@@ -10,6 +10,12 @@ DRAFTER_ROLE = "drafter"
 # Decides, independently of the planner, whether the latest message is worth remembering
 # long-term for this tenant. Runs on its own debounced trigger - see tenant_brain_service.py.
 BRAIN_WRITER_ROLE = "brain_writer"
+# Reads a redo's "what"/"why" feedback and proposes working-memory/rule changes for a human to
+# approve - see memory_redo_service.py. Never applies anything itself.
+MEMORY_REDO_ROLE = "memory_redo"
+# Answers a staff member's ad-hoc question about one tenant's working memory - see
+# memory_qa_service.py. Read-only; never writes to the brain/fields/action list.
+MEMORY_QA_ROLE = "memory_qa"
 
 
 class AiAgentProfile(Base):
@@ -50,6 +56,7 @@ class AiAgentProfile(Base):
     include_beds24 = Column(Boolean, nullable=False, default=True, server_default="true")
     include_payments = Column(Boolean, nullable=False, default=False, server_default="false")
     include_notes = Column(Boolean, nullable=False, default=True, server_default="true")
+    include_availability = Column(Boolean, nullable=False, default=False, server_default="false")
     # Planner only: whether to show the brain's table of contents so it can request sections.
     include_brain_index = Column(Boolean, nullable=False, default=True, server_default="true")
 

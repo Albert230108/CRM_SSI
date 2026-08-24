@@ -513,11 +513,17 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     existing = db.query(Tenant).filter(Tenant.booking_id == payload.booking_id).first()
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking already imported")
-    tenant = Tenant(**payload.model_dump())
+    # property_name is a read-only computed property on Tenant (derived from room_name), not a
+    # column - excluded here since Tenant(**...) would otherwise raise on the setter-less property.
+    tenant = Tenant(**payload.model_dump(exclude={"property_name"}))
     db.add(tenant)
     db.flush()
     apply_default_ai_templates_if_enabled(db, tenant.id)
     apply_default_planner_mode(db, tenant.id)
+    # One immediate initial-brain fill (entries, structured fields, action items) from whatever
+    # booking/profile data exists at creation - no inbound message exists yet, so this reuses
+    # the manual "scan history" path rather than the debounced per-message trigger.
+    tenant_brain_service.scan_tenant_history(db, tenant)
     db.commit()
     db.refresh(tenant)
     return tenant

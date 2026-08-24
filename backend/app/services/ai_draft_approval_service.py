@@ -15,6 +15,8 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import ai_auto_draft_service
 from app.services import ai_draft_notification_service
+from app.services import memory_redo_service
+from app.services import redo_request_log_service
 from app.services.whatsapp_client import WhatsAppBridgeError
 
 logger = logging.getLogger(__name__)
@@ -23,8 +25,55 @@ _CODE_PATTERN = re.compile(r"\b(YES|NO)[-\s]?(\d+)\b", re.IGNORECASE)
 # A reply that is nothing but a yes/no, which carries no draft id of its own.
 _BARE_PATTERN = re.compile(r"^\s*(yes|no|y|n)\s*[.!]*\s*$", re.IGNORECASE)
 # REDO carries free-text instructions after the code, so it's matched against the whole
-# message rather than as a \b-delimited token like YES/NO.
+# message rather than as a \b-delimited token like YES/NO. What/why extraction from that free
+# text happens separately in _extract_what_why, since staff type it by hand on WhatsApp and
+# routinely mix up order, skip "why", or vary casing.
 _REDO_PATTERN = re.compile(r"^\s*REDO[-\s]?(\d+)\s*[:\-]?\s*(.*)$", re.IGNORECASE | re.DOTALL)
+_WHAT_LABEL = "what:"
+_WHY_LABEL = "why:"
+
+
+def _extract_what_why(text: str) -> tuple[str, str | None]:
+    """Forgiving, order-independent extraction of what:/why: from human-typed WhatsApp text.
+
+    Staff will mix up order, skip either label, or vary casing, so this handles each
+    combination explicitly rather than assuming a fixed sequence:
+      - neither label present -> the whole text is "what" (matches the pre-existing plain
+        "REDO-{id} <instructions>" format, so that still works unchanged)
+      - only "what:" present -> everything after it is "what"
+      - only "why:" present -> everything before it is the implicit "what", everything after is "why"
+      - both present, "what:" first -> text between the labels is "what", text after "why:" is "why"
+      - both present, "why:" first -> text between the labels is "why", text after "what:" is "what"
+    """
+    lower = text.lower()
+    what_idx = lower.find(_WHAT_LABEL)
+    why_idx = lower.find(_WHY_LABEL)
+
+    if what_idx == -1 and why_idx == -1:
+        return text.strip(), None
+
+    if what_idx != -1 and why_idx == -1:
+        return text[what_idx + len(_WHAT_LABEL) :].strip(), None
+
+    if what_idx == -1 and why_idx != -1:
+        what_text = text[:why_idx].strip()
+        why_text = text[why_idx + len(_WHY_LABEL) :].strip() or None
+        return what_text, why_text
+
+    if what_idx < why_idx:
+        what_text = text[what_idx + len(_WHAT_LABEL) : why_idx].strip()
+        why_text = text[why_idx + len(_WHY_LABEL) :].strip() or None
+    else:
+        why_text = text[why_idx + len(_WHY_LABEL) : what_idx].strip() or None
+        what_text = text[what_idx + len(_WHAT_LABEL) :].strip()
+    return what_text, why_text
+
+
+def _combine_what_why(what: str, why: str | None) -> str:
+    combined = f"What: {what}"
+    if why:
+        combined += f"\nWhy: {why}"
+    return combined
 
 PENDING_STATUSES = ("pending", "needs_review")
 
@@ -142,9 +191,10 @@ def _handle_redo_reply(
     re-broadcasts it to every opted-in admin under the same code.
     """
     draft_id = int(redo_match.group(1))
-    instructions = redo_match.group(2).strip()
-    if not instructions:
+    what, why = _extract_what_why(redo_match.group(2).strip())
+    if not what:
         return outcome(f"Please include what to change, e.g. REDO-{draft_id} make it shorter.")
+    instructions = _combine_what_why(what, why)
 
     approval_request = (
         db.query(AiAutoDraftApprovalRequest)
@@ -176,11 +226,26 @@ def _handle_redo_reply(
 
     regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, instructions)
     if regenerated is None:
+        # Logged even on failure - the redo log is an accessible record of every attempt, not
+        # just the ones that succeeded.
+        redo_request_log_service.log_redo_request(
+            db, ai_auto_draft_id=draft_id, tenant_id=draft.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id
+        )
+        db.commit()
         return outcome(
             f"⚠️ Redo failed — planner produced no draft. Try again or reply NO-{draft_id} to dismiss."
         )
 
+    log_entry = redo_request_log_service.log_redo_request(
+        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id
+    )
     db.commit()
+    try:
+        memory_redo_service.propose_updates_from_redo(db, regenerated, what, why, redo_log_id=log_entry.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Memory redo suggestion generation failed draft_id=%s", draft_id)
     ai_draft_notification_service.notify_admins_of_redraft(db, regenerated)
     # The acknowledgement above already told the requester a redo is in progress, and the
     # broadcast just sent them the regenerated draft under the same code - nothing more to say.

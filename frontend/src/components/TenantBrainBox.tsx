@@ -13,6 +13,18 @@ type BrainEntry = {
   updated_at: string
 }
 
+type TenantBrainFieldValue = {
+  field_definition_id: number
+  key: string
+  label: string
+  ai_instruction: string
+  value: string | null
+  source: string | null
+  updated_at: string | null
+}
+
+type MemoryQaMessage = { id: number; role: 'user' | 'assistant'; content: string; created_at: string }
+
 type TenantBrainBoxProps = {
   tenantId?: number
   isActive?: boolean
@@ -46,6 +58,16 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
   const [scanMessage, setScanMessage] = useState('')
   const [fullscreen, setFullscreen] = useState(false)
 
+  const [fields, setFields] = useState<TenantBrainFieldValue[]>([])
+  const [fieldDrafts, setFieldDrafts] = useState<Record<number, string>>({})
+  const [savingFieldId, setSavingFieldId] = useState<number | null>(null)
+
+  const [availability, setAvailability] = useState('')
+
+  const [qaMessages, setQaMessages] = useState<MemoryQaMessage[]>([])
+  const [qaQuestion, setQaQuestion] = useState('')
+  const [qaAsking, setQaAsking] = useState(false)
+
   const loadEntries = async () => {
     if (!tenantId) return
     try {
@@ -61,13 +83,97 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
     }
   }
 
+  const loadFields = async () => {
+    if (!tenantId) return
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/brain-fields`, { headers: authHeaders })
+      if (!response.ok) return
+      const data: TenantBrainFieldValue[] = await response.json()
+      setFields(data)
+      setFieldDrafts(Object.fromEntries(data.map((field) => [field.field_definition_id, field.value ?? ''])))
+    } catch {
+      // Structured fields are a bonus panel - a failed fetch just leaves the section empty.
+    }
+  }
+
+  const loadAvailability = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/beds24-availability`, { headers: authHeaders })
+      if (!response.ok) return
+      const data = await response.json()
+      setAvailability(data.summary_text ?? '')
+    } catch {
+      // Same as above - non-critical.
+    }
+  }
+
+  const loadQaHistory = async () => {
+    if (!tenantId) return
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/memory-qa`, { headers: authHeaders })
+      if (!response.ok) return
+      setQaMessages(await response.json())
+    } catch {
+      // Non-critical.
+    }
+  }
+
   useEffect(() => {
     setEntries([])
     setError('')
     setScanMessage('')
-    if (tenantId) void loadEntries()
+    setFields([])
+    setFieldDrafts({})
+    setQaMessages([])
+    if (tenantId) {
+      void loadEntries()
+      void loadFields()
+      void loadQaHistory()
+    }
+    void loadAvailability()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId])
+
+  const saveField = async (fieldDefinitionId: number) => {
+    if (!tenantId) return
+    try {
+      setSavingFieldId(fieldDefinitionId)
+      const value = fieldDrafts[fieldDefinitionId] ?? ''
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/brain-fields/${fieldDefinitionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({ value: value.trim() || null }),
+      })
+      if (!response.ok) throw new Error('Failed to save field')
+      const updated: TenantBrainFieldValue = await response.json()
+      setFields((current) => current.map((field) => (field.field_definition_id === fieldDefinitionId ? updated : field)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save field')
+    } finally {
+      setSavingFieldId(null)
+    }
+  }
+
+  const askQuestion = async () => {
+    const question = qaQuestion.trim()
+    if (!tenantId || !question || qaAsking) return
+    try {
+      setQaAsking(true)
+      setQaMessages((current) => [...current, { id: -Date.now(), role: 'user', content: question, created_at: new Date().toISOString() }])
+      setQaQuestion('')
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/memory-qa`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({ question }),
+      })
+      if (!response.ok) throw new Error('Failed to get an answer')
+      await loadQaHistory()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to get an answer')
+    } finally {
+      setQaAsking(false)
+    }
+  }
 
   useEffect(() => {
     if (!fullscreen) return
@@ -237,7 +343,42 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+      <div className="min-h-0 flex-1 space-y-3 overflow-auto">
+        {tenantId && fields.length > 0 ? (
+          <div className="rounded-xl border border-gray-200 bg-white p-2">
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">Structured Fields</p>
+            <div className="space-y-1.5">
+              {fields.map((field) => (
+                <div key={field.field_definition_id} className="flex items-center gap-1.5">
+                  <span className="w-28 shrink-0 truncate text-xs font-medium text-gray-600" title={field.ai_instruction}>
+                    {field.label}
+                  </span>
+                  <input
+                    type="text"
+                    value={fieldDrafts[field.field_definition_id] ?? ''}
+                    onChange={(event) =>
+                      setFieldDrafts((current) => ({ ...current, [field.field_definition_id]: event.target.value }))
+                    }
+                    onBlur={() => {
+                      if ((fieldDrafts[field.field_definition_id] ?? '') !== (field.value ?? '')) void saveField(field.field_definition_id)
+                    }}
+                    placeholder="Not set"
+                    className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+                  />
+                  {savingFieldId === field.field_definition_id ? <span className="shrink-0 text-[10px] text-gray-400">Saving...</span> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {availability ? (
+          <div className="rounded-xl border border-gray-200 bg-white p-2">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Availability</p>
+            <p className="whitespace-pre-wrap text-xs text-gray-700">{availability}</p>
+          </div>
+        ) : null}
+
         {!tenantId ? null : !loading && entries.length === 0 ? (
           <p className="text-sm text-gray-400">Nothing remembered yet.</p>
         ) : (
@@ -290,6 +431,43 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
           ))
         )}
       </div>
+
+      {tenantId ? (
+        <div className="shrink-0 space-y-1.5 border-t border-gray-100 pt-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ask AI about this tenant</p>
+          {qaMessages.length > 0 ? (
+            <div className="max-h-32 space-y-1.5 overflow-auto rounded-lg border border-gray-100 bg-gray-50/60 p-1.5">
+              {qaMessages.map((message) => (
+                <p key={message.id} className={`text-xs ${message.role === 'user' ? 'font-medium text-gray-800' : 'text-gray-600'}`}>
+                  <span className="font-semibold">{message.role === 'user' ? 'You: ' : 'AI: '}</span>
+                  {message.content}
+                </p>
+              ))}
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={qaQuestion}
+              onChange={(event) => setQaQuestion(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void askQuestion()
+              }}
+              disabled={qaAsking}
+              placeholder="Ask a question about this tenant..."
+              className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+            />
+            <button
+              type="button"
+              onClick={askQuestion}
+              disabled={!qaQuestion.trim() || qaAsking}
+              className="shrink-0 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {qaAsking ? 'Asking...' : 'Ask'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

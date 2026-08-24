@@ -10,7 +10,7 @@ from app.models.finance import Finance as FinanceRecord
 from app.models.gmail_integration import ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
-from app.services import ai_prompt_blocks, brain_service, gemini_client
+from app.services import ai_prompt_blocks, beds24_availability_service, brain_service, gemini_client
 from app.services.email_template_service import resolve_template_text
 from app.services.thread_timeline_service import ensure_utc as _ensure_utc, load_tenant_whatsapp_messages
 
@@ -96,6 +96,12 @@ def _build_beds24_context(tenant: Tenant, blocks: dict[str, str] | None = None) 
     return ai_prompt_blocks.join(_blocks(blocks)["ctx_beds24"], "\n".join(lines))
 
 
+def _build_availability_context(db: Session, blocks: dict[str, str] | None = None) -> str:
+    """The cached, pre-parsed Beds24 availability summary - never the raw per-date JSON."""
+    summary = beds24_availability_service.get_cached_summary(db)
+    return ai_prompt_blocks.join(_blocks(blocks)["ctx_availability"], summary)
+
+
 def _build_payments_context(db: Session, tenant: Tenant, blocks: dict[str, str] | None = None) -> str:
     records = (
         db.query(FinanceRecord)
@@ -119,7 +125,11 @@ def _load_email_history(db: Session, tenant_id: int, limit: int) -> list[_Histor
     messages = (
         db.query(ConversationMessage)
         .join(TenantConversationLink, TenantConversationLink.conversation_id == ConversationMessage.conversation_id)
-        .filter(TenantConversationLink.tenant_id == tenant_id, TenantConversationLink.unlinked_at.is_(None))
+        .filter(
+            TenantConversationLink.tenant_id == tenant_id,
+            TenantConversationLink.unlinked_at.is_(None),
+            TenantConversationLink.is_visible.is_(True),
+        )
         .order_by(ConversationMessage.sent_at.desc(), ConversationMessage.id.desc())
         .limit(limit)
         .all()
@@ -272,6 +282,8 @@ def assemble_prompt(
         beds24_group.append(_build_payments_context(db, tenant, text))
     if template.include_notes:
         beds24_group.append(_build_notes_context(tenant, text))
+    if template.include_availability:
+        beds24_group.append(_build_availability_context(db, text))
     if beds24_group:
         parts.append(ai_prompt_blocks.join(text["beds24"], "\n\n".join(beds24_group)))
 

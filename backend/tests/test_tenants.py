@@ -2,16 +2,31 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 
+import pytest
+
 from app.api.tenants import list_tenant_statuses, list_tenants
+from app.core.dependencies import get_current_user
+from app.main import app
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.notification import Notification, NotificationReadState
 from app.models.tenant import Tenant
+from app.models.tenant_brain_entry import TenantBrainEntry
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant_email_address import TenantEmailAddress
 from app.models.tenant_notes_history import TenantNotesHistory
 from app.models.user import User
+from app.services import tenant_brain_service
+
+CREATE_TENANT_USER = User(id=3, email="creator@example.com", password_hash="x", is_active=True, is_admin=False)
+
+
+@pytest.fixture()
+def user_client(client):
+    app.dependency_overrides[get_current_user] = lambda: CREATE_TENANT_USER
+    yield client
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def create_tenant(db_session, name='Tenant A', booking_id='B-1'):
@@ -128,14 +143,58 @@ def test_delete_tenant_returns_controlled_error_when_commit_fails(client, db_ses
     assert response.json()['detail'] == 'Tenant could not be deleted because dependent records still exist'
     assert db_session.query(Tenant).filter(Tenant.id == tenant.id).first() is not None
 
-def test_create_tenant_creates_whatsapp_endpoint_mapping(client, db_session):
-    response = client.post('/api/tenants', json={'booking_id': 'CREATE-A', 'name': 'Tenant Create A'})
+def test_create_tenant_does_not_auto_create_whatsapp_endpoint(user_client, db_session, monkeypatch):
+    """A WhatsApp chat may only be linked to a tenant through an explicit manual
+    TenantChannelEndpoint mapping (see CLAUDE.md's WhatsApp invariants) - tenant creation must
+    not auto-create a bare endpoint. This replaces a stale test that asserted the opposite; that
+    assertion was never actually exercised because the plain `client` fixture 401s before it,
+    and the auto-creation code path it checked for (`ensure_whatsapp_endpoint_for_tenant`) has
+    no call sites anywhere in the app."""
+    monkeypatch.setattr(tenant_brain_service.gemini_client, "generate", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no profile configured, should not be called")))
+    response = user_client.post('/api/tenants', json={'booking_id': 'CREATE-A', 'name': 'Tenant Create A'})
     assert response.status_code == 201
     payload = response.json()
     assert payload["booking_id"] == "CREATE-A"
-    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == payload["id"], TenantChannelEndpoint.channel_type == "whatsapp", TenantChannelEndpoint.provider == "whatsapp-service", TenantChannelEndpoint.external_account_id == "edi-crm-whatsapp").first()
-    assert endpoint is not None
-    assert endpoint.is_active is True
+    endpoint = db_session.query(TenantChannelEndpoint).filter(TenantChannelEndpoint.tenant_id == payload["id"]).first()
+    assert endpoint is None
+
+
+def test_create_tenant_does_not_crash_on_property_name_field(user_client, db_session):
+    """Regression test: property_name is a read-only computed property on Tenant, not a column -
+    TenantCreate still accepts it (derived from room_name), so it must be excluded before
+    constructing Tenant(**payload) rather than passed straight through."""
+    response = user_client.post(
+        '/api/tenants', json={'booking_id': 'CREATE-PROP', 'name': 'Tenant Create Prop', 'property_name': 'Should Be Ignored'}
+    )
+    assert response.status_code == 201
+
+
+def test_create_tenant_runs_initial_brain_scan(user_client, db_session, monkeypatch):
+    from app.models.ai_agent_profile import BRAIN_WRITER_ROLE, AiAgentProfile
+    from app.services import gemini_client
+
+    db_session.add(AiAgentProfile(name="Default Brain Writer", role=BRAIN_WRITER_ROLE, is_default=True))
+    db_session.commit()
+
+    def _fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        return gemini_client.GenerationResult(
+            text="ignored",
+            parsed={"should_remember": True, "entries": ["New tenant, no history yet."], "reasoning": "Initial scan."},
+            model=model or "fake-model",
+            prompt_tokens=1,
+            output_tokens=1,
+            latency_ms=1,
+        )
+
+    monkeypatch.setattr(tenant_brain_service.gemini_client, "generate", _fake_generate)
+
+    response = user_client.post('/api/tenants', json={'booking_id': 'CREATE-SCAN', 'name': 'Tenant Create Scan'})
+    assert response.status_code == 201
+    tenant_id = response.json()["id"]
+
+    entry = db_session.query(TenantBrainEntry).filter(TenantBrainEntry.tenant_id == tenant_id).one()
+    assert entry.content == "New tenant, no history yet."
+    assert entry.source == "scanner"
 
 def test_import_tenant_creates_whatsapp_endpoint_mapping(client, db_session, monkeypatch):
     monkeypatch.setattr("app.api.tenants.fetch_booking_with_invoice", fake_whatsapp_booking)

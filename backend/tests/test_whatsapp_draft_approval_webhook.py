@@ -4,6 +4,7 @@ from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
 from app.models.communication import Communication
+from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import ai_auto_draft_service, ai_draft_notification_service
@@ -404,7 +405,14 @@ def test_redo_reply_regenerates_draft_in_place_and_rebroadcasts(client, db_sessi
 
     assert response.status_code == 200
     assert response.json()["message"] == "staff draft approval handled"
-    assert regenerate_calls == [(draft.id, "make it shorter and mention the deposit")]
+    # No what:/why: labels in the message - the whole free-text instructions become "What".
+    assert regenerate_calls == [(draft.id, "What: make it shorter and mention the deposit")]
+
+    log_entry = db_session.query(RedoRequestLog).filter(RedoRequestLog.ai_auto_draft_id == draft.id).one()
+    assert log_entry.channel == "whatsapp"
+    assert log_entry.what == "make it shorter and mention the deposit"
+    assert log_entry.why is None
+    assert log_entry.requested_by_user_id == user.id
 
     # The webhook's own confirmation send is skipped entirely for a successful redo - the
     # acknowledgement and the redone-draft broadcast (both below) already cover it, and the
@@ -431,6 +439,41 @@ def test_redo_reply_regenerates_draft_in_place_and_rebroadcasts(client, db_sessi
     db_session.refresh(approval_request)
     assert approval_request.responded_at is None
     assert approval_request.response is None
+
+
+def test_redo_reply_extracts_what_and_why_regardless_of_order(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-approval-webhook-redo-order")
+    user = _create_user(db_session, email="approval-webhook-redo-order@example.com", phone="+31611120099")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+
+    async def fake_broadcast_send(to, message, external_account_id=None):
+        return {}
+
+    monkeypatch.setattr(ai_draft_notification_service, "send_system_whatsapp_message", fake_broadcast_send)
+    _patch_confirmation_send(monkeypatch)
+
+    cases = [
+        ("make it shorter why: they already asked yesterday", "What: make it shorter\nWhy: they already asked yesterday"),
+        ("why: they already asked yesterday what: make it shorter", "What: make it shorter\nWhy: they already asked yesterday"),
+        ("WHAT: make it shorter", "What: make it shorter"),
+    ]
+    for suffix, expected_instructions in cases:
+        draft = _create_draft(db_session, tenant)
+        _create_approval_request(db_session, draft, user)
+        regenerate_calls = []
+
+        def fake_regenerate(db, draft_arg, instructions, _calls=regenerate_calls):
+            _calls.append(instructions)
+            draft_arg.generated_text = "Revised."
+            draft_arg.status = "pending"
+            return draft_arg
+
+        monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", fake_regenerate)
+
+        response = _post_reply(client, sender=user.phone, message=f"REDO-{draft.id} {suffix}")
+        assert response.status_code == 200
+        assert regenerate_calls == [expected_instructions]
 
 
 def test_redo_reply_without_instructions_asks_for_them(client, db_session, monkeypatch):

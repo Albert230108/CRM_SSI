@@ -40,6 +40,8 @@ export default function Navbar() {
   const settingsActive = location.pathname.startsWith('/settings')
   const adminActive = location.pathname.startsWith('/admin')
   const aiDraftsActive = location.pathname.startsWith('/ai-drafts')
+  const actionsActive = location.pathname.startsWith('/actions')
+  const workingMemoryActive = location.pathname.startsWith('/working-memory')
   const [pendingAiDraftsCount, setPendingAiDraftsCount] = useState(0)
   const notifySyncCompleted = useSyncStore((state) => state.notifySyncCompleted)
   const notifyImportCompleted = useSyncStore((state) => state.notifyImportCompleted)
@@ -238,6 +240,20 @@ export default function Navbar() {
                   {aiDraftsBadgeLabel}
                 </span>
               ) : null}
+            </Link>
+            <Link
+              to="/actions"
+              onClick={(event) => guardedNavigate(event, '/actions')}
+              className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${actionsActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+            >
+              <span>Actions</span>
+            </Link>
+            <Link
+              to="/working-memory"
+              onClick={(event) => guardedNavigate(event, '/working-memory')}
+              className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${workingMemoryActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+            >
+              <span>Working Memory</span>
             </Link>
             <Link
               to="/settings"

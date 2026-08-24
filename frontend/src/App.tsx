@@ -15,6 +15,8 @@ import AiAgentRuns from './pages/AiAgentRuns'
 import BrainSections from './pages/BrainSections'
 import AiPendingDrafts from './pages/AiPendingDrafts'
 import AiPayloadPreview from './pages/AiPayloadPreview'
+import Actions from './pages/Actions'
+import WorkingMemoryHome from './pages/WorkingMemoryHome'
 import AdminSettings from './pages/AdminSettings'
 import InvitationSetup from './pages/InvitationSetup'
 import PasswordReset from './pages/PasswordReset'
@@ -68,6 +70,8 @@ export default function App() {
                     <Route path="/ai-runs" element={<ProtectedRoute><AiAgentRuns /></ProtectedRoute>} />
                     <Route path="/ai-drafts" element={<AiPendingDrafts />} />
                     <Route path="/ai-payload-preview" element={<AiPayloadPreview />} />
+                    <Route path="/actions" element={<Actions />} />
+                    <Route path="/working-memory" element={<WorkingMemoryHome />} />
                     <Route
                       path="/admin/settings"
                       element={
