@@ -1,4 +1,4 @@
-"""Every fixed string the three AI agents put into their prompts, in one editable registry.
+"""Every fixed string the agent prompts put into their prompts, in one editable registry.
 
 Historically the role preamble, the framing above each section and the `## Output` JSON
 instruction were Python literals, so an operator reading the run log at /ai-runs saw text
@@ -19,6 +19,8 @@ from typing import Any
 PLANNER_ROLE = "planner"
 CHECKER_ROLE = "checker"
 DRAFTER_ROLE = "drafter"
+MEMORY_REDO_ROLE = "memory_redo"
+MEMORY_QA_ROLE = "memory_qa"
 
 STRUCTURE_GROUP = "structure"
 CONTEXT_GROUP = "context"
@@ -357,10 +359,210 @@ DRAFTER_BLOCKS: tuple[PromptBlock, ...] = (
 ) + _context_blocks(include_inbound=True)
 
 
+MEMORY_QA_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        key="preamble",
+        label="Role preamble",
+        help="The opening line that tells the model what job it is doing. Emitted first.",
+        default=(
+            "You answer a staff member's question about one tenant in a short-stay rental CRM, using "
+            "only the working-memory context provided below. If the context doesn't contain the "
+            "answer, say so plainly rather than guessing."
+        ),
+    ),
+    PromptBlock(
+        key="instructions_header",
+        label="Instructions heading",
+        help="Sits above the Instructions you wrote for this profile. Omitted when Instructions is blank.",
+        default=_INSTRUCTIONS_HEADER_DEFAULT,
+    ),
+    PromptBlock(
+        key="ctx_fields",
+        label="Structured fields heading",
+        help="Sits above the tenant's named working-memory fields.",
+        default="## Structured Fields",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_entries",
+        label="Free-text entries heading",
+        help="Sits above the tenant's free-text brain entries.",
+        default="## Free-Text Brain Entries",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_actions",
+        label="Action items heading",
+        help="Sits above the tenant's action items.",
+        default="## Action Items",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_brain_index",
+        label="Knowledge base index heading",
+        help="Sits above the brain's table of contents. Helpful when the answer needs a specific section path.",
+        default="## Knowledge Base Index",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_tenant_history",
+        label="Tenant history heading",
+        help="Sits above the tenant's email and WhatsApp conversation history.",
+        default="## Tenant Conversation History",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_beds24",
+        label="Booking information heading",
+        help="Sits above the tenant's Beds24 booking fields.",
+        default="## Booking Information (Beds24)",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_payments",
+        label="Payments heading",
+        help="Sits above the payment and charge records.",
+        default="## Payments & Charges",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_notes",
+        label="Internal notes heading",
+        help="Sits above the tenant's internal notes.",
+        default="## Internal Notes",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_availability",
+        label="Availability heading",
+        help="Sits above the parsed Beds24 room/studio availability summary.",
+        default="## Room Availability (Beds24)",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_history",
+        label="Session history heading",
+        help="Sits above prior memory-QA turns in this session.",
+        default="## Prior Questions In This Session",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_question",
+        label="Question heading",
+        help="Sits above the current staff question.",
+        default="## Question",
+        group=CONTEXT_GROUP,
+    ),
+)
+
+
+MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        key="preamble",
+        label="Role preamble",
+        help="The opening line that tells the model what job it is doing. Emitted first.",
+        default=(
+            "A staff member asked to redo an AI-generated reply in a short-stay rental CRM, explaining "
+            "what to change and why. Decide whether that feedback reveals something worth permanently "
+            "changing in this tenant's working memory, or in a general rule that would apply across "
+            "tenants. Most redos are one-off wording notes and warrant no suggestion at all - only "
+            "propose a change when the \"why\" points at a durable, generalizable fact or policy, not a "
+            "one-time stylistic tweak."
+        ),
+    ),
+    PromptBlock(
+        key="instructions_header",
+        label="Instructions heading",
+        help="Sits above the Instructions you wrote for this profile. Omitted when Instructions is blank.",
+        default=_INSTRUCTIONS_HEADER_DEFAULT,
+    ),
+    PromptBlock(
+        key="ctx_fields",
+        label="Structured fields heading",
+        help="Sits above the tenant's named working-memory fields.",
+        default="## Structured Fields (key | label | current value)",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_entries",
+        label="Free-text entries heading",
+        help="Sits above the tenant's free-text brain entries.",
+        default="## Free-Text Brain Entries",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_beds24",
+        label="Booking information heading",
+        help="Sits above the tenant's Beds24 booking fields.",
+        default="## Booking Information (Beds24)",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_payments",
+        label="Payments heading",
+        help="Sits above the payment and charge records.",
+        default="## Payments & Charges",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_notes",
+        label="Internal notes heading",
+        help="Sits above the tenant's internal notes.",
+        default="## Internal Notes",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_rules",
+        label="Global rules heading",
+        help="Sits above the existing working-memory rules.",
+        default="## Existing Global Rules (id | condition -> action)",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_availability",
+        label="Availability heading",
+        help="Sits above the parsed Beds24 room/studio availability summary.",
+        default="## Availability",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="draft",
+        label="Draft heading",
+        help="Sits above the draft being redone.",
+        default="## Draft Being Redone",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_redo",
+        label="Redo feedback heading",
+        help="Sits above the staff member's redo explanation.",
+        default="## Redo Feedback",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="output",
+        label="Output instruction",
+        help=(
+            "Emitted last. Reword freely, but keep the field names - suggestions, kind, field_key, "
+            "value, content, rule_id, condition_text, action_text, reasoning - because the response "
+            "schema in code enforces them."
+        ),
+        default=(
+            "## Output\n"
+            "Return JSON only. `suggestions` is a list of 0 or more proposed changes, each with a "
+            "`kind`, the fields relevant to that kind, and a `reasoning` explaining why it's durable "
+            "and generalizable rather than one-off. Leave `suggestions` empty when in doubt."
+        ),
+    ),
+)
+
+
 BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     PLANNER_ROLE: PLANNER_BLOCKS,
     CHECKER_ROLE: CHECKER_BLOCKS,
     DRAFTER_ROLE: DRAFTER_BLOCKS,
+    MEMORY_QA_ROLE: MEMORY_QA_BLOCKS,
+    MEMORY_REDO_ROLE: MEMORY_REDO_BLOCKS,
 }
 
 DEFAULTS_BY_ROLE: dict[str, dict[str, str]] = {

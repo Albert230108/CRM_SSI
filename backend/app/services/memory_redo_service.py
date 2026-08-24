@@ -116,7 +116,7 @@ _RULE_OUTPUT_INSTRUCTION = (
 )
 
 
-def _fields_and_rules_block(db: Session, tenant_id: int) -> str:
+def _fields_and_rules_block(db: Session, tenant_id: int, blocks: dict[str, str]) -> str:
     definitions = brain_field_service.list_definitions(db, active_only=True)
     values = brain_field_service.get_values_for_tenant(db, tenant_id)
     field_lines = [
@@ -129,30 +129,37 @@ def _fields_and_rules_block(db: Session, tenant_id: int) -> str:
     rule_lines = [f"- id={rule.id} | if {rule.condition_text} then {rule.action_text}" for rule in rules]
 
     parts = [
-        ai_prompt_blocks.join("## Structured Fields (key | label | current value)", "\n".join(field_lines) or "None defined."),
-        ai_prompt_blocks.join("## Free-Text Brain Entries", "\n".join(entry_lines) or "None yet."),
-        ai_prompt_blocks.join("## Existing Global Rules (id | condition -> action)", "\n".join(rule_lines) or "None yet."),
-        ai_prompt_blocks.join("## Availability", beds24_availability_service.get_cached_summary(db)),
+        ai_prompt_blocks.join(blocks["ctx_fields"], "\n".join(field_lines) or "None defined."),
+        ai_prompt_blocks.join(blocks["ctx_entries"], "\n".join(entry_lines) or "None yet."),
+        ai_prompt_blocks.join(blocks["ctx_rules"], "\n".join(rule_lines) or "None yet."),
+        ai_prompt_blocks.join(blocks["ctx_availability"], beds24_availability_service.get_cached_summary(db)),
     ]
     return "\n\n".join(parts)
 
 
 def _build_legacy_prompt(db: Session, tenant: Tenant, profile: AiAgentProfile, generated_text: str, what: str, why: str | None) -> str:
-    parts: list[str] = [_LEGACY_PREAMBLE]
+    blocks = ai_prompt_blocks.resolve_blocks(profile, MEMORY_REDO_ROLE)
+    parts: list[str] = []
+
+    preamble = (blocks["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
 
     instructions = (profile.instructions or "").strip()
     if instructions:
-        parts.append(ai_prompt_blocks.join("## Your Instructions", instructions))
+        parts.append(ai_prompt_blocks.join(blocks["instructions_header"], instructions))
 
-    parts.append(_fields_and_rules_block(db, tenant.id))
-    parts.append(ai_prompt_blocks.join("## Draft Being Redone", generated_text or ""))
+    parts.append(_fields_and_rules_block(db, tenant.id, blocks))
+    parts.append(ai_prompt_blocks.join(blocks["draft"], generated_text or ""))
 
     redo_lines = [f"What to change: {what}"]
     if why:
         redo_lines.append(f"Why: {why}")
-    parts.append(ai_prompt_blocks.join("## Redo Feedback", "\n".join(redo_lines)))
+    parts.append(ai_prompt_blocks.join(blocks["ctx_redo"], "\n".join(redo_lines)))
 
-    parts.append(_OUTPUT_INSTRUCTION)
+    output = (blocks["output"] or "").strip()
+    if output:
+        parts.append(output)
     return "\n\n".join(part for part in parts if part.strip())
 
 
@@ -161,11 +168,18 @@ def _build_rule_redo_prompt(db: Session, log: RedoRequestLog, profile: AiAgentPr
     if tenant is None:
         return ""
 
-    parts: list[str] = [_RULE_REDO_PREAMBLE]
+    blocks = ai_prompt_blocks.resolve_blocks(profile, MEMORY_REDO_ROLE)
+    parts: list[str] = []
+
+    preamble = (blocks["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
+
     instructions = (profile.instructions or "").strip()
     if instructions:
-        parts.append(ai_prompt_blocks.join("## Your Instructions", instructions))
-    parts.append(_fields_and_rules_block(db, tenant.id))
+        parts.append(ai_prompt_blocks.join(blocks["instructions_header"], instructions))
+
+    parts.append(_fields_and_rules_block(db, tenant.id, blocks))
 
     redo_lines = [
         f"Redo log id: {log.id}",
@@ -176,10 +190,12 @@ def _build_rule_redo_prompt(db: Session, log: RedoRequestLog, profile: AiAgentPr
         redo_lines.append(f"Why: {log.why}")
     redo_lines.append("## Original Draft")
     redo_lines.append(draft_text or "")
-    parts.append(ai_prompt_blocks.join("## Redo Log", "\n".join(redo_lines)))
-    parts.append(_RULE_OUTPUT_INSTRUCTION)
-    return "\n\n".join(part for part in parts if part.strip())
+    parts.append(ai_prompt_blocks.join(blocks["ctx_redo"], "\n".join(redo_lines)))
 
+    output = (blocks["output"] or "").strip()
+    if output:
+        parts.append(output)
+    return "\n\n".join(part for part in parts if part.strip())
 
 def _build_proposed_value(item: dict) -> dict | None:
     kind = str(item.get("kind") or "").strip()

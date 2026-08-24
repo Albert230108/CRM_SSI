@@ -70,7 +70,7 @@ def test_join_omits_the_missing_side():
     assert ai_prompt_blocks.join("", "") == ""
 
 
-@pytest.mark.parametrize("role", ["planner", "checker", "drafter"])
+@pytest.mark.parametrize("role", ["planner", "checker", "drafter", "memory_redo", "memory_qa"])
 def test_prompt_blocks_endpoint_returns_the_registry_for_each_role(user_client, role):
     response = user_client.get("/api/ai-agent-profiles/prompt-blocks", params={"role": role})
     assert response.status_code == 200

@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'memory_redo'
+export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'memory_redo' | 'memory_qa'
 
 export type AiAgentProfile = {
   id: number
@@ -22,6 +22,7 @@ export type AiAgentProfile = {
   include_beds24: boolean
   include_payments: boolean
   include_notes: boolean
+  include_availability: boolean
   include_brain_index: boolean
   match_inbound_language: boolean
   escalate_keywords: string[]
@@ -68,6 +69,7 @@ const emptyForm = (role: AgentRole): ProfileForm => ({
   include_beds24: true,
   include_payments: false,
   include_notes: true,
+  include_availability: false,
   include_brain_index: true,
   match_inbound_language: true,
   escalate_keywords: '',
@@ -91,9 +93,10 @@ export default function AiAgentProfiles() {
     planner: [],
     checker: [],
     drafter: [],
-    // brain_writer and memory_redo have no editable prompt-block registry - see the loadPromptBlocks effect.
+    // brain_writer has no editable prompt-block registry - see the loadPromptBlocks effect.
     brain_writer: [],
     memory_redo: [],
+    memory_qa: [],
   })
   const [form, setForm] = useState<ProfileForm | null>(null)
   const [saving, setSaving] = useState(false)
@@ -111,10 +114,8 @@ export default function AiAgentProfiles() {
   }, [load])
 
   useEffect(() => {
-    // brain_writer and memory_redo have no editable prompt-block registry (server only serves it
-    // for these three roles) - their profiles still carry instructions/model/context settings via
-    // the plain form.
-    const roles: AgentRole[] = ['planner', 'checker', 'drafter']
+    // brain_writer still has no editable prompt-block registry; the other roles do.
+    const roles: AgentRole[] = ['planner', 'checker', 'drafter', 'memory_redo', 'memory_qa']
     const loadPromptBlocks = async () => {
       const entries = await Promise.all(
         roles.map(async (role) => {
@@ -293,6 +294,7 @@ export default function AiAgentProfiles() {
       {renderRole('checker', 'Checker profiles', 'Reviews each draft. It never rewrites the text itself — it only approves or gives feedback.')}
       {renderRole('drafter', 'Drafter profiles', 'Writes the reply itself. Prompt text only — model, sampling and context still come from the reply template.')}
       {renderRole('brain_writer', 'Brain writer profiles', 'Decides, independently of the planner, whether an inbound message is worth remembering long-term for a tenant.')}
+      {renderRole('memory_qa', 'Memory QA profiles', 'Answers ad-hoc tenant questions using the context you choose below.')}
       {renderRole('memory_redo', 'Redo log agent profiles', 'Reads redo logs and suggests durable rule changes for review.')}
 
       {form ? (
@@ -382,11 +384,12 @@ export default function AiAgentProfiles() {
               <label className="flex items-center gap-2 text-sm text-gray-700">
                 <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} /> Internal notes
               </label>
-              {form.role === 'planner' || form.role === 'checker' ? (
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} /> {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
-                </label>
-              ) : null}
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={form.include_availability} onChange={(event) => set('include_availability', event.target.checked)} /> Availability summary
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} /> {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
+              </label>
             </div>
 
             <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Guardrails &amp; escalation</h3>

@@ -248,3 +248,11 @@ def test_memory_redo_role_is_listed_and_filterable(client):
     assert response.status_code == 200
     roles = {profile["role"] for profile in response.json()}
     assert roles == {"memory_redo"}
+
+
+def test_memory_qa_role_is_listed_and_filterable(client):
+    client.post("/api/ai-agent-profiles", json=_payload(name="QA", role="memory_qa"))
+    response = client.get("/api/ai-agent-profiles", params={"role": "memory_qa"})
+    assert response.status_code == 200
+    roles = {profile["role"] for profile in response.json()}
+    assert roles == {"memory_qa"}

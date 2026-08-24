@@ -25,6 +25,7 @@ _ASSIGNABLE_FIELDS = (
     "include_beds24",
     "include_payments",
     "include_notes",
+    "include_availability",
     "include_brain_index",
     "match_inbound_language",
     "escalate_keywords",
@@ -66,7 +67,7 @@ class PromptBlockDefinition(BaseModel):
 
 @router.get("/prompt-blocks", response_model=list[PromptBlockDefinition])
 def list_prompt_blocks(
-    role: str = Query(..., pattern="^(planner|checker|drafter|brain_writer|memory_redo)$"),
+    role: str = Query(..., pattern="^(planner|checker|drafter|brain_writer|memory_redo|memory_qa)$"),
     current_user: User = Depends(get_current_user),
 ) -> list[PromptBlockDefinition]:
     """The blocks a profile of this role may override, with their built-in default text.
@@ -84,7 +85,7 @@ def list_prompt_blocks(
 
 @router.get("", response_model=list[AiAgentProfileRead])
 def list_agent_profiles(
-    role: str | None = Query(None, pattern="^(planner|checker|drafter|brain_writer|memory_redo)$"),
+    role: str | None = Query(None, pattern="^(planner|checker|drafter|brain_writer|memory_redo|memory_qa)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AiAgentProfile]:

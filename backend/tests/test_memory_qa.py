@@ -67,6 +67,43 @@ def test_ask_endpoint_requires_nonblank_question(user_client, db_session):
     assert response.status_code == 400
 
 
+def test_profile_context_toggles_control_which_tenant_sections_are_sent(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    db_session.add(
+        memory_qa_service.AiAgentProfile(
+            name="QA",
+            role=memory_qa_service.MEMORY_QA_ROLE,
+            is_default=True,
+            include_beds24=False,
+            include_payments=False,
+            include_notes=False,
+            include_availability=False,
+            include_brain_index=False,
+            history_limit=0,
+        )
+    )
+    db_session.commit()
+
+    captured_prompt = {}
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        captured_prompt["prompt"] = prompt
+        return gemini_client.GenerationResult(text="Answer.", parsed=None, model="fake", prompt_tokens=1, output_tokens=1, latency_ms=1)
+
+    monkeypatch.setattr(memory_qa_service.gemini_client, "generate", fake_generate)
+
+    memory_qa_service.answer_question(db_session, tenant, "What do we know?")
+
+    prompt = captured_prompt["prompt"]
+    assert "Structured Fields" in prompt
+    assert "Tenant Conversation History" not in prompt
+    assert "Booking Information (Beds24)" not in prompt
+    assert "Payments & Charges" not in prompt
+    assert "Internal Notes" not in prompt
+    assert "Room Availability (Beds24)" not in prompt
+    assert "Knowledge Base Index" not in prompt
+
+
 def test_history_endpoint_returns_persisted_turns(user_client, db_session, monkeypatch):
     tenant = _create_tenant(db_session)
 

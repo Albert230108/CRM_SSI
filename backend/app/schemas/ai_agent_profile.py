@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AgentRole = Literal["planner", "checker", "drafter", "brain_writer", "memory_redo"]
+AgentRole = Literal["planner", "checker", "drafter", "brain_writer", "memory_redo", "memory_qa"]
 HistoryChannels = Literal["both", "inbound", "email", "whatsapp"]
 NoMatchBehaviour = Literal["escalate", "skip"]
 
@@ -28,6 +28,7 @@ class AiAgentProfileBase(BaseModel):
     include_beds24: bool = True
     include_payments: bool = False
     include_notes: bool = True
+    include_availability: bool = False
     include_brain_index: bool = True
 
     match_inbound_language: bool = True
