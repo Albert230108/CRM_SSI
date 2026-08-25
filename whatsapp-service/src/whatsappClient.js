@@ -12,6 +12,7 @@ const {
   crmBackfillBatchTimeoutMs,
   crmOutboundResolutionUrl,
   reconnectDelayMs,
+  reconnectReplayGraceMs,
   whatsappClientId,
   whatsappWebVersion,
   whatsappHistoryBackfillBatchSize,
@@ -72,6 +73,7 @@ let initializingPromise = null;
 let reconnectTimer = null;
 let shuttingDown = false;
 let startupBackfillTriggered = false;
+let lastReadyAt = 0;
 const forwardedMessages = createForwardedMessageCache({ ttlMs: forwardedMessageCacheTtlMs });
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
@@ -80,6 +82,10 @@ let outboundCaptureCount = 0;
 
 function getChatId(chat) {
   return chat?.id?._serialized || chat?.id?.serialized || chat?.id || null;
+}
+
+function isWithinReconnectGrace() {
+  return Date.now() - lastReadyAt < reconnectReplayGraceMs;
 }
 
 // whatsapp-web.js's own window.WWebJS.getChatModel() resolves a chat's last-message preview via
@@ -987,6 +993,7 @@ async function forwardInboundMessage(message) {
     sender: message?.author || message?.from || null,
     whatsapp_chat_id: message?.from || null,
     media,
+    source: isWithinReconnectGrace() ? "history" : undefined,
   });
   return forwardCrmMessage(payload, "inbound");
 }
@@ -1002,6 +1009,7 @@ async function forwardOutboundMessage(message, chatId, recipient, tenantId = nul
     whatsapp_chat_id: chatId || message?.from || message?.to || null,
     whatsapp_message_id: message?.id?._serialized || null,
     tenant_id: tenantId,
+    source: isWithinReconnectGrace() ? "history" : undefined,
   });
   return forwardCrmMessage(payload, "outbound");
 }
@@ -1410,6 +1418,7 @@ function attachClientEvents(nextClient) {
 
   nextClient.on("ready", () => {
     ready = true;
+    lastReadyAt = Date.now();
     console.log("WhatsApp client ready.");
     void maybeRunStartupBackfill();
   });
@@ -2083,6 +2092,8 @@ module.exports = {
   listChats,
   forwardCrmMessage,
   forwardInboundMessage,
+  forwardOutboundMessage,
+  __setLastReadyAtForTests: (value) => { lastReadyAt = Number(value) || 0; },
 };
 
 

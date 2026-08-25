@@ -32,6 +32,7 @@ module.exports = {
   // for other previously-seen versions to roll back to.
   whatsappWebVersion: String(process.env.WHATSAPP_WEB_VERSION || "2.3000.1043053164").trim(),
   reconnectDelayMs: Math.max(1000, toInteger(process.env.RECONNECT_DELAY_MS, 5000)),
+  reconnectReplayGraceMs: Math.max(0, toInteger(process.env.WHATSAPP_RECONNECT_REPLAY_GRACE_MS, 20000)),
   crmWebhookUrl,
   crmWebhookSecret: String(process.env.CRM_WEBHOOK_SECRET || "").trim(),
   crmWebhookRouteToken: String(process.env.CRM_WEBHOOK_ROUTE_TOKEN || "").trim(),
