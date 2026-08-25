@@ -283,3 +283,85 @@ def test_bulk_planner_mode_assigns_across_tenants_with_and_without_settings(non_
 
     # The pre-existing tenant's auto-send toggle must be cleared by the bulk action too.
     assert non_admin_client.get(f"/api/tenants/{tenant_with_settings.id}/ai-settings").json()["auto_send_email"] is False
+
+
+
+def test_bulk_brain_writer_assigns_across_tenants_with_and_without_settings(non_admin_client, db_session):
+    tenant_with_settings = _create_tenant(db_session, booking_id="B-brain-bulk-1", name="Brain Bulk A")
+    tenant_without_settings = _create_tenant(db_session, booking_id="B-brain-bulk-2", name="Brain Bulk B")
+
+    # Create a pre-existing row for one tenant so the bulk endpoint has to update an existing row
+    # and create the missing one in the same call.
+    non_admin_client.put(
+        f"/api/tenants/{tenant_with_settings.id}/ai-settings",
+        json={"brain_writer_enabled": False},
+    )
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-brain-writer",
+        json={
+            "tenant_ids": [tenant_with_settings.id, tenant_without_settings.id],
+            "brain_writer_enabled": True,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["tenants_affected"] == 2
+
+    for tenant in (tenant_with_settings, tenant_without_settings):
+        settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+        assert settings["brain_writer_enabled"] is True
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-brain-writer",
+        json={
+            "tenant_ids": [tenant_with_settings.id, tenant_without_settings.id],
+            "brain_writer_enabled": False,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["tenants_affected"] == 2
+
+    for tenant in (tenant_with_settings, tenant_without_settings):
+        settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+        assert settings["brain_writer_enabled"] is False
+
+
+
+def test_bulk_action_writer_assigns_across_tenants_with_and_without_settings(non_admin_client, db_session):
+    tenant_with_settings = _create_tenant(db_session, booking_id="B-action-bulk-1", name="Action Bulk A")
+    tenant_without_settings = _create_tenant(db_session, booking_id="B-action-bulk-2", name="Action Bulk B")
+
+    # Create a pre-existing row for one tenant so the bulk endpoint has to update an existing row
+    # and create the missing one in the same call.
+    non_admin_client.put(
+        f"/api/tenants/{tenant_with_settings.id}/ai-settings",
+        json={"action_writer_enabled": False},
+    )
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-action-writer",
+        json={
+            "tenant_ids": [tenant_with_settings.id, tenant_without_settings.id],
+            "action_writer_enabled": True,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["tenants_affected"] == 2
+
+    for tenant in (tenant_with_settings, tenant_without_settings):
+        settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+        assert settings["action_writer_enabled"] is True
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-action-writer",
+        json={
+            "tenant_ids": [tenant_with_settings.id, tenant_without_settings.id],
+            "action_writer_enabled": False,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["tenants_affected"] == 2
+
+    for tenant in (tenant_with_settings, tenant_without_settings):
+        settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+        assert settings["action_writer_enabled"] is False

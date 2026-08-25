@@ -85,6 +85,10 @@ export default function AiTenantSettings() {
   const [bulkPlannerMode, setBulkPlannerMode] = useState<TenantAiSettings['planner_mode']>('manual')
   const [bulkPlannerModeSaving, setBulkPlannerModeSaving] = useState(false)
   const [bulkPlannerModeMessage, setBulkPlannerModeMessage] = useState('')
+  const [bulkBrainWriterSaving, setBulkBrainWriterSaving] = useState(false)
+  const [bulkBrainWriterMessage, setBulkBrainWriterMessage] = useState('')
+  const [bulkActionWriterSaving, setBulkActionWriterSaving] = useState(false)
+  const [bulkActionWriterMessage, setBulkActionWriterMessage] = useState('')
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -267,6 +271,60 @@ export default function AiTenantSettings() {
       }
     } finally {
       setBulkPlannerModeSaving(false)
+    }
+  }
+
+  const runBulkBrainWriterAction = async (enabled: boolean) => {
+    if (!bulkTenantIds.size) return
+    setBulkBrainWriterSaving(true)
+    setBulkBrainWriterMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenant-ai-settings/bulk-brain-writer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          tenant_ids: Array.from(bulkTenantIds),
+          brain_writer_enabled: enabled,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setBulkBrainWriterMessage(data?.detail ?? 'Failed to run bulk action')
+        return
+      }
+      setBulkBrainWriterMessage(`${enabled ? 'Activated' : 'Deactivated'} automatic brain updates for ${data.tenants_affected} tenant(s).`)
+      if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
+        await selectTenant(selectedTenant)
+      }
+    } finally {
+      setBulkBrainWriterSaving(false)
+    }
+  }
+
+  const runBulkActionWriterAction = async (enabled: boolean) => {
+    if (!bulkTenantIds.size) return
+    setBulkActionWriterSaving(true)
+    setBulkActionWriterMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenant-ai-settings/bulk-action-writer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          tenant_ids: Array.from(bulkTenantIds),
+          action_writer_enabled: enabled,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setBulkActionWriterMessage(data?.detail ?? 'Failed to run bulk action')
+        return
+      }
+      setBulkActionWriterMessage(`${enabled ? 'Activated' : 'Deactivated'} automatic action-item updates for ${data.tenants_affected} tenant(s).`)
+      if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
+        await selectTenant(selectedTenant)
+      }
+    } finally {
+      setBulkActionWriterSaving(false)
     }
   }
 
@@ -493,31 +551,85 @@ export default function AiTenantSettings() {
           </div>
         </div>
 
-        <div className="mt-3 border-t border-gray-200 pt-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk planner mode</p>
-          <p className="mt-1 text-xs text-gray-500">
-            Select tenants above, then set their Planner &amp; Checker mode all at once.
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <select
-              value={bulkPlannerMode}
-              onChange={(event) => setBulkPlannerMode(event.target.value as TenantAiSettings['planner_mode'])}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
-            >
-              <option value="off">Off</option>
-              <option value="manual">Manual</option>
-              <option value="auto-draft">Auto-draft</option>
-              <option value="auto-send">Auto-send</option>
-            </select>
-            <button
-              type="button"
-              onClick={runBulkPlannerModeAction}
-              disabled={bulkPlannerModeSaving || !bulkTenantIds.size}
-              className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
-            >
-              {bulkPlannerModeSaving ? 'Working...' : 'Apply'}
-            </button>
-            {bulkPlannerModeMessage ? <p className="text-sm text-gray-600">{bulkPlannerModeMessage}</p> : null}
+        <div className="mt-3 grid gap-3 border-t border-gray-200 pt-3 lg:grid-cols-3">
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk planner mode</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Select tenants above, then set their Planner &amp; Checker mode all at once.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <select
+                value={bulkPlannerMode}
+                onChange={(event) => setBulkPlannerMode(event.target.value as TenantAiSettings['planner_mode'])}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+              >
+                <option value="off">Off</option>
+                <option value="manual">Manual</option>
+                <option value="auto-draft">Auto-draft</option>
+                <option value="auto-send">Auto-send</option>
+              </select>
+              <button
+                type="button"
+                onClick={runBulkPlannerModeAction}
+                disabled={bulkPlannerModeSaving || !bulkTenantIds.size}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+              >
+                {bulkPlannerModeSaving ? 'Working...' : 'Apply'}
+              </button>
+              {bulkPlannerModeMessage ? <p className="text-sm text-gray-600">{bulkPlannerModeMessage}</p> : null}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk brain writer</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Select tenants above, then turn Tenant Brain updates on or off in one go.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => runBulkBrainWriterAction(true)}
+                disabled={bulkBrainWriterSaving || !bulkTenantIds.size}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+              >
+                Activate
+              </button>
+              <button
+                type="button"
+                onClick={() => runBulkBrainWriterAction(false)}
+                disabled={bulkBrainWriterSaving || !bulkTenantIds.size}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
+              >
+                Deactivate
+              </button>
+              {bulkBrainWriterMessage ? <p className="text-sm text-gray-600">{bulkBrainWriterMessage}</p> : null}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk action writer</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Select tenants above, then turn Action Writer updates on or off in one go.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => runBulkActionWriterAction(true)}
+                disabled={bulkActionWriterSaving || !bulkTenantIds.size}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+              >
+                Activate
+              </button>
+              <button
+                type="button"
+                onClick={() => runBulkActionWriterAction(false)}
+                disabled={bulkActionWriterSaving || !bulkTenantIds.size}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
+              >
+                Deactivate
+              </button>
+              {bulkActionWriterMessage ? <p className="text-sm text-gray-600">{bulkActionWriterMessage}</p> : null}
+            </div>
           </div>
         </div>
       </section>

@@ -64,3 +64,21 @@ class BulkTenantPlannerModeAssignment(BaseModel):
 
 class BulkTenantPlannerModeAssignmentResult(BaseModel):
     tenants_affected: int
+
+
+class BulkTenantBrainWriterAssignment(BaseModel):
+    tenant_ids: list[int]
+    brain_writer_enabled: bool
+
+
+class BulkTenantBrainWriterAssignmentResult(BaseModel):
+    tenants_affected: int
+
+
+class BulkTenantActionWriterAssignment(BaseModel):
+    tenant_ids: list[int]
+    action_writer_enabled: bool
+
+
+class BulkTenantActionWriterAssignmentResult(BaseModel):
+    tenants_affected: int

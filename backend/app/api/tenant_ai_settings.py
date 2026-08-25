@@ -12,6 +12,10 @@ from app.schemas.tenant_ai_settings import (
     BulkTenantAiTemplateAssignmentResult,
     BulkTenantPlannerModeAssignment,
     BulkTenantPlannerModeAssignmentResult,
+    BulkTenantBrainWriterAssignment,
+    BulkTenantBrainWriterAssignmentResult,
+    BulkTenantActionWriterAssignment,
+    BulkTenantActionWriterAssignmentResult,
     TenantAiSettingsRead,
     TenantAiSettingsUpdate,
 )
@@ -209,3 +213,35 @@ def bulk_update_tenant_planner_mode(
 
     db.commit()
     return BulkTenantPlannerModeAssignmentResult(tenants_affected=len(tenant_ids))
+
+
+@router.post("/tenant-ai-settings/bulk-brain-writer", response_model=BulkTenantBrainWriterAssignmentResult)
+def bulk_update_tenant_brain_writer(
+    payload: BulkTenantBrainWriterAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantBrainWriterAssignmentResult:
+    tenant_ids = sorted(set(payload.tenant_ids))
+    if not tenant_ids:
+        return BulkTenantBrainWriterAssignmentResult(tenants_affected=0)
+    for tenant_id in tenant_ids:
+        settings = _get_or_create_settings(db, tenant_id)
+        settings.brain_writer_enabled = payload.brain_writer_enabled
+    db.commit()
+    return BulkTenantBrainWriterAssignmentResult(tenants_affected=len(tenant_ids))
+
+
+@router.post("/tenant-ai-settings/bulk-action-writer", response_model=BulkTenantActionWriterAssignmentResult)
+def bulk_update_tenant_action_writer(
+    payload: BulkTenantActionWriterAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantActionWriterAssignmentResult:
+    tenant_ids = sorted(set(payload.tenant_ids))
+    if not tenant_ids:
+        return BulkTenantActionWriterAssignmentResult(tenants_affected=0)
+    for tenant_id in tenant_ids:
+        settings = _get_or_create_settings(db, tenant_id)
+        settings.action_writer_enabled = payload.action_writer_enabled
+    db.commit()
+    return BulkTenantActionWriterAssignmentResult(tenants_affected=len(tenant_ids))
