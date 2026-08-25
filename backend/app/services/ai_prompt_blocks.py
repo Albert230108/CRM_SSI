@@ -593,7 +593,8 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
         help=(
             "Emitted last. Reword freely, but keep the field names - suggestions, kind, field_key, "
             "value, content, rule_id, condition_text, action_text, profile_id, template_id, field, "
-            "suggested_text, reasoning - because the response schema in code enforces them."
+            "section_id, suggested_text, reasoning - because the response schema in code enforces "
+            "them."
         ),
         default=(
             "## Output\n"
@@ -602,9 +603,11 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
             "and generalizable rather than one-off. Compare the redo feedback against the run log: "
             "if the planner/drafter/checker's own instructions caused the mistake, propose a "
             "`profile_change`; if the chosen reply template's guidelines/sections caused it, propose "
-            "a `template_change`; only propose `rule_add`/`rule_modify`/`rule_delete` or "
-            "`field_value`/`brain_entry` for a durable, generalizable fact or policy. Leave "
-            "`suggestions` empty when in doubt."
+            "a `template_change` - when `field` is `\"sections\"`, set `section_id` to one of the "
+            "`section_id=...` values listed under the run log's template sections, never invent one; "
+            "leave `section_id` empty for any other `field`. Only propose "
+            "`rule_add`/`rule_modify`/`rule_delete` or `field_value`/`brain_entry` for a durable, "
+            "generalizable fact or policy. Leave `suggestions` empty when in doubt."
         ),
     ),
 )

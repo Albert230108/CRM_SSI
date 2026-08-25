@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.models.ai_agent_profile import MEMORY_REDO_ROLE, AiAgentProfile
 from app.models.ai_agent_run import STATUS_COMPLETED, STATUS_FAILED, STATUS_SKIPPED, AiAgentRun, AiAgentRunStep
 from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_reply_template import AiReplyTemplate
 from app.models.memory_suggestion import (
     KIND_BRAIN_ENTRY,
     KIND_FIELD_VALUE,
@@ -70,6 +71,9 @@ _SUGGESTION_ITEM_PROPERTIES = {
     # and the suggested replacement text for it
     "field": {"type": "string"},
     "suggested_text": {"type": "string"},
+    # template_change only, when field="sections" - must be one of the section_id values listed
+    # under the run log's template sections, never invented
+    "section_id": {"type": "string"},
     "reasoning": {"type": "string"},
 }
 
@@ -174,6 +178,14 @@ def _run_log_block(db: Session, blocks: dict[str, str], agent_run_id: int | None
         f"checker_profile_id={run.checker_profile_id} final_template_id={run.final_template_id} "
         f"attempts={run.attempts}"
     ]
+    if run.final_template_id is not None:
+        template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == run.final_template_id).first()
+        if template is not None:
+            for section in template.sections or []:
+                section_id = section.get("id") if isinstance(section, dict) else None
+                label = section.get("label") if isinstance(section, dict) else None
+                if section_id:
+                    lines.append(f"- section_id={section_id} | {label or '(untitled section)'}")
     for step in steps:
         lines.append(f"--- step {step.step_index} ({step.stage}, model={step.model}) ---")
         lines.append(f"Prompt:\n{_truncate(step.prompt)}")
@@ -303,9 +315,10 @@ def _build_proposed_value(item: dict) -> dict | None:
         template_id = item.get("template_id")
         field = str(item.get("field") or "").strip()
         suggested_text = str(item.get("suggested_text") or "").strip()
+        section_id = str(item.get("section_id") or "").strip() or None
         if not isinstance(template_id, int) or not field or not suggested_text:
             return None
-        return {"template_id": template_id, "field": field, "suggested_text": suggested_text}
+        return {"template_id": template_id, "field": field, "section_id": section_id, "suggested_text": suggested_text}
     return None
 
 
@@ -360,6 +373,18 @@ def _create_suggestions(
             target_id = proposed_value["profile_id"]
         elif kind == KIND_TEMPLATE_CHANGE:
             target_id = proposed_value["template_id"]
+            section_id = proposed_value.get("section_id")
+            if section_id is not None:
+                template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == target_id).first()
+                known_section_ids = {
+                    section.get("id") for section in (template.sections or []) if isinstance(section, dict)
+                } if template is not None else set()
+                if section_id not in known_section_ids:
+                    logger.warning(
+                        "Memory redo suggestion dropped: unknown section_id=%r template_id=%s tenant_id=%s",
+                        section_id, target_id, tenant.id,
+                    )
+                    continue
 
         if _suggestion_exists(db, redo_log_id=redo_log_id, kind=kind, target_id=target_id, proposed_value=proposed_value):
             continue

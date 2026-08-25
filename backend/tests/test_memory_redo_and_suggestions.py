@@ -630,6 +630,116 @@ def test_process_redo_request_log_creates_template_change_suggestion(db_session,
     assert suggestion.kind == KIND_TEMPLATE_CHANGE
     assert suggestion.tenant_id is None
     assert suggestion.target_id == template.id
+    assert suggestion.proposed_value["section_id"] is None
+
+
+def test_process_redo_request_log_creates_template_change_suggestion_with_section_id(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True))
+    template = AiReplyTemplate(
+        name="Booking Confirmation",
+        guidelines="Confirm the dates.",
+        sections=[{"id": "sec-1", "label": "Checkout Info", "content": "Checkout is at 11am.", "x": 0, "y": 0, "order": 0}],
+        created_by_user_id=1,
+    )
+    db_session.add(template)
+    db_session.commit()
+    db_session.refresh(template)
+
+    run = _create_run_with_steps(db_session, tenant, final_template_id=template.id)
+    log_entry = RedoRequestLog(tenant_id=tenant.id, channel="crm", what="the confirmation is missing the checkout time", ai_agent_run_id=run.id)
+    db_session.add(log_entry)
+    db_session.commit()
+    db_session.refresh(log_entry)
+
+    captured_prompts = []
+
+    def _generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        captured_prompts.append(prompt)
+        return gemini_client.GenerationResult(
+            text="ignored",
+            parsed={
+                "suggestions": [
+                    {
+                        "kind": KIND_TEMPLATE_CHANGE,
+                        "template_id": template.id,
+                        "field": "sections",
+                        "section_id": "sec-1",
+                        "suggested_text": "Checkout is at 11am. Always state this.",
+                        "reasoning": "The Checkout Info section never mentions the checkout time explicitly.",
+                    }
+                ]
+            },
+            model=model or "fake-model",
+            prompt_tokens=1,
+            output_tokens=1,
+            latency_ms=1,
+        )
+
+    monkeypatch.setattr(memory_redo_service.gemini_client, "generate", _generate)
+
+    created = memory_redo_service.process_redo_request_log(db_session, log_entry.id)
+    db_session.commit()
+
+    assert len(captured_prompts) == 1
+    assert "section_id=sec-1" in captured_prompts[0]
+    assert "Checkout Info" in captured_prompts[0]
+
+    assert len(created) == 1
+    suggestion = created[0]
+    assert suggestion.kind == KIND_TEMPLATE_CHANGE
+    assert suggestion.target_id == template.id
+    assert suggestion.proposed_value["section_id"] == "sec-1"
+
+
+def test_process_redo_request_log_drops_template_change_with_unknown_section_id(db_session, monkeypatch, caplog):
+    """Regression guard mirroring test_propose_updates_ignores_hallucinated_field_key: a
+    section_id the model invents (not present in the template's real sections) must never
+    become a suggestion a human reviews as if it pointed at a real block."""
+    tenant = _create_tenant(db_session)
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True))
+    template = AiReplyTemplate(
+        name="Booking Confirmation",
+        guidelines="Confirm the dates.",
+        sections=[{"id": "sec-1", "label": "Checkout Info", "content": "Checkout is at 11am.", "x": 0, "y": 0, "order": 0}],
+        created_by_user_id=1,
+    )
+    db_session.add(template)
+    db_session.commit()
+    db_session.refresh(template)
+
+    run = _create_run_with_steps(db_session, tenant, final_template_id=template.id)
+    log_entry = RedoRequestLog(tenant_id=tenant.id, channel="crm", what="the confirmation is missing the checkout time", ai_agent_run_id=run.id)
+    db_session.add(log_entry)
+    db_session.commit()
+    db_session.refresh(log_entry)
+
+    monkeypatch.setattr(
+        memory_redo_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "suggestions": [
+                    {
+                        "kind": KIND_TEMPLATE_CHANGE,
+                        "template_id": template.id,
+                        "field": "sections",
+                        "section_id": "sec-does-not-exist",
+                        "suggested_text": "x",
+                        "reasoning": "y",
+                    }
+                ]
+            }
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        created = memory_redo_service.process_redo_request_log(db_session, log_entry.id)
+    db_session.commit()
+
+    assert created == []
+    assert db_session.query(MemorySuggestion).count() == 0
+    assert any("unknown section_id" in record.message for record in caplog.records)
 
 
 def test_approve_profile_change_suggestion_does_not_mutate_profile(db_session):

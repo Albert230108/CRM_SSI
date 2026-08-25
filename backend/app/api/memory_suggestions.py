@@ -66,13 +66,24 @@ def list_memory_suggestions(db: Session = Depends(get_db), current_user: User = 
     profile_ids = [r.target_id for r in rows if r.kind == KIND_PROFILE_CHANGE and r.target_id is not None]
     template_ids = [r.target_id for r in rows if r.kind == KIND_TEMPLATE_CHANGE and r.target_id is not None]
     profile_names = {p.id: f"{p.name} ({p.role})" for p in db.query(AiAgentProfile).filter(AiAgentProfile.id.in_(profile_ids)).all()}
-    template_names = {t.id: t.name for t in db.query(AiReplyTemplate).filter(AiReplyTemplate.id.in_(template_ids)).all()}
+    templates_by_id = {t.id: t for t in db.query(AiReplyTemplate).filter(AiReplyTemplate.id.in_(template_ids)).all()}
 
     def _target_name(row: MemorySuggestion) -> Optional[str]:
         if row.kind == KIND_PROFILE_CHANGE:
             return profile_names.get(row.target_id)
         if row.kind == KIND_TEMPLATE_CHANGE:
-            return template_names.get(row.target_id)
+            template = templates_by_id.get(row.target_id)
+            if template is None:
+                return None
+            section_id = (row.proposed_value or {}).get("section_id")
+            if section_id:
+                section_label = next(
+                    (s.get("label") for s in (template.sections or []) if isinstance(s, dict) and s.get("id") == section_id),
+                    None,
+                )
+                if section_label:
+                    return f"{template.name} → {section_label}"
+            return template.name
         return None
 
     return [_to_read(row, tenant_names.get(row.tenant_id), _target_name(row)) for row in rows]

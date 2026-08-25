@@ -130,6 +130,14 @@ def _apply_template_change(db: Session, suggestion: MemorySuggestion) -> ApplyRe
     template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == suggestion.target_id).first()
     if template is None:
         return ApplyResult(False, "The target reply template no longer exists.")
+    section_id = (suggestion.proposed_value or {}).get("section_id")
+    if section_id:
+        section_label = next(
+            (s.get("label") for s in (template.sections or []) if isinstance(s, dict) and s.get("id") == section_id),
+            None,
+        )
+        if section_label:
+            return ApplyResult(True, f"Reviewed. Edit this reply template's '{section_label}' section manually to apply the suggested change.")
     return ApplyResult(True, "Reviewed. Edit this reply template manually to apply the suggested change.")
 
 
