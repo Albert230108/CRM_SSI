@@ -117,6 +117,7 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
   const [savingId, setSavingId] = useState<number | null>(null)
 
   const [fullscreen, setFullscreen] = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
 
   const load = async () => {
     if (!tenantId) return
@@ -149,13 +150,22 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
   }, [tenantId])
 
   useEffect(() => {
-    if (!fullscreen) return
+    if (!fullscreen || showAddModal) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setFullscreen(false)
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [fullscreen])
+  }, [fullscreen, showAddModal])
+
+  useEffect(() => {
+    if (!showAddModal) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowAddModal(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showAddModal])
 
   useEffect(() => {
     if (!isActive || !onActionsChange) return
@@ -170,10 +180,20 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
         >
           {fullscreen ? 'Exit' : 'Fullscreen'}
         </button>
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          disabled={!tenantId}
+          aria-label="Add new task"
+          title="Add new task"
+          className="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          +
+        </button>
       </div>,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fullscreen, isActive, onActionsChange])
+  }, [fullscreen, isActive, onActionsChange, tenantId])
 
   const resetAddForm = () => {
     setNewTitle('')
@@ -209,6 +229,7 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
       const item: ActionItem = await response.json()
       setItems((current) => [item, ...current])
       resetAddForm()
+      setShowAddModal(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add action item')
     } finally {
@@ -300,7 +321,7 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
   return (
     <div className={containerClassName}>
       {fullscreen ? (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={() => setFullscreen(false)}
@@ -308,97 +329,135 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
           >
             Exit fullscreen
           </button>
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            disabled={!tenantId}
+            aria-label="Add new task"
+            title="Add new task"
+            className="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            +
+          </button>
         </div>
       ) : null}
       {subtitleMessage ? <p className="text-sm text-gray-500">{subtitleMessage}</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
-      <div className="flex shrink-0 items-center gap-2">
-        <input
-          type="text"
-          value={quickText}
-          onChange={(event) => setQuickText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') void handleQuickAdd()
+      {showAddModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowAddModal(false)
           }}
-          disabled={!tenantId || parsing}
-          placeholder={tenantId ? 'Quick add: "Call guest tomorrow 5pm"...' : ''}
-          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
-        />
-        <button
-          type="button"
-          onClick={handleQuickAdd}
-          disabled={!tenantId || !quickText.trim() || parsing}
-          className="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {parsing ? 'Parsing...' : 'Parse'}
-        </button>
-      </div>
+          <div className="w-full max-w-2xl rounded-2xl border border-gray-200 bg-white p-4 shadow-xl">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Add new task</p>
+                <p className="text-xs text-gray-500">Quick parse or fill in the task manually.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="rounded-full border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <input
-          type="text"
-          value={newTitle}
-          onChange={(event) => setNewTitle(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') void handleAdd()
-          }}
-          disabled={!tenantId}
-          placeholder={tenantId ? 'Add an action item...' : ''}
-          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
-        />
-        <input
-          type="date"
-          value={newDueDate}
-          onChange={(event) => setNewDueDate(event.target.value)}
-          disabled={!tenantId}
-          className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
-        />
-        <select
-          value={newPriority}
-          onChange={(event) => setNewPriority(event.target.value)}
-          disabled={!tenantId}
-          className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
-        >
-          <option value="">Priority</option>
-          <option value="p1">P1</option>
-          <option value="p2">P2</option>
-          <option value="p3">P3</option>
-          <option value="p4">P4</option>
-        </select>
-        <button
-          type="button"
-          onClick={() => setNewTagIds([])}
-          disabled={!tenantId || newTagIds.length === 0}
-          className="shrink-0 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Clear tags
-        </button>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={!tenantId || !newTitle.trim() || adding}
-          className="shrink-0 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Add
-        </button>
-      </div>
+            <div className="space-y-3">
+              <div className="flex shrink-0 items-center gap-2">
+                <input
+                  type="text"
+                  value={quickText}
+                  onChange={(event) => setQuickText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void handleQuickAdd()
+                  }}
+                  disabled={!tenantId || parsing}
+                  placeholder={tenantId ? 'Quick add: "Call guest tomorrow 5pm"...' : ''}
+                  className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+                />
+                <button
+                  type="button"
+                  onClick={handleQuickAdd}
+                  disabled={!tenantId || !quickText.trim() || parsing}
+                  className="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {parsing ? 'Parsing...' : 'Parse'}
+                </button>
+              </div>
 
-      <TagChipSelector tags={tags} selectedIds={newTagIds} onToggle={(tagId) => toggleSelectedTag(tagId, newTagIds, setNewTagIds)} disabled={!tenantId} />
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(event) => setNewTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void handleAdd()
+                  }}
+                  disabled={!tenantId}
+                  placeholder={tenantId ? 'Add an action item...' : ''}
+                  className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+                />
+                <input
+                  type="date"
+                  value={newDueDate}
+                  onChange={(event) => setNewDueDate(event.target.value)}
+                  disabled={!tenantId}
+                  className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+                />
+                <select
+                  value={newPriority}
+                  onChange={(event) => setNewPriority(event.target.value)}
+                  disabled={!tenantId}
+                  className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+                >
+                  <option value="">Priority</option>
+                  <option value="p1">P1</option>
+                  <option value="p2">P2</option>
+                  <option value="p3">P3</option>
+                  <option value="p4">P4</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setNewTagIds([])}
+                  disabled={!tenantId || newTagIds.length === 0}
+                  className="shrink-0 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Clear tags
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAdd}
+                  disabled={!tenantId || !newTitle.trim() || adding}
+                  className="shrink-0 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Add
+                </button>
+              </div>
 
-      <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
-        <input type="checkbox" checked={repeatEnabled} onChange={(event) => setRepeatEnabled(event.target.checked)} disabled={!tenantId} />
-        Repeat every
-        <input
-          type="number"
-          min={1}
-          value={repeatDays}
-          onChange={(event) => setRepeatDays(event.target.value)}
-          disabled={!tenantId || !repeatEnabled}
-          className="w-14 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs text-gray-700 outline-none disabled:bg-gray-50"
-        />
-        days
-      </label>
+              <TagChipSelector tags={tags} selectedIds={newTagIds} onToggle={(tagId) => toggleSelectedTag(tagId, newTagIds, setNewTagIds)} disabled={!tenantId} />
+
+              <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
+                <input type="checkbox" checked={repeatEnabled} onChange={(event) => setRepeatEnabled(event.target.checked)} disabled={!tenantId} />
+                Repeat every
+                <input
+                  type="number"
+                  min={1}
+                  value={repeatDays}
+                  onChange={(event) => setRepeatDays(event.target.value)}
+                  disabled={!tenantId || !repeatEnabled}
+                  className="w-14 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs text-gray-700 outline-none disabled:bg-gray-50"
+                />
+                days
+              </label>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 space-y-2 overflow-auto">
         {!tenantId ? null : !loading && items.length === 0 ? (
