@@ -603,7 +603,7 @@ export default function Settings() {
                 Edit the AI Brain &rarr;
               </Link>
               <Link to="/settings/ai-agents" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
-                Planner, Drafter &amp; Checker &rarr;
+                AI Agent Templates &rarr;
               </Link>
               <Link to="/ai-runs" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
                 AI logs &rarr;

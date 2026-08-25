@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { type AgentRole, type AiAgentProfile, type PromptBlockDefinition } from '../types/aiAgentProfile'
 
@@ -12,9 +12,193 @@ type ProfileForm = Omit<AiAgentProfile, 'id' | 'escalate_keywords' | 'instructio
   model: string
 }
 
+type FieldRelevance = {
+  model: boolean
+  temperature: boolean
+  max_output_tokens: boolean
+  history_limit: boolean
+  history_channels: boolean
+  history_lookback_days: boolean
+  include_beds24: boolean
+  include_payments: boolean
+  include_notes: boolean
+  include_availability: boolean
+  include_brain_index: boolean
+  match_inbound_language: boolean
+  escalate_keywords: boolean
+  min_confidence: boolean
+  on_no_template_match: boolean
+  max_redraft_attempts: boolean
+  block_auto_send_on_fail: boolean
+  daily_token_cap: boolean
+  prompt_blocks: boolean
+}
+
 const LABEL = 'block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500'
 const INPUT =
   'mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500'
+
+const INSTRUCTIONS_PLACEHOLDER: Record<AgentRole, string> = {
+  planner:
+    'e.g. Always prefer the most specific template. If the guest asks several things, pick the template covering the most urgent one and mention the rest in the instruction.',
+  checker:
+    'e.g. Reject the draft if it invents a price, promises anything not in the knowledge base, or is longer than four sentences.',
+  drafter: "e.g. Stay warm and concise, mirror the guest's tone, and end with a friendly sign-off.",
+  brain_writer: 'e.g. Capture facts, policies, or patterns worth remembering long-term, not one-off replies.',
+  action_writer: 'e.g. Describe the exact condition that should create a task, and keep the trigger unambiguous.',
+  memory_redo: 'e.g. Suggest a rule only after the same correction shows up more than once.',
+  memory_qa: 'e.g. Answer only from the provided context; if the answer is missing, say so clearly.',
+}
+
+const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
+  planner: {
+    model: true,
+    temperature: true,
+    max_output_tokens: true,
+    history_limit: true,
+    history_channels: true,
+    history_lookback_days: true,
+    include_beds24: true,
+    include_payments: true,
+    include_notes: true,
+    include_availability: true,
+    include_brain_index: true,
+    match_inbound_language: true,
+    escalate_keywords: true,
+    min_confidence: true,
+    on_no_template_match: true,
+    max_redraft_attempts: false,
+    block_auto_send_on_fail: false,
+    daily_token_cap: true,
+    prompt_blocks: true,
+  },
+  checker: {
+    model: true,
+    temperature: true,
+    max_output_tokens: true,
+    history_limit: true,
+    history_channels: true,
+    history_lookback_days: true,
+    include_beds24: true,
+    include_payments: true,
+    include_notes: true,
+    include_availability: true,
+    include_brain_index: true,
+    match_inbound_language: true,
+    escalate_keywords: false,
+    min_confidence: false,
+    on_no_template_match: false,
+    max_redraft_attempts: true,
+    block_auto_send_on_fail: true,
+    daily_token_cap: true,
+    prompt_blocks: true,
+  },
+  drafter: {
+    model: false,
+    temperature: false,
+    max_output_tokens: false,
+    history_limit: false,
+    history_channels: false,
+    history_lookback_days: false,
+    include_beds24: false,
+    include_payments: false,
+    include_notes: false,
+    include_availability: false,
+    include_brain_index: false,
+    match_inbound_language: false,
+    escalate_keywords: false,
+    min_confidence: false,
+    on_no_template_match: false,
+    max_redraft_attempts: false,
+    block_auto_send_on_fail: false,
+    daily_token_cap: false,
+    prompt_blocks: true,
+  },
+  brain_writer: {
+    model: true,
+    temperature: true,
+    max_output_tokens: true,
+    history_limit: true,
+    history_channels: true,
+    history_lookback_days: true,
+    include_beds24: true,
+    include_payments: true,
+    include_notes: true,
+    include_availability: false,
+    include_brain_index: false,
+    match_inbound_language: false,
+    escalate_keywords: false,
+    min_confidence: false,
+    on_no_template_match: false,
+    max_redraft_attempts: false,
+    block_auto_send_on_fail: false,
+    daily_token_cap: false,
+    prompt_blocks: true,
+  },
+  action_writer: {
+    model: true,
+    temperature: true,
+    max_output_tokens: true,
+    history_limit: true,
+    history_channels: false,
+    history_lookback_days: true,
+    include_beds24: true,
+    include_payments: false,
+    include_notes: true,
+    include_availability: false,
+    include_brain_index: false,
+    match_inbound_language: false,
+    escalate_keywords: false,
+    min_confidence: false,
+    on_no_template_match: false,
+    max_redraft_attempts: false,
+    block_auto_send_on_fail: false,
+    daily_token_cap: false,
+    prompt_blocks: true,
+  },
+  memory_redo: {
+    model: true,
+    temperature: true,
+    max_output_tokens: true,
+    history_limit: false,
+    history_channels: false,
+    history_lookback_days: false,
+    include_beds24: false,
+    include_payments: false,
+    include_notes: false,
+    include_availability: false,
+    include_brain_index: false,
+    match_inbound_language: false,
+    escalate_keywords: false,
+    min_confidence: false,
+    on_no_template_match: false,
+    max_redraft_attempts: false,
+    block_auto_send_on_fail: false,
+    daily_token_cap: false,
+    prompt_blocks: true,
+  },
+  memory_qa: {
+    model: true,
+    temperature: true,
+    max_output_tokens: true,
+    history_limit: true,
+    history_channels: true,
+    history_lookback_days: true,
+    include_beds24: true,
+    include_payments: true,
+    include_notes: true,
+    include_availability: true,
+    include_brain_index: true,
+    match_inbound_language: false,
+    escalate_keywords: false,
+    min_confidence: false,
+    on_no_template_match: false,
+    max_redraft_attempts: false,
+    block_auto_send_on_fail: false,
+    daily_token_cap: false,
+    prompt_blocks: true,
+  },
+}
 
 function emptyForm(role: AgentRole): ProfileForm {
   return {
@@ -60,7 +244,6 @@ function toFormState(profile: AiAgentProfile): ProfileForm {
 export default function AiAgentProfileEditor() {
   const { profileId } = useParams<{ profileId: string }>()
   const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
   const isNew = profileId === 'new'
   const initialRole = (searchParams.get('role') as AgentRole | null) ?? 'planner'
@@ -71,8 +254,32 @@ export default function AiAgentProfileEditor() {
   const [notFound, setNotFound] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [leavePrompt, setLeavePrompt] = useState(false)
 
   const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : undefined), [token])
+  const savedSnapshotRef = useRef<string>('')
+  const currentSnapshot = useMemo(() => JSON.stringify(form), [form])
+  const isDirty = savedSnapshotRef.current !== '' && currentSnapshot !== savedSnapshotRef.current
+  const relevance = FIELD_RELEVANCE[form.role]
+  const showModelSampling = relevance.model || relevance.temperature || relevance.max_output_tokens
+  const showContextBudget =
+    relevance.history_limit ||
+    relevance.history_channels ||
+    relevance.history_lookback_days ||
+    relevance.include_beds24 ||
+    relevance.include_payments ||
+    relevance.include_notes ||
+    relevance.include_availability ||
+    relevance.include_brain_index
+  const showGuardrails =
+    relevance.escalate_keywords ||
+    relevance.min_confidence ||
+    relevance.on_no_template_match ||
+    relevance.max_redraft_attempts ||
+    relevance.block_auto_send_on_fail ||
+    relevance.match_inbound_language
+  const showCost = relevance.daily_token_cap
+  const instructionsPlaceholder = INSTRUCTIONS_PLACEHOLDER[form.role]
 
   useEffect(() => {
     let cancelled = false
@@ -91,6 +298,7 @@ export default function AiAgentProfileEditor() {
       if (isNew) {
         const blank = emptyForm(initialRole)
         setForm(blank)
+        savedSnapshotRef.current = JSON.stringify(blank)
         await loadPromptBlocks(initialRole)
         if (!cancelled) setLoading(false)
         return
@@ -119,6 +327,7 @@ export default function AiAgentProfileEditor() {
       const data: AiAgentProfile = await response.json()
       const next = toFormState(data)
       setForm(next)
+      savedSnapshotRef.current = JSON.stringify(next)
       await loadPromptBlocks(data.role)
       if (!cancelled) setLoading(false)
     }
@@ -128,6 +337,16 @@ export default function AiAgentProfileEditor() {
       cancelled = true
     }
   }, [authHeaders, initialRole, isNew, profileId])
+
+  useEffect(() => {
+    if (!isDirty) return
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [isDirty])
 
   const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) =>
     setForm((current) => (current ? { ...current, [key]: value } : current))
@@ -164,9 +383,7 @@ export default function AiAgentProfileEditor() {
       setMessage('Saved.')
       const next = toFormState(data)
       setForm(next)
-      if (!isEditing) {
-        navigate(`/settings/ai-agents/${data.id}`, { replace: true })
-      }
+      savedSnapshotRef.current = JSON.stringify(next)
       return true
     } catch {
       setMessage('Failed to save the profile')
@@ -179,6 +396,17 @@ export default function AiAgentProfileEditor() {
   const save = async (event: FormEvent) => {
     event.preventDefault()
     await saveProfile()
+  }
+
+  const leave = () => window.close()
+
+  const requestLeave = () => {
+    if (isDirty) setLeavePrompt(true)
+    else leave()
+  }
+
+  const saveAndClose = async () => {
+    if (await saveProfile()) leave()
   }
 
   if (loading) {
@@ -203,15 +431,15 @@ export default function AiAgentProfileEditor() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-4">
       <p className="text-xs">
-        <Link to="/settings/ai-agents" className="text-cyan-700 hover:underline">
+        <button type="button" onClick={requestLeave} className="text-cyan-700 hover:underline">
           &larr; Back to AI agent profiles
-        </Link>
+        </button>
       </p>
       <h1 className="mt-1 text-lg font-semibold text-gray-900">
         {form.id !== null ? `Edit ${form.role} profile` : `New ${form.role} profile`}
       </h1>
 
-      <form onSubmit={save} className="mt-4 rounded-2xl border border-gray-200 bg-white p-3.5">
+      <form onSubmit={save} className="mt-4 rounded-2xl border border-gray-200 bg-white p-3">
         <div className="mt-0 grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label className={LABEL} htmlFor="profile-name">
@@ -240,215 +468,248 @@ export default function AiAgentProfileEditor() {
             rows={8}
             value={form.instructions}
             onChange={(event) => set('instructions', event.target.value)}
-            placeholder={
-              form.role === 'planner'
-                ? 'e.g. Always prefer the most specific template. If the guest asks several things, pick the template covering the most urgent one and mention the rest in the instruction.'
-                : 'e.g. Reject the draft if it invents a price, promises anything not in the knowledge base, or is longer than four sentences.'
-            }
+            placeholder={instructionsPlaceholder}
             className={INPUT}
           />
         </div>
 
-        {form.role === 'drafter' ? null : (
+        {showModelSampling ? (
           <>
-            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Model &amp; sampling</h3>
+            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Model &amp; sampling</h3>
             <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-3">
-              <div>
-                <label className={LABEL} htmlFor="profile-model">
-                  Model
-                </label>
-                <input
-                  id="profile-model"
-                  type="text"
-                  value={form.model}
-                  onChange={(event) => set('model', event.target.value)}
-                  placeholder="leave blank for the default"
-                  className={INPUT}
-                />
-              </div>
-              <div>
-                <label className={LABEL} htmlFor="profile-temp">
-                  Temperature
-                </label>
-                <input
-                  id="profile-temp"
-                  type="number"
-                  step="0.1"
-                  min={0}
-                  max={2}
-                  value={form.temperature ?? ''}
-                  onChange={(event) => set('temperature', event.target.value === '' ? null : Number(event.target.value))}
-                  className={INPUT}
-                />
-              </div>
-              <div>
-                <label className={LABEL} htmlFor="profile-max-tokens">
-                  Max output tokens
-                </label>
-                <input
-                  id="profile-max-tokens"
-                  type="number"
-                  min={1}
-                  value={form.max_output_tokens ?? ''}
-                  onChange={(event) => set('max_output_tokens', event.target.value === '' ? null : Number(event.target.value))}
-                  className={INPUT}
-                />
-              </div>
-            </div>
-
-            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Context budget</h3>
-            <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-3">
-              <div>
-                <label className={LABEL} htmlFor="profile-history">
-                  History messages
-                </label>
-                <input
-                  id="profile-history"
-                  type="number"
-                  min={0}
-                  value={form.history_limit}
-                  onChange={(event) => set('history_limit', Number(event.target.value))}
-                  className={INPUT}
-                />
-              </div>
-              <div>
-                <label className={LABEL} htmlFor="profile-channels">
-                  History channels
-                </label>
-                <select
-                  id="profile-channels"
-                  value={form.history_channels}
-                  onChange={(event) => set('history_channels', event.target.value as ProfileForm['history_channels'])}
-                  className={INPUT}
-                >
-                  <option value="both">Email + WhatsApp</option>
-                  <option value="inbound">Whichever the message arrived on</option>
-                  <option value="email">Email only</option>
-                  <option value="whatsapp">WhatsApp only</option>
-                </select>
-              </div>
-              <div>
-                <label className={LABEL} htmlFor="profile-lookback">
-                  Lookback days
-                </label>
-                <input
-                  id="profile-lookback"
-                  type="number"
-                  min={1}
-                  value={form.history_lookback_days ?? ''}
-                  onChange={(event) => set('history_lookback_days', event.target.value === '' ? null : Number(event.target.value))}
-                  placeholder="no limit"
-                  className={INPUT}
-                />
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-4">
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={form.include_beds24} onChange={(event) => set('include_beds24', event.target.checked)} /> Booking info
-              </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={form.include_payments} onChange={(event) => set('include_payments', event.target.checked)} /> Payments &amp; charges
-              </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} /> Internal notes
-              </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={form.include_availability} onChange={(event) => set('include_availability', event.target.checked)} /> Availability summary
-              </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} />{' '}
-                {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
-              </label>
-            </div>
-
-            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Guardrails &amp; escalation</h3>
-            <div className="mt-1.5">
-              <label className={LABEL} htmlFor="profile-keywords">
-                Escalation keywords
-              </label>
-              <input
-                id="profile-keywords"
-                type="text"
-                value={form.escalate_keywords}
-                onChange={(event) => set('escalate_keywords', event.target.value)}
-                placeholder="refund, lawyer, police"
-                className={INPUT}
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Comma separated, case-insensitive. A match parks the conversation for a human before any model is called.
-              </p>
-            </div>
-            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
-              {form.role === 'planner' ? (
-                <>
-                  <div>
-                    <label className={LABEL} htmlFor="profile-min-conf">
-                      Minimum confidence
-                    </label>
-                    <input
-                      id="profile-min-conf"
-                      type="number"
-                      step="0.05"
-                      min={0}
-                      max={1}
-                      value={form.min_confidence}
-                      onChange={(event) => set('min_confidence', Number(event.target.value))}
-                      className={INPUT}
-                    />
-                  </div>
-                  <div>
-                    <label className={LABEL} htmlFor="profile-no-match">
-                      When no template fits
-                    </label>
-                    <select
-                      id="profile-no-match"
-                      value={form.on_no_template_match}
-                      onChange={(event) => set('on_no_template_match', event.target.value as ProfileForm['on_no_template_match'])}
-                      className={INPUT}
-                    >
-                      <option value="escalate">Park it for a human</option>
-                      <option value="skip">Do nothing</option>
-                    </select>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label className={LABEL} htmlFor="profile-redrafts">
-                      Max redrafts
-                    </label>
-                    <input
-                      id="profile-redrafts"
-                      type="number"
-                      min={0}
-                      max={5}
-                      value={form.max_redraft_attempts}
-                      onChange={(event) => set('max_redraft_attempts', Number(event.target.value))}
-                      className={INPUT}
-                    />
-                    <p className="mt-1 text-xs text-gray-500">After this many rejections the last draft is parked for review.</p>
-                  </div>
-                  <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={form.block_auto_send_on_fail}
-                      onChange={(event) => set('block_auto_send_on_fail', event.target.checked)}
-                    />
-                    Never auto-send a draft I rejected
+              {relevance.model ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-model">
+                    Model
                   </label>
-                </>
-              )}
-              <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={form.match_inbound_language}
-                  onChange={(event) => set('match_inbound_language', event.target.checked)}
-                />
-                Reply in the guest's language
-              </label>
+                  <input
+                    id="profile-model"
+                    type="text"
+                    value={form.model}
+                    onChange={(event) => set('model', event.target.value)}
+                    placeholder="leave blank for the default"
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
+              {relevance.temperature ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-temp">
+                    Temperature
+                  </label>
+                  <input
+                    id="profile-temp"
+                    type="number"
+                    step="0.1"
+                    min={0}
+                    max={2}
+                    value={form.temperature ?? ''}
+                    onChange={(event) => set('temperature', event.target.value === '' ? null : Number(event.target.value))}
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
+              {relevance.max_output_tokens ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-max-tokens">
+                    Max output tokens
+                  </label>
+                  <input
+                    id="profile-max-tokens"
+                    type="number"
+                    min={1}
+                    value={form.max_output_tokens ?? ''}
+                    onChange={(event) => set('max_output_tokens', event.target.value === '' ? null : Number(event.target.value))}
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
             </div>
+          </>
+        ) : null}
 
-            <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Cost</h3>
+        {showContextBudget ? (
+          <>
+            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Context budget</h3>
+            <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-4">
+              {relevance.history_limit ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-history">
+                    History messages
+                  </label>
+                  <input
+                    id="profile-history"
+                    type="number"
+                    min={0}
+                    value={form.history_limit}
+                    onChange={(event) => set('history_limit', Number(event.target.value))}
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
+              {relevance.history_channels ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-channels">
+                    History channels
+                  </label>
+                  <select
+                    id="profile-channels"
+                    value={form.history_channels}
+                    onChange={(event) => set('history_channels', event.target.value as ProfileForm['history_channels'])}
+                    className={INPUT}
+                  >
+                    <option value="both">Email + WhatsApp</option>
+                    <option value="inbound">Whichever the message arrived on</option>
+                    <option value="email">Email only</option>
+                    <option value="whatsapp">WhatsApp only</option>
+                  </select>
+                </div>
+              ) : null}
+              {relevance.history_lookback_days ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-lookback">
+                    Lookback days
+                  </label>
+                  <input
+                    id="profile-lookback"
+                    type="number"
+                    min={1}
+                    value={form.history_lookback_days ?? ''}
+                    onChange={(event) => set('history_lookback_days', event.target.value === '' ? null : Number(event.target.value))}
+                    placeholder="no limit"
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
+              <div className="flex flex-col gap-2 pt-5">
+                {relevance.include_beds24 ? (
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={form.include_beds24} onChange={(event) => set('include_beds24', event.target.checked)} /> Booking info
+                  </label>
+                ) : null}
+                {relevance.include_payments ? (
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={form.include_payments} onChange={(event) => set('include_payments', event.target.checked)} /> Payments &amp; charges
+                  </label>
+                ) : null}
+                {relevance.include_notes ? (
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} /> Internal notes
+                  </label>
+                ) : null}
+                {relevance.include_availability ? (
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={form.include_availability} onChange={(event) => set('include_availability', event.target.checked)} /> Availability summary
+                  </label>
+                ) : null}
+                {relevance.include_brain_index ? (
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} />{' '}
+                    {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
+                  </label>
+                ) : null}
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {showGuardrails ? (
+          <>
+            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Guardrails &amp; escalation</h3>
+            {relevance.escalate_keywords ? (
+              <div className="mt-1.5">
+                <label className={LABEL} htmlFor="profile-keywords">
+                  Escalation keywords
+                </label>
+                <input
+                  id="profile-keywords"
+                  type="text"
+                  value={form.escalate_keywords}
+                  onChange={(event) => set('escalate_keywords', event.target.value)}
+                  placeholder="refund, lawyer, police"
+                  className={INPUT}
+                />
+                <p className="mt-1 text-xs text-gray-500">Comma separated. Matches park the conversation for a human before the model runs.</p>
+              </div>
+            ) : null}
+            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
+              {relevance.min_confidence ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-min-conf">
+                    Minimum confidence
+                  </label>
+                  <input
+                    id="profile-min-conf"
+                    type="number"
+                    step="0.05"
+                    min={0}
+                    max={1}
+                    value={form.min_confidence}
+                    onChange={(event) => set('min_confidence', Number(event.target.value))}
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
+              {relevance.on_no_template_match ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-no-match">
+                    When no template fits
+                  </label>
+                  <select
+                    id="profile-no-match"
+                    value={form.on_no_template_match}
+                    onChange={(event) => set('on_no_template_match', event.target.value as ProfileForm['on_no_template_match'])}
+                    className={INPUT}
+                  >
+                    <option value="escalate">Park it for a human</option>
+                    <option value="skip">Do nothing</option>
+                  </select>
+                </div>
+              ) : null}
+              {relevance.max_redraft_attempts ? (
+                <div>
+                  <label className={LABEL} htmlFor="profile-redrafts">
+                    Max redrafts
+                  </label>
+                  <input
+                    id="profile-redrafts"
+                    type="number"
+                    min={0}
+                    max={5}
+                    value={form.max_redraft_attempts}
+                    onChange={(event) => set('max_redraft_attempts', Number(event.target.value))}
+                    className={INPUT}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">After this many rejections the draft is parked for review.</p>
+                </div>
+              ) : null}
+              {relevance.block_auto_send_on_fail ? (
+                <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.block_auto_send_on_fail}
+                    onChange={(event) => set('block_auto_send_on_fail', event.target.checked)}
+                  />
+                  Never auto-send a draft I rejected
+                </label>
+              ) : null}
+              {relevance.match_inbound_language ? (
+                <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.match_inbound_language}
+                    onChange={(event) => set('match_inbound_language', event.target.checked)}
+                  />
+                  Reply in the guest's language
+                </label>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+
+        {showCost ? (
+          <>
+            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Cost</h3>
             <div className="mt-1.5 max-w-xs">
               <label className={LABEL} htmlFor="profile-cap">
                 Daily token cap
@@ -464,78 +725,78 @@ export default function AiAgentProfileEditor() {
               />
             </div>
           </>
-        )}
-
-        <h3 className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt blocks</h3>
-        <p className="mt-1.5 text-xs text-gray-500">
-          Every fixed piece of wording this agent sends to the model - the opening line, the framing above each section,
-          the closing output instruction. Leave a box blank to remove that block from the prompt entirely.
-        </p>
-        {form.role !== 'drafter' ? (
-          <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            The "Output" block's prose can be reworded freely, but the field names it describes (e.g.{' '}
-            <code>should_reply</code>, <code>template_id</code>, <code>confidence</code>, <code>passed</code>,{' '}
-            <code>feedback</code>) are enforced separately in code - removing the field itself from the JSON is not
-            possible from here.
-          </p>
         ) : null}
 
-        {(['structure', 'context'] as const).map((group) => {
-          const defs = promptBlockDefs.filter((def) => def.group === group)
-          if (!defs.length) return null
-          return (
-            <div key={group} className="mt-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
-                {group === 'structure' ? 'Structure' : 'Context headings'}
+        {promptBlockDefs.length > 0 ? (
+          <>
+            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt blocks</h3>
+            <p className="mt-1.5 text-xs text-gray-500">
+              Every fixed piece of wording this agent sends to the model. Leave a box blank to remove that block from the prompt entirely.
+            </p>
+            {form.role !== 'drafter' ? (
+              <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                The "Output" block text can change, but the field names it mentions are enforced in code.
               </p>
-              <div className="mt-1.5 space-y-3">
-                {defs.map((def) => {
-                  const value = form.prompt_blocks[def.key] ?? def.default
-                  const isDefault = !(def.key in form.prompt_blocks)
-                  return (
-                    <div key={def.key}>
-                      <div className="flex items-center justify-between gap-3">
-                        <label className={LABEL} htmlFor={`block-${def.key}`}>
-                          {def.label}
-                        </label>
-                        {isDefault ? null : (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setForm((current) => {
-                                if (!current) return current
-                                const { [def.key]: _removed, ...rest } = current.prompt_blocks
-                                return { ...current, prompt_blocks: rest }
-                              })
-                            }
-                            className="shrink-0 text-xs font-semibold text-cyan-700 hover:underline"
-                          >
-                            Reset to default
-                          </button>
-                        )}
-                      </div>
-                      <textarea
-                        id={`block-${def.key}`}
-                        rows={value.split('\n').length > 2 ? 4 : 2}
-                        value={value}
-                        onChange={(event) => {
-                          const next = event.target.value
-                          setForm((current) =>
-                            current ? { ...current, prompt_blocks: { ...current.prompt_blocks, [def.key]: next } } : current,
-                          )
-                        }}
-                        className={`${INPUT} font-mono text-xs`}
-                      />
-                      <p className="mt-1 text-xs text-gray-500">{def.help}</p>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })}
+            ) : null}
 
-        <div className="mt-4 flex items-center gap-3">
+            {(['structure', 'context'] as const).map((group) => {
+              const defs = promptBlockDefs.filter((def) => def.group === group)
+              if (!defs.length) return null
+              return (
+                <div key={group} className="mt-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
+                    {group === 'structure' ? 'Structure' : 'Context headings'}
+                  </p>
+                  <div className="mt-1.5 space-y-3">
+                    {defs.map((def) => {
+                      const value = form.prompt_blocks[def.key] ?? def.default
+                      const isDefault = !(def.key in form.prompt_blocks)
+                      return (
+                        <div key={def.key}>
+                          <div className="flex items-center justify-between gap-3">
+                            <label className={LABEL} htmlFor={`block-${def.key}`}>
+                              {def.label}
+                            </label>
+                            {isDefault ? null : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setForm((current) => {
+                                    if (!current) return current
+                                    const { [def.key]: _removed, ...rest } = current.prompt_blocks
+                                    return { ...current, prompt_blocks: rest }
+                                  })
+                                }
+                                className="shrink-0 text-xs font-semibold text-cyan-700 hover:underline"
+                              >
+                                Reset to default
+                              </button>
+                            )}
+                          </div>
+                          <textarea
+                            id={`block-${def.key}`}
+                            rows={value.split('\n').length > 2 ? 4 : 2}
+                            value={value}
+                            onChange={(event) => {
+                              const next = event.target.value
+                              setForm((current) =>
+                                current ? { ...current, prompt_blocks: { ...current.prompt_blocks, [def.key]: next } } : current,
+                              )
+                            }}
+                            className={`${INPUT} font-mono text-xs`}
+                          />
+                          <p className="mt-1 text-xs text-gray-500">{def.help}</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </>
+        ) : null}
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           <button
             type="submit"
             disabled={saving}
@@ -545,7 +806,15 @@ export default function AiAgentProfileEditor() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/settings/ai-agents')}
+            disabled={saving}
+            onClick={saveAndClose}
+            className="rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-100 disabled:bg-gray-100 disabled:text-gray-400"
+          >
+            {saving ? 'Saving...' : 'Save & Close'}
+          </button>
+          <button
+            type="button"
+            onClick={requestLeave}
             className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
           >
             Cancel
@@ -553,6 +822,48 @@ export default function AiAgentProfileEditor() {
           {message ? <p className="text-sm text-gray-600">{message}</p> : null}
         </div>
       </form>
+
+      {leavePrompt ? (
+        <div
+          role="alertdialog"
+          aria-label="Unsaved profile changes"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-white/60 p-4 backdrop-blur-md"
+        >
+          <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-xl">
+            <p className="text-lg font-semibold text-gray-800">Unsaved changes</p>
+            <p className="text-sm text-gray-500">This profile has changes that have not been saved.</p>
+            <div className="flex w-full flex-col gap-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={async () => {
+                  if (await saveProfile()) leave()
+                  else setLeavePrompt(false)
+                }}
+                className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? 'Saving...' : 'Save & Leave'}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={leave}
+                className="w-full rounded-xl border border-rose-200 bg-white px-4 py-2.5 font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Discard &amp; Leave
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setLeavePrompt(false)}
+                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }
