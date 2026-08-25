@@ -200,7 +200,11 @@ def _suggestion_exists(db: Session, *, kind: str, target_id: int) -> bool:
     )
 
 
-def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> None:
+def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int]:
+    new_items_written = 0
+    modify_suggestions_written = 0
+    delete_suggestions_written = 0
+
     for raw_item in plan.get("new_items") or []:
         title = str((raw_item or {}).get("title") or "").strip()
         if not title:
@@ -215,6 +219,7 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> None:
             tag_id=_resolve_tag_id(db, (raw_item or {}).get("tag")),
             priority=_resolve_priority((raw_item or {}).get("priority")),
         )
+        new_items_written += 1
 
     open_item_ids = {item.id for item in action_item_service.list_for_tenant(db, tenant.id) if item.status == "open"}
 
@@ -249,6 +254,7 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> None:
                 status=STATUS_PENDING,
             )
         )
+        modify_suggestions_written += 1
 
     for raw_item in plan.get("delete_items") or []:
         item_id = (raw_item or {}).get("action_item_id")
@@ -266,6 +272,9 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> None:
                 status=STATUS_PENDING,
             )
         )
+        delete_suggestions_written += 1
+
+    return new_items_written, modify_suggestions_written, delete_suggestions_written
 
 
 def generate_action_writer_update_for_trigger(db: Session, trigger: ActionWriterTrigger) -> None:
@@ -344,5 +353,13 @@ def generate_action_writer_update_for_trigger(db: Session, trigger: ActionWriter
         run.status = STATUS_SKIPPED
         return
 
-    _apply_plan(db, tenant, plan)
+    new_items_written, modify_suggestions_written, delete_suggestions_written = _apply_plan(db, tenant, plan)
     run.status = STATUS_COMPLETED
+    logger.info(
+        "Action writer run completed run_id=%s tenant_id=%s new_items_written=%s modify_suggestions_written=%s delete_suggestions_written=%s",
+        run.id,
+        tenant.id,
+        new_items_written,
+        modify_suggestions_written,
+        delete_suggestions_written,
+    )

@@ -207,8 +207,10 @@ def _run_due_tenant_brain_triggers_once() -> None:
     try:
         now = datetime.now(timezone.utc)
         due_triggers = db.query(TenantBrainTrigger).filter(TenantBrainTrigger.trigger_at <= now).all()
+        logger.info("Found %s due brain triggers this tick", len(due_triggers))
         for trigger in due_triggers:
             trigger_id = trigger.id
+            logger.info("Processing brain trigger %s for tenant %s", trigger_id, trigger.tenant_id)
             try:
                 tenant_brain_service.generate_brain_update_for_trigger(db, trigger)
             except Exception:
@@ -231,8 +233,10 @@ def _run_due_action_writer_triggers_once() -> None:
     try:
         now = datetime.now(timezone.utc)
         due_triggers = db.query(ActionWriterTrigger).filter(ActionWriterTrigger.trigger_at <= now).all()
+        logger.info("Found %s due action writer triggers this tick", len(due_triggers))
         for trigger in due_triggers:
             trigger_id = trigger.id
+            logger.info("Processing action writer trigger %s for tenant %s", trigger_id, trigger.tenant_id)
             try:
                 action_writer_service.generate_action_writer_update_for_trigger(db, trigger)
             except Exception:
@@ -301,6 +305,8 @@ async def _ai_draft_scheduler_forever() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("app").setLevel(logging.INFO)
     task = asyncio.create_task(_poll_gmail_accounts_forever())
     logger.info("Started background Gmail incremental catch-up poll loop interval_seconds=%s", EMAIL_POLL_INTERVAL_SECONDS)
     renewal_task = asyncio.create_task(_renew_gmail_watches_forever())

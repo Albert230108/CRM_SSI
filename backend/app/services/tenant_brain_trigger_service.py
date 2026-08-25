@@ -1,10 +1,14 @@
 from datetime import datetime, timedelta, timezone
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.models.admin_settings import AdminSettings
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_brain_trigger import TenantBrainTrigger
+
+logger = logging.getLogger(__name__)
 
 
 def _debounce_seconds(db: Session) -> int:
@@ -35,6 +39,7 @@ def register_message_trigger(
     """
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
     if ai_settings is None or not ai_settings.brain_writer_enabled:
+        logger.info(f"Brain writer trigger skipped for tenant {tenant_id}: disabled/no settings")
         return
 
     trigger_at = datetime.now(timezone.utc) + timedelta(seconds=_debounce_seconds(db))
@@ -59,3 +64,5 @@ def register_message_trigger(
             existing_trigger.email_thread_id = email_thread_id
         if whatsapp_endpoint_id is not None:
             existing_trigger.whatsapp_endpoint_id = whatsapp_endpoint_id
+
+    logger.info(f"Brain writer trigger registered for tenant {tenant_id}, due at {trigger_at}")

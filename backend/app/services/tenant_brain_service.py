@@ -320,6 +320,13 @@ def _run_brain_writer(
         brain_field_service.set_value(db, tenant.id, definition.id, value, source=source)
 
     run.status = STATUS_COMPLETED
+    logger.info(
+        "Brain writer run completed run_id=%s tenant_id=%s entries_written=%s field_values_applied=%s",
+        run.id,
+        tenant.id,
+        len(added),
+        len([field_value for field_value in (plan.get("field_values") or []) if str((field_value or {}).get("key") or "").strip() and str((field_value or {}).get("value") or "").strip()]),
+    )
     return added
 
 
