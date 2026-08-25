@@ -9,6 +9,7 @@ from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.core.whatsapp_identity import get_canonical_whatsapp_identity
+from app.services import action_writer_trigger_service, tenant_brain_trigger_service
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,12 @@ def persist_whatsapp_outbound_communication(
             ai_generated=ai_generated,
         )
         db.add(communication)
+        # Only on a genuinely new message, not the "deduped" branch below: a dedupe match is
+        # the webhook echoing a message this session already persisted (via a manual/AI send),
+        # so the debounce timer was already reset for it - registering again here would just
+        # push generation back further for no new information.
+        tenant_brain_trigger_service.register_message_trigger(db, tenant_id=tenant_id, channel="whatsapp", direction="outbound")
+        action_writer_trigger_service.register_message_trigger(db, tenant_id=tenant_id, channel="whatsapp", direction="outbound")
     else:
         persistence_state = "deduped"
         _apply_outbound_metadata(

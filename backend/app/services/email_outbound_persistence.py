@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.services import action_writer_trigger_service, tenant_brain_trigger_service
 from app.services.attachment_service import link_attachments
 
 PROVIDER_GMAIL = "gmail"
@@ -71,6 +72,12 @@ def persist_gmail_outbound_message(
         ai_generated=ai_generated,
     )
     db.add(communication)
+    tenant_brain_trigger_service.register_message_trigger(
+        db, tenant_id=tenant_id, channel="email", direction="outbound", email_thread_id=conversation.id
+    )
+    action_writer_trigger_service.register_message_trigger(
+        db, tenant_id=tenant_id, channel="email", direction="outbound", email_thread_id=conversation.id
+    )
     db.commit()
     db.refresh(communication)
 

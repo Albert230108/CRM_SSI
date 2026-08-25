@@ -65,15 +65,22 @@ def list_ai_auto_drafts(
     return [_to_read(db, draft) for draft in drafts]
 
 
+class AiAutoDraftDismissRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 @router.put("/{draft_id}/dismiss", response_model=AiAutoDraftRead)
 def dismiss_ai_auto_draft(
     draft_id: int,
+    payload: AiAutoDraftDismissRequest = AiAutoDraftDismissRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AiAutoDraftRead:
     draft = _get_draft(db, draft_id)
     draft.status = "dismissed"
     draft.scheduled_send_at = None
+    draft.resolution_source = "human_ui"
+    draft.resolution_reason = (payload.reason or "").strip() or None
     db.commit()
     db.refresh(draft)
     return _to_read(db, draft)
@@ -152,16 +159,21 @@ def redo_ai_auto_draft(
     return _to_read(db, regenerated)
 
 
+class AiAutoDraftSendNowRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 @router.put("/{draft_id}/send-now", response_model=AiAutoDraftRead)
 def send_ai_auto_draft_now(
     draft_id: int,
+    payload: AiAutoDraftSendNowRequest = AiAutoDraftSendNowRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AiAutoDraftRead:
     draft = _get_draft(db, draft_id)
     if draft.status not in DEFAULT_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Draft is not in a sendable state")
-    sent = ai_auto_draft_service.send_scheduled_draft(db, draft)
+    sent = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_ui", reason=(payload.reason or "").strip() or None)
     if not sent:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send draft")
     db.commit()

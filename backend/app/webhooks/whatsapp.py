@@ -21,7 +21,8 @@ from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services.ai_draft_approval_service import try_handle_admin_reply
 from app.services.ai_draft_trigger_service import register_inbound_message
-from app.services.tenant_brain_trigger_service import register_inbound_message as register_brain_inbound_message
+from app.services.action_writer_trigger_service import register_message_trigger as register_action_writer_trigger
+from app.services.tenant_brain_trigger_service import register_message_trigger as register_brain_trigger
 from app.services.attachment_service import link_attachments, store_upload
 from app.services.attachment_storage import max_file_bytes
 from app.services.notification_service import create_notification
@@ -698,7 +699,12 @@ def _process_whatsapp_message(
     )
     if not is_history_payload:
         register_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
-        register_brain_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
+        register_brain_trigger(
+            db, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=resolved.matched_endpoint_id
+        )
+        register_action_writer_trigger(
+            db, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=resolved.matched_endpoint_id
+        )
         register_notification_for_whatsapp(db)
         if background_tasks is not None:
             background_tasks.add_task(_trigger_auto_resync, tenant.id)

@@ -79,6 +79,71 @@ def test_dismiss_and_mark_used(non_admin_client, db_session):
     assert draft2.id not in {item["id"] for item in listing}
 
 
+def test_dismiss_records_human_ui_resolution_reason(non_admin_client, db_session):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/dismiss", json={"reason": "Guest cancelled the booking"})
+    assert response.status_code == 200
+
+    db_session.refresh(draft)
+    assert draft.resolution_source == "human_ui"
+    assert draft.resolution_reason == "Guest cancelled the booking"
+
+
+def test_dismiss_without_reason_leaves_resolution_reason_null(non_admin_client, db_session):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/dismiss")
+    assert response.status_code == 200
+
+    db_session.refresh(draft)
+    assert draft.resolution_source == "human_ui"
+    assert draft.resolution_reason is None
+
+
+def test_send_scheduled_draft_auto_timer_falls_back_to_checker_feedback(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="whatsapp",
+        generated_text="draft",
+        status="pending_auto_send",
+        checker_feedback="Checker approved: matches template tone.",
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: True)
+
+    sent = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="auto_timer")
+
+    assert sent is True
+    assert draft.status == "sent"
+    assert draft.resolution_source == "auto_timer"
+    assert draft.resolution_reason == "Checker approved: matches template tone."
+
+
+def test_send_scheduled_draft_human_ui_uses_explicit_reason(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="whatsapp", generated_text="draft", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: True)
+
+    sent = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui", reason="Confirmed by phone")
+
+    assert sent is True
+    assert draft.resolution_source == "human_ui"
+    assert draft.resolution_reason == "Confirmed by phone"
+
+
 def test_cancel_auto_send_downgrades_to_pending(non_admin_client, db_session):
     tenant = _create_tenant(db_session)
     draft = AiAutoDraft(

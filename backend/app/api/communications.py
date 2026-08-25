@@ -21,7 +21,7 @@ from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
-from app.services import ai_agent_orchestrator, ai_reply_service, memory_redo_service, redo_request_log_service
+from app.services import action_writer_trigger_service, ai_agent_orchestrator, ai_reply_service, memory_redo_service, redo_request_log_service, tenant_brain_trigger_service
 from app.services.attachment_service import (
     AttachmentLimitExceededError,
     AttachmentNotFoundError,
@@ -1047,6 +1047,12 @@ async def forward_tenant_email_thread(
         created_at=datetime.now(timezone.utc),
     )
     db.add(communication)
+    tenant_brain_trigger_service.register_message_trigger(
+        db, tenant_id=tenant.id, channel="email", direction="outbound", email_thread_id=conversation.id
+    )
+    action_writer_trigger_service.register_message_trigger(
+        db, tenant_id=tenant.id, channel="email", direction="outbound", email_thread_id=conversation.id
+    )
     db.commit()
     db.refresh(communication)
 

@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.models.admin_settings import AdminSettings
+from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.tenant_ai_settings import TenantAiSettings
-from app.models.tenant_brain_trigger import TenantBrainTrigger
 
 
 def _debounce_seconds(db: Session) -> int:
@@ -21,31 +21,28 @@ def register_message_trigger(
     email_thread_id: int | None = None,
     whatsapp_endpoint_id: int | None = None,
 ) -> None:
-    """Called on every genuinely-live message, inbound or outbound, alongside
-    ai_draft_trigger_service.register_inbound_message (which stays inbound-only - auto-draft
-    generation is inherently a reply-to-inbound concept).
+    """Called on every genuinely-live message, inbound or outbound - mirrors
+    tenant_brain_trigger_service.register_message_trigger in its own debounce queue.
 
-    Independent of auto_draft_*/planner_mode: gated purely on TenantAiSettings.brain_writer_enabled,
-    so a tenant can build up a brain with AI replies fully off, and a tenant with AI replies on
-    does not get brain-writing unless separately opted in. Debounces the same way the auto-draft
-    trigger does, in its own queue. Does not commit - callers already own the transaction.
+    Gated purely on TenantAiSettings.action_writer_enabled, independent of brain_writer_enabled
+    and planner_mode. Does not commit - callers already own the transaction.
 
-    `direction` isn't used for gating today (the brain writer reacts equally to either
+    `direction` isn't used for gating today (the action writer reacts equally to either
     direction) - it documents intent and gives a future hook if that ever needs to change.
     """
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
-    if ai_settings is None or not ai_settings.brain_writer_enabled:
+    if ai_settings is None or not ai_settings.action_writer_enabled:
         return
 
     trigger_at = datetime.now(timezone.utc) + timedelta(seconds=_debounce_seconds(db))
     existing_trigger = (
-        db.query(TenantBrainTrigger)
-        .filter(TenantBrainTrigger.tenant_id == tenant_id, TenantBrainTrigger.channel == channel)
+        db.query(ActionWriterTrigger)
+        .filter(ActionWriterTrigger.tenant_id == tenant_id, ActionWriterTrigger.channel == channel)
         .first()
     )
     if existing_trigger is None:
         db.add(
-            TenantBrainTrigger(
+            ActionWriterTrigger(
                 tenant_id=tenant_id,
                 channel=channel,
                 trigger_at=trigger_at,

@@ -10,6 +10,11 @@ DRAFTER_ROLE = "drafter"
 # Decides, independently of the planner, whether the latest message is worth remembering
 # long-term for this tenant. Runs on its own debounced trigger - see tenant_brain_service.py.
 BRAIN_WRITER_ROLE = "brain_writer"
+# Decides, independently of the planner and brain writer, whether a tenant's action-item list
+# needs a new task or an existing one needs to change. Runs on its own debounced trigger - see
+# action_writer_service.py. New items are created directly; modify/delete proposals require
+# human approval via MemorySuggestion.
+ACTION_WRITER_ROLE = "action_writer"
 # Reads a redo's "what"/"why" feedback and proposes working-memory/rule changes for a human to
 # approve - see memory_redo_service.py. Never applies anything itself.
 MEMORY_REDO_ROLE = "memory_redo"
@@ -30,7 +35,7 @@ class AiAgentProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False, index=True)  # planner | checker | drafter | brain_writer | memory_redo | memory_qa
+    role = Column(String(20), nullable=False, index=True)  # planner | checker | drafter | brain_writer | action_writer | memory_redo | memory_qa
     # Exactly one profile per role is the fallback used by tenants that have not pinned one.
     is_default = Column(Boolean, nullable=False, default=False, server_default="false")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")

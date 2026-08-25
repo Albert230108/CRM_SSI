@@ -4,7 +4,6 @@ import pytest
 
 from app.core.dependencies import get_current_user
 from app.main import app
-from app.models.action_item import ActionItem
 from app.models.ai_agent_profile import BRAIN_WRITER_ROLE, AiAgentProfile
 from app.models.ai_agent_run import AiAgentRun
 from app.models.brain_field_definition import BrainFieldDefinition
@@ -16,7 +15,7 @@ from app.models.tenant_brain_field_value import TenantBrainFieldValue
 from app.models.tenant_brain_trigger import TenantBrainTrigger
 from app.models.user import User
 from app.services import tenant_brain_service
-from app.services.tenant_brain_trigger_service import register_inbound_message
+from app.services.tenant_brain_trigger_service import register_message_trigger
 
 REGULAR_USER = User(id=2, email="agent@example.com", password_hash="x", is_active=True, is_admin=False)
 
@@ -110,7 +109,7 @@ def test_no_trigger_when_brain_writer_disabled(db_session):
     db_session.add(TenantAiSettings(tenant_id=tenant.id, brain_writer_enabled=False, planner_mode="auto-send"))
     db_session.commit()
 
-    register_inbound_message(db_session, tenant=tenant, channel="email")
+    register_message_trigger(db_session, tenant_id=tenant.id, channel="email", direction="inbound")
     db_session.commit()
 
     assert db_session.query(TenantBrainTrigger).filter(TenantBrainTrigger.tenant_id == tenant.id).count() == 0
@@ -118,7 +117,7 @@ def test_no_trigger_when_brain_writer_disabled(db_session):
 
 def test_no_trigger_when_no_ai_settings_row_exists(db_session):
     tenant = _create_tenant(db_session)
-    register_inbound_message(db_session, tenant=tenant, channel="email")
+    register_message_trigger(db_session, tenant_id=tenant.id, channel="email", direction="inbound")
     db_session.commit()
     assert db_session.query(TenantBrainTrigger).count() == 0
 
@@ -129,7 +128,7 @@ def test_trigger_created_independent_of_planner_mode(db_session):
     db_session.add(TenantAiSettings(tenant_id=tenant.id, brain_writer_enabled=True, planner_mode="off"))
     db_session.commit()
 
-    register_inbound_message(db_session, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=7)
+    register_message_trigger(db_session, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=7)
     db_session.commit()
 
     trigger = db_session.query(TenantBrainTrigger).filter(TenantBrainTrigger.tenant_id == tenant.id).one()
@@ -137,7 +136,7 @@ def test_trigger_created_independent_of_planner_mode(db_session):
     assert trigger.channel == "whatsapp"
     assert trigger.whatsapp_endpoint_id == 7
 
-    register_inbound_message(db_session, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=7)
+    register_message_trigger(db_session, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=7)
     db_session.commit()
 
     triggers = db_session.query(TenantBrainTrigger).filter(TenantBrainTrigger.tenant_id == tenant.id).all()
@@ -170,7 +169,7 @@ def _setup_brain_writer(db_session, tenant):
 def test_generate_brain_update_adds_no_entries_when_should_remember_is_false(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_brain_writer(db_session, tenant)
-    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "What time is check-in?")
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "What time is check-in?")
     monkeypatch.setattr(
         tenant_brain_service.gemini_client,
         "generate",
@@ -190,7 +189,7 @@ def test_generate_brain_update_adds_no_entries_when_should_remember_is_false(db_
 def test_generate_brain_update_adds_entries_when_should_remember_is_true(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_brain_writer(db_session, tenant)
-    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "I'm allergic to feathers, please no feather pillows.")
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "I'm allergic to feathers, please no feather pillows.")
     monkeypatch.setattr(
         tenant_brain_service.gemini_client,
         "generate",
@@ -268,7 +267,7 @@ def test_scan_endpoint_adds_entries_from_scanner(user_client, db_session, monkey
     assert body[0]["source"] == "scanner"
 
 
-# --- structured field_values / action_items ------------------------------------------------
+# --- structured field_values ----------------------------------------------------------------
 
 
 def test_generate_brain_update_sets_matching_field_value(db_session, monkeypatch):
@@ -278,7 +277,7 @@ def test_generate_brain_update_sets_matching_field_value(db_session, monkeypatch
     db_session.add(field)
     db_session.commit()
 
-    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "I'm bringing my dog.")
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "I'm bringing my dog.")
     monkeypatch.setattr(
         tenant_brain_service.gemini_client,
         "generate",
@@ -314,7 +313,7 @@ def test_generate_brain_update_ignores_empty_field_value(db_session, monkeypatch
     db_session.add(field)
     db_session.commit()
 
-    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "What time is check-in?")
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "What time is check-in?")
     monkeypatch.setattr(
         tenant_brain_service.gemini_client,
         "generate",
@@ -333,30 +332,3 @@ def test_generate_brain_update_ignores_empty_field_value(db_session, monkeypatch
     db_session.commit()
 
     assert db_session.query(TenantBrainFieldValue).filter(TenantBrainFieldValue.tenant_id == tenant.id).count() == 0
-
-
-def test_generate_brain_update_creates_ai_action_item(db_session, monkeypatch):
-    tenant = _create_tenant(db_session)
-    _setup_brain_writer(db_session, tenant)
-    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "Please call me back about the invoice.")
-    monkeypatch.setattr(
-        tenant_brain_service.gemini_client,
-        "generate",
-        _fake_generate(
-            {
-                "should_remember": True,
-                "action_items": [{"title": "Call tenant about invoice", "description": "", "due_date": ""}],
-                "entries": [],
-                "reasoning": "Explicit callback request.",
-            }
-        ),
-    )
-    trigger = TenantBrainTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
-
-    tenant_brain_service.generate_brain_update_for_trigger(db_session, trigger)
-    db_session.commit()
-
-    item = db_session.query(ActionItem).filter(ActionItem.tenant_id == tenant.id).one()
-    assert item.title == "Call tenant about invoice"
-    assert item.source == "ai"
-    assert item.status == "open"

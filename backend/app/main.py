@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from app.api.admin_invites import router as admin_invites_router
 from app.api.admin_settings import router as admin_settings_router
 from app.api.action_items import router as action_items_router
+from app.api.action_tags import router as action_tags_router
 from app.api.admin_sync import router as admin_sync_router
 from app.api.ai_agent_profiles import router as ai_agent_profiles_router
 from app.api.ai_agent_runs import router as ai_agent_runs_router
@@ -38,11 +39,12 @@ from app.api.tenant_email_links import router as tenant_email_links_router
 from app.api.whatsapp_thread_links import router as whatsapp_thread_links_router
 from app.api.working_memory_rules import router as working_memory_rules_router
 from app.database import SessionLocal
+from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant_brain_trigger import TenantBrainTrigger
-from app.services import ai_auto_draft_service, beds24_availability_service, tenant_brain_service
+from app.services import action_writer_service, ai_auto_draft_service, beds24_availability_service, tenant_brain_service
 from app.services.ai_draft_notification_service import notify_admins_of_new_draft
 from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
 from app.webhooks.gmail import router as gmail_webhook_router
@@ -189,7 +191,7 @@ def _run_due_ai_auto_sends_once() -> None:
         for draft in due_drafts:
             draft_id = draft.id
             try:
-                ai_auto_draft_service.send_scheduled_draft(db, draft)
+                ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="auto_timer")
                 db.commit()
             except Exception:
                 db.rollback()
@@ -220,6 +222,30 @@ def _run_due_tenant_brain_triggers_once() -> None:
                 db.commit()
     except Exception:
         logger.exception("Tenant brain scheduler loop failed to load due triggers")
+    finally:
+        db.close()
+
+
+def _run_due_action_writer_triggers_once() -> None:
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        due_triggers = db.query(ActionWriterTrigger).filter(ActionWriterTrigger.trigger_at <= now).all()
+        for trigger in due_triggers:
+            trigger_id = trigger.id
+            try:
+                action_writer_service.generate_action_writer_update_for_trigger(db, trigger)
+            except Exception:
+                db.rollback()
+                logger.exception("Action writer update generation failed trigger_id=%s", trigger_id)
+            finally:
+                # Always consume the trigger, whether generation succeeded or failed - a
+                # permanently-broken trigger must not retry every cycle forever; a new message
+                # will register a fresh trigger anyway.
+                db.query(ActionWriterTrigger).filter(ActionWriterTrigger.id == trigger_id).delete()
+                db.commit()
+    except Exception:
+        logger.exception("Action writer scheduler loop failed to load due triggers")
     finally:
         db.close()
 
@@ -268,6 +294,7 @@ async def _ai_draft_scheduler_forever() -> None:
         await asyncio.to_thread(_run_due_ai_draft_triggers_once)
         await asyncio.to_thread(_run_due_ai_auto_sends_once)
         await asyncio.to_thread(_run_due_tenant_brain_triggers_once)
+        await asyncio.to_thread(_run_due_action_writer_triggers_once)
         await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
         await _maybe_refresh_beds24_availability_once()
 
@@ -319,6 +346,7 @@ app.include_router(beds24_webhook_router, prefix="/api")
 app.include_router(beds24_availability_router, prefix="/api")
 app.include_router(brain_fields_router, prefix="/api")
 app.include_router(action_items_router, prefix="/api")
+app.include_router(action_tags_router, prefix="/api")
 app.include_router(working_memory_rules_router, prefix="/api")
 app.include_router(memory_suggestions_router, prefix="/api")
 app.include_router(memory_qa_router, prefix="/api")

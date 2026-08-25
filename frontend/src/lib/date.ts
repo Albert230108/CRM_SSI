@@ -9,6 +9,11 @@ const DISPLAY_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
   minute: '2-digit',
   hour12: false,
 })
+const DISPLAY_DAY_MONTH_YEAR_SHORT_FORMATTER = new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+})
 
 function toValidDate(value?: string | number | Date | null): Date | null {
   if (value === null || value === undefined || value === '') return null
@@ -22,6 +27,15 @@ export function formatDisplayDate(value?: string | number | Date | null): string
   if (!date) return '-'
 
   return `${DISPLAY_WEEKDAY_FORMATTER.format(date)} ${DISPLAY_DAY_MONTH_YEAR_FORMATTER.format(date)}`
+}
+
+/** Short-month variant of formatDisplayDate, e.g. "Fri 04 Aug 2025" - used where space is tight
+ * (the Availability tab) rather than the full "Fri 04 August 2025" style used elsewhere. */
+export function formatDisplayDateShortMonth(value?: string | number | Date | null): string {
+  const date = toValidDate(value)
+  if (!date) return '-'
+
+  return `${DISPLAY_WEEKDAY_FORMATTER.format(date)} ${DISPLAY_DAY_MONTH_YEAR_SHORT_FORMATTER.format(date)}`
 }
 
 export function computeNights(

@@ -5,12 +5,14 @@ import ToastHost from '../components/Toast'
 import SettingsSidebarLayout, { SettingsTab } from '../components/settings/SettingsSidebarLayout'
 import WorkingMemoryCanvas from '../components/WorkingMemoryCanvas'
 import { CARD_HEIGHT, CARD_WIDTH, nextCardPosition, type WorkingMemoryCard } from '../lib/workingMemoryCanvas'
+import { formatDisplayDateShortMonth } from '../lib/date'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const TABS: SettingsTab[] = [
   { id: 'rules', label: 'Rules' },
   { id: 'fields', label: 'Field Schema' },
+  { id: 'tags', label: 'Action Tags' },
   { id: 'availability', label: 'Availability' },
   { id: 'suggestions', label: 'Pending Suggestions' },
   { id: 'redo-log', label: 'Redo Log' },
@@ -303,11 +305,182 @@ function FieldsTab({ showSuccess, showError }: { showSuccess: (m: string) => voi
 }
 
 
+// -------------------------------------------------------------------------------- Tags tab
+
+type ActionTagDefinition = { id: number; name: string; color: string; position: number; is_active: boolean }
+
+const DEFAULT_TAG_COLOR = '#0891b2'
+
+function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void; showError: (m: string) => void }) {
+  const authHeaders = useAuthHeaders()
+  const [tags, setTags] = useState<ActionTagDefinition[]>([])
+  const [loading, setLoading] = useState(true)
+  const [newName, setNewName] = useState('')
+  const [newColor, setNewColor] = useState(DEFAULT_TAG_COLOR)
+  const [creating, setCreating] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/action-tags`, { headers: authHeaders })
+      if (!response.ok) throw new Error()
+      const all: ActionTagDefinition[] = await response.json()
+      setTags(all.sort((a, b) => a.position - b.position))
+    } catch {
+      showError('Failed to load action tags')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const create = async () => {
+    const name = newName.trim()
+    if (!name || creating) return
+    try {
+      setCreating(true)
+      const response = await fetch(`${API_BASE_URL}/api/action-tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({ name, color: newColor }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.detail ?? 'Failed to create tag')
+      setNewName('')
+      setNewColor(DEFAULT_TAG_COLOR)
+      showSuccess('Tag created')
+      await load()
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Failed to create tag')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const update = async (tag: ActionTagDefinition, patch: Partial<Pick<ActionTagDefinition, 'name' | 'color' | 'is_active' | 'position'>>) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/action-tags/${tag.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify(patch),
+      })
+      if (!response.ok) throw new Error()
+      await load()
+    } catch {
+      showError('Failed to update tag')
+    }
+  }
+
+  const remove = async (tag: ActionTagDefinition) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/action-tags/${tag.id}`, { method: 'DELETE', headers: authHeaders })
+      if (!response.ok) throw new Error()
+      showSuccess('Tag deleted')
+      await load()
+    } catch {
+      showError('Failed to delete tag')
+    }
+  }
+
+  const move = async (tag: ActionTagDefinition, direction: -1 | 1) => {
+    const index = tags.findIndex((t) => t.id === tag.id)
+    const swapWith = tags[index + direction]
+    if (!swapWith) return
+    await Promise.all([update(tag, { position: swapWith.position }), update(swapWith, { position: tag.position })])
+  }
+
+  return (
+    <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
+      <h2 className="text-lg font-semibold text-gray-900">Action Tags</h2>
+      <p className="mt-1 text-sm text-gray-500">
+        The tag palette action items can use. Distinct from the Manual/AI source badge - this is a category you choose,
+        and the action-writer agent auto-fills from the active tags below.
+      </p>
+
+      <div className="mt-3 flex items-center gap-2">
+        <input
+          type="text"
+          value={newName}
+          onChange={(event) => setNewName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void create()
+          }}
+          placeholder="Tag name, e.g. Follow-up"
+          className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+        />
+        <input
+          type="color"
+          value={newColor}
+          onChange={(event) => setNewColor(event.target.value)}
+          className="h-9 w-9 shrink-0 cursor-pointer rounded border border-gray-300 bg-white p-0.5"
+        />
+        <button
+          type="button"
+          onClick={create}
+          disabled={!newName.trim() || creating}
+          className="shrink-0 rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+        >
+          Add tag
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-1.5">
+        {loading ? (
+          <p className="text-sm text-gray-500">Loading...</p>
+        ) : tags.length === 0 ? (
+          <p className="text-sm text-gray-400">No tags configured yet.</p>
+        ) : (
+          tags.map((tag, index) => (
+            <div key={tag.id} className="flex items-center gap-2 rounded-xl border border-gray-200 p-2">
+              <div className="flex shrink-0 flex-col">
+                <button type="button" disabled={index === 0} onClick={() => move(tag, -1)} className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-30">▲</button>
+                <button type="button" disabled={index === tags.length - 1} onClick={() => move(tag, 1)} className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-30">▼</button>
+              </div>
+              <input
+                type="color"
+                value={tag.color}
+                onChange={(event) => update(tag, { color: event.target.value })}
+                className="h-8 w-8 shrink-0 cursor-pointer rounded border border-gray-300 bg-white p-0.5"
+              />
+              <span className="rounded-full px-2.5 py-1 text-xs font-medium text-white" style={{ backgroundColor: tag.color }}>{tag.name}</span>
+              <input
+                type="text"
+                defaultValue={tag.name}
+                onBlur={(event) => {
+                  const value = event.target.value.trim()
+                  if (value && value !== tag.name) void update(tag, { name: value })
+                }}
+                className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-cyan-400"
+              />
+              <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
+                <input type="checkbox" checked={tag.is_active} onChange={(event) => update(tag, { is_active: event.target.checked })} />
+                Active
+              </label>
+              <button type="button" onClick={() => remove(tag)} className="shrink-0 text-xs font-medium text-rose-500 hover:text-rose-600">
+                Delete
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
 // -------------------------------------------------------------------------------- Availability tab
+
+type Beds24AvailabilityRoom = {
+  room_name: string
+  free_ranges: Array<{ check_in: string; check_out: string }>
+}
 
 function AvailabilityTab({ showError }: { showError: (m: string) => void }) {
   const authHeaders = useAuthHeaders()
-  const [summary, setSummary] = useState('')
+  const [rooms, setRooms] = useState<Beds24AvailabilityRoom[]>([])
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -318,7 +491,7 @@ function AvailabilityTab({ showError }: { showError: (m: string) => void }) {
         const response = await fetch(`${API_BASE_URL}/api/beds24-availability`, { headers: authHeaders })
         if (!response.ok) throw new Error()
         const data = await response.json()
-        setSummary(data.summary_text ?? '')
+        setRooms(data.rooms ?? [])
         setRefreshedAt(data.refreshed_at ?? null)
       } catch {
         showError('Failed to load availability')
@@ -332,15 +505,30 @@ function AvailabilityTab({ showError }: { showError: (m: string) => void }) {
   return (
     <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
       <h2 className="text-lg font-semibold text-gray-900">Availability</h2>
-      <p className="mt-1 text-sm text-gray-500">Beds24 room availability is shown here as working memory, not in the tenant brain.</p>
-      <div className="mt-3">
+      <p className="mt-1 text-sm text-gray-500">Free dates only, from Beds24. Shown here as working memory, not in the tenant brain.</p>
+      <div className="mt-3 space-y-2">
         {loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
-        ) : summary ? (
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <p className="whitespace-pre-wrap text-sm text-gray-800">{summary}</p>
-            {refreshedAt ? <p className="mt-2 text-xs text-gray-500">Refreshed {new Date(refreshedAt).toLocaleString()}</p> : null}
-          </div>
+        ) : rooms.length > 0 ? (
+          <>
+            {rooms.map((room) => (
+              <div key={room.room_name} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <p className="text-sm font-semibold text-gray-900">{room.room_name}</p>
+                {room.free_ranges.length > 0 ? (
+                  <ul className="mt-1.5 space-y-1 text-sm text-gray-700">
+                    {room.free_ranges.map((range) => (
+                      <li key={`${range.check_in}-${range.check_out}`}>
+                        Check in {formatDisplayDateShortMonth(range.check_in)} &mdash; Check out {formatDisplayDateShortMonth(range.check_out)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1.5 text-sm text-gray-400">No free dates on file.</p>
+                )}
+              </div>
+            ))}
+            {refreshedAt ? <p className="text-xs text-gray-500">Refreshed {new Date(refreshedAt).toLocaleString()}</p> : null}
+          </>
         ) : (
           <p className="text-sm text-gray-400">No availability data on file.</p>
         )}
@@ -356,6 +544,7 @@ type MemorySuggestion = {
   kind: string
   tenant_id: number | null
   tenant_name: string | null
+  target_id: number | null
   proposed_value: Record<string, unknown>
   reasoning: string | null
   created_at: string
@@ -567,6 +756,7 @@ export default function WorkingMemoryHome() {
       <SettingsSidebarLayout title="Working Memory" subtitle="Rules, structured fields, and AI-suggested changes" tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
         {activeTab === 'rules' ? <RulesTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'fields' ? <FieldsTab showSuccess={showSuccess} showError={showError} /> : null}
+        {activeTab === 'tags' ? <TagsTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'availability' ? <AvailabilityTab showError={showError} /> : null}
         {activeTab === 'suggestions' ? <SuggestionsTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'redo-log' ? <RedoLogTab showError={showError} /> : null}

@@ -315,9 +315,13 @@ def try_handle_admin_reply(
         )
         return None
 
+    # Trailing free text after a "YES-482"/"NO-482" code (e.g. "NO-482 wrong tone") becomes the
+    # logged reason for the send/dismiss decision - see AiAutoDraft.resolution_reason.
+    typed_reason: str | None = None
     if match:
         decision = match.group(1).upper()
         draft_id = int(match.group(2))
+        typed_reason = text[match.end() :].strip().lstrip(":-").strip() or None if text else None
     else:
         # Never send a draft from a bare "yes". Require the explicit draft code so an approval
         # cannot target the wrong draft as the number of outstanding drafts changes.
@@ -354,8 +358,10 @@ def try_handle_admin_reply(
     if draft.status not in PENDING_STATUSES:
         return outcome(_already_handled_reply(db, draft))
 
+    reason = typed_reason or f"{decision.title()} via WhatsApp by {user.full_name or user.email}"
+
     if decision == "YES":
-        sent = ai_auto_draft_service.send_scheduled_draft(db, draft)
+        sent = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_whatsapp", reason=reason)
         if not sent:
             # Left unanswered on purpose: nothing was persisted for this attempt, and leaving
             # the approval_request row without a response lets the same or another admin retry.
@@ -369,6 +375,8 @@ def try_handle_admin_reply(
 
     draft.status = "dismissed"
     draft.scheduled_send_at = None
+    draft.resolution_source = "human_whatsapp"
+    draft.resolution_reason = reason
     approval_request.responded_at = datetime.now(timezone.utc)
     approval_request.response = decision
     db.commit()

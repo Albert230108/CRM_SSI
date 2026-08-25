@@ -82,6 +82,58 @@ def test_refresh_availability_summary_upserts_single_row(db_session, monkeypatch
     assert beds24_availability_service.get_cached_summary(db_session) == "Studio 1: booked Aug 25"
 
 
+def test_parse_availability_structured_checkout_is_day_after_last_free_night():
+    raw = [
+        {
+            "roomId": 1,
+            "name": "Studio 1",
+            "availability": {
+                "2026-08-25": False,
+                "2026-08-29": True,
+                "2026-08-30": True,
+                "2026-08-31": True,
+                "2026-09-01": True,
+                "2026-09-02": True,
+                "2026-09-03": True,
+                "2026-09-04": True,
+                "2026-09-05": True,
+            },
+        }
+    ]
+
+    rooms = beds24_availability_service.parse_availability_structured(raw)
+
+    assert rooms == [{"room_name": "Studio 1", "free_ranges": [{"check_in": "2026-08-29", "check_out": "2026-09-06"}]}]
+
+
+def test_parse_availability_structured_excludes_booked_ranges_and_empty_rooms():
+    raw = [
+        {"roomId": 1, "name": "Studio 1", "availability": {"2026-08-25": False, "2026-08-26": False}},
+        {"roomId": 2, "name": "Studio 2", "availability": {"2026-08-25": True}},
+    ]
+
+    rooms = beds24_availability_service.parse_availability_structured(raw)
+
+    assert rooms == [{"room_name": "Studio 2", "free_ranges": [{"check_in": "2026-08-25", "check_out": "2026-08-26"}]}]
+
+
+def test_parse_availability_structured_empty_input():
+    assert beds24_availability_service.parse_availability_structured([]) == []
+
+
+def test_refresh_availability_summary_also_stores_rooms_json(db_session, monkeypatch):
+    async def fake_get_room_availability():
+        return [{"roomId": 1, "name": "Studio 1", "availability": {"2026-08-25": True}}]
+
+    monkeypatch.setattr(beds24_availability_service.beds24_client, "get_room_availability", fake_get_room_availability)
+
+    asyncio.run(beds24_availability_service.refresh_availability_summary(db_session))
+    db_session.commit()
+
+    row = db_session.query(Beds24AvailabilitySummary).one()
+    assert row.rooms_json == [{"room_name": "Studio 1", "free_ranges": [{"check_in": "2026-08-25", "check_out": "2026-08-26"}]}]
+
+
 def test_refresh_skips_when_already_running(db_session, monkeypatch):
     calls = {"n": 0}
 

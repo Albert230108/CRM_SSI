@@ -5,12 +5,16 @@ for a while during which the target might be edited or removed by someone else.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.models.action_item import STATUS_OPEN as ACTION_ITEM_STATUS_OPEN
+from app.models.action_item import ActionItem
 from app.models.brain_field_definition import BrainFieldDefinition
 from app.models.memory_suggestion import (
+    KIND_ACTION_ITEM_DELETE,
+    KIND_ACTION_ITEM_MODIFY,
     KIND_BRAIN_ENTRY,
     KIND_FIELD_VALUE,
     KIND_RULE_ADD,
@@ -23,13 +27,26 @@ from app.models.memory_suggestion import (
 )
 from app.models.tenant import Tenant
 from app.models.working_memory_rule import SOURCE_AI_SUGGESTED, STATUS_ACTIVE, WorkingMemoryRule
-from app.services import brain_field_service, tenant_brain_service, working_memory_rule_service
+from app.services import action_item_service, brain_field_service, tenant_brain_service, working_memory_rule_service
 
 
-def list_pending(db: Session) -> list[MemorySuggestion]:
+_ACTION_ITEM_KINDS = {KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE}
+
+
+def list_pending(db: Session, *, exclude_kinds: set[str] | None = None) -> list[MemorySuggestion]:
+    """Rule/field/entry suggestions. Action-item modify/delete suggestions have their own
+    dedicated review surface (see list_pending_action_item_suggestions and the Actions page) -
+    the caller excludes those kinds here so they don't show up twice."""
+    query = db.query(MemorySuggestion).filter(MemorySuggestion.status == STATUS_PENDING)
+    if exclude_kinds:
+        query = query.filter(MemorySuggestion.kind.notin_(exclude_kinds))
+    return query.order_by(MemorySuggestion.created_at.desc()).all()
+
+
+def list_pending_action_item_suggestions(db: Session) -> list[MemorySuggestion]:
     return (
         db.query(MemorySuggestion)
-        .filter(MemorySuggestion.status == STATUS_PENDING)
+        .filter(MemorySuggestion.status == STATUS_PENDING, MemorySuggestion.kind.in_(_ACTION_ITEM_KINDS))
         .order_by(MemorySuggestion.created_at.desc())
         .all()
     )
@@ -91,6 +108,37 @@ def _apply_rule_delete(db: Session, suggestion: MemorySuggestion) -> ApplyResult
     return ApplyResult(True, "Rule dismissed.")
 
 
+def _apply_action_item_modify(db: Session, suggestion: MemorySuggestion) -> ApplyResult:
+    item = db.query(ActionItem).filter(ActionItem.id == suggestion.target_id).first()
+    if item is None or item.status != ACTION_ITEM_STATUS_OPEN:
+        return ApplyResult(False, "The target action item no longer exists or is no longer open.")
+    proposed = suggestion.proposed_value or {}
+    due_date_raw = proposed.get("due_date")
+    due_date = None
+    if due_date_raw:
+        try:
+            due_date = date.fromisoformat(str(due_date_raw))
+        except ValueError:
+            due_date = None
+    action_item_service.update(
+        db,
+        item,
+        title=proposed.get("title"),
+        due_date=due_date,
+        tag_id=proposed.get("tag_id"),
+        priority=proposed.get("priority"),
+    )
+    return ApplyResult(True, "Action item updated.")
+
+
+def _apply_action_item_delete(db: Session, suggestion: MemorySuggestion) -> ApplyResult:
+    item = db.query(ActionItem).filter(ActionItem.id == suggestion.target_id).first()
+    if item is None or item.status != ACTION_ITEM_STATUS_OPEN:
+        return ApplyResult(False, "The target action item no longer exists or is no longer open.")
+    action_item_service.dismiss(db, item)
+    return ApplyResult(True, "Action item dismissed.")
+
+
 def approve(db: Session, suggestion: MemorySuggestion, reviewer_id: int | None = None) -> ApplyResult:
     if suggestion.status != STATUS_PENDING:
         return ApplyResult(False, "This suggestion has already been reviewed.")
@@ -101,6 +149,8 @@ def approve(db: Session, suggestion: MemorySuggestion, reviewer_id: int | None =
         KIND_RULE_ADD: lambda: _apply_rule_add(db, suggestion, reviewer_id),
         KIND_RULE_MODIFY: lambda: _apply_rule_modify(db, suggestion),
         KIND_RULE_DELETE: lambda: _apply_rule_delete(db, suggestion),
+        KIND_ACTION_ITEM_MODIFY: lambda: _apply_action_item_modify(db, suggestion),
+        KIND_ACTION_ITEM_DELETE: lambda: _apply_action_item_delete(db, suggestion),
     }
     handler = handlers.get(suggestion.kind)
     result = handler() if handler is not None else ApplyResult(False, "Unknown suggestion kind.")

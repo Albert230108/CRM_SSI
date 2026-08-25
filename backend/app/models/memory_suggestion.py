@@ -7,6 +7,8 @@ KIND_BRAIN_ENTRY = "brain_entry"
 KIND_RULE_ADD = "rule_add"
 KIND_RULE_MODIFY = "rule_modify"
 KIND_RULE_DELETE = "rule_delete"
+KIND_ACTION_ITEM_MODIFY = "action_item_modify"
+KIND_ACTION_ITEM_DELETE = "action_item_delete"
 
 STATUS_PENDING = "pending"
 STATUS_APPROVED = "approved"
@@ -14,11 +16,15 @@ STATUS_REJECTED = "rejected"
 
 
 class MemorySuggestion(Base):
-    """An AI-proposed change to a tenant's working memory or a global rule, arising from a
-    redo's "what"/"why" feedback. Always requires human approval - see memory_suggestion_service
-    for what applying each kind actually does. tenant_id is null for rule kinds, since rules are
-    global. target_id points at the row being modified/deleted (field_definition_id for
-    field_value, working_memory_rule id for rule_modify/rule_delete); null for anything new.
+    """An AI-proposed change to a tenant's working memory, a global rule, or an action item.
+    Rule/field/entry kinds arise from a redo's "what"/"why" feedback (see memory_redo_service);
+    action_item_modify/delete arise from the action writer agent (see action_writer_service)
+    deciding an *existing* item needs to change - new items it creates directly, no approval
+    needed. Always requires human approval - see memory_suggestion_service for what applying
+    each kind actually does. tenant_id is null for rule kinds, since rules are global; set for
+    action_item kinds, since action items are tenant-scoped. target_id points at the row being
+    modified/deleted (field_definition_id for field_value, working_memory_rule id for
+    rule_modify/rule_delete, action_item id for action_item_modify/delete); null for anything new.
     """
 
     __tablename__ = "memory_suggestions"

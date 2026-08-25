@@ -28,5 +28,11 @@ class AiAutoDraft(Base):
     # Set when the draft came out of the planner loop, linking it to its full execution log.
     agent_run_id = Column(Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True)
     checker_feedback = Column(Text, nullable=True)
+    # Why this draft ended up sent or dismissed, and who/what decided - set at every path that
+    # reaches a final send/dismiss outcome (CRM UI buttons, a WhatsApp YES/NO reply, or the
+    # automatic auto-send timer). Read by memory_redo_service as extra context for the redo
+    # agent - see ai_draft_approval_service.py, api/ai_auto_drafts.py, ai_auto_draft_service.py.
+    resolution_reason = Column(Text, nullable=True)
+    resolution_source = Column(String(20), nullable=True)  # human_ui | human_whatsapp | auto_timer
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

@@ -533,6 +533,13 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
         group=CONTEXT_GROUP,
     ),
     PromptBlock(
+        key="ctx_recent_decisions",
+        label="Recent send/dismiss reasoning heading",
+        help="Sits above recent AI-draft send/dismiss outcomes and why they happened, for this tenant.",
+        default="## Recent Send/Dismiss Reasoning",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
         key="ctx_redo",
         label="Redo feedback heading",
         help="Sits above the staff member's redo explanation.",

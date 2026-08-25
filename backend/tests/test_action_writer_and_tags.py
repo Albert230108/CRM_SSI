@@ -1,0 +1,450 @@
+from datetime import date, datetime, timezone
+
+import pytest
+
+from app.core.dependencies import get_current_user
+from app.main import app
+from app.models.action_item import ActionItem
+from app.models.action_tag_definition import ActionTagDefinition
+from app.models.action_writer_trigger import ActionWriterTrigger
+from app.models.ai_agent_profile import ACTION_WRITER_ROLE, AiAgentProfile
+from app.models.ai_agent_run import AiAgentRun
+from app.models.memory_suggestion import MemorySuggestion
+from app.models.tenant import Tenant
+from app.models.tenant_ai_settings import TenantAiSettings
+from app.models.user import User
+from app.services import action_item_service, action_writer_service
+
+REGULAR_USER = User(id=3, email="actions@example.com", password_hash="x", is_active=True, is_admin=False)
+
+
+@pytest.fixture()
+def user_client(client):
+    app.dependency_overrides[get_current_user] = lambda: REGULAR_USER
+    yield client
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def _create_tenant(db_session, **overrides):
+    defaults = dict(name="Action Tenant", booking_id="B-action-1")
+    defaults.update(overrides)
+    tenant = Tenant(**defaults)
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+    return tenant
+
+
+# --- Action tags API ------------------------------------------------------------------------
+
+
+def test_create_list_update_delete_action_tag(user_client, db_session):
+    create_response = user_client.post("/api/action-tags", json={"name": "Follow-up", "color": "#0891b2"})
+    assert create_response.status_code == 201
+    body = create_response.json()
+    assert body["name"] == "Follow-up"
+    assert body["is_active"] is True
+    tag_id = body["id"]
+
+    list_response = user_client.get("/api/action-tags")
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1
+
+    patch_response = user_client.patch(f"/api/action-tags/{tag_id}", json={"color": "#f43f5e"})
+    assert patch_response.status_code == 200
+    assert patch_response.json()["color"] == "#f43f5e"
+
+    delete_response = user_client.delete(f"/api/action-tags/{tag_id}")
+    assert delete_response.status_code == 204
+    assert db_session.query(ActionTagDefinition).count() == 0
+
+
+def test_create_action_tag_rejects_duplicate_name(user_client):
+    user_client.post("/api/action-tags", json={"name": "Billing", "color": "#000000"})
+    response = user_client.post("/api/action-tags", json={"name": "Billing", "color": "#111111"})
+    assert response.status_code == 409
+
+
+def test_list_active_only_excludes_inactive_tags(user_client):
+    create_response = user_client.post("/api/action-tags", json={"name": "Archived", "color": "#000000"})
+    tag_id = create_response.json()["id"]
+    user_client.patch(f"/api/action-tags/{tag_id}", json={"is_active": False})
+
+    response = user_client.get("/api/action-tags", params={"active_only": True})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+# --- Action item tag/priority threading, and recurrence-on-complete ------------------------
+
+
+def test_action_item_read_includes_tag_name_and_color(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    tag = ActionTagDefinition(name="Urgent", color="#f43f5e")
+    db_session.add(tag)
+    db_session.commit()
+
+    response = user_client.post(
+        f"/api/tenants/{tenant.id}/action-items",
+        json={"title": "Call guest", "tag_id": tag.id, "priority": "p1"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["tag_name"] == "Urgent"
+    assert body["tag_color"] == "#f43f5e"
+    assert body["priority"] == "p1"
+
+
+def test_complete_recurring_item_creates_next_occurrence(db_session):
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(
+        db_session, tenant.id, "Check the boiler", due_date=date(2026, 8, 1), recurrence_interval_days=7, recurrence_anchor="due_date"
+    )
+    db_session.commit()
+
+    action_item_service.complete(db_session, item)
+    db_session.commit()
+
+    assert item.status == "done"
+    next_item = db_session.query(ActionItem).filter(ActionItem.tenant_id == tenant.id, ActionItem.status == "open").one()
+    assert next_item.title == "Check the boiler"
+    assert next_item.due_date == date(2026, 8, 8)
+    assert next_item.recurrence_interval_days == 7
+
+
+def test_complete_non_recurring_item_creates_no_next_occurrence(db_session):
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "One-off task")
+    db_session.commit()
+
+    action_item_service.complete(db_session, item)
+    db_session.commit()
+
+    assert db_session.query(ActionItem).filter(ActionItem.tenant_id == tenant.id).count() == 1
+
+
+# --- action_writer_service: creation automatic, modify/delete gated on approval ------------
+
+
+def _fake_generate(payload):
+    from app.services import gemini_client
+
+    def _generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        return gemini_client.GenerationResult(
+            text="ignored", parsed=payload, model=model or "fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+        )
+
+    return _generate
+
+
+def _setup_action_writer(db_session, tenant):
+    profile = AiAgentProfile(name="Default Action Writer", role=ACTION_WRITER_ROLE, is_default=True)
+    db_session.add(profile)
+    db_session.add(TenantAiSettings(tenant_id=tenant.id, action_writer_enabled=True))
+    db_session.commit()
+    return profile
+
+
+def test_action_writer_creates_new_item_directly(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_action_writer(db_session, tenant)
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Please call me back about the invoice.")
+    monkeypatch.setattr(
+        action_writer_service.gemini_client,
+        "generate",
+        _fake_generate({"new_items": [{"title": "Call tenant about invoice"}], "reasoning": "Explicit callback request."}),
+    )
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    item = db_session.query(ActionItem).filter(ActionItem.tenant_id == tenant.id).one()
+    assert item.title == "Call tenant about invoice"
+    assert item.source == "ai"
+    assert item.status == "open"
+    run = db_session.query(AiAgentRun).filter(AiAgentRun.tenant_id == tenant.id).one()
+    assert run.status == "completed"
+    assert run.mode == "action_writer"
+
+
+def test_action_writer_modify_creates_pending_suggestion_not_direct_change(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_action_writer(db_session, tenant)
+    existing = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1))
+    db_session.commit()
+
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Actually, push that back a week.")
+    monkeypatch.setattr(
+        action_writer_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "modify_items": [{"action_item_id": existing.id, "due_date": "2026-08-08", "reasoning": "Guest asked to push it back."}],
+                "reasoning": "Due date change requested.",
+            }
+        ),
+    )
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    # The existing item is untouched - only a pending suggestion was created.
+    db_session.refresh(existing)
+    assert existing.due_date == date(2026, 8, 1)
+    suggestion = db_session.query(MemorySuggestion).filter(MemorySuggestion.kind == "action_item_modify").one()
+    assert suggestion.target_id == existing.id
+    assert suggestion.status == "pending"
+    assert suggestion.tenant_id == tenant.id
+    assert suggestion.proposed_value["due_date"] == "2026-08-08"
+
+
+def test_action_writer_delete_creates_pending_suggestion(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_action_writer(db_session, tenant)
+    existing = action_item_service.create(db_session, tenant.id, "No longer needed")
+    db_session.commit()
+
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Never mind, forget that task.")
+    monkeypatch.setattr(
+        action_writer_service.gemini_client,
+        "generate",
+        _fake_generate({"delete_items": [{"action_item_id": existing.id, "reasoning": "Guest withdrew the request."}], "reasoning": "No longer needed."}),
+    )
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    db_session.refresh(existing)
+    assert existing.status == "open"
+    suggestion = db_session.query(MemorySuggestion).filter(MemorySuggestion.kind == "action_item_delete").one()
+    assert suggestion.target_id == existing.id
+    assert suggestion.status == "pending"
+
+
+def test_action_writer_does_not_duplicate_pending_suggestion_on_repeat_trigger(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_action_writer(db_session, tenant)
+    existing = action_item_service.create(db_session, tenant.id, "Original title")
+    db_session.commit()
+
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Push it back.")
+    monkeypatch.setattr(
+        action_writer_service.gemini_client,
+        "generate",
+        _fake_generate({"modify_items": [{"action_item_id": existing.id, "title": "Updated title", "reasoning": "x"}], "reasoning": "y"}),
+    )
+
+    for _ in range(2):
+        trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+        action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+        db_session.commit()
+
+    assert db_session.query(MemorySuggestion).filter(MemorySuggestion.kind == "action_item_modify").count() == 1
+
+
+def test_action_writer_noop_when_disabled(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    db_session.add(TenantAiSettings(tenant_id=tenant.id, action_writer_enabled=False))
+    db_session.commit()
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+
+    assert db_session.query(AiAgentRun).filter(AiAgentRun.tenant_id == tenant.id).count() == 0
+
+
+# --- memory_suggestion_service apply handlers for action item kinds ------------------------
+
+
+def test_approve_action_item_modify_suggestion_applies_change(db_session):
+    from app.services import memory_suggestion_service
+
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "Original title")
+    db_session.commit()
+    suggestion = MemorySuggestion(
+        kind="action_item_modify", tenant_id=tenant.id, target_id=item.id, proposed_value={"title": "New title"}, status="pending"
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+
+    result = memory_suggestion_service.approve(db_session, suggestion, reviewer_id=None)
+    db_session.commit()
+
+    assert result.applied is True
+    db_session.refresh(item)
+    assert item.title == "New title"
+
+
+def test_approve_action_item_delete_suggestion_dismisses_item(db_session):
+    from app.services import memory_suggestion_service
+
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "To be removed")
+    db_session.commit()
+    suggestion = MemorySuggestion(kind="action_item_delete", tenant_id=tenant.id, target_id=item.id, proposed_value={}, status="pending")
+    db_session.add(suggestion)
+    db_session.commit()
+
+    result = memory_suggestion_service.approve(db_session, suggestion, reviewer_id=None)
+    db_session.commit()
+
+    assert result.applied is True
+    db_session.refresh(item)
+    assert item.status == "dismissed"
+
+
+def test_approve_action_item_modify_fails_gracefully_when_item_already_dismissed(db_session):
+    from app.services import memory_suggestion_service
+
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "Already gone")
+    action_item_service.dismiss(db_session, item)
+    db_session.commit()
+    suggestion = MemorySuggestion(
+        kind="action_item_modify", tenant_id=tenant.id, target_id=item.id, proposed_value={"title": "New"}, status="pending"
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+
+    result = memory_suggestion_service.approve(db_session, suggestion, reviewer_id=None)
+
+    assert result.applied is False
+
+
+# --- quick natural-language add endpoint ----------------------------------------------------
+
+
+def test_parse_action_item_text_endpoint(user_client, db_session, monkeypatch):
+    from app.services import action_item_parse_service, gemini_client
+
+    tenant = _create_tenant(db_session)
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        return gemini_client.GenerationResult(
+            text="ignored", parsed={"title": "Call guest", "due_date": "2026-08-05", "priority": "p2"}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+        )
+
+    monkeypatch.setattr(action_item_parse_service.gemini_client, "generate", fake_generate)
+
+    response = user_client.post(f"/api/tenants/{tenant.id}/action-items/parse", json={"text": "Call guest next Wednesday"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "Call guest"
+    assert body["due_date"] == "2026-08-05"
+    assert body["priority"] == "p2"
+
+
+# --- Dedicated action-item pending-suggestions review surface ------------------------------
+
+
+def test_pending_suggestions_endpoint_returns_modify_diff_with_old_and_new(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    old_tag = ActionTagDefinition(name="Old Tag", color="#111111")
+    new_tag = ActionTagDefinition(name="New Tag", color="#222222")
+    db_session.add_all([old_tag, new_tag])
+    db_session.commit()
+    item = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1), tag_id=old_tag.id, priority="p3")
+    db_session.commit()
+    suggestion = MemorySuggestion(
+        kind="action_item_modify",
+        tenant_id=tenant.id,
+        target_id=item.id,
+        proposed_value={"title": "New title", "due_date": "2026-08-08", "priority": "p1", "tag_id": new_tag.id},
+        reasoning="Guest asked to push it back and bump urgency.",
+        status="pending",
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+
+    response = user_client.get("/api/action-items/pending-suggestions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    row = body[0]
+    assert row["kind"] == "action_item_modify"
+    assert row["tenant_id"] == tenant.id
+    assert row["action_item_id"] == item.id
+    assert row["current"] == {
+        "title": "Original title",
+        "description": None,
+        "due_date": "2026-08-01",
+        "priority": "p3",
+        "tag_name": "Old Tag",
+        "tag_color": "#111111",
+        "status": "open",
+    }
+    assert row["proposed"]["title"] == "New title"
+    assert row["proposed"]["due_date"] == "2026-08-08"
+    assert row["proposed"]["priority"] == "p1"
+    assert row["proposed"]["tag_id"] == new_tag.id
+    assert row["proposed"]["tag_name"] == "New Tag"
+    assert row["reasoning"] == "Guest asked to push it back and bump urgency."
+
+
+def test_pending_suggestions_endpoint_returns_delete_with_deleted_flag(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "No longer needed")
+    db_session.commit()
+    suggestion = MemorySuggestion(kind="action_item_delete", tenant_id=tenant.id, target_id=item.id, proposed_value={}, status="pending")
+    db_session.add(suggestion)
+    db_session.commit()
+
+    response = user_client.get("/api/action-items/pending-suggestions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["kind"] == "action_item_delete"
+    assert body[0]["proposed"] == {"deleted": True}
+    assert body[0]["current"]["title"] == "No longer needed"
+
+
+def test_pending_suggestions_endpoint_excludes_non_action_item_kinds(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    db_session.add(MemorySuggestion(kind="brain_entry", tenant_id=tenant.id, target_id=None, proposed_value={"content": "x"}, status="pending"))
+    db_session.commit()
+
+    response = user_client.get("/api/action-items/pending-suggestions")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_generic_suggestions_endpoint_excludes_action_item_kinds(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "Title")
+    db_session.commit()
+    db_session.add_all(
+        [
+            MemorySuggestion(kind="action_item_modify", tenant_id=tenant.id, target_id=item.id, proposed_value={"title": "New"}, status="pending"),
+            MemorySuggestion(kind="brain_entry", tenant_id=tenant.id, target_id=None, proposed_value={"content": "durable fact"}, status="pending"),
+        ]
+    )
+    db_session.commit()
+
+    response = user_client.get("/api/memory-suggestions")
+
+    assert response.status_code == 200
+    kinds = {row["kind"] for row in response.json()}
+    assert kinds == {"brain_entry"}
+
+
+def test_parse_action_item_text_returns_502_on_gemini_failure(user_client, db_session, monkeypatch):
+    from app.services import action_item_parse_service, gemini_client
+
+    tenant = _create_tenant(db_session)
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        raise gemini_client.GeminiClientError("boom")
+
+    monkeypatch.setattr(action_item_parse_service.gemini_client, "generate", fake_generate)
+
+    response = user_client.post(f"/api/tenants/{tenant.id}/action-items/parse", json={"text": "Call guest tomorrow"})
+
+    assert response.status_code == 502

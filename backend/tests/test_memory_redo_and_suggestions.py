@@ -104,6 +104,81 @@ def test_propose_updates_creates_field_value_suggestion(db_session, monkeypatch)
     assert suggestion.status == STATUS_PENDING
 
 
+def test_propose_updates_prompt_includes_recent_send_dismiss_reasoning(db_session, monkeypatch):
+    """The redo-AGENT (memory_redo) should be able to see why recent drafts for this tenant
+    were sent or dismissed, not just fields/entries/rules - see ai_auto_draft.resolution_reason
+    and memory_redo_service._recent_decisions_lines."""
+    tenant = _create_tenant(db_session)
+    draft = _create_draft(db_session, tenant)
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True))
+    resolved_draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="whatsapp",
+        generated_text="Earlier draft",
+        status="dismissed",
+        resolution_source="human_whatsapp",
+        resolution_reason="Guest already confirmed by phone",
+    )
+    db_session.add(resolved_draft)
+    db_session.commit()
+
+    captured_prompts = []
+
+    def _generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        captured_prompts.append(prompt)
+        return gemini_client.GenerationResult(
+            text="ignored", parsed={"suggestions": []}, model=model or "fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+        )
+
+    monkeypatch.setattr(memory_redo_service.gemini_client, "generate", _generate)
+
+    memory_redo_service.propose_updates_from_redo(db_session, draft, "make it shorter", None)
+    db_session.commit()
+
+    assert len(captured_prompts) == 1
+    assert "Guest already confirmed by phone" in captured_prompts[0]
+    assert "dismissed (human_whatsapp)" in captured_prompts[0]
+
+
+def test_memory_redo_schema_constrains_kind_to_valid_literals():
+    """Regression test for a production bug: an earlier version of MEMORY_REDO_SCHEMA/
+    RULE_REDO_SCHEMA left `kind` as an unconstrained string, so Gemini would sometimes emit
+    plausible-but-wrong values (e.g. "add_global_rule" instead of "rule_add"). Those got
+    silently dropped in _create_suggestions - the AiAgentRun still logged "completed" with
+    real-looking suggestions in its parsed output, but zero MemorySuggestion rows were ever
+    created, so nothing ever appeared in Pending Suggestions. The enum is what actually
+    prevents the model from emitting anything else.
+    """
+    kind_schema = memory_redo_service.MEMORY_REDO_SCHEMA["properties"]["suggestions"]["items"]["properties"]["kind"]
+    assert set(kind_schema["enum"]) == {KIND_FIELD_VALUE, KIND_BRAIN_ENTRY, KIND_RULE_ADD, KIND_RULE_MODIFY, KIND_RULE_DELETE}
+
+    rule_kind_schema = memory_redo_service.RULE_REDO_SCHEMA["properties"]["suggestions"]["items"]["properties"]["kind"]
+    assert set(rule_kind_schema["enum"]) == {KIND_RULE_ADD, KIND_RULE_MODIFY, KIND_RULE_DELETE}
+
+
+def test_propose_updates_logs_and_skips_unrecognized_kind(db_session, monkeypatch, caplog):
+    tenant = _create_tenant(db_session)
+    draft = _create_draft(db_session, tenant)
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True))
+    db_session.commit()
+
+    monkeypatch.setattr(
+        memory_redo_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {"suggestions": [{"kind": "add_global_rule", "condition_text": "x", "action_text": "y", "reasoning": "z"}]}
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        created = memory_redo_service.propose_updates_from_redo(db_session, draft, "make it shorter", None)
+    db_session.commit()
+
+    assert created == []
+    assert db_session.query(MemorySuggestion).count() == 0
+    assert any("unrecognized kind" in record.message for record in caplog.records)
+
+
 def test_propose_updates_ignores_hallucinated_field_key(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     draft = _create_draft(db_session, tenant)

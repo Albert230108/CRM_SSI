@@ -220,6 +220,29 @@ def latest_inbound_text(db: Session, tenant_id: int, channel: str) -> str | None
     return (messages[-1].message or "").strip() if messages else None
 
 
+def latest_message_text(db: Session, tenant_id: int, channel: str) -> str | None:
+    """Direction-agnostic sibling of latest_inbound_text, for triggers that fire on outbound
+    messages too (brain_writer, action_writer) - a tenant whose very first message was outbound
+    must still get a focus message rather than silently no-op.
+    """
+    if channel == "email":
+        message = (
+            db.query(ConversationMessage)
+            .join(TenantConversationLink, TenantConversationLink.conversation_id == ConversationMessage.conversation_id)
+            .filter(
+                TenantConversationLink.tenant_id == tenant_id,
+                TenantConversationLink.unlinked_at.is_(None),
+                TenantConversationLink.is_visible.is_(True),
+            )
+            .order_by(ConversationMessage.sent_at.desc(), ConversationMessage.id.desc())
+            .first()
+        )
+        return (message.body or "").strip() if message is not None else None
+
+    messages = load_tenant_whatsapp_messages(db, tenant_id)
+    return (messages[-1].message or "").strip() if messages else None
+
+
 def _resolve_history_channels(profile: AiAgentProfile, channel: str) -> str:
     """"inbound" means "whichever channel this message arrived on"; everything else is literal."""
     configured = (profile.history_channels or "both").strip()

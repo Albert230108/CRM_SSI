@@ -34,7 +34,8 @@ from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
 from app.schemas.gmail_integration import ConversationRead, GmailAccountRead
 from app.services.ai_draft_trigger_service import register_inbound_message
-from app.services.tenant_brain_trigger_service import register_inbound_message as register_brain_inbound_message
+from app.services.action_writer_trigger_service import register_message_trigger as register_action_writer_trigger
+from app.services.tenant_brain_trigger_service import register_message_trigger as register_brain_trigger
 from app.services.background_jobs import get_job, start_job
 from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_gmail_attachment_bytes
 from app.services.html_text import html_to_text
@@ -565,7 +566,12 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         thread_ref=str(conversation.id),
                     )
                     register_inbound_message(db, tenant=notify_tenant, channel="email", email_thread_id=conversation.id)
-                    register_brain_inbound_message(db, tenant=notify_tenant, channel="email", email_thread_id=conversation.id)
+                    register_brain_trigger(
+                        db, tenant_id=notify_tenant.id, channel="email", direction="inbound", email_thread_id=conversation.id
+                    )
+                    register_action_writer_trigger(
+                        db, tenant_id=notify_tenant.id, channel="email", direction="inbound", email_thread_id=conversation.id
+                    )
                     register_notification_for_whatsapp(db)
         except IntegrityError:
             continue

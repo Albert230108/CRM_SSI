@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -31,7 +30,6 @@ from app.models.tenant_brain_entry_history import (
 )
 from app.models.tenant_brain_trigger import TenantBrainTrigger
 from app.services import (
-    action_item_service,
     ai_agent_orchestrator,
     ai_prompt_blocks,
     ai_reply_service,
@@ -57,18 +55,6 @@ BRAIN_WRITER_SCHEMA = {
                     "value": {"type": "string"},
                 },
                 "required": ["key", "value"],
-            },
-        },
-        "action_items": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "due_date": {"type": "string"},
-                },
-                "required": ["title"],
             },
         },
         "entries": {"type": "array", "items": {"type": "string"}},
@@ -100,21 +86,12 @@ _FIELD_GUARDRAILS = (
     "a fact in `entries` if it already fits one of these fields."
 )
 
-_ACTION_ITEM_GUARDRAILS = (
-    "## Action Items\n"
-    "Do NOT invent action items. Only add one to `action_items` if the tenant explicitly "
-    "requests a task, or a clear operational follow-up is strictly required by this specific "
-    "message. When in doubt, leave `action_items` empty."
-)
-
 _OUTPUT_INSTRUCTION = (
     "## Output\n"
     "Return JSON only. Set `should_remember` to true only if there is at least one new, durable "
-    "fact, field value, or action item worth saving. `field_values` lists only fields you have "
-    "direct evidence for (omit the rest). `action_items` lists only genuinely new tasks (see "
-    "guardrails above - usually empty). `entries` is a list of short, standalone facts to add "
-    "that don't fit a field - empty if should_remember is false. `reasoning` briefly explains "
-    "the decision."
+    "fact or field value worth saving. `field_values` lists only fields you have direct evidence "
+    "for (omit the rest). `entries` is a list of short, standalone facts to add that don't fit a "
+    "field - empty if should_remember is false. `reasoning` briefly explains the decision."
 )
 
 
@@ -243,7 +220,6 @@ def _build_prompt(
     fields_block = _fields_block(db, tenant.id)
     if fields_block:
         parts.append(fields_block)
-    parts.append(_ACTION_ITEM_GUARDRAILS)
 
     if history_limit:
         parts.append(
@@ -343,20 +319,6 @@ def _run_brain_writer(
             continue
         brain_field_service.set_value(db, tenant.id, definition.id, value, source=source)
 
-    for action_item in plan.get("action_items") or []:
-        title = str((action_item or {}).get("title") or "").strip()
-        if not title:
-            continue
-        description = str((action_item or {}).get("description") or "").strip() or None
-        due_date_raw = str((action_item or {}).get("due_date") or "").strip()
-        due_date = None
-        if due_date_raw:
-            try:
-                due_date = date.fromisoformat(due_date_raw)
-            except ValueError:
-                due_date = None
-        action_item_service.create_ai_item(db, tenant.id, title, description, due_date)
-
     run.status = STATUS_COMPLETED
     return added
 
@@ -379,7 +341,7 @@ def generate_brain_update_for_trigger(db: Session, trigger: TenantBrainTrigger) 
     if profile is None:
         return []
 
-    inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, trigger.channel)
+    inbound_text = ai_agent_orchestrator.latest_message_text(db, tenant.id, trigger.channel)
     if not inbound_text:
         return []
 

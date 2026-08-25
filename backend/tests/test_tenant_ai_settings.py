@@ -51,6 +51,9 @@ def test_get_creates_default_settings_row(non_admin_client, db_session):
         # gets automatic brain updates.
         "brain_writer_enabled": False,
         "brain_writer_profile_id": None,
+        # Independent of planner_mode and brain_writer_enabled - also opt-in.
+        "action_writer_enabled": False,
+        "action_writer_profile_id": None,
     }
 
 

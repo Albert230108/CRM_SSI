@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'memory_redo' | 'memory_qa'
+export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'memory_redo' | 'memory_qa'
 
 export type AiAgentProfile = {
   id: number
@@ -93,8 +93,10 @@ export default function AiAgentProfiles() {
     planner: [],
     checker: [],
     drafter: [],
-    // brain_writer has no editable prompt-block registry - see the loadPromptBlocks effect.
+    // brain_writer and action_writer have no editable prompt-block registry - see the
+    // loadPromptBlocks effect.
     brain_writer: [],
+    action_writer: [],
     memory_redo: [],
     memory_qa: [],
   })
@@ -114,7 +116,7 @@ export default function AiAgentProfiles() {
   }, [load])
 
   useEffect(() => {
-    // brain_writer still has no editable prompt-block registry; the other roles do.
+    // brain_writer and action_writer still have no editable prompt-block registry; the other roles do.
     const roles: AgentRole[] = ['planner', 'checker', 'drafter', 'memory_redo', 'memory_qa']
     const loadPromptBlocks = async () => {
       const entries = await Promise.all(
@@ -293,7 +295,8 @@ export default function AiAgentProfiles() {
       {renderRole('planner', 'Planner profiles', 'Chooses the template, the knowledge to pull in, and the instruction for the drafter.')}
       {renderRole('checker', 'Checker profiles', 'Reviews each draft. It never rewrites the text itself — it only approves or gives feedback.')}
       {renderRole('drafter', 'Drafter profiles', 'Writes the reply itself. Prompt text only — model, sampling and context still come from the reply template.')}
-      {renderRole('brain_writer', 'Brain writer profiles', 'Decides, independently of the planner, whether an inbound message is worth remembering long-term for a tenant.')}
+      {renderRole('brain_writer', 'Brain writer profiles', 'Decides, independently of the planner, whether a message is worth remembering long-term for a tenant.')}
+      {renderRole('action_writer', 'Action writer profiles', 'Decides, independently of the planner and brain writer, whether a tenant’s action-item list needs a new task or a change to an existing one.')}
       {renderRole('memory_qa', 'Memory QA profiles', 'Answers ad-hoc tenant questions using the context you choose below.')}
       {renderRole('memory_redo', 'Redo log agent profiles', 'Reads redo logs and suggests durable rule changes for review.')}
 

@@ -98,7 +98,7 @@ def test_yes_reply_sends_draft_and_confirms(client, db_session, monkeypatch):
     draft = _create_draft(db_session, tenant)
     _create_approval_request(db_session, draft, user)
 
-    def fake_send_scheduled_draft(db, draft_arg):
+    def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
         return True
 
@@ -120,6 +120,66 @@ def test_yes_reply_sends_draft_and_confirms(client, db_session, monkeypatch):
     assert request.response == "YES"
     assert request.responded_at is not None
     assert db_session.query(Communication).count() == 0
+
+
+def test_yes_reply_with_trailing_text_is_logged_as_resolution_reason(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    user = _create_user(db_session)
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+    _create_approval_request(db_session, draft, user)
+
+    def fake_send_scheduled_draft(db, draft_arg, **kwargs):
+        draft_arg.status = "sent"
+        draft_arg.resolution_source = kwargs.get("resolution_source")
+        draft_arg.resolution_reason = kwargs.get("reason")
+        return True
+
+    monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
+    _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message=f"YES-{draft.id} guest already confirmed by phone")
+
+    assert response.status_code == 200
+    db_session.refresh(draft)
+    assert draft.resolution_source == "human_whatsapp"
+    assert draft.resolution_reason == "guest already confirmed by phone"
+
+
+def test_no_reply_with_trailing_text_is_logged_as_resolution_reason(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    user = _create_user(db_session)
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+    _create_approval_request(db_session, draft, user)
+    _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message=f"NO-{draft.id} wrong tone for this guest")
+
+    assert response.status_code == 200
+    db_session.refresh(draft)
+    assert draft.status == "dismissed"
+    assert draft.resolution_source == "human_whatsapp"
+    assert draft.resolution_reason == "wrong tone for this guest"
+
+
+def test_no_reply_without_trailing_text_gets_generic_resolution_reason(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    user = _create_user(db_session)
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+    draft = _create_draft(db_session, tenant)
+    _create_approval_request(db_session, draft, user)
+    _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message=f"NO-{draft.id}")
+
+    assert response.status_code == 200
+    db_session.refresh(draft)
+    assert draft.resolution_source == "human_whatsapp"
+    assert "via WhatsApp by" in draft.resolution_reason
 
 
 def test_no_reply_dismisses_draft(client, db_session, monkeypatch):
@@ -184,7 +244,7 @@ def test_lid_reply_is_matched_by_stored_identity_key(client, db_session, monkeyp
     draft = _create_draft(db_session, tenant)
     _create_approval_request(db_session, draft, user)
 
-    def fake_send_scheduled_draft(db, draft_arg):
+    def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
         return True
 
@@ -225,7 +285,7 @@ def test_lid_reply_matches_when_canonical_identity_is_the_crm_number(client, db_
     draft = _create_draft(db_session, tenant)
     _create_approval_request(db_session, draft, user)
 
-    def fake_send_scheduled_draft(db, draft_arg):
+    def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
         return True
 
@@ -546,7 +606,7 @@ def test_redo_then_yes_still_works_after_reset(client, db_session, monkeypatch):
     redo_response = _post_reply(client, sender=user.phone, message=f"REDO-{draft.id} shorter please")
     assert redo_response.status_code == 200
 
-    def fake_send_scheduled_draft(db, draft_arg):
+    def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
         return True
 

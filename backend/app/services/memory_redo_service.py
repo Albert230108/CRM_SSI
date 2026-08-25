@@ -42,8 +42,11 @@ MEMORY_REDO_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    # One of: field_value | brain_entry | rule_add | rule_modify | rule_delete
-                    "kind": {"type": "string"},
+                    # An unconstrained string here lets the model invent plausible-but-wrong
+                    # values (e.g. "add_global_rule" instead of "rule_add") that _create_suggestions
+                    # then silently drops - the enum is what actually pins the model to the
+                    # literals the code checks for; the comment alone is invisible to it.
+                    "kind": {"type": "string", "enum": sorted(_LEGACY_VALID_KINDS)},
                     # field_value only
                     "field_key": {"type": "string"},
                     "value": {"type": "string"},
@@ -71,7 +74,7 @@ RULE_REDO_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string"},
+                    "kind": {"type": "string", "enum": sorted(_RULE_VALID_KINDS)},
                     "rule_id": {"type": "integer"},
                     "condition_text": {"type": "string"},
                     "action_text": {"type": "string"},
@@ -116,6 +119,17 @@ _RULE_OUTPUT_INSTRUCTION = (
 )
 
 
+def _recent_decisions_lines(db: Session, tenant_id: int) -> list[str]:
+    recent_drafts = (
+        db.query(AiAutoDraft)
+        .filter(AiAutoDraft.tenant_id == tenant_id, AiAutoDraft.resolution_reason.isnot(None))
+        .order_by(AiAutoDraft.updated_at.desc())
+        .limit(10)
+        .all()
+    )
+    return [f"- {draft.status} ({draft.resolution_source}): {draft.resolution_reason}" for draft in recent_drafts]
+
+
 def _fields_and_rules_block(db: Session, tenant_id: int, blocks: dict[str, str]) -> str:
     definitions = brain_field_service.list_definitions(db, active_only=True)
     values = brain_field_service.get_values_for_tenant(db, tenant_id)
@@ -133,6 +147,7 @@ def _fields_and_rules_block(db: Session, tenant_id: int, blocks: dict[str, str])
         ai_prompt_blocks.join(blocks["ctx_entries"], "\n".join(entry_lines) or "None yet."),
         ai_prompt_blocks.join(blocks["ctx_rules"], "\n".join(rule_lines) or "None yet."),
         ai_prompt_blocks.join(blocks["ctx_availability"], beds24_availability_service.get_cached_summary(db)),
+        ai_prompt_blocks.join(blocks["ctx_recent_decisions"], "\n".join(_recent_decisions_lines(db, tenant_id)) or "None yet."),
     ]
     return "\n\n".join(parts)
 
@@ -257,15 +272,25 @@ def _create_suggestions(
     for item in raw_suggestions:
         kind = str((item or {}).get("kind") or "").strip()
         if kind not in valid_kinds:
+            # The schema's enum should prevent this, but log rather than silently drop it in
+            # case the model ever violates it (or a future kind is added to the schema without
+            # updating valid_kinds here) - a run that logs "completed" with zero suggestions
+            # actually created is otherwise indistinguishable from one that genuinely found
+            # nothing worth proposing.
+            logger.warning("Memory redo suggestion dropped: unrecognized kind=%r tenant_id=%s item=%r", kind, tenant.id, item)
             continue
         proposed_value = _build_proposed_value(item or {})
         if proposed_value is None:
+            logger.warning("Memory redo suggestion dropped: incomplete fields for kind=%s tenant_id=%s item=%r", kind, tenant.id, item)
             continue
 
         target_id = proposed_value.get("rule_id")
         if kind == KIND_FIELD_VALUE:
             definition = definitions_by_key.get(proposed_value["field_key"])
             if definition is None:
+                logger.warning(
+                    "Memory redo suggestion dropped: unknown field_key=%r tenant_id=%s", proposed_value["field_key"], tenant.id
+                )
                 continue
             target_id = definition.id
 

@@ -30,12 +30,14 @@ type TenantAiSettings = {
   drafter_profile_id: number | null
   brain_writer_enabled: boolean
   brain_writer_profile_id: number | null
+  action_writer_enabled: boolean
+  action_writer_profile_id: number | null
 }
 
 type AgentProfileOption = {
   id: number
   name: string
-  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'memory_redo'
+  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'memory_redo'
   is_default: boolean
 }
 
@@ -56,6 +58,8 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
   drafter_profile_id: null,
   brain_writer_enabled: false,
   brain_writer_profile_id: null,
+  action_writer_enabled: false,
+  action_writer_profile_id: null,
 })
 
 export default function AiTenantSettings() {
@@ -769,6 +773,48 @@ export default function AiTenantSettings() {
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'brain_writer').map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-2.5">
+                <p className="text-sm font-semibold text-gray-900">Action Writer</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  Independent of the toggles above: when enabled, a lightweight step reviews each
+                  inbound or outbound message and, if a task is worth tracking, adds it directly
+                  to this tenant&apos;s Actions list. If it decides an existing action needs to
+                  change or be removed, that goes to Pending Suggestions for a human to approve
+                  first.
+                </p>
+                <label className="mt-2 flex items-center gap-2 text-sm text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={settings.action_writer_enabled}
+                    onChange={(event) =>
+                      setSettings((current) => (current ? { ...current, action_writer_enabled: event.target.checked } : current))
+                    }
+                  />
+                  Enable automatic action-item updates for this tenant
+                </label>
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="action-writer-profile">
+                    Action writer profile
+                  </label>
+                  <select
+                    id="action-writer-profile"
+                    value={settings.action_writer_profile_id ?? ''}
+                    disabled={!settings.action_writer_enabled}
+                    onChange={(event) =>
+                      setSettings((current) =>
+                        current ? { ...current, action_writer_profile_id: event.target.value ? Number(event.target.value) : null } : current,
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                  >
+                    <option value="">Use the default</option>
+                    {agentProfiles.filter((profile) => profile.role === 'action_writer').map((profile) => (
                       <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
                     ))}
                   </select>

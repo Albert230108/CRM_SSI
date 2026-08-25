@@ -380,16 +380,25 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> bool:
     return True
 
 
-def send_scheduled_draft(db: Session, draft: AiAutoDraft) -> bool:
+def send_scheduled_draft(
+    db: Session, draft: AiAutoDraft, *, resolution_source: str = "human_ui", reason: str | None = None
+) -> bool:
     """Sends a `pending_auto_send` draft via the same primitives manual sends use.
 
     Returns True and mutates draft.status/sent_communication_id on success; on failure the
     draft is left as `pending_auto_send` (unlogged failures would otherwise silently drop a
     reply the tenant is waiting on) so it's retried on the next scheduler sweep, and still
     visible/actionable (dismiss/use manually) in the pending-drafts UI in the meantime.
+
+    `resolution_source`/`reason` record why this send happened - "human_ui" (CRM button),
+    "human_whatsapp" (a YES-{id} reply), or "auto_timer" (the scheduler, no human involved).
+    The auto-timer path has no explicit reason of its own, so it falls back to the checker's
+    feedback - the reason a draft was allowed to auto-send in the first place.
     """
     sent = _send_email_draft(db, draft) if draft.channel == "email" else _send_whatsapp_draft(db, draft)
     if not sent:
         return False
     draft.status = "sent"
+    draft.resolution_source = resolution_source
+    draft.resolution_reason = reason or (draft.checker_feedback if resolution_source == "auto_timer" else None)
     return True

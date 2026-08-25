@@ -26,6 +26,7 @@ export default function AiPendingDrafts() {
   const [redoWhat, setRedoWhat] = useState('')
   const [redoWhy, setRedoWhy] = useState('')
   const [redoSubmitting, setRedoSubmitting] = useState(false)
+  const [reasons, setReasons] = useState<Record<number, string>>({})
 
   const loadDrafts = useCallback(async () => {
     if (!token) return
@@ -47,7 +48,8 @@ export default function AiPendingDrafts() {
   const dismiss = async (draft: AiAutoDraftItem) => {
     await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/dismiss`, {
       method: 'PUT',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ reason: reasons[draft.id]?.trim() || null }),
     })
     await loadDrafts()
   }
@@ -68,7 +70,8 @@ export default function AiPendingDrafts() {
     })
     const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/send-now`, {
       method: 'PUT',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ reason: reasons[draft.id]?.trim() || null }),
     })
     if (!response.ok) {
       let detail = 'Failed to send draft.'
@@ -130,6 +133,13 @@ export default function AiPendingDrafts() {
                 <p className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
               </div>
             </div>
+            <input
+              type="text"
+              value={reasons[draft.id] ?? ''}
+              onChange={(event) => setReasons((prev) => ({ ...prev, [draft.id]: event.target.value }))}
+              placeholder="Reason for sending/dismissing (optional, logged for the redo agent)"
+              className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 outline-none focus:border-cyan-300"
+            />
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
