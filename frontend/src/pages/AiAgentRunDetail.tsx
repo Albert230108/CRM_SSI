@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -55,6 +56,8 @@ export default function AiAgentRunDetail() {
   const [error, setError] = useState('')
   const [run, setRun] = useState<AgentRunDetail | null>(null)
   const [expandedStepId, setExpandedStepId] = useState<number | null>(null)
+
+  useDocumentTitle(run ? `CRM - Run #${run.id} - ${run.tenant_name ?? 'Unknown Tenant'}` : `CRM - Run #${runId}`)
 
   const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : undefined), [token])
 

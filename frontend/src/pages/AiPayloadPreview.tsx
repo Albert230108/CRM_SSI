@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -18,6 +19,7 @@ type PreviewResponse = {
 }
 
 export default function AiPayloadPreview() {
+  useDocumentTitle('CRM - AI Payload Preview')
   const token = useAuthStore((state) => state.token)
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [error, setError] = useState('')

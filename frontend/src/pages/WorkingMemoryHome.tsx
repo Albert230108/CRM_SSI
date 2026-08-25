@@ -7,6 +7,7 @@ import SettingsSidebarLayout, { SettingsTab } from '../components/settings/Setti
 import WorkingMemoryCanvas from '../components/WorkingMemoryCanvas'
 import { CARD_HEIGHT, CARD_WIDTH, nextCardPosition, type WorkingMemoryCard } from '../lib/workingMemoryCanvas'
 import { formatDisplayDateShortMonth } from '../lib/date'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -812,6 +813,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
 // -------------------------------------------------------------------------------- page shell
 
 export default function WorkingMemoryHome() {
+  useDocumentTitle('CRM - Working Memory')
   const [activeTab, setActiveTab] = useState('rules')
   const { toast, showSuccess, showError, dismiss } = useToast()
 

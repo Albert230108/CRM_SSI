@@ -179,6 +179,8 @@ def _build_prompt(
         parts.append(ai_reply_service._build_beds24_context(tenant))
     if profile.include_notes:
         parts.append(ai_reply_service._build_notes_context(tenant))
+    if profile.include_payments:
+        parts.append(ai_reply_service._build_payments_context(db, tenant))
     if message_text:
         parts.append(ai_prompt_blocks.join("## Latest Message", message_text))
 

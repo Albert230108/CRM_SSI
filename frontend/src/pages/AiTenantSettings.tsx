@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -64,6 +65,7 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
 })
 
 export default function AiTenantSettings() {
+  useDocumentTitle('CRM - AI Tenant Settings')
   const token = useAuthStore((state) => state.token)
   const location = useLocation()
   const [searchQuery, setSearchQuery] = useState('')

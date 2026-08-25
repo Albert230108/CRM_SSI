@@ -24,6 +24,7 @@ import {
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
 import { useSyncStore } from '../store/syncStore'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const DESKTOP_BREAKPOINT = '(min-width: 768px)'
 const MESSAGE_TOAST_DURATION_MS = 6000
@@ -112,6 +113,15 @@ export default function Dashboard() {
   const handleThreadReady = useCallback((readyTenantId: number) => {
     if (readyTenantId === selectedTenantIdRef.current) setThreadReady(true)
   }, [])
+
+  const [activeTenantName, setActiveTenantName] = useState<string | null>(null)
+  useEffect(() => {
+    setActiveTenantName(null)
+  }, [selectedTenantId])
+  const handleTenantLoaded = useCallback((tenantName: string) => {
+    setActiveTenantName(tenantName)
+  }, [])
+  useDocumentTitle(selectedTenantId !== undefined ? `CRM - ${activeTenantName ?? 'Dashboard'}` : 'CRM - Dashboard')
 
   const isSwitchingTenant = selectedTenantId !== undefined && !(financeReady && oneDriveReady && notesReady && threadReady)
 
@@ -384,6 +394,7 @@ export default function Dashboard() {
               tenantId={selectedTenantId}
               reloadSignal={tenantReloadSignal}
               onReady={handleThreadReady}
+              onTenantLoaded={handleTenantLoaded}
               initialThreadTarget={initialThreadTarget}
               onInitialThreadTargetConsumed={() => setInitialThreadTarget(null)}
             />

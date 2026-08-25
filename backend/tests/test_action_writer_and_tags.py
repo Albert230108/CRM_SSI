@@ -237,6 +237,39 @@ def test_action_writer_creates_new_item_directly(db_session, monkeypatch):
     assert run.mode == "action_writer"
 
 
+def test_action_writer_includes_payments_context_when_enabled(db_session, monkeypatch):
+    """include_payments exists on AiAgentProfile and is honored by the planner/drafter, but was
+    never wired into the action writer's own prompt builder -- toggling it on for an
+    action_writer profile must actually include payments/charges context in its prompt."""
+    from app.models.finance import Finance
+
+    tenant = _create_tenant(db_session)
+    profile = _setup_action_writer(db_session, tenant)
+    profile.include_payments = True
+    db_session.add(Finance(tenant_id=tenant.id, type="charge", amount=120, currency="EUR", description="Cleaning fee"))
+    db_session.commit()
+
+    captured_prompts = []
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "When is my next payment due?")
+
+    def _generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        from app.services import gemini_client
+
+        captured_prompts.append(prompt)
+        return gemini_client.GenerationResult(
+            text="ignored", parsed={"reasoning": "No action needed."}, model=model or "fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+        )
+
+    monkeypatch.setattr(action_writer_service.gemini_client, "generate", _generate)
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert len(captured_prompts) == 1
+    assert "Cleaning fee" in captured_prompts[0]
+
+
 def test_action_writer_modify_creates_pending_suggestion_not_direct_change(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_action_writer(db_session, tenant)

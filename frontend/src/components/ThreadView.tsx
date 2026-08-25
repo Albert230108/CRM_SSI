@@ -313,6 +313,7 @@ type WhatsappEndpointOption = {
   chat_display_name: string | null
   routing_strategy: string
   is_active: boolean
+  is_most_recent_inbound?: boolean
 }
 
 type ThreadWhatsappLink = {
@@ -430,6 +431,7 @@ type ThreadViewProps = {
   tenantId?: number
   reloadSignal?: number
   onReady?: (tenantId: number) => void
+  onTenantLoaded?: (tenantName: string) => void
   // Set when the panel was opened from a notification click, so the specific email thread or
   // WhatsApp group that notification was about gets auto-selected once threads finish loading.
   initialThreadTarget?: { channel: string; threadRef: string } | null
@@ -543,7 +545,7 @@ type AiAutoDraftItem = {
   created_at: string
 }
 
-export default function ThreadView({ tenantId, reloadSignal, onReady, initialThreadTarget, onInitialThreadTargetConsumed }: ThreadViewProps) {
+export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLoaded, initialThreadTarget, onInitialThreadTargetConsumed }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
   const user = useAuthStore((state) => state.user)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
@@ -1362,6 +1364,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
         const groupedThreadData: GroupedThreadResponse = await threadResponse.json()
         const endpointData: WhatsappEndpointOption[] = await endpointResponse.json()
         setTenant(tenantData)
+        onTenantLoaded?.(tenantData.name)
         setItems(groupedThreadData.items)
         setWhatsappEndpoints(endpointData)
 
@@ -1387,7 +1390,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
           if (current && endpointData.some((endpoint) => String(endpoint.id) === current)) {
             return current
           }
-          return endpointData.length === 1 ? String(endpointData[0].id) : ''
+          if (endpointData.length === 1) return String(endpointData[0].id)
+          const mostRecentInbound = endpointData.find((endpoint) => endpoint.is_most_recent_inbound)
+          return mostRecentInbound ? String(mostRecentInbound.id) : ''
         })
         if (linksResponse.ok) {
           const linksData: ThreadWhatsappLink[] = await linksResponse.json()

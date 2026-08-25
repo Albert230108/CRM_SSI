@@ -18,6 +18,7 @@ import {
   type AiTemplateSection,
   type BrainSectionOption,
 } from '../types/aiReplyTemplate'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -117,6 +118,7 @@ export default function AiTemplateEditor() {
   const isNew = templateId === 'new'
 
   const [form, setForm] = useState<FormState>(createEmptyForm)
+  useDocumentTitle(isNew ? 'CRM - New Template' : `CRM - ${form.name || 'Edit Template'}`)
   const [brainSections, setBrainSections] = useState<BrainSectionOption[]>([])
   const [loading, setLoading] = useState(!isNew)
   const [notFound, setNotFound] = useState(false)

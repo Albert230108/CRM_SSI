@@ -7,6 +7,7 @@ import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SettingsSidebarLayout, { SettingsTab } from '../components/settings/SettingsSidebarLayout'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -49,6 +50,7 @@ const SETTINGS_TABS: SettingsTab[] = [
 ]
 
 export default function Settings() {
+  useDocumentTitle('CRM - Settings')
   const token = useAuthStore((state) => state.token)
   const user = useAuthStore((state) => state.user)
   const setUser = useAuthStore((state) => state.setUser)

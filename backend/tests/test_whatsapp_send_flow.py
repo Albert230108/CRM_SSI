@@ -132,8 +132,9 @@ def test_whatsapp_send_targets_linked_chat_not_tenant_primary_phone(user_client,
 
 
 def test_whatsapp_send_requires_specific_endpoint_when_account_has_multiple_chats(user_client, db_session, monkeypatch):
-    """external_account_id alone can no longer disambiguate once a tenant has multiple active
-    chats linked on that account -- the caller must pick a specific whatsapp_endpoint_id."""
+    """external_account_id alone can't disambiguate once a tenant has multiple active chats
+    linked on that account and neither has ever received an inbound message -- there's no
+    recency signal to default to, so the caller must pick a specific whatsapp_endpoint_id."""
     tenant = create_tenant(db_session, booking_id="B-outbound-ambiguous")
     first = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
     first.external_chat_namespace = "111@lid"
@@ -157,6 +158,76 @@ def test_whatsapp_send_requires_specific_endpoint_when_account_has_multiple_chat
 
     assert response.status_code == 400
     assert "multiple chats" in response.json()["detail"]
+
+
+def test_whatsapp_send_defaults_to_most_recent_inbound_chat_when_account_is_ambiguous(user_client, db_session, monkeypatch):
+    """When a tenant has multiple active chats linked on the same account, sending with only
+    external_account_id (no whatsapp_endpoint_id) should default to whichever chat most
+    recently received an inbound message, instead of erroring out on the ambiguity."""
+    tenant = create_tenant(db_session, booking_id="B-outbound-default-recent")
+    older_endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    older_endpoint.external_chat_namespace = "111@lid"
+    newer_endpoint = create_whatsapp_endpoint(db_session, tenant.id, "edi-crm-whatsapp")
+    newer_endpoint.external_chat_namespace = "222@lid"
+    db_session.commit()
+
+    db_session.add_all(
+        [
+            Communication(
+                tenant_id=tenant.id,
+                channel="whatsapp",
+                direction="inbound",
+                provider="whatsapp-service",
+                external_account_id="edi-crm-whatsapp",
+                external_chat_namespace="111@lid",
+                message="Hello from the older chat",
+                created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+            Communication(
+                tenant_id=tenant.id,
+                channel="whatsapp",
+                direction="inbound",
+                provider="whatsapp-service",
+                external_account_id="edi-crm-whatsapp",
+                external_chat_namespace="222@lid",
+                message="Hello from the newer chat",
+                created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    captured = {}
+
+    async def fake_send_whatsapp_message(payload):
+        captured.update(payload)
+        return {
+            "whatsapp_message_id": "msg-outbound-default-recent",
+            "whatsapp_chat_id": "222@lid",
+            "tenant_id": payload["tenant_id"],
+            "external_account_id": payload["external_account_id"],
+            "whatsapp_endpoint_id": payload["whatsapp_endpoint_id"],
+        }
+
+    monkeypatch.setattr("app.api.communications.send_whatsapp_message", fake_send_whatsapp_message)
+
+    response = user_client.post(
+        f"/api/communications/tenants/{tenant.id}/send",
+        json={
+            "channel": "whatsapp",
+            "message": "Hello",
+            "external_account_id": "edi-crm-whatsapp",
+        },
+    )
+
+    assert response.status_code == 201
+    assert captured["whatsapp_endpoint_id"] == newer_endpoint.id
+
+    endpoints_response = user_client.get(f"/api/communications/tenants/{tenant.id}/whatsapp-endpoints")
+    assert endpoints_response.status_code == 200
+    flags = {row["id"]: row["is_most_recent_inbound"] for row in endpoints_response.json()}
+    assert flags[newer_endpoint.id] is True
+    assert flags[older_endpoint.id] is False
 
 
 def test_whatsapp_send_returns_explicit_bridge_mismatch_error(client, db_session, monkeypatch):

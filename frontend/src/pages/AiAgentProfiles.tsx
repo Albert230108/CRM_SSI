@@ -3,11 +3,13 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import { type AgentRole, type AiAgentProfile } from '../types/aiAgentProfile'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const CARD = 'rounded-2xl border border-gray-200 bg-white p-3.5'
 
 export default function AiAgentProfiles() {
+  useDocumentTitle('CRM - AI Agents')
   const token = useAuthStore((state) => state.token)
   const location = useLocation()
   const [profiles, setProfiles] = useState<AiAgentProfile[]>([])

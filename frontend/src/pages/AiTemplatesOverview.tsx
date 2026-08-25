@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { withAiSettingsReturn } from '../lib/aiSettingsNavigation'
 import { useAuthStore } from '../store/authStore'
 import type { AiReplyTemplate } from '../types/aiReplyTemplate'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -16,6 +17,7 @@ const AI_HUB_LINKS = [
 ] as const
 
 export default function AiTemplatesOverview() {
+  useDocumentTitle('CRM - AI Templates')
   const token = useAuthStore((state) => state.token)
   const [templates, setTemplates] = useState<AiReplyTemplate[]>([])
   const [loading, setLoading] = useState(true)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -40,6 +41,7 @@ function templateLabel(id: number | null, name?: string | null): string {
 }
 
 export default function AiAgentRuns() {
+  useDocumentTitle('CRM - AI Runs')
   const token = useAuthStore((state) => state.token)
   const location = useLocation()
   const [runs, setRuns] = useState<AgentRun[]>([])

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -17,6 +18,7 @@ type AiAutoDraftItem = {
 }
 
 export default function AiPendingDrafts() {
+  useDocumentTitle('CRM - AI Drafts')
   const token = useAuthStore((state) => state.token)
   const navigate = useNavigate()
   const [drafts, setDrafts] = useState<AiAutoDraftItem[]>([])

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -12,6 +13,7 @@ type InviteInfo = {
 }
 
 export default function InvitationSetup() {
+  useDocumentTitle('CRM - Set Up Account')
   const { token } = useParams()
   const navigate = useNavigate()
   const setAuth = useAuthStore((state) => state.setAuth)

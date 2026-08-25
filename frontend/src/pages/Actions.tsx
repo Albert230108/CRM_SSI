@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -135,6 +136,7 @@ function joinTagNames(tags: Array<{ name: string }>) {
 }
 
 export default function Actions() {
+  useDocumentTitle('CRM - Actions')
   const token = useAuthStore((state) => state.token)
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
   const { toast, showError, dismiss } = useToast()

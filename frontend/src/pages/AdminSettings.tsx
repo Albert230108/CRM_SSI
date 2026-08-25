@@ -5,6 +5,7 @@ import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SettingsSidebarLayout, { SettingsTab } from '../components/settings/SettingsSidebarLayout'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -92,6 +93,7 @@ const emptyNewUser = {
 }
 
 export default function AdminSettings() {
+  useDocumentTitle('CRM - Admin Settings')
   const token = useAuthStore((state) => state.token)
   const { toast, showSuccess, showError, dismiss } = useToast()
   const [activeTab, setActiveTab] = useState('users')

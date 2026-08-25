@@ -169,7 +169,7 @@ def _mask_endpoint_value(value: str | None) -> str | None:
     return f"{value[:4]}***{value[-4:]}"
 
 
-def _to_endpoint_read(endpoint: TenantChannelEndpoint) -> TenantChannelEndpointRead:
+def _to_endpoint_read(endpoint: TenantChannelEndpoint, *, is_most_recent_inbound: bool = False) -> TenantChannelEndpointRead:
     return TenantChannelEndpointRead(
         id=endpoint.id,
         tenant_id=endpoint.tenant_id,
@@ -187,7 +187,45 @@ def _to_endpoint_read(endpoint: TenantChannelEndpoint) -> TenantChannelEndpointR
         has_signing_secret=bool(endpoint.signing_secret),
         created_at=endpoint.created_at,
         updated_at=endpoint.updated_at,
+        is_most_recent_inbound=is_most_recent_inbound,
     )
+
+
+def _resolve_most_recent_inbound_whatsapp_endpoint(
+    db: Session, tenant_id: int, *, external_account_id: str | None = None
+) -> TenantChannelEndpoint | None:
+    """The active WhatsApp endpoint that received the tenant's latest inbound message.
+
+    Communications don't carry a direct FK to the endpoint they belong to, so this maps
+    back via the same provider/account/chat-identity matching used for inbound routing
+    (tenant_channel_resolver), handling @lid vs @c.us variants rather than a naive string
+    match on external_chat_namespace.
+    """
+    query = db.query(Communication).filter(
+        Communication.tenant_id == tenant_id,
+        Communication.channel == "whatsapp",
+        Communication.direction == "inbound",
+    )
+    if external_account_id:
+        query = query.filter(Communication.external_account_id == external_account_id)
+    inbound = query.order_by(Communication.created_at.desc(), Communication.id.desc()).first()
+    if inbound is None:
+        return None
+
+    provider = (inbound.provider or "").strip()
+    account_id = (inbound.external_account_id or "").strip()
+    chat_identity = inbound.external_chat_namespace or inbound.whatsapp_chat_id
+    if not provider or not account_id or not chat_identity:
+        return None
+
+    endpoint = _lookup_whatsapp_endpoint_by_exact_chat_identity(
+        db, provider=provider, external_account_id=account_id, chat_identity=chat_identity
+    )
+    if endpoint is None:
+        endpoint = _lookup_whatsapp_endpoint_by_normalized_chat_identity(
+            db, provider=provider, external_account_id=account_id, chat_identity=chat_identity
+        )
+    return endpoint
 
 
 @router.get("/tenants/{tenant_id}/timeline", response_model=list[CommunicationRead])
@@ -228,7 +266,14 @@ def get_tenant_whatsapp_endpoints(
         .order_by(TenantChannelEndpoint.created_at.desc(), TenantChannelEndpoint.id.desc())
         .all()
     )
-    return [_to_endpoint_read(endpoint) for endpoint in endpoints]
+    most_recent_inbound_endpoint = _resolve_most_recent_inbound_whatsapp_endpoint(db, tenant_id) if len(endpoints) > 1 else None
+    return [
+        _to_endpoint_read(
+            endpoint,
+            is_most_recent_inbound=most_recent_inbound_endpoint is not None and endpoint.id == most_recent_inbound_endpoint.id,
+        )
+        for endpoint in endpoints
+    ]
 
 
 @router.get("/tenants/{tenant_id}/grouped-thread", response_model=MixedTimelineRead)
@@ -670,11 +715,18 @@ async def send_tenant_communication(
                 .all()
             )
             if len(matching_endpoints) > 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Tenant has multiple chats linked on this account; select a specific WhatsApp chat to send from",
+                # Default to whichever of these chats most recently received an inbound
+                # message from the tenant, rather than erroring out on the ambiguity.
+                selected_endpoint = _resolve_most_recent_inbound_whatsapp_endpoint(
+                    db, tenant.id, external_account_id=payload.external_account_id.strip()
                 )
-            selected_endpoint = matching_endpoints[0] if matching_endpoints else None
+                if selected_endpoint is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Tenant has multiple chats linked on this account; select a specific WhatsApp chat to send from",
+                    )
+            else:
+                selected_endpoint = matching_endpoints[0] if matching_endpoints else None
         if selected_endpoint is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select a WhatsApp account to send from")
         if not selected_endpoint.is_active:

@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { type AgentRole, type AiAgentProfile, type PromptBlockDefinition } from '../types/aiAgentProfile'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -148,7 +149,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     history_channels: false,
     history_lookback_days: true,
     include_beds24: true,
-    include_payments: false,
+    include_payments: true,
     include_notes: true,
     include_availability: false,
     include_tenant_brain: false,
@@ -258,6 +259,7 @@ export default function AiAgentProfileEditor() {
   const initialRole = (searchParams.get('role') as AgentRole | null) ?? 'planner'
 
   const [form, setForm] = useState<ProfileForm>(() => emptyForm(isNew ? initialRole : 'planner'))
+  useDocumentTitle(isNew ? 'CRM - New AI Agent' : `CRM - ${form.name || 'Edit AI Agent'}`)
   const [promptBlockDefs, setPromptBlockDefs] = useState<PromptBlockDefinition[]>([])
   const [loading, setLoading] = useState(!isNew)
   const [notFound, setNotFound] = useState(false)
