@@ -439,27 +439,26 @@ export default function AiAgentProfileEditor() {
         {form.id !== null ? `Edit ${form.role} profile` : `New ${form.role} profile`}
       </h1>
 
-      <form onSubmit={save} className="mt-4 rounded-2xl border border-gray-200 bg-white p-3">
-        <div className="mt-0 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div>
+
+      <form onSubmit={save} className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-white p-3.5">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm sm:col-span-2 xl:col-span-2">
             <label className={LABEL} htmlFor="profile-name">
               Name
             </label>
             <input id="profile-name" type="text" value={form.name} onChange={(event) => set('name', event.target.value)} className={INPUT} />
           </div>
-          <div className="flex items-end gap-4 pb-1">
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.is_default} onChange={(event) => set('is_default', event.target.checked)} />
-              Default for this role
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.is_active} onChange={(event) => set('is_active', event.target.checked)} />
-              Active
-            </label>
-          </div>
+          <label className="flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <span className={LABEL}>Default for this role</span>
+            <input className="mt-3 h-4 w-4" type="checkbox" checked={form.is_default} onChange={(event) => set('is_default', event.target.checked)} />
+          </label>
+          <label className="flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <span className={LABEL}>Active</span>
+            <input className="mt-3 h-4 w-4" type="checkbox" checked={form.is_active} onChange={(event) => set('is_active', event.target.checked)} />
+          </label>
         </div>
 
-        <div className="mt-3">
+        <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
           <label className={LABEL} htmlFor="profile-instructions">
             Instructions
           </label>
@@ -474,11 +473,11 @@ export default function AiAgentProfileEditor() {
         </div>
 
         {showModelSampling ? (
-          <>
-            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Model &amp; sampling</h3>
-            <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Model &amp; sampling</h3>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {relevance.model ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-model">
                     Model
                   </label>
@@ -493,7 +492,7 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
               {relevance.temperature ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-temp">
                     Temperature
                   </label>
@@ -510,7 +509,7 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
               {relevance.max_output_tokens ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-max-tokens">
                     Max output tokens
                   </label>
@@ -525,15 +524,15 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
             </div>
-          </>
+          </div>
         ) : null}
 
         {showContextBudget ? (
-          <>
-            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Context budget</h3>
-            <div className="mt-1.5 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Context budget</h3>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {relevance.history_limit ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-history">
                     History messages
                   </label>
@@ -548,7 +547,7 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
               {relevance.history_channels ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-channels">
                     History channels
                   </label>
@@ -566,7 +565,7 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
               {relevance.history_lookback_days ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-lookback">
                     Lookback days
                   </label>
@@ -581,60 +580,69 @@ export default function AiAgentProfileEditor() {
                   />
                 </div>
               ) : null}
-              <div className="flex flex-col gap-2 pt-5">
-                {relevance.include_beds24 ? (
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input type="checkbox" checked={form.include_beds24} onChange={(event) => set('include_beds24', event.target.checked)} /> Booking info
-                  </label>
-                ) : null}
-                {relevance.include_payments ? (
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input type="checkbox" checked={form.include_payments} onChange={(event) => set('include_payments', event.target.checked)} /> Payments &amp; charges
-                  </label>
-                ) : null}
-                {relevance.include_notes ? (
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} /> Internal notes
-                  </label>
-                ) : null}
-                {relevance.include_availability ? (
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input type="checkbox" checked={form.include_availability} onChange={(event) => set('include_availability', event.target.checked)} /> Availability summary
-                  </label>
-                ) : null}
-                {relevance.include_brain_index ? (
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} />{' '}
-                    {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
-                  </label>
-                ) : null}
-              </div>
+              {(relevance.include_beds24 || relevance.include_payments || relevance.include_notes || relevance.include_availability || relevance.include_brain_index) ? (
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 sm:col-span-2 xl:col-span-2">
+                  <p className={LABEL}>Included sources</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {relevance.include_beds24 ? (
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={form.include_beds24} onChange={(event) => set('include_beds24', event.target.checked)} />
+                        Booking info
+                      </label>
+                    ) : null}
+                    {relevance.include_payments ? (
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={form.include_payments} onChange={(event) => set('include_payments', event.target.checked)} />
+                        Payments &amp; charges
+                      </label>
+                    ) : null}
+                    {relevance.include_notes ? (
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={form.include_notes} onChange={(event) => set('include_notes', event.target.checked)} />
+                        Internal notes
+                      </label>
+                    ) : null}
+                    {relevance.include_availability ? (
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={form.include_availability} onChange={(event) => set('include_availability', event.target.checked)} />
+                        Availability summary
+                      </label>
+                    ) : null}
+                    {relevance.include_brain_index ? (
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} />{' '}
+                        {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
+                      </label>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
             </div>
-          </>
+          </div>
         ) : null}
 
         {showGuardrails ? (
-          <>
-            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Guardrails &amp; escalation</h3>
-            {relevance.escalate_keywords ? (
-              <div className="mt-1.5">
-                <label className={LABEL} htmlFor="profile-keywords">
-                  Escalation keywords
-                </label>
-                <input
-                  id="profile-keywords"
-                  type="text"
-                  value={form.escalate_keywords}
-                  onChange={(event) => set('escalate_keywords', event.target.value)}
-                  placeholder="refund, lawyer, police"
-                  className={INPUT}
-                />
-                <p className="mt-1 text-xs text-gray-500">Comma separated. Matches park the conversation for a human before the model runs.</p>
-              </div>
-            ) : null}
-            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Guardrails &amp; escalation</h3>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {relevance.escalate_keywords ? (
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 sm:col-span-2 xl:col-span-2">
+                  <label className={LABEL} htmlFor="profile-keywords">
+                    Escalation keywords
+                  </label>
+                  <input
+                    id="profile-keywords"
+                    type="text"
+                    value={form.escalate_keywords}
+                    onChange={(event) => set('escalate_keywords', event.target.value)}
+                    placeholder="refund, lawyer, police"
+                    className={INPUT}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Comma separated. Matches park the conversation for a human before the model runs.</p>
+                </div>
+              ) : null}
               {relevance.min_confidence ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-min-conf">
                     Minimum confidence
                   </label>
@@ -651,7 +659,7 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
               {relevance.on_no_template_match ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-no-match">
                     When no template fits
                   </label>
@@ -667,7 +675,7 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
               {relevance.max_redraft_attempts ? (
-                <div>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                   <label className={LABEL} htmlFor="profile-redrafts">
                     Max redrafts
                   </label>
@@ -684,7 +692,7 @@ export default function AiAgentProfileEditor() {
                 </div>
               ) : null}
               {relevance.block_auto_send_on_fail ? (
-                <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
+                <label className="flex items-end gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
                   <input
                     type="checkbox"
                     checked={form.block_auto_send_on_fail}
@@ -694,7 +702,7 @@ export default function AiAgentProfileEditor() {
                 </label>
               ) : null}
               {relevance.match_inbound_language ? (
-                <label className="flex items-end gap-2 pb-3 text-sm text-gray-700">
+                <label className="flex items-end gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
                   <input
                     type="checkbox"
                     checked={form.match_inbound_language}
@@ -704,37 +712,41 @@ export default function AiAgentProfileEditor() {
                 </label>
               ) : null}
             </div>
-          </>
+          </div>
         ) : null}
 
         {showCost ? (
-          <>
-            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Cost</h3>
-            <div className="mt-1.5 max-w-xs">
-              <label className={LABEL} htmlFor="profile-cap">
-                Daily token cap
-              </label>
-              <input
-                id="profile-cap"
-                type="number"
-                min={1}
-                value={form.daily_token_cap ?? ''}
-                onChange={(event) => set('daily_token_cap', event.target.value === '' ? null : Number(event.target.value))}
-                placeholder="unlimited"
-                className={INPUT}
-              />
+          <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Cost</h3>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                <label className={LABEL} htmlFor="profile-cap">
+                  Daily token cap
+                </label>
+                <input
+                  id="profile-cap"
+                  type="number"
+                  min={1}
+                  value={form.daily_token_cap ?? ''}
+                  onChange={(event) => set('daily_token_cap', event.target.value === '' ? null : Number(event.target.value))}
+                  placeholder="unlimited"
+                  className={INPUT}
+                />
+              </div>
             </div>
-          </>
+          </div>
         ) : null}
 
         {promptBlockDefs.length > 0 ? (
-          <>
-            <h3 className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt blocks</h3>
-            <p className="mt-1.5 text-xs text-gray-500">
-              Every fixed piece of wording this agent sends to the model. Leave a box blank to remove that block from the prompt entirely.
-            </p>
+          <div className="space-y-2">
+            <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt blocks</h3>
+              <p className="mt-2 text-xs text-gray-500">
+                Every fixed piece of wording this agent sends to the model. Leave a box blank to remove that block from the prompt entirely.
+              </p>
+            </div>
             {form.role !== 'drafter' ? (
-              <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <p className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 The "Output" block text can change, but the field names it mentions are enforced in code.
               </p>
             ) : null}
@@ -743,16 +755,16 @@ export default function AiAgentProfileEditor() {
               const defs = promptBlockDefs.filter((def) => def.group === group)
               if (!defs.length) return null
               return (
-                <div key={group} className="mt-3">
+                <div key={group} className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
                     {group === 'structure' ? 'Structure' : 'Context headings'}
                   </p>
-                  <div className="mt-1.5 space-y-3">
+                  <div className="mt-3 space-y-3">
                     {defs.map((def) => {
                       const value = form.prompt_blocks[def.key] ?? def.default
                       const isDefault = !(def.key in form.prompt_blocks)
                       return (
-                        <div key={def.key}>
+                        <div key={def.key} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
                           <div className="flex items-center justify-between gap-3">
                             <label className={LABEL} htmlFor={`block-${def.key}`}>
                               {def.label}
@@ -793,10 +805,10 @@ export default function AiAgentProfileEditor() {
                 </div>
               )
             })}
-          </>
+          </div>
         ) : null}
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
             type="submit"
             disabled={saving}
@@ -822,7 +834,6 @@ export default function AiAgentProfileEditor() {
           {message ? <p className="text-sm text-gray-600">{message}</p> : null}
         </div>
       </form>
-
       {leavePrompt ? (
         <div
           role="alertdialog"
