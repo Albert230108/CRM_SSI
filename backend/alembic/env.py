@@ -11,6 +11,7 @@ if backend_root not in sys.path:
     sys.path.insert(0, backend_root)
 
 from app.database import Base, DATABASE_URL
+from app.models.action_item_tag import ActionItemTag  # noqa: F401
 from app.models import communication, finance, gmail_integration, password_reset, tenant, tenant_channel_endpoint, tenant_email_address, tenant_phone_alias, user  # noqa: F401
 
 config = context.config

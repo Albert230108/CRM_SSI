@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import relationship
 
 from app.database import Base
 
@@ -27,7 +28,6 @@ class ActionItem(Base):
     due_date = Column(Date, nullable=True)
     status = Column(String(20), nullable=False, default=STATUS_OPEN, server_default=STATUS_OPEN)
     source = Column(String(20), nullable=False)  # manual | ai
-    tag_id = Column(Integer, ForeignKey("action_tag_definitions.id", ondelete="SET NULL"), nullable=True)
     priority = Column(String(4), nullable=True)  # p1 (highest) .. p4, or NULL for none
     # NULL means not recurring. When set, completing this item creates the next occurrence -
     # see action_item_service.complete.
@@ -40,3 +40,13 @@ class ActionItem(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    tag_links = relationship(
+        "ActionItemTag",
+        cascade="all, delete-orphan",
+        order_by="ActionItemTag.position, ActionItemTag.id",
+    )
+
+    @property
+    def tag_ids(self) -> list[int]:
+        return [link.tag_id for link in self.tag_links]

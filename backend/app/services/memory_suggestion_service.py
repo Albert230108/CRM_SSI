@@ -125,7 +125,7 @@ def _apply_action_item_modify(db: Session, suggestion: MemorySuggestion) -> Appl
         item,
         title=proposed.get("title"),
         due_date=due_date,
-        tag_id=proposed.get("tag_id"),
+        tag_ids=proposed.get("tag_ids"),
         priority=proposed.get("priority"),
     )
     return ApplyResult(True, "Action item updated.")

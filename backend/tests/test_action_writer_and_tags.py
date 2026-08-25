@@ -5,6 +5,7 @@ import pytest
 from app.core.dependencies import get_current_user
 from app.main import app
 from app.models.action_item import ActionItem
+from app.models.action_item_tag import ActionItemTag
 from app.models.action_tag_definition import ActionTagDefinition
 from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.ai_agent_profile import ACTION_WRITER_ROLE, AiAgentProfile
@@ -78,27 +79,89 @@ def test_list_active_only_excludes_inactive_tags(user_client):
 # --- Action item tag/priority threading, and recurrence-on-complete ------------------------
 
 
-def test_action_item_read_includes_tag_name_and_color(user_client, db_session):
+def test_action_item_read_includes_tags(user_client, db_session):
     tenant = _create_tenant(db_session)
-    tag = ActionTagDefinition(name="Urgent", color="#f43f5e")
-    db_session.add(tag)
+    tag_a = ActionTagDefinition(name="Urgent", color="#f43f5e")
+    tag_b = ActionTagDefinition(name="Guest", color="#0ea5e9")
+    db_session.add_all([tag_a, tag_b])
     db_session.commit()
 
     response = user_client.post(
         f"/api/tenants/{tenant.id}/action-items",
-        json={"title": "Call guest", "tag_id": tag.id, "priority": "p1"},
+        json={"title": "Call guest", "tag_ids": [tag_a.id, tag_b.id], "priority": "p1"},
     )
     assert response.status_code == 201
     body = response.json()
-    assert body["tag_name"] == "Urgent"
-    assert body["tag_color"] == "#f43f5e"
+    assert body["tags"] == [
+        {"id": tag_a.id, "name": "Urgent", "color": "#f43f5e"},
+        {"id": tag_b.id, "name": "Guest", "color": "#0ea5e9"},
+    ]
     assert body["priority"] == "p1"
+
+
+def test_create_action_item_persists_multiple_tags_in_order(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    tag_a = ActionTagDefinition(name="Urgent", color="#f43f5e")
+    tag_b = ActionTagDefinition(name="Guest", color="#0ea5e9")
+    db_session.add_all([tag_a, tag_b])
+    db_session.commit()
+
+    response = user_client.post(
+        f"/api/tenants/{tenant.id}/action-items",
+        json={"title": "Call guest", "tag_ids": [tag_a.id, tag_b.id]},
+    )
+    assert response.status_code == 201
+    item_id = response.json()["id"]
+
+    rows = db_session.query(ActionItemTag).filter(ActionItemTag.action_item_id == item_id).order_by(ActionItemTag.position, ActionItemTag.id).all()
+    assert [row.tag_id for row in rows] == [tag_a.id, tag_b.id]
+    assert [row.position for row in rows] == [0, 1]
+
+
+def test_update_action_item_tag_ids_replace_clear_and_preserve(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    tag_a = ActionTagDefinition(name="A", color="#111111")
+    tag_b = ActionTagDefinition(name="B", color="#222222")
+    tag_c = ActionTagDefinition(name="C", color="#333333")
+    db_session.add_all([tag_a, tag_b, tag_c])
+    db_session.commit()
+    item = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1), tag_ids=[tag_a.id, tag_b.id], priority="p3")
+    db_session.commit()
+
+    response = user_client.patch(f"/api/action-items/{item.id}", json={"tag_ids": [tag_b.id, tag_c.id]})
+    assert response.status_code == 200
+    assert [tag["id"] for tag in response.json()["tags"]] == [tag_b.id, tag_c.id]
+
+    response = user_client.patch(
+        f"/api/action-items/{item.id}",
+        json={"title": "Retitled", "due_date": "2026-08-10", "priority": "p1"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "Retitled"
+    assert body["due_date"] == "2026-08-10"
+    assert body["priority"] == "p1"
+    assert [tag["id"] for tag in body["tags"]] == [tag_b.id, tag_c.id]
+
+    response = user_client.patch(f"/api/action-items/{item.id}", json={"tag_ids": []})
+    assert response.status_code == 200
+    assert response.json()["tags"] == []
 
 
 def test_complete_recurring_item_creates_next_occurrence(db_session):
     tenant = _create_tenant(db_session)
+    tag_a = ActionTagDefinition(name="Urgent", color="#f43f5e")
+    tag_b = ActionTagDefinition(name="Guest", color="#0ea5e9")
+    db_session.add_all([tag_a, tag_b])
+    db_session.commit()
     item = action_item_service.create(
-        db_session, tenant.id, "Check the boiler", due_date=date(2026, 8, 1), recurrence_interval_days=7, recurrence_anchor="due_date"
+        db_session,
+        tenant.id,
+        "Check the boiler",
+        due_date=date(2026, 8, 1),
+        recurrence_interval_days=7,
+        recurrence_anchor="due_date",
+        tag_ids=[tag_a.id, tag_b.id],
     )
     db_session.commit()
 
@@ -110,6 +173,7 @@ def test_complete_recurring_item_creates_next_occurrence(db_session):
     assert next_item.title == "Check the boiler"
     assert next_item.due_date == date(2026, 8, 8)
     assert next_item.recurrence_interval_days == 7
+    assert next_item.tag_ids == [tag_a.id, tag_b.id]
 
 
 def test_complete_non_recurring_item_creates_no_next_occurrence(db_session):
@@ -148,11 +212,15 @@ def _setup_action_writer(db_session, tenant):
 def test_action_writer_creates_new_item_directly(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_action_writer(db_session, tenant)
+    tag_a = ActionTagDefinition(name="Invoice", color="#0891b2")
+    tag_b = ActionTagDefinition(name="Follow-up", color="#f97316")
+    db_session.add_all([tag_a, tag_b])
+    db_session.commit()
     monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Please call me back about the invoice.")
     monkeypatch.setattr(
         action_writer_service.gemini_client,
         "generate",
-        _fake_generate({"new_items": [{"title": "Call tenant about invoice"}], "reasoning": "Explicit callback request."}),
+        _fake_generate({"new_items": [{"title": "Call tenant about invoice", "tags": ["Invoice", "Follow-up"]}], "reasoning": "Explicit callback request."}),
     )
     trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
 
@@ -163,6 +231,7 @@ def test_action_writer_creates_new_item_directly(db_session, monkeypatch):
     assert item.title == "Call tenant about invoice"
     assert item.source == "ai"
     assert item.status == "open"
+    assert item.tag_ids == [tag_a.id, tag_b.id]
     run = db_session.query(AiAgentRun).filter(AiAgentRun.tenant_id == tenant.id).one()
     assert run.status == "completed"
     assert run.mode == "action_writer"
@@ -171,7 +240,13 @@ def test_action_writer_creates_new_item_directly(db_session, monkeypatch):
 def test_action_writer_modify_creates_pending_suggestion_not_direct_change(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_action_writer(db_session, tenant)
-    existing = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1))
+    old_tag_a = ActionTagDefinition(name="Old A", color="#111111")
+    old_tag_b = ActionTagDefinition(name="Old B", color="#222222")
+    new_tag_a = ActionTagDefinition(name="New A", color="#333333")
+    new_tag_b = ActionTagDefinition(name="New B", color="#444444")
+    db_session.add_all([old_tag_a, old_tag_b, new_tag_a, new_tag_b])
+    db_session.commit()
+    existing = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1), tag_ids=[old_tag_a.id, old_tag_b.id])
     db_session.commit()
 
     monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Actually, push that back a week.")
@@ -180,7 +255,14 @@ def test_action_writer_modify_creates_pending_suggestion_not_direct_change(db_se
         "generate",
         _fake_generate(
             {
-                "modify_items": [{"action_item_id": existing.id, "due_date": "2026-08-08", "reasoning": "Guest asked to push it back."}],
+                "modify_items": [
+                    {
+                        "action_item_id": existing.id,
+                        "due_date": "2026-08-08",
+                        "tags": ["New A", "New B"],
+                        "reasoning": "Guest asked to push it back.",
+                    }
+                ],
                 "reasoning": "Due date change requested.",
             }
         ),
@@ -198,6 +280,7 @@ def test_action_writer_modify_creates_pending_suggestion_not_direct_change(db_se
     assert suggestion.status == "pending"
     assert suggestion.tenant_id == tenant.id
     assert suggestion.proposed_value["due_date"] == "2026-08-08"
+    assert suggestion.proposed_value["tag_ids"] == [new_tag_a.id, new_tag_b.id]
 
 
 def test_action_writer_delete_creates_pending_suggestion(db_session, monkeypatch):
@@ -279,6 +362,35 @@ def test_approve_action_item_modify_suggestion_applies_change(db_session):
     assert item.title == "New title"
 
 
+def test_approve_action_item_modify_suggestion_applies_tag_changes(db_session):
+    from app.services import memory_suggestion_service
+
+    tenant = _create_tenant(db_session)
+    old_tag = ActionTagDefinition(name="Old", color="#111111")
+    new_tag_a = ActionTagDefinition(name="New A", color="#222222")
+    new_tag_b = ActionTagDefinition(name="New B", color="#333333")
+    db_session.add_all([old_tag, new_tag_a, new_tag_b])
+    db_session.commit()
+    item = action_item_service.create(db_session, tenant.id, "Original title", tag_ids=[old_tag.id])
+    db_session.commit()
+    suggestion = MemorySuggestion(
+        kind="action_item_modify",
+        tenant_id=tenant.id,
+        target_id=item.id,
+        proposed_value={"tag_ids": [new_tag_a.id, new_tag_b.id]},
+        status="pending",
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+
+    result = memory_suggestion_service.approve(db_session, suggestion, reviewer_id=None)
+    db_session.commit()
+
+    assert result.applied is True
+    db_session.refresh(item)
+    assert item.tag_ids == [new_tag_a.id, new_tag_b.id]
+
+
 def test_approve_action_item_delete_suggestion_dismisses_item(db_session):
     from app.services import memory_suggestion_service
 
@@ -344,17 +456,19 @@ def test_parse_action_item_text_endpoint(user_client, db_session, monkeypatch):
 
 def test_pending_suggestions_endpoint_returns_modify_diff_with_old_and_new(user_client, db_session):
     tenant = _create_tenant(db_session)
-    old_tag = ActionTagDefinition(name="Old Tag", color="#111111")
-    new_tag = ActionTagDefinition(name="New Tag", color="#222222")
-    db_session.add_all([old_tag, new_tag])
+    old_tag_a = ActionTagDefinition(name="Old Tag A", color="#111111")
+    old_tag_b = ActionTagDefinition(name="Old Tag B", color="#222222")
+    new_tag_a = ActionTagDefinition(name="New Tag A", color="#333333")
+    new_tag_b = ActionTagDefinition(name="New Tag B", color="#444444")
+    db_session.add_all([old_tag_a, old_tag_b, new_tag_a, new_tag_b])
     db_session.commit()
-    item = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1), tag_id=old_tag.id, priority="p3")
+    item = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1), tag_ids=[old_tag_a.id, old_tag_b.id], priority="p3")
     db_session.commit()
     suggestion = MemorySuggestion(
         kind="action_item_modify",
         tenant_id=tenant.id,
         target_id=item.id,
-        proposed_value={"title": "New title", "due_date": "2026-08-08", "priority": "p1", "tag_id": new_tag.id},
+        proposed_value={"title": "New title", "due_date": "2026-08-08", "priority": "p1", "tag_ids": [new_tag_a.id, new_tag_b.id]},
         reasoning="Guest asked to push it back and bump urgency.",
         status="pending",
     )
@@ -375,15 +489,17 @@ def test_pending_suggestions_endpoint_returns_modify_diff_with_old_and_new(user_
         "description": None,
         "due_date": "2026-08-01",
         "priority": "p3",
-        "tag_name": "Old Tag",
-        "tag_color": "#111111",
+        "tags": [
+            {"id": old_tag_a.id, "name": "Old Tag A", "color": "#111111"},
+            {"id": old_tag_b.id, "name": "Old Tag B", "color": "#222222"},
+        ],
         "status": "open",
     }
     assert row["proposed"]["title"] == "New title"
     assert row["proposed"]["due_date"] == "2026-08-08"
     assert row["proposed"]["priority"] == "p1"
-    assert row["proposed"]["tag_id"] == new_tag.id
-    assert row["proposed"]["tag_name"] == "New Tag"
+    assert row["proposed"]["tag_ids"] == [new_tag_a.id, new_tag_b.id]
+    assert row["proposed"]["tag_names"] == ["New Tag A", "New Tag B"]
     assert row["reasoning"] == "Guest asked to push it back and bump urgency."
 
 

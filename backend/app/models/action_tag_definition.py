@@ -7,9 +7,10 @@ class ActionTagDefinition(Base):
     """One entry in the global, admin-configurable action-tag palette.
 
     Same admin-authored, position-ordered, is_active-flagged shape as BrainFieldDefinition.
-    `color` is a hex string used as the tag pill's fill background in the UI. ActionItem.tag_id
-    is a single-select FK into this table - staff pick one, and the action-writer agent may
-    only choose from the currently active names (see action_writer_service.py).
+    `color` is a hex string used as the tag pill's fill background in the UI. ActionItem.tag_ids
+    is a multi-select relationship into this table - staff can choose several tags, and the
+    action-writer agent may only choose from the currently active names (see
+    action_writer_service.py).
     """
 
     __tablename__ = "action_tag_definitions"

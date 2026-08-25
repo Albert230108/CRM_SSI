@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import defaultdict
 from datetime import date
 
 from sqlalchemy.orm import Session
 
 from app.models.action_item import ActionItem
+from app.models.action_item_tag import ActionItemTag
 from app.models.action_tag_definition import ActionTagDefinition
 from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.ai_agent_profile import ACTION_WRITER_ROLE, AiAgentProfile
@@ -44,7 +46,7 @@ ACTION_WRITER_SCHEMA = {
                     "description": {"type": "string"},
                     "due_date": {"type": "string"},
                     "priority": {"type": "string"},
-                    "tag": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["title"],
             },
@@ -58,7 +60,7 @@ ACTION_WRITER_SCHEMA = {
                     "title": {"type": "string"},
                     "due_date": {"type": "string"},
                     "priority": {"type": "string"},
-                    "tag": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
                     "reasoning": {"type": "string"},
                 },
                 "required": ["action_item_id", "reasoning"],
@@ -88,8 +90,8 @@ _ACTION_WRITER_PREAMBLE = (
     "message. When in doubt, propose nothing."
 )
 
-_OPEN_ITEMS_HEADER = "## Open Action Items (id | title | due date | priority | tag)"
-_TAGS_HEADER = "## Available Tags (choose `tag` from this list only, or omit)"
+_OPEN_ITEMS_HEADER = "## Open Action Items (id | title | due date | priority | tags)"
+_TAGS_HEADER = "## Available Tags (choose `tags` from this list only, or omit)"
 
 _OUTPUT_INSTRUCTION = (
     "## Output\n"
@@ -97,8 +99,8 @@ _OUTPUT_INSTRUCTION = (
     "`delete_items` reference an existing item's `action_item_id` from the list above and always "
     "include a `reasoning` explaining why the change is warranted - a human reviews these before "
     "they take effect. `priority` is one of p1 (most urgent) to p4 (least urgent), omit if not "
-    "implied. `tag` must be one of the available tag names above, omit if none fits. `reasoning` "
-    "at the top level briefly explains the overall decision."
+    "implied. `tags` must be zero or more of the available tag names above, omit if none fits. "
+    "`reasoning` at the top level briefly explains the overall decision."
 )
 
 
@@ -106,12 +108,23 @@ def _open_items_block(db: Session, tenant_id: int) -> str:
     items = [item for item in action_item_service.list_for_tenant(db, tenant_id) if item.status == "open"]
     if not items:
         return ai_prompt_blocks.join(_OPEN_ITEMS_HEADER, "None yet.")
-    tags_by_id = {
-        tag.id: tag for tag in db.query(ActionTagDefinition).filter(ActionTagDefinition.id.in_({i.tag_id for i in items if i.tag_id})).all()
-    }
+    item_ids = [item.id for item in items]
+    link_rows = (
+        db.query(ActionItemTag.action_item_id, ActionItemTag.tag_id)
+        .filter(ActionItemTag.action_item_id.in_(item_ids))
+        .order_by(ActionItemTag.action_item_id, ActionItemTag.position, ActionItemTag.id)
+        .all()
+    )
+    tag_ids = {tag_id for _, tag_id in link_rows}
+    tags_by_id = {tag.id: tag for tag in db.query(ActionTagDefinition).filter(ActionTagDefinition.id.in_(tag_ids)).all()} if tag_ids else {}
+    tag_names_by_item_id: dict[int, list[str]] = defaultdict(list)
+    for item_id, tag_id in link_rows:
+        tag = tags_by_id.get(tag_id)
+        if tag is not None:
+            tag_names_by_item_id[item_id].append(tag.name)
     lines = [
         f"- id={item.id} | {item.title} | due: {item.due_date or '(none)'} | priority: {item.priority or '(none)'} | "
-        f"tag: {tags_by_id[item.tag_id].name if item.tag_id in tags_by_id else '(none)'}"
+        f"tags: {', '.join(tag_names_by_item_id.get(item.id, [])) or '(none)'}"
         for item in items
     ]
     return ai_prompt_blocks.join(_OPEN_ITEMS_HEADER, "\n".join(lines))
@@ -163,15 +176,20 @@ def _build_prompt(
     return "\n\n".join(part for part in parts if part.strip())
 
 
-def _resolve_tag_id(db: Session, tag_name: str | None) -> int | None:
-    if not tag_name:
-        return None
-    tag = (
+def _resolve_tag_ids(db: Session, tag_names: list[str] | None) -> list[int]:
+    if not tag_names:
+        return []
+    cleaned = [name.strip() for name in tag_names if isinstance(name, str) and name.strip()]
+    unique_names = list(dict.fromkeys(cleaned))
+    if not unique_names:
+        return []
+    tags = (
         db.query(ActionTagDefinition)
-        .filter(ActionTagDefinition.name == tag_name.strip(), ActionTagDefinition.is_active.is_(True))
-        .first()
+        .filter(ActionTagDefinition.name.in_(unique_names), ActionTagDefinition.is_active.is_(True))
+        .all()
     )
-    return tag.id if tag is not None else None
+    tags_by_name = {tag.name: tag.id for tag in tags}
+    return [tags_by_name[name] for name in unique_names if name in tags_by_name]
 
 
 def _resolve_priority(raw: str | None) -> str | None:
@@ -216,7 +234,7 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int]
             title,
             description,
             _resolve_due_date((raw_item or {}).get("due_date")),
-            tag_id=_resolve_tag_id(db, (raw_item or {}).get("tag")),
+            tag_ids=_resolve_tag_ids(db, (raw_item or {}).get("tags")),
             priority=_resolve_priority((raw_item or {}).get("priority")),
         )
         new_items_written += 1
@@ -239,9 +257,9 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int]
         priority = _resolve_priority((raw_item or {}).get("priority"))
         if priority is not None:
             proposed_value["priority"] = priority
-        tag_id = _resolve_tag_id(db, (raw_item or {}).get("tag"))
-        if tag_id is not None:
-            proposed_value["tag_id"] = tag_id
+        tag_ids = _resolve_tag_ids(db, (raw_item or {}).get("tags"))
+        if tag_ids:
+            proposed_value["tag_ids"] = tag_ids
         if not proposed_value:
             continue
         db.add(

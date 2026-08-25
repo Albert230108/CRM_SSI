@@ -5,6 +5,12 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Priority = 'p1' | 'p2' | 'p3' | 'p4'
 
+type ActionTag = {
+  id: number
+  name: string
+  color: string
+}
+
 type ActionItem = {
   id: number
   title: string
@@ -12,18 +18,10 @@ type ActionItem = {
   due_date: string | null
   status: 'open' | 'done' | 'dismissed'
   source: 'manual' | 'ai'
-  tag_id: number | null
-  tag_name: string | null
-  tag_color: string | null
+  tags: ActionTag[]
   priority: Priority | null
   recurrence_interval_days: number | null
   recurrence_anchor: 'due_date' | 'completed_at' | null
-}
-
-type ActionTag = {
-  id: number
-  name: string
-  color: string
 }
 
 type Props = {
@@ -46,6 +44,51 @@ const PRIORITY_STYLE: Record<Priority, string> = {
 
 const PRIORITY_LABEL: Record<Priority, string> = { p1: 'P1', p2: 'P2', p3: 'P3', p4: 'P4' }
 
+const DismissedBadge = () => (
+  <span className="rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
+    Dismissed
+  </span>
+)
+
+function TagChipSelector({
+  tags,
+  selectedIds,
+  onToggle,
+  disabled = false,
+}: {
+  tags: ActionTag[]
+  selectedIds: number[]
+  onToggle: (tagId: number) => void
+  disabled?: boolean
+}) {
+  if (tags.length === 0) {
+    return <span className="text-xs text-gray-400">No tags configured.</span>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {tags.map((tag) => {
+        const selected = selectedIds.includes(tag.id)
+        return (
+          <button
+            key={tag.id}
+            type="button"
+            onClick={() => onToggle(tag.id)}
+            disabled={disabled}
+            aria-pressed={selected}
+            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+              selected ? 'border-transparent text-white shadow-sm' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+            } disabled:cursor-not-allowed disabled:opacity-50`}
+            style={selected ? { backgroundColor: tag.color } : undefined}
+          >
+            {tag.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function TenantActionsBox({ tenantId, isActive = true, onActionsChange }: Props) {
   const token = useAuthStore((state) => state.token)
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
@@ -60,11 +103,20 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
 
   const [newTitle, setNewTitle] = useState('')
   const [newDueDate, setNewDueDate] = useState('')
-  const [newTagId, setNewTagId] = useState('')
+  const [newTagIds, setNewTagIds] = useState<number[]>([])
   const [newPriority, setNewPriority] = useState('')
   const [repeatEnabled, setRepeatEnabled] = useState(false)
   const [repeatDays, setRepeatDays] = useState('7')
   const [adding, setAdding] = useState(false)
+
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDueDate, setEditDueDate] = useState('')
+  const [editPriority, setEditPriority] = useState('')
+  const [editTagIds, setEditTagIds] = useState<number[]>([])
+  const [savingId, setSavingId] = useState<number | null>(null)
+
+  const [fullscreen, setFullscreen] = useState(false)
 
   const load = async () => {
     if (!tenantId) return
@@ -96,13 +148,44 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId])
 
+  useEffect(() => {
+    if (!fullscreen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [fullscreen])
+
+  useEffect(() => {
+    if (!isActive || !onActionsChange) return
+    onActionsChange(
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setFullscreen((current) => !current)}
+          aria-label={fullscreen ? 'Exit fullscreen' : 'Open tenant actions fullscreen'}
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Open tenant actions fullscreen'}
+          className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+        >
+          {fullscreen ? 'Exit' : 'Fullscreen'}
+        </button>
+      </div>,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen, isActive, onActionsChange])
+
   const resetAddForm = () => {
     setNewTitle('')
     setNewDueDate('')
-    setNewTagId('')
+    setNewTagIds([])
     setNewPriority('')
     setRepeatEnabled(false)
     setRepeatDays('7')
+  }
+
+  const toggleSelectedTag = (tagId: number, selectedIds: number[], setSelectedIds: (ids: number[]) => void) => {
+    setSelectedIds(selectedIds.includes(tagId) ? selectedIds.filter((id) => id !== tagId) : [...selectedIds, tagId])
   }
 
   const handleAdd = async () => {
@@ -116,7 +199,7 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
         body: JSON.stringify({
           title,
           due_date: newDueDate || null,
-          tag_id: newTagId ? Number(newTagId) : null,
+          tag_ids: newTagIds,
           priority: newPriority || null,
           recurrence_interval_days: repeatEnabled && repeatDays ? Number(repeatDays) : null,
           recurrence_anchor: 'due_date',
@@ -157,6 +240,47 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
     }
   }
 
+  const startEdit = (item: ActionItem) => {
+    setEditingId(item.id)
+    setEditTitle(item.title)
+    setEditDueDate(item.due_date ?? '')
+    setEditPriority(item.priority ?? '')
+    setEditTagIds(item.tags.map((tag) => tag.id))
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditTitle('')
+    setEditDueDate('')
+    setEditPriority('')
+    setEditTagIds([])
+  }
+
+  const saveEdit = async (itemId: number) => {
+    if (!tenantId || savingId === itemId) return
+    try {
+      setSavingId(itemId)
+      const response = await fetch(`${API_BASE_URL}/api/action-items/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          due_date: editDueDate || null,
+          priority: editPriority || null,
+          tag_ids: editTagIds,
+        }),
+      })
+      if (!response.ok) throw new Error('Failed to save action item')
+      const updated: ActionItem = await response.json()
+      setItems((current) => current.map((item) => (item.id === itemId ? updated : item)))
+      cancelEdit()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save action item')
+    } finally {
+      setSavingId(null)
+    }
+  }
+
   const transition = async (id: number, action: 'complete' | 'dismiss' | 'reopen') => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/action-items/${id}/${action}`, { method: 'POST', headers: authHeaders })
@@ -168,15 +292,24 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
     }
   }
 
-  useEffect(() => {
-    if (!isActive || !onActionsChange) return
-    onActionsChange(null)
-  }, [isActive, onActionsChange])
-
   const subtitleMessage = !tenantId ? 'No tenant selected' : loading ? 'Loading...' : ''
+  const containerClassName = fullscreen
+    ? 'fixed inset-0 z-50 flex h-screen w-screen min-w-0 flex-col gap-1.5 bg-white p-4'
+    : 'flex h-full w-full min-w-0 flex-col gap-1.5'
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col gap-1.5">
+    <div className={containerClassName}>
+      {fullscreen ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setFullscreen(false)}
+            className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+          >
+            Exit fullscreen
+          </button>
+        </div>
+      ) : null}
       {subtitleMessage ? <p className="text-sm text-gray-500">{subtitleMessage}</p> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
@@ -233,17 +366,14 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
           <option value="p3">P3</option>
           <option value="p4">P4</option>
         </select>
-        <select
-          value={newTagId}
-          onChange={(event) => setNewTagId(event.target.value)}
-          disabled={!tenantId}
-          className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+        <button
+          type="button"
+          onClick={() => setNewTagIds([])}
+          disabled={!tenantId || newTagIds.length === 0}
+          className="shrink-0 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <option value="">No tag</option>
-          {tags.map((tag) => (
-            <option key={tag.id} value={tag.id}>{tag.name}</option>
-          ))}
-        </select>
+          Clear tags
+        </button>
         <button
           type="button"
           onClick={handleAdd}
@@ -253,6 +383,8 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
           Add
         </button>
       </div>
+
+      <TagChipSelector tags={tags} selectedIds={newTagIds} onToggle={(tagId) => toggleSelectedTag(tagId, newTagIds, setNewTagIds)} disabled={!tenantId} />
 
       <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
         <input type="checkbox" checked={repeatEnabled} onChange={(event) => setRepeatEnabled(event.target.checked)} disabled={!tenantId} />
@@ -273,38 +405,102 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
           <p className="text-sm text-gray-400">Nothing to do yet.</p>
         ) : (
           items.map((item) => (
-            <div key={item.id} className="rounded-xl border border-gray-200 bg-white p-2 text-sm">
-              <p className={`whitespace-pre-wrap ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
-              {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
-              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${SOURCE_STYLE[item.source]}`}>{item.source === 'ai' ? 'AI' : 'Manual'}</span>
-                  {item.priority ? <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${PRIORITY_STYLE[item.priority]}`}>{PRIORITY_LABEL[item.priority]}</span> : null}
-                  {item.tag_name ? (
-                    <span className="rounded-full px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: item.tag_color ?? '#6b7280' }}>
-                      {item.tag_name}
-                    </span>
-                  ) : null}
-                  {item.recurrence_interval_days ? <span className="text-xs text-gray-400">↻ every {item.recurrence_interval_days}d</span> : null}
-                  {item.due_date ? <span className="text-xs text-gray-400">Due {item.due_date}</span> : null}
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  {item.status === 'open' ? (
-                    <>
-                      <button type="button" onClick={() => transition(item.id, 'complete')} className="text-xs font-medium text-emerald-600 hover:text-emerald-700">
-                        Done
-                      </button>
-                      <button type="button" onClick={() => transition(item.id, 'dismiss')} className="text-xs font-medium text-rose-500 hover:text-rose-600">
-                        Dismiss
-                      </button>
-                    </>
-                  ) : (
-                    <button type="button" onClick={() => transition(item.id, 'reopen')} className="text-xs font-medium text-gray-500 hover:text-gray-700">
-                      Reopen
+            <div
+              key={item.id}
+              className={`rounded-xl border p-2 text-sm ${
+                item.status === 'dismissed' ? 'border-gray-200 bg-gray-50 opacity-75' : 'border-gray-200 bg-white'
+              }`}
+            >
+              {editingId === item.id ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(event) => setEditTitle(event.target.value)}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-cyan-300"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="date"
+                      value={editDueDate}
+                      onChange={(event) => setEditDueDate(event.target.value)}
+                      className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300"
+                    />
+                    <select
+                      value={editPriority}
+                      onChange={(event) => setEditPriority(event.target.value)}
+                      className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300"
+                    >
+                      <option value="">Priority</option>
+                      <option value="p1">P1</option>
+                      <option value="p2">P2</option>
+                      <option value="p3">P3</option>
+                      <option value="p4">P4</option>
+                    </select>
+                  </div>
+                  <TagChipSelector
+                    tags={tags}
+                    selectedIds={editTagIds}
+                    onToggle={(tagId) => toggleSelectedTag(tagId, editTagIds, setEditTagIds)}
+                    disabled={!tenantId}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void saveEdit(item.id)}
+                      disabled={savingId === item.id || !editTitle.trim()}
+                      className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingId === item.id ? 'Saving...' : 'Save'}
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      className="rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <p className={`whitespace-pre-wrap ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
+                  {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
+                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${SOURCE_STYLE[item.source]}`}>{item.source === 'ai' ? 'AI' : 'Manual'}</span>
+                      {item.status === 'dismissed' ? <DismissedBadge /> : null}
+                      {item.priority ? <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${PRIORITY_STYLE[item.priority]}`}>{PRIORITY_LABEL[item.priority]}</span> : null}
+                      {item.tags.map((tag) => (
+                        <span key={tag.id} className="rounded-full px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: tag.color }}>
+                          {tag.name}
+                        </span>
+                      ))}
+                      {item.recurrence_interval_days ? <span className="text-xs text-gray-400">↻ every {item.recurrence_interval_days}d</span> : null}
+                      {item.due_date ? <span className="text-xs text-gray-400">Due {item.due_date}</span> : null}
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button type="button" onClick={() => startEdit(item)} className="text-xs font-medium text-gray-500 hover:text-gray-700">
+                        Edit
+                      </button>
+                      {item.status === 'open' ? (
+                        <>
+                          <button type="button" onClick={() => transition(item.id, 'complete')} className="text-xs font-medium text-emerald-600 hover:text-emerald-700">
+                            Done
+                          </button>
+                          <button type="button" onClick={() => transition(item.id, 'dismiss')} className="text-xs font-medium text-rose-500 hover:text-rose-600">
+                            Dismiss
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => transition(item.id, 'reopen')} className="text-xs font-medium text-gray-500 hover:text-gray-700">
+                          Reopen
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           ))
         )}

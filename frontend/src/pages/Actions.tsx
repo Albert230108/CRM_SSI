@@ -8,6 +8,12 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type Priority = 'p1' | 'p2' | 'p3' | 'p4'
 
+type ActionTag = {
+  id: number
+  name: string
+  color: string
+}
+
 type ActionItem = {
   id: number
   tenant_id: number
@@ -17,8 +23,7 @@ type ActionItem = {
   due_date: string | null
   status: 'open' | 'done' | 'dismissed'
   source: 'manual' | 'ai'
-  tag_name: string | null
-  tag_color: string | null
+  tags: ActionTag[]
   priority: Priority | null
 }
 
@@ -38,6 +43,53 @@ const PRIORITY_STYLE: Record<Priority, string> = {
 
 const PRIORITY_LABEL: Record<Priority, string> = { p1: 'P1', p2: 'P2', p3: 'P3', p4: 'P4' }
 
+function TagChipSelector({
+  tags,
+  selectedIds,
+  onToggle,
+  disabled = false,
+}: {
+  tags: ActionTag[]
+  selectedIds: number[]
+  onToggle: (tagId: number) => void
+  disabled?: boolean
+}) {
+  if (tags.length === 0) {
+    return <span className="text-xs text-gray-400">No tags configured.</span>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {tags.map((tag) => {
+        const selected = selectedIds.includes(tag.id)
+        return (
+          <button
+            key={tag.id}
+            type="button"
+            onClick={() => onToggle(tag.id)}
+            disabled={disabled}
+            aria-pressed={selected}
+            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+              selected ? 'border-transparent text-white shadow-sm' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+            } disabled:cursor-not-allowed disabled:opacity-50`}
+            style={selected ? { backgroundColor: tag.color } : undefined}
+          >
+            {tag.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function DismissedBadge() {
+  return (
+    <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
+      Dismissed
+    </span>
+  )
+}
+
 const PRIORITY_FILTERS: Array<{ id: Priority | ''; label: string }> = [
   { id: '', label: 'Any priority' },
   { id: 'p1', label: 'P1' },
@@ -51,8 +103,7 @@ type ActionItemSuggestionSnapshot = {
   description: string | null
   due_date: string | null
   priority: Priority | null
-  tag_name: string | null
-  tag_color: string | null
+  tags: ActionTag[]
   status: string
 }
 
@@ -79,6 +130,10 @@ function DiffRow({ label, oldValue, newValue }: { label: string; oldValue: strin
   )
 }
 
+function joinTagNames(tags: Array<{ name: string }>) {
+  return tags.map((tag) => tag.name).join(', ')
+}
+
 export default function Actions() {
   const token = useAuthStore((state) => state.token)
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
@@ -90,6 +145,12 @@ export default function Actions() {
   const [loading, setLoading] = useState(true)
   const [suggestions, setSuggestions] = useState<ActionItemSuggestion[]>([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(true)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDueDate, setEditDueDate] = useState('')
+  const [editPriority, setEditPriority] = useState('')
+  const [editTagIds, setEditTagIds] = useState<number[]>([])
+  const [savingId, setSavingId] = useState<number | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -129,6 +190,51 @@ export default function Actions() {
   }, [])
 
   const visibleItems = priorityFilter ? items.filter((item) => item.priority === priorityFilter) : items
+
+  const toggleSelectedTag = (tagId: number, selectedIds: number[], setSelectedIds: (ids: number[]) => void) => {
+    setSelectedIds(selectedIds.includes(tagId) ? selectedIds.filter((id) => id !== tagId) : [...selectedIds, tagId])
+  }
+
+  const startEdit = (item: ActionItem) => {
+    setEditingId(item.id)
+    setEditTitle(item.title)
+    setEditDueDate(item.due_date ?? '')
+    setEditPriority(item.priority ?? '')
+    setEditTagIds(item.tags.map((tag) => tag.id))
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditTitle('')
+    setEditDueDate('')
+    setEditPriority('')
+    setEditTagIds([])
+  }
+
+  const saveEdit = async (itemId: number) => {
+    if (savingId === itemId) return
+    try {
+      setSavingId(itemId)
+      const response = await fetch(`${API_BASE_URL}/api/action-items/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          due_date: editDueDate || null,
+          priority: editPriority || null,
+          tag_ids: editTagIds,
+        }),
+      })
+      if (!response.ok) throw new Error()
+      const updated: ActionItem = await response.json()
+      setItems((current) => current.map((item) => (item.id === itemId ? updated : item)))
+      cancelEdit()
+    } catch {
+      showError('Failed to save action item')
+    } finally {
+      setSavingId(null)
+    }
+  }
 
   const transition = async (id: number, action: 'complete' | 'dismiss' | 'reopen') => {
     try {
@@ -198,8 +304,8 @@ export default function Actions() {
                           {'priority' in suggestion.proposed ? (
                             <DiffRow label="Priority" oldValue={suggestion.current.priority ?? ''} newValue={String(suggestion.proposed.priority ?? '')} />
                           ) : null}
-                          {'tag_id' in suggestion.proposed ? (
-                            <DiffRow label="Tag" oldValue={suggestion.current.tag_name ?? ''} newValue={String(suggestion.proposed.tag_name ?? '')} />
+                          {'tag_ids' in suggestion.proposed || 'tag_names' in suggestion.proposed ? (
+                            <DiffRow label="Tags" oldValue={joinTagNames(suggestion.current.tags)} newValue={Array.isArray(suggestion.proposed.tag_names) ? (suggestion.proposed.tag_names as string[]).join(', ') : ''} />
                           ) : null}
                         </div>
                       )}
@@ -266,44 +372,103 @@ export default function Actions() {
             <p className="text-sm text-gray-400">Nothing here.</p>
           ) : (
             visibleItems.map((item) => (
-              <div key={item.id} className="rounded-xl border border-gray-200 bg-white p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <Link to={`/dashboard/tenant/${item.tenant_id}`} className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline">
-                      {item.tenant_name ?? `Tenant #${item.tenant_id}`}
-                    </Link>
-                    <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
-                    {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                      <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-cyan-50 text-cyan-700' : 'bg-gray-100 text-gray-600'}`}>
-                        {item.source === 'ai' ? 'AI' : 'Manual'}
-                      </span>
-                      {item.priority ? <span className={`rounded-full px-2 py-0.5 font-semibold ${PRIORITY_STYLE[item.priority]}`}>{PRIORITY_LABEL[item.priority]}</span> : null}
-                      {item.tag_name ? (
-                        <span className="rounded-full px-2 py-0.5 font-medium text-white" style={{ backgroundColor: item.tag_color ?? '#6b7280' }}>
-                          {item.tag_name}
-                        </span>
-                      ) : null}
-                      {item.due_date ? <span>Due {item.due_date}</span> : null}
+              <div
+                key={item.id}
+                className={`rounded-xl border p-3 ${item.status === 'dismissed' ? 'border-gray-200 bg-gray-50 opacity-75' : 'border-gray-200 bg-white'}`}
+              >
+                {editingId === item.id ? (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(event) => setEditTitle(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-cyan-300"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="date"
+                        value={editDueDate}
+                        onChange={(event) => setEditDueDate(event.target.value)}
+                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300"
+                      />
+                      <select
+                        value={editPriority}
+                        onChange={(event) => setEditPriority(event.target.value)}
+                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300"
+                      >
+                        <option value="">Priority</option>
+                        <option value="p1">P1</option>
+                        <option value="p2">P2</option>
+                        <option value="p3">P3</option>
+                        <option value="p4">P4</option>
+                      </select>
+                    </div>
+                    <TagChipSelector
+                      tags={item.tags.length > 0 ? item.tags : []}
+                      selectedIds={editTagIds}
+                      onToggle={(tagId) => toggleSelectedTag(tagId, editTagIds, setEditTagIds)}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void saveEdit(item.id)}
+                        disabled={savingId === item.id || !editTitle.trim()}
+                        className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {savingId === item.id ? 'Saving...' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelEdit}
+                        className="rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-2">
-                    {item.status === 'open' ? (
-                      <>
-                        <button type="button" onClick={() => transition(item.id, 'complete')} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-                          Done
-                        </button>
-                        <button type="button" onClick={() => transition(item.id, 'dismiss')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                          Dismiss
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button" onClick={() => transition(item.id, 'reopen')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                        Reopen
+                ) : (
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link to={`/dashboard/tenant/${item.tenant_id}`} className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline">
+                        {item.tenant_name ?? `Tenant #${item.tenant_id}`}
+                      </Link>
+                      <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
+                      {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                        <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-cyan-50 text-cyan-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {item.source === 'ai' ? 'AI' : 'Manual'}
+                        </span>
+                        {item.status === 'dismissed' ? <DismissedBadge /> : null}
+                        {item.priority ? <span className={`rounded-full px-2 py-0.5 font-semibold ${PRIORITY_STYLE[item.priority]}`}>{PRIORITY_LABEL[item.priority]}</span> : null}
+                        {item.tags.map((tag) => (
+                          <span key={tag.id} className="rounded-full px-2 py-0.5 font-medium text-white" style={{ backgroundColor: tag.color }}>
+                            {tag.name}
+                          </span>
+                        ))}
+                        {item.due_date ? <span>Due {item.due_date}</span> : null}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button type="button" onClick={() => startEdit(item)} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500 hover:text-gray-700">
+                        Edit
                       </button>
-                    )}
+                      {item.status === 'open' ? (
+                        <>
+                          <button type="button" onClick={() => transition(item.id, 'complete')} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+                            Done
+                          </button>
+                          <button type="button" onClick={() => transition(item.id, 'dismiss')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                            Dismiss
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => transition(item.id, 'reopen')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                          Reopen
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             ))
           )}
