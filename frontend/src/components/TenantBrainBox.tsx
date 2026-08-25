@@ -258,6 +258,7 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
   }
 
   const subtitleMessage = !tenantId ? 'No tenant selected' : loading ? 'Loading...' : ''
+  const hasPriorScan = entries.some((entry) => entry.source === 'scanner')
 
   useEffect(() => {
     if (!isActive || !onActionsChange) return
@@ -278,12 +279,12 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
           disabled={!tenantId || scanning}
           className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {scanning ? 'Scanning...' : 'Generate initial brain'}
+          {scanning ? (hasPriorScan ? 'Updating...' : 'Scanning...') : (hasPriorScan ? 'Update brain' : 'Generate initial brain')}
         </button>
       </div>,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fullscreen, isActive, scanning, tenantId])
+  }, [fullscreen, isActive, scanning, tenantId, entries.length])
 
   return (
     <div

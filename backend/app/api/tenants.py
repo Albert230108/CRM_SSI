@@ -29,14 +29,16 @@ from app.services.beds24_client import get_booking_detail, get_bookings, update_
 from app.services.beds24_service import fetch_booking_with_invoice
 from app.services.tenant_ai_template_provisioning import (
     apply_default_ai_templates_if_enabled,
+    apply_default_brain_action_writer_settings,
     apply_default_planner_mode,
 )
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
 from app.services.tenant_notes_history import SOURCE_BEDS24_IMPORT, SOURCE_MANUAL, set_tenant_notes
 from app.models.tenant_notes_history import TenantNotesHistory
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
-from app.models.tenant_brain_entry import TenantBrainEntry
+from app.models.tenant_brain_entry import SOURCE_SCANNER, TenantBrainEntry
 from app.models.tenant_brain_entry_history import TenantBrainEntryHistory
+from app.services.action_writer_trigger_service import register_manual_trigger
 from app.services import tenant_brain_service
 
 router = APIRouter(tags=["tenants"])
@@ -550,6 +552,7 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     db.flush()
     apply_default_ai_templates_if_enabled(db, tenant.id)
     apply_default_planner_mode(db, tenant.id)
+    apply_default_brain_action_writer_settings(db, tenant.id)
     # One immediate initial-brain fill (entries, structured fields, action items) from whatever
     # booking/profile data exists at creation - no inbound message exists yet, so this reuses
     # the manual "scan history" path rather than the debounced per-message trigger.
@@ -855,7 +858,15 @@ def scan_tenant_brain(
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
+    is_update = (
+        db.query(TenantBrainEntry.id)
+        .filter(TenantBrainEntry.tenant_id == tenant_id, TenantBrainEntry.source == SOURCE_SCANNER)
+        .first()
+        is not None
+    )
     entries = tenant_brain_service.scan_tenant_history(db, tenant, user_id=current_user.id)
+    if is_update:
+        register_manual_trigger(db, tenant_id=tenant_id)
     db.commit()
     for entry in entries:
         db.refresh(entry)
@@ -1193,6 +1204,7 @@ async def _import_tenant(
             ))
         apply_default_ai_templates_if_enabled(db, tenant.id)
         apply_default_planner_mode(db, tenant.id)
+        apply_default_brain_action_writer_settings(db, tenant.id)
     else:
         tenant = existing
         tenant.first_name = first_name

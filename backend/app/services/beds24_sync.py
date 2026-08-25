@@ -10,7 +10,7 @@ from app.api.tenants import ROOM_ID_MAPPING, _extract_guest_fields
 from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.services.beds24_service import fetch_booking_with_invoice
-from app.services.tenant_ai_template_provisioning import apply_default_planner_mode
+from app.services.tenant_ai_template_provisioning import apply_default_brain_action_writer_settings, apply_default_planner_mode
 from app.services.tenant_brain_service import scan_tenant_history
 from app.services.tenant_notes_history import SOURCE_BEDS24_SYNC_SERVICE, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
@@ -65,6 +65,7 @@ async def sync_tenant_from_beds24_booking(
         db.add(tenant)
         db.flush()
         apply_default_planner_mode(db, tenant.id)
+        apply_default_brain_action_writer_settings(db, tenant.id)
 
     tenant.name = fields.get("name") or booking_id
     tenant.first_name = fields.get("first_name")

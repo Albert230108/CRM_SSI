@@ -24,6 +24,31 @@ def apply_default_planner_mode(db: Session, tenant_id: int) -> None:
     tenant_settings.planner_mode = mode
 
 
+def apply_default_brain_action_writer_settings(db: Session, tenant_id: int) -> None:
+    """Seed the brain/action writer toggles for a newly created tenant.
+
+    Only new tenants are affected - existing tenants are never retro-fitted - so changing the
+    admin defaults cannot silently enable AI for live tenants. Does not commit.
+    """
+    settings = db.query(AdminSettings).first()
+    if settings is None:
+        return
+
+    brain_enabled = bool(settings.brain_writer_default_enabled)
+    action_enabled = bool(settings.action_writer_default_enabled)
+    if not brain_enabled and not action_enabled:
+        return
+
+    tenant_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    if tenant_settings is None:
+        tenant_settings = TenantAiSettings(tenant_id=tenant_id)
+        db.add(tenant_settings)
+    if brain_enabled:
+        tenant_settings.brain_writer_enabled = True
+    if action_enabled:
+        tenant_settings.action_writer_enabled = True
+
+
 def apply_default_ai_templates_if_enabled(db: Session, tenant_id: int) -> None:
     """Links a newly created tenant to every existing shared AI reply template.
 

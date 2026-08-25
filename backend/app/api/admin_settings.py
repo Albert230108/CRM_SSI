@@ -35,6 +35,10 @@ def update_admin_settings(payload: AdminSettingsUpdate, db: Session = Depends(ge
         settings.ai_auto_apply_templates_to_new_tenants = payload.ai_auto_apply_templates_to_new_tenants
     if payload.planner_default_mode is not None:
         settings.planner_default_mode = payload.planner_default_mode
+    if payload.brain_writer_default_enabled is not None:
+        settings.brain_writer_default_enabled = payload.brain_writer_default_enabled
+    if payload.action_writer_default_enabled is not None:
+        settings.action_writer_default_enabled = payload.action_writer_default_enabled
     if payload.ai_daily_token_cap is not None:
         # Omitting the field leaves the cap alone; sending 0 is how the UI clears it, since a
         # null would be indistinguishable from "not included in this partial update".

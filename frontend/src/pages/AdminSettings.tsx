@@ -138,6 +138,8 @@ export default function AdminSettings() {
   const [savingPlannerDefaults, setSavingPlannerDefaults] = useState(false)
   const [savingAiDraftTiming, setSavingAiDraftTiming] = useState(false)
   const [autoApplyTemplatesToNewTenants, setAutoApplyTemplatesToNewTenants] = useState(false)
+  const [brainWriterDefaultEnabled, setBrainWriterDefaultEnabled] = useState(false)
+  const [actionWriterDefaultEnabled, setActionWriterDefaultEnabled] = useState(false)
   const [savingAutoApplyTemplates, setSavingAutoApplyTemplates] = useState(false)
 
   const loadLogs = async () => {
@@ -185,6 +187,8 @@ export default function AdminSettings() {
           if (typeof data.planner_default_mode === 'string') setPlannerDefaultMode(data.planner_default_mode)
           setDailyTokenCap(typeof data.ai_daily_token_cap === 'number' ? data.ai_daily_token_cap : 0)
           if (typeof data.ai_auto_apply_templates_to_new_tenants === 'boolean') setAutoApplyTemplatesToNewTenants(data.ai_auto_apply_templates_to_new_tenants)
+          if (typeof data.brain_writer_default_enabled === 'boolean') setBrainWriterDefaultEnabled(data.brain_writer_default_enabled)
+          if (typeof data.action_writer_default_enabled === 'boolean') setActionWriterDefaultEnabled(data.action_writer_default_enabled)
         } else {
           showError('Failed to load admin settings')
         }
@@ -526,6 +530,52 @@ export default function AdminSettings() {
     }
   }
 
+  const saveBrainWriterDefaultEnabled = async (nextValue: boolean) => {
+    const previousValue = brainWriterDefaultEnabled
+    setBrainWriterDefaultEnabled(nextValue)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ brain_writer_default_enabled: nextValue }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setBrainWriterDefaultEnabled(previousValue)
+        showError(typeof data.detail === 'string' ? data.detail : 'Failed to save')
+        return
+      }
+      setBrainWriterDefaultEnabled(data.brain_writer_default_enabled)
+      showSuccess('Saved')
+    } catch {
+      setBrainWriterDefaultEnabled(previousValue)
+      showError('Failed to save')
+    }
+  }
+
+  const saveActionWriterDefaultEnabled = async (nextValue: boolean) => {
+    const previousValue = actionWriterDefaultEnabled
+    setActionWriterDefaultEnabled(nextValue)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action_writer_default_enabled: nextValue }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setActionWriterDefaultEnabled(previousValue)
+        showError(typeof data.detail === 'string' ? data.detail : 'Failed to save')
+        return
+      }
+      setActionWriterDefaultEnabled(data.action_writer_default_enabled)
+      showSuccess('Saved')
+    } catch {
+      setActionWriterDefaultEnabled(previousValue)
+      showError('Failed to save')
+    }
+  }
+
   const confirmClearInvites = async () => {
     setClearInvitesError('')
     setClearingInvites(true)
@@ -762,21 +812,53 @@ export default function AdminSettings() {
                 </button>
               </form>
 
-              <div className="mt-3 border-t border-gray-200 pt-3">
-                <label className="flex items-center gap-3 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={autoApplyTemplatesToNewTenants}
-                    disabled={savingAutoApplyTemplates}
-                    onChange={(event) => saveAutoApplyTemplates(event.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300"
-                  />
-                  Automatically make every shared AI reply template available to newly created tenants
-                </label>
-                <p className="mt-1 text-xs text-gray-500">
-                  When off (default), a new tenant starts with no AI templates available and must be configured manually
-                  on the tenant AI settings page.
-                </p>
+              <div className="mt-3 border-t border-gray-200 pt-3 space-y-3">
+                <div>
+                  <label className="flex items-center gap-3 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={autoApplyTemplatesToNewTenants}
+                      disabled={savingAutoApplyTemplates}
+                      onChange={(event) => saveAutoApplyTemplates(event.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    Automatically make every shared AI reply template available to newly created tenants
+                  </label>
+                  <p className="mt-1 text-xs text-gray-500">
+                    When off (default), a new tenant starts with no AI templates available and must be configured manually
+                    on the tenant AI settings page.
+                  </p>
+                </div>
+                <div>
+                  <label className="flex items-center gap-3 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={brainWriterDefaultEnabled}
+                      onChange={(event) => void saveBrainWriterDefaultEnabled(event.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    Enable the brain writer by default for newly created tenants
+                  </label>
+                  <p className="mt-1 text-xs text-gray-500">
+                    When off (default), new tenants start with the brain writer disabled and must be enabled manually
+                    on the tenant AI settings page.
+                  </p>
+                </div>
+                <div>
+                  <label className="flex items-center gap-3 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={actionWriterDefaultEnabled}
+                      onChange={(event) => void saveActionWriterDefaultEnabled(event.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    Enable the action writer by default for newly created tenants
+                  </label>
+                  <p className="mt-1 text-xs text-gray-500">
+                    When off (default), new tenants start with the action writer disabled and must be enabled manually
+                    on the tenant AI settings page.
+                  </p>
+                </div>
               </div>
             </section>
 

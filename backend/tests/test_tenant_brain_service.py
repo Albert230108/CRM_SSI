@@ -6,7 +6,9 @@ from app.core.dependencies import get_current_user
 from app.main import app
 from app.models.ai_agent_profile import BRAIN_WRITER_ROLE, AiAgentProfile
 from app.models.ai_agent_run import AiAgentRun
+from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.brain_field_definition import BrainFieldDefinition
+from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_brain_entry import TenantBrainEntry
@@ -16,6 +18,7 @@ from app.models.tenant_brain_trigger import TenantBrainTrigger
 from app.models.user import User
 from app.services import tenant_brain_service
 from app.services.tenant_brain_trigger_service import register_message_trigger
+from app.services.action_writer_trigger_service import register_manual_trigger
 
 REGULAR_USER = User(id=2, email="agent@example.com", password_hash="x", is_active=True, is_admin=False)
 
@@ -144,6 +147,29 @@ def test_trigger_created_independent_of_planner_mode(db_session):
     assert triggers[0].trigger_at >= first_trigger_at
 
 
+def test_register_manual_trigger_uses_latest_communication_channel_and_upserts(db_session):
+    tenant = _create_tenant(db_session)
+    db_session.add(TenantAiSettings(tenant_id=tenant.id, action_writer_enabled=True))
+    db_session.add(Communication(tenant_id=tenant.id, channel="email", direction="inbound", message="Earlier message", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+    db_session.add(Communication(tenant_id=tenant.id, channel="whatsapp", direction="outbound", message="Later message", created_at=datetime(2026, 1, 2, tzinfo=timezone.utc)))
+    db_session.commit()
+
+    assert register_manual_trigger(db_session, tenant_id=tenant.id) is True
+    db_session.commit()
+
+    trigger = db_session.query(ActionWriterTrigger).filter(ActionWriterTrigger.tenant_id == tenant.id).one()
+    assert trigger.channel == "whatsapp"
+    first_trigger_at = trigger.trigger_at
+    assert first_trigger_at <= datetime.now(timezone.utc).replace(tzinfo=None)
+
+    assert register_manual_trigger(db_session, tenant_id=tenant.id) is True
+    db_session.commit()
+
+    triggers = db_session.query(ActionWriterTrigger).filter(ActionWriterTrigger.tenant_id == tenant.id).all()
+    assert len(triggers) == 1
+    assert triggers[0].trigger_at >= first_trigger_at
+
+
 # --- generate_brain_update_for_trigger: LLM decision wiring --------------------------------
 
 
@@ -267,68 +293,46 @@ def test_scan_endpoint_adds_entries_from_scanner(user_client, db_session, monkey
     assert body[0]["source"] == "scanner"
 
 
-# --- structured field_values ----------------------------------------------------------------
-
-
-def test_generate_brain_update_sets_matching_field_value(db_session, monkeypatch):
+def test_scan_endpoint_registers_action_writer_trigger_only_after_repeat_scan(user_client, db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_brain_writer(db_session, tenant)
-    field = BrainFieldDefinition(key="pets", label="Pets", ai_instruction="Does the tenant have pets?")
-    db_session.add(field)
+    settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).one()
+    settings.action_writer_enabled = True
+    db_session.add(Communication(tenant_id=tenant.id, channel="email", direction="inbound", message="Hello there"))
     db_session.commit()
 
-    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "I'm bringing my dog.")
     monkeypatch.setattr(
         tenant_brain_service.gemini_client,
         "generate",
-        _fake_generate(
-            {
-                "should_remember": True,
-                "field_values": [{"key": "pets", "value": "Has a dog"}, {"key": "unknown_key", "value": "ignored"}],
-                "entries": [],
-                "reasoning": "Pet mentioned.",
-            }
-        ),
+        _fake_generate({"should_remember": True, "entries": ["Always pays by card."], "reasoning": "Payment preference."}),
     )
-    trigger = TenantBrainTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
 
-    tenant_brain_service.generate_brain_update_for_trigger(db_session, trigger)
-    db_session.commit()
+    first_response = user_client.post(f"/api/tenants/{tenant.id}/brain/scan")
+    assert first_response.status_code == 200
+    assert db_session.query(ActionWriterTrigger).filter(ActionWriterTrigger.tenant_id == tenant.id).count() == 0
 
-    value = (
-        db_session.query(TenantBrainFieldValue)
-        .filter(TenantBrainFieldValue.tenant_id == tenant.id, TenantBrainFieldValue.field_definition_id == field.id)
-        .one()
-    )
-    assert value.value == "Has a dog"
-    assert value.source == "planner"
-    # The unknown key is silently ignored rather than erroring - no row created for it.
-    assert db_session.query(TenantBrainFieldValue).filter(TenantBrainFieldValue.tenant_id == tenant.id).count() == 1
+    second_response = user_client.post(f"/api/tenants/{tenant.id}/brain/scan")
+    assert second_response.status_code == 200
+    trigger = db_session.query(ActionWriterTrigger).filter(ActionWriterTrigger.tenant_id == tenant.id).one()
+    assert trigger.channel == "email"
+    assert trigger.trigger_at <= datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def test_generate_brain_update_ignores_empty_field_value(db_session, monkeypatch):
+def test_scan_endpoint_does_not_register_action_writer_trigger_when_disabled(user_client, db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_brain_writer(db_session, tenant)
-    field = BrainFieldDefinition(key="pets", label="Pets", ai_instruction="Does the tenant have pets?")
-    db_session.add(field)
+    db_session.add(Communication(tenant_id=tenant.id, channel="email", direction="inbound", message="Hello there"))
     db_session.commit()
 
-    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "What time is check-in?")
     monkeypatch.setattr(
         tenant_brain_service.gemini_client,
         "generate",
-        _fake_generate(
-            {
-                "should_remember": True,
-                "field_values": [{"key": "pets", "value": ""}],
-                "entries": ["Some other durable fact."],
-                "reasoning": "No pet evidence.",
-            }
-        ),
+        _fake_generate({"should_remember": True, "entries": ["Always pays by card."], "reasoning": "Payment preference."}),
     )
-    trigger = TenantBrainTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
 
-    tenant_brain_service.generate_brain_update_for_trigger(db_session, trigger)
-    db_session.commit()
+    user_client.post(f"/api/tenants/{tenant.id}/brain/scan")
+    user_client.post(f"/api/tenants/{tenant.id}/brain/scan")
 
-    assert db_session.query(TenantBrainFieldValue).filter(TenantBrainFieldValue.tenant_id == tenant.id).count() == 0
+    assert db_session.query(ActionWriterTrigger).filter(ActionWriterTrigger.tenant_id == tenant.id).count() == 0
+
+
