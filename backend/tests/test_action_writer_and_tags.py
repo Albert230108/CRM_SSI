@@ -307,6 +307,30 @@ def test_action_writer_delete_creates_pending_suggestion(db_session, monkeypatch
     assert suggestion.status == "pending"
 
 
+def test_action_writer_complete_creates_pending_suggestion(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_action_writer(db_session, tenant)
+    existing = action_item_service.create(db_session, tenant.id, "Completed task")
+    db_session.commit()
+
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Done, that's handled.")
+    monkeypatch.setattr(
+        action_writer_service.gemini_client,
+        "generate",
+        _fake_generate({"complete_items": [{"action_item_id": existing.id, "reasoning": "Tenant said it was finished."}], "reasoning": "Task completed."}),
+    )
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    db_session.refresh(existing)
+    assert existing.status == "open"
+    suggestion = db_session.query(MemorySuggestion).filter(MemorySuggestion.kind == "action_item_complete").one()
+    assert suggestion.target_id == existing.id
+    assert suggestion.status == "pending"
+
+
 def test_action_writer_does_not_duplicate_pending_suggestion_on_repeat_trigger(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     _setup_action_writer(db_session, tenant)
@@ -407,6 +431,24 @@ def test_approve_action_item_delete_suggestion_dismisses_item(db_session):
     assert result.applied is True
     db_session.refresh(item)
     assert item.status == "dismissed"
+
+
+def test_approve_action_item_complete_suggestion_marks_item_done(db_session):
+    from app.services import memory_suggestion_service
+
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "Already done")
+    db_session.commit()
+    suggestion = MemorySuggestion(kind="action_item_complete", tenant_id=tenant.id, target_id=item.id, proposed_value={}, status="pending")
+    db_session.add(suggestion)
+    db_session.commit()
+
+    result = memory_suggestion_service.approve(db_session, suggestion, reviewer_id=None)
+    db_session.commit()
+
+    assert result.applied is True
+    db_session.refresh(item)
+    assert item.status == "done"
 
 
 def test_approve_action_item_modify_fails_gracefully_when_item_already_dismissed(db_session):
@@ -521,6 +563,24 @@ def test_pending_suggestions_endpoint_returns_delete_with_deleted_flag(user_clie
     assert body[0]["current"]["title"] == "No longer needed"
 
 
+def test_pending_suggestions_endpoint_returns_complete_with_completed_flag(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "Finished task")
+    db_session.commit()
+    suggestion = MemorySuggestion(kind="action_item_complete", tenant_id=tenant.id, target_id=item.id, proposed_value={}, status="pending")
+    db_session.add(suggestion)
+    db_session.commit()
+
+    response = user_client.get("/api/action-items/pending-suggestions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["kind"] == "action_item_complete"
+    assert body[0]["proposed"] == {"completed": True}
+    assert body[0]["current"]["title"] == "Finished task"
+
+
 def test_pending_suggestions_endpoint_excludes_non_action_item_kinds(user_client, db_session):
     tenant = _create_tenant(db_session)
     db_session.add(MemorySuggestion(kind="brain_entry", tenant_id=tenant.id, target_id=None, proposed_value={"content": "x"}, status="pending"))
@@ -539,6 +599,7 @@ def test_generic_suggestions_endpoint_excludes_action_item_kinds(user_client, db
     db_session.add_all(
         [
             MemorySuggestion(kind="action_item_modify", tenant_id=tenant.id, target_id=item.id, proposed_value={"title": "New"}, status="pending"),
+            MemorySuggestion(kind="action_item_complete", tenant_id=tenant.id, target_id=item.id, proposed_value={}, status="pending"),
             MemorySuggestion(kind="brain_entry", tenant_id=tenant.id, target_id=None, proposed_value={"content": "durable fact"}, status="pending"),
         ]
     )

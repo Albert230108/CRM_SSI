@@ -13,6 +13,7 @@ from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
 from app.models.memory_suggestion import (
+    KIND_ACTION_ITEM_COMPLETE,
     KIND_ACTION_ITEM_DELETE,
     KIND_ACTION_ITEM_MODIFY,
     MemorySuggestion,
@@ -269,7 +270,7 @@ def _action_item_suggestion_for_id(db: Session, suggestion_id: int) -> MemorySug
         .filter(
             MemorySuggestion.id == suggestion_id,
             MemorySuggestion.status == STATUS_PENDING,
-            MemorySuggestion.kind.in_((KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE)),
+            MemorySuggestion.kind.in_((KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_COMPLETE)),
         )
         .first()
     )

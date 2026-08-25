@@ -10,7 +10,7 @@ from app.core.dependencies import get_current_user, get_db
 from app.models.action_item import ActionItem
 from app.models.action_item_tag import ActionItemTag
 from app.models.action_tag_definition import ActionTagDefinition
-from app.models.memory_suggestion import KIND_ACTION_ITEM_DELETE
+from app.models.memory_suggestion import KIND_ACTION_ITEM_COMPLETE, KIND_ACTION_ITEM_DELETE
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import action_item_parse_service, action_item_service, memory_suggestion_service
@@ -137,7 +137,7 @@ class ActionItemSuggestionSnapshot(BaseModel):
 
 class ActionItemSuggestionRead(BaseModel):
     id: int
-    kind: str  # action_item_modify | action_item_delete
+    kind: str  # action_item_modify | action_item_delete | action_item_complete
     tenant_id: int
     tenant_name: Optional[str] = None
     action_item_id: int
@@ -187,6 +187,8 @@ def list_action_item_pending_suggestions(
         proposed = dict(s.proposed_value or {})
         if s.kind == KIND_ACTION_ITEM_DELETE:
             proposed = {"deleted": True}
+        elif s.kind == KIND_ACTION_ITEM_COMPLETE:
+            proposed = {"completed": True}
         else:
             proposed_tag_ids = proposed.get("tag_ids")
             if isinstance(proposed_tag_ids, list):

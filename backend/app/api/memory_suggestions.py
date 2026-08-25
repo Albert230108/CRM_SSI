@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.memory_suggestion import KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_MODIFY, STATUS_PENDING, MemorySuggestion
+from app.models.memory_suggestion import KIND_ACTION_ITEM_COMPLETE, KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_MODIFY, STATUS_PENDING, MemorySuggestion
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import memory_suggestion_service
@@ -42,10 +42,10 @@ def _to_read(suggestion: MemorySuggestion, tenant_name: Optional[str]) -> Memory
 
 @router.get("", response_model=list[MemorySuggestionRead])
 def list_memory_suggestions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Action-item modify/delete suggestions have their own dedicated review surface on the
+    # Action-item modify/delete/complete suggestions have their own dedicated review surface on the
     # Actions page (GET /api/action-items/pending-suggestions) - excluded here so they're not
     # reviewed twice in two different places.
-    rows = memory_suggestion_service.list_pending(db, exclude_kinds={KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE})
+    rows = memory_suggestion_service.list_pending(db, exclude_kinds={KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_COMPLETE})
     tenant_names = {
         t.id: t.name for t in db.query(Tenant).filter(Tenant.id.in_([r.tenant_id for r in rows if r.tenant_id is not None])).all()
     }

@@ -13,6 +13,7 @@ from app.models.action_item import STATUS_OPEN as ACTION_ITEM_STATUS_OPEN
 from app.models.action_item import ActionItem
 from app.models.brain_field_definition import BrainFieldDefinition
 from app.models.memory_suggestion import (
+    KIND_ACTION_ITEM_COMPLETE,
     KIND_ACTION_ITEM_DELETE,
     KIND_ACTION_ITEM_MODIFY,
     KIND_BRAIN_ENTRY,
@@ -30,11 +31,11 @@ from app.models.working_memory_rule import SOURCE_AI_SUGGESTED, STATUS_ACTIVE, W
 from app.services import action_item_service, brain_field_service, tenant_brain_service, working_memory_rule_service
 
 
-_ACTION_ITEM_KINDS = {KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE}
+_ACTION_ITEM_KINDS = {KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_COMPLETE}
 
 
 def list_pending(db: Session, *, exclude_kinds: set[str] | None = None) -> list[MemorySuggestion]:
-    """Rule/field/entry suggestions. Action-item modify/delete suggestions have their own
+    """Rule/field/entry suggestions. Action-item modify/delete/complete suggestions have their own
     dedicated review surface (see list_pending_action_item_suggestions and the Actions page) -
     the caller excludes those kinds here so they don't show up twice."""
     query = db.query(MemorySuggestion).filter(MemorySuggestion.status == STATUS_PENDING)
@@ -139,6 +140,14 @@ def _apply_action_item_delete(db: Session, suggestion: MemorySuggestion) -> Appl
     return ApplyResult(True, "Action item dismissed.")
 
 
+def _apply_action_item_complete(db: Session, suggestion: MemorySuggestion) -> ApplyResult:
+    item = db.query(ActionItem).filter(ActionItem.id == suggestion.target_id).first()
+    if item is None or item.status != ACTION_ITEM_STATUS_OPEN:
+        return ApplyResult(False, "The target action item no longer exists or is no longer open.")
+    action_item_service.complete(db, item)
+    return ApplyResult(True, "Action item completed.")
+
+
 def approve(db: Session, suggestion: MemorySuggestion, reviewer_id: int | None = None) -> ApplyResult:
     if suggestion.status != STATUS_PENDING:
         return ApplyResult(False, "This suggestion has already been reviewed.")
@@ -151,6 +160,7 @@ def approve(db: Session, suggestion: MemorySuggestion, reviewer_id: int | None =
         KIND_RULE_DELETE: lambda: _apply_rule_delete(db, suggestion),
         KIND_ACTION_ITEM_MODIFY: lambda: _apply_action_item_modify(db, suggestion),
         KIND_ACTION_ITEM_DELETE: lambda: _apply_action_item_delete(db, suggestion),
+        KIND_ACTION_ITEM_COMPLETE: lambda: _apply_action_item_complete(db, suggestion),
     }
     handler = handlers.get(suggestion.kind)
     result = handler() if handler is not None else ApplyResult(False, "Unknown suggestion kind.")

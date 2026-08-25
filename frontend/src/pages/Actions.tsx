@@ -109,7 +109,7 @@ type ActionItemSuggestionSnapshot = {
 
 type ActionItemSuggestion = {
   id: number
-  kind: 'action_item_modify' | 'action_item_delete'
+  kind: 'action_item_modify' | 'action_item_delete' | 'action_item_complete'
   tenant_id: number
   tenant_name: string | null
   action_item_id: number
@@ -273,64 +273,74 @@ export default function Actions() {
               The action-writer AI wants to change or remove these existing items. Nothing applies until you approve it.
             </p>
             <div className="mt-2 space-y-2">
-              {suggestions.map((suggestion) => (
-                <div key={suggestion.id} className="rounded-xl border border-amber-200 bg-white p-2.5 text-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Link to={`/dashboard/tenant/${suggestion.tenant_id}`} className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline">
-                          {suggestion.tenant_name ?? `Tenant #${suggestion.tenant_id}`}
-                        </Link>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${suggestion.kind === 'action_item_delete' ? 'bg-rose-50 text-rose-700' : 'bg-cyan-50 text-cyan-700'}`}>
-                          {suggestion.kind === 'action_item_delete' ? 'Delete' : 'Modify'}
-                        </span>
-                      </div>
+              {suggestions.map((suggestion) => {
+                const isDelete = suggestion.kind === 'action_item_delete'
+                const isComplete = suggestion.kind === 'action_item_complete'
+                const badgeClass = isDelete ? 'bg-rose-50 text-rose-700' : isComplete ? 'bg-emerald-50 text-emerald-700' : 'bg-cyan-50 text-cyan-700'
+                const badgeLabel = isDelete ? 'Delete' : isComplete ? 'Complete' : 'Modify'
 
-                      {suggestion.kind === 'action_item_delete' ? (
-                        <div className="mt-1.5">
-                          <p className="text-gray-900 line-through">{suggestion.current.title}</p>
-                          <p className="mt-0.5 text-xs text-rose-600">This item will be deleted.</p>
+                return (
+                  <div key={suggestion.id} className="rounded-xl border border-amber-200 bg-white p-2.5 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Link to={`/dashboard/tenant/${suggestion.tenant_id}`} className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline">
+                            {suggestion.tenant_name ?? `Tenant #${suggestion.tenant_id}`}
+                          </Link>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${badgeClass}`}>{badgeLabel}</span>
                         </div>
-                      ) : (
-                        <div className="mt-1.5 space-y-0.5">
-                          {'title' in suggestion.proposed ? (
-                            <DiffRow label="Title" oldValue={suggestion.current.title} newValue={String(suggestion.proposed.title ?? '')} />
-                          ) : (
+
+                        {isDelete ? (
+                          <div className="mt-1.5">
+                            <p className="text-gray-900 line-through">{suggestion.current.title}</p>
+                            <p className="mt-0.5 text-xs text-rose-600">This item will be deleted.</p>
+                          </div>
+                        ) : isComplete ? (
+                          <div className="mt-1.5">
                             <p className="text-gray-900">{suggestion.current.title}</p>
-                          )}
-                          {'due_date' in suggestion.proposed ? (
-                            <DiffRow label="Due" oldValue={suggestion.current.due_date ?? ''} newValue={String(suggestion.proposed.due_date ?? '')} />
-                          ) : null}
-                          {'priority' in suggestion.proposed ? (
-                            <DiffRow label="Priority" oldValue={suggestion.current.priority ?? ''} newValue={String(suggestion.proposed.priority ?? '')} />
-                          ) : null}
-                          {'tag_ids' in suggestion.proposed || 'tag_names' in suggestion.proposed ? (
-                            <DiffRow label="Tags" oldValue={joinTagNames(suggestion.current.tags)} newValue={Array.isArray(suggestion.proposed.tag_names) ? (suggestion.proposed.tag_names as string[]).join(', ') : ''} />
-                          ) : null}
-                        </div>
-                      )}
+                            <p className="mt-0.5 text-xs text-emerald-600">This item will be marked done.</p>
+                          </div>
+                        ) : (
+                          <div className="mt-1.5 space-y-0.5">
+                            {'title' in suggestion.proposed ? (
+                              <DiffRow label="Title" oldValue={suggestion.current.title} newValue={String(suggestion.proposed.title ?? '')} />
+                            ) : (
+                              <p className="text-gray-900">{suggestion.current.title}</p>
+                            )}
+                            {'due_date' in suggestion.proposed ? (
+                              <DiffRow label="Due" oldValue={suggestion.current.due_date ?? ''} newValue={String(suggestion.proposed.due_date ?? '')} />
+                            ) : null}
+                            {'priority' in suggestion.proposed ? (
+                              <DiffRow label="Priority" oldValue={suggestion.current.priority ?? ''} newValue={String(suggestion.proposed.priority ?? '')} />
+                            ) : null}
+                            {'tag_ids' in suggestion.proposed || 'tag_names' in suggestion.proposed ? (
+                              <DiffRow label="Tags" oldValue={joinTagNames(suggestion.current.tags)} newValue={Array.isArray(suggestion.proposed.tag_names) ? (suggestion.proposed.tag_names as string[]).join(', ') : ''} />
+                            ) : null}
+                          </div>
+                        )}
 
-                      {suggestion.reasoning ? <p className="mt-1.5 text-xs italic text-gray-500">&ldquo;{suggestion.reasoning}&rdquo;</p> : null}
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => reviewSuggestion(suggestion, 'approve')}
-                        className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => reviewSuggestion(suggestion, 'reject')}
-                        className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500"
-                      >
-                        Reject
-                      </button>
+                        {suggestion.reasoning ? <p className="mt-1.5 text-xs italic text-gray-500">&ldquo;{suggestion.reasoning}&rdquo;</p> : null}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => reviewSuggestion(suggestion, 'approve')}
+                          className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => reviewSuggestion(suggestion, 'reject')}
+                          className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500"
+                        >
+                          Reject
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         ) : null}

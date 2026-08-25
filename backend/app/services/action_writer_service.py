@@ -2,9 +2,8 @@
 needs a new task or a change to an existing one.
 
 New items (`new_items`) are created directly, same as brain_writer entries - surfacing
-immediately, no approval needed. Proposed changes to an *existing* item (`modify_items`,
-`delete_items`) are never applied directly: they become pending MemorySuggestion rows a human
-must approve (see memory_suggestion_service._apply_action_item_modify/_delete), mirroring how
+immediately, no approval needed. Proposed changes to an *existing* item (`modify_items`, `complete_items`, `delete_items`) are never applied directly: they become pending MemorySuggestion rows a human
+must approve (see memory_suggestion_service._apply_action_item_modify/_complete/_delete), mirroring how
 memory_redo's rule suggestions work.
 
 Runs on its own debounced trigger - see action_writer_trigger_service.py and the scheduler
@@ -25,7 +24,7 @@ from app.models.action_tag_definition import ActionTagDefinition
 from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.ai_agent_profile import ACTION_WRITER_ROLE, AiAgentProfile
 from app.models.ai_agent_run import STATUS_COMPLETED, STATUS_FAILED, STATUS_SKIPPED, AiAgentRun, AiAgentRunStep
-from app.models.memory_suggestion import KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_MODIFY, STATUS_PENDING, MemorySuggestion
+from app.models.memory_suggestion import KIND_ACTION_ITEM_COMPLETE, KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_MODIFY, STATUS_PENDING, MemorySuggestion
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.services import action_item_service, action_tag_service, ai_agent_orchestrator, ai_prompt_blocks, ai_reply_service, gemini_client
@@ -77,6 +76,17 @@ ACTION_WRITER_SCHEMA = {
                 "required": ["action_item_id", "reasoning"],
             },
         },
+        "complete_items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action_item_id": {"type": "integer"},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["action_item_id", "reasoning"],
+            },
+        },
         "reasoning": {"type": "string"},
     },
     "required": ["reasoning"],
@@ -85,9 +95,10 @@ ACTION_WRITER_SCHEMA = {
 _ACTION_WRITER_PREAMBLE = (
     "You maintain the action-item checklist for one tenant in a short-stay rental CRM. Decide "
     "whether the latest message means a new task should be tracked, or an existing open task "
-    "needs to change or be removed. Do NOT invent tasks - only add one if the tenant explicitly "
+    "needs to change, be completed, or be removed. Do NOT invent tasks - only add one if the tenant explicitly "
     "requests something, or a clear operational follow-up is strictly required by this specific "
-    "message. When in doubt, propose nothing."
+    "message. When in doubt, propose nothing. Treat \"completed\" as the tenant indicating the work was actually done; "
+    "treat \"removed\" as the task is no longer needed or relevant."
 )
 
 _OPEN_ITEMS_HEADER = "## Open Action Items (id | title | due date | priority | tags)"
@@ -95,10 +106,9 @@ _TAGS_HEADER = "## Available Tags (choose `tags` from this list only, or omit)"
 
 _OUTPUT_INSTRUCTION = (
     "## Output\n"
-    "Return JSON only. `new_items` lists genuinely new tasks - usually empty. `modify_items` and "
-    "`delete_items` reference an existing item's `action_item_id` from the list above and always "
+    "Return JSON only. `new_items` lists genuinely new tasks - usually empty. `modify_items`, `complete_items`, and `delete_items` reference an existing item's `action_item_id` from the list above and always "
     "include a `reasoning` explaining why the change is warranted - a human reviews these before "
-    "they take effect. `priority` is one of p1 (most urgent) to p4 (least urgent), omit if not "
+    "they take effect. Use `complete_items` when the tenant's message indicates the task was actually accomplished; use `delete_items` when the task is no longer needed or relevant. `priority` is one of p1 (most urgent) to p4 (least urgent), omit if not "
     "implied. `tags` must be zero or more of the available tag names above, omit if none fits. "
     "`reasoning` at the top level briefly explains the overall decision."
 )
@@ -218,10 +228,11 @@ def _suggestion_exists(db: Session, *, kind: str, target_id: int) -> bool:
     )
 
 
-def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int]:
+def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int, int]:
     new_items_written = 0
     modify_suggestions_written = 0
     delete_suggestions_written = 0
+    complete_suggestions_written = 0
 
     for raw_item in plan.get("new_items") or []:
         title = str((raw_item or {}).get("title") or "").strip()
@@ -274,6 +285,24 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int]
         )
         modify_suggestions_written += 1
 
+    for raw_item in plan.get("complete_items") or []:
+        item_id = (raw_item or {}).get("action_item_id")
+        if not isinstance(item_id, int) or item_id not in open_item_ids:
+            continue
+        if _suggestion_exists(db, kind=KIND_ACTION_ITEM_COMPLETE, target_id=item_id):
+            continue
+        db.add(
+            MemorySuggestion(
+                kind=KIND_ACTION_ITEM_COMPLETE,
+                tenant_id=tenant.id,
+                target_id=item_id,
+                proposed_value={},
+                reasoning=str((raw_item or {}).get("reasoning") or "").strip() or None,
+                status=STATUS_PENDING,
+            )
+        )
+        complete_suggestions_written += 1
+
     for raw_item in plan.get("delete_items") or []:
         item_id = (raw_item or {}).get("action_item_id")
         if not isinstance(item_id, int) or item_id not in open_item_ids:
@@ -292,12 +321,12 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int]
         )
         delete_suggestions_written += 1
 
-    return new_items_written, modify_suggestions_written, delete_suggestions_written
+    return new_items_written, modify_suggestions_written, complete_suggestions_written, delete_suggestions_written
 
 
 def generate_action_writer_update_for_trigger(db: Session, trigger: ActionWriterTrigger) -> None:
     """The automatic path: one due ActionWriterTrigger row, one LLM call, zero or more new
-    items created plus zero or more pending modify/delete suggestions.
+    items created plus zero or more pending modify/complete/delete suggestions.
 
     Mirrors tenant_brain_service.generate_brain_update_for_trigger's shape: returns quietly for
     any state that makes generation impossible, so the scheduler sweep can just move on.
@@ -366,18 +395,19 @@ def generate_action_writer_update_for_trigger(db: Session, trigger: ActionWriter
     run.duration_ms = int((time.monotonic() - started) * 1000)
 
     plan = result.parsed or {}
-    has_changes = bool(plan.get("new_items") or plan.get("modify_items") or plan.get("delete_items"))
+    has_changes = bool(plan.get("new_items") or plan.get("modify_items") or plan.get("complete_items") or plan.get("delete_items"))
     if not has_changes:
         run.status = STATUS_SKIPPED
         return
 
-    new_items_written, modify_suggestions_written, delete_suggestions_written = _apply_plan(db, tenant, plan)
+    new_items_written, modify_suggestions_written, complete_suggestions_written, delete_suggestions_written = _apply_plan(db, tenant, plan)
     run.status = STATUS_COMPLETED
     logger.info(
-        "Action writer run completed run_id=%s tenant_id=%s new_items_written=%s modify_suggestions_written=%s delete_suggestions_written=%s",
+        "Action writer run completed run_id=%s tenant_id=%s new_items_written=%s modify_suggestions_written=%s complete_suggestions_written=%s delete_suggestions_written=%s",
         run.id,
         tenant.id,
         new_items_written,
         modify_suggestions_written,
+        complete_suggestions_written,
         delete_suggestions_written,
     )
