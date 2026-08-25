@@ -8,15 +8,25 @@ import re
 from sqlalchemy.orm import Session
 
 from app.core.phone_normalization import phone_match_candidates
+from app.models.action_item import ActionItem
 from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
+from app.models.memory_suggestion import (
+    KIND_ACTION_ITEM_DELETE,
+    KIND_ACTION_ITEM_MODIFY,
+    MemorySuggestion,
+    STATUS_PENDING,
+)
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.services import action_item_service
 from app.services import ai_auto_draft_service
 from app.services import ai_draft_notification_service
 from app.services import memory_redo_service
+from app.services import memory_suggestion_service
 from app.services import redo_request_log_service
+from app.services import whatsapp_action_digest_service
 from app.services.whatsapp_client import WhatsAppBridgeError
 
 logger = logging.getLogger(__name__)
@@ -29,6 +39,7 @@ _BARE_PATTERN = re.compile(r"^\s*(yes|no|y|n)\s*[.!]*\s*$", re.IGNORECASE)
 # text happens separately in _extract_what_why, since staff type it by hand on WhatsApp and
 # routinely mix up order, skip "why", or vary casing.
 _REDO_PATTERN = re.compile(r"^\s*REDO[-\s]?(\d+)\s*[:\-]?\s*(.*)$", re.IGNORECASE | re.DOTALL)
+_DOMAIN_CODE_PATTERN = re.compile(r"^\s*(DRAFT|ACTION)[-\s]?(YES|NO)[-\s]?(\d+)\b", re.IGNORECASE)
 _WHAT_LABEL = "what:"
 _WHY_LABEL = "why:"
 
@@ -252,6 +263,63 @@ def _handle_redo_reply(
     return AdminReplyOutcome(reply_text=None, reply_to_phone=None)
 
 
+def _action_item_suggestion_for_id(db: Session, suggestion_id: int) -> MemorySuggestion | None:
+    return (
+        db.query(MemorySuggestion)
+        .filter(
+            MemorySuggestion.id == suggestion_id,
+            MemorySuggestion.status == STATUS_PENDING,
+            MemorySuggestion.kind.in_((KIND_ACTION_ITEM_MODIFY, KIND_ACTION_ITEM_DELETE)),
+        )
+        .first()
+    )
+
+
+def _action_item_suggestion_rows(db: Session, suggestions: list[MemorySuggestion]) -> list[tuple[MemorySuggestion, ActionItem | None, str]]:
+    rows: list[tuple[MemorySuggestion, ActionItem | None, str]] = []
+    for suggestion in suggestions:
+        item = db.query(ActionItem).filter(ActionItem.id == suggestion.target_id).first() if suggestion.target_id is not None else None
+        tenant = db.query(Tenant).filter(Tenant.id == suggestion.tenant_id).first() if suggestion.tenant_id is not None else None
+        rows.append((suggestion, item, tenant.name if tenant is not None else "Unknown tenant"))
+    return rows
+
+
+def _action_item_tenant_names(db: Session, items: list[ActionItem]) -> dict[int, str]:
+    tenant_ids = {item.tenant_id for item in items}
+    if not tenant_ids:
+        return {}
+    tenants = db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all()
+    return {tenant.id: tenant.name for tenant in tenants}
+
+
+def _handle_action_item_suggestion_reply(
+    db: Session,
+    *,
+    user: User,
+    suggestion: MemorySuggestion,
+    decision: str,
+    outcome,
+) -> AdminReplyOutcome:
+    if decision == "YES":
+        result = memory_suggestion_service.approve(db, suggestion, reviewer_id=user.id)
+        db.commit()
+        if result.applied:
+            return outcome(f"✅ Approved action-item suggestion #{suggestion.id}: {result.message}")
+        return outcome(f"⚠️ Action-item suggestion #{suggestion.id} could not be applied: {result.message}")
+
+    memory_suggestion_service.reject(db, suggestion, reviewer_id=user.id)
+    db.commit()
+    return outcome(f"🗑️ Rejected action-item suggestion #{suggestion.id}.")
+
+
+def _format_action_item_disambiguation(draft_id: int) -> str:
+    return (
+        f"That code matches both a draft approval and a pending action-item suggestion. "
+        f"Reply DRAFT-YES-{draft_id} / DRAFT-NO-{draft_id} for the draft, or "
+        f"ACTION-YES-{draft_id} / ACTION-NO-{draft_id} for the action item."
+    )
+
+
 def try_handle_admin_reply(
     db: Session,
     *,
@@ -299,11 +367,83 @@ def try_handle_admin_reply(
     def outcome(reply_text: str) -> AdminReplyOutcome:
         return AdminReplyOutcome(reply_text=reply_text, reply_to_phone=reply_to_phone)
 
+    command = whatsapp_action_digest_service.resolve_command(text or "")
+    if command == "today":
+        items = action_item_service.list_open_today_or_overdue(db)
+        tenant_names = _action_item_tenant_names(db, items)
+        return outcome(
+            whatsapp_action_digest_service.format_open_actions_message(
+                items, tenant_names=tenant_names, heading="📋 Open actions (today & overdue)"
+            )
+        )
+    if command == "upcoming":
+        items = action_item_service.list_open_upcoming(db)
+        tenant_names = _action_item_tenant_names(db, items)
+        return outcome(
+            whatsapp_action_digest_service.format_open_actions_message(
+                items, tenant_names=tenant_names, heading="📋 Open actions (upcoming 7 days)"
+            )
+        )
+    if command == "pending":
+        suggestions = memory_suggestion_service.list_pending_action_item_suggestions(db)
+        return outcome(
+            whatsapp_action_digest_service.format_pending_suggestions_message(_action_item_suggestion_rows(db, suggestions))
+        )
+    if command == "help":
+        return outcome(whatsapp_action_digest_service.format_help_message())
+
     redo_match = _REDO_PATTERN.match(text or "")
     if redo_match:
         return _handle_redo_reply(
             db, user=user, external_account_id=notification_account_id, redo_match=redo_match, outcome=outcome
         )
+
+    domain_match = _DOMAIN_CODE_PATTERN.match(text or "")
+    if domain_match:
+        domain = domain_match.group(1).upper()
+        decision = domain_match.group(2).upper()
+        draft_id = int(domain_match.group(3))
+        if domain == "ACTION":
+            suggestion = _action_item_suggestion_for_id(db, draft_id)
+            if suggestion is None:
+                return outcome(f"No pending action-item suggestion found for that code ({decision}-{draft_id}).")
+            return _handle_action_item_suggestion_reply(db, user=user, suggestion=suggestion, decision=decision, outcome=outcome)
+
+        approval_request = (
+            db.query(AiAutoDraftApprovalRequest)
+            .filter(AiAutoDraftApprovalRequest.ai_auto_draft_id == draft_id, AiAutoDraftApprovalRequest.user_id == user.id)
+            .first()
+        )
+        if approval_request is None:
+            return outcome(f"No pending draft notification found for that code ({decision}-{draft_id}).")
+
+        draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
+        if draft is None:
+            return outcome("That draft no longer exists.")
+
+        if draft.status not in PENDING_STATUSES:
+            return outcome(_already_handled_reply(db, draft))
+
+        reason = f"{decision.title()} via WhatsApp by {user.full_name or user.email}"
+        if decision == "YES":
+            sent = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_whatsapp", reason=reason)
+            if not sent:
+                return outcome("⚠️ Failed to send — check the draft in the CRM.")
+            approval_request.responded_at = datetime.now(timezone.utc)
+            approval_request.response = decision
+            db.commit()
+            tenant = db.query(Tenant).filter(Tenant.id == draft.tenant_id).first()
+            tenant_name = tenant.name if tenant is not None else "the tenant"
+            return outcome(f"✅ Sent to {tenant_name}.")
+
+        draft.status = "dismissed"
+        draft.scheduled_send_at = None
+        draft.resolution_source = "human_whatsapp"
+        draft.resolution_reason = reason
+        approval_request.responded_at = datetime.now(timezone.utc)
+        approval_request.response = decision
+        db.commit()
+        return outcome("🗑️ Draft dismissed.")
 
     match = _CODE_PATTERN.search(text or "")
     bare_match = None if match else _BARE_PATTERN.match(text or "")
@@ -315,16 +455,12 @@ def try_handle_admin_reply(
         )
         return None
 
-    # Trailing free text after a "YES-482"/"NO-482" code (e.g. "NO-482 wrong tone") becomes the
-    # logged reason for the send/dismiss decision - see AiAutoDraft.resolution_reason.
     typed_reason: str | None = None
     if match:
         decision = match.group(1).upper()
         draft_id = int(match.group(2))
         typed_reason = text[match.end() :].strip().lstrip(":-").strip() or None if text else None
     else:
-        # Never send a draft from a bare "yes". Require the explicit draft code so an approval
-        # cannot target the wrong draft as the number of outstanding drafts changes.
         decision = "YES" if bare_match.group(1).lower().startswith("y") else "NO"
         outstanding = _outstanding_requests_for_user(db, user.id)
         if not outstanding:
@@ -348,8 +484,15 @@ def try_handle_admin_reply(
         .filter(AiAutoDraftApprovalRequest.ai_auto_draft_id == draft_id, AiAutoDraftApprovalRequest.user_id == user.id)
         .first()
     )
+    action_item_suggestion = _action_item_suggestion_for_id(db, draft_id)
+    if approval_request is not None and action_item_suggestion is not None:
+        return outcome(_format_action_item_disambiguation(draft_id))
+    if action_item_suggestion is not None:
+        return _handle_action_item_suggestion_reply(
+            db, user=user, suggestion=action_item_suggestion, decision=decision, outcome=outcome
+        )
     if approval_request is None:
-        return outcome(f"No pending draft notification found for that code ({decision}-{draft_id}).")
+        return outcome(f"No pending draft or action-item notification found for that code ({decision}-{draft_id}).")
 
     draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
     if draft is None:
@@ -363,8 +506,6 @@ def try_handle_admin_reply(
     if decision == "YES":
         sent = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_whatsapp", reason=reason)
         if not sent:
-            # Left unanswered on purpose: nothing was persisted for this attempt, and leaving
-            # the approval_request row without a response lets the same or another admin retry.
             return outcome("⚠️ Failed to send — check the draft in the CRM.")
         approval_request.responded_at = datetime.now(timezone.utc)
         approval_request.response = decision

@@ -25,6 +25,27 @@ def list_all(db: Session, *, status_filter: str | None = None) -> list[ActionIte
     return query.order_by(ActionItem.status == STATUS_DONE, ActionItem.due_date.is_(None), ActionItem.due_date, ActionItem.created_at.desc()).all()
 
 
+def list_open_today_or_overdue(db: Session) -> list[ActionItem]:
+    today = date.today()
+    return (
+        db.query(ActionItem)
+        .filter(ActionItem.status == STATUS_OPEN, ActionItem.due_date.isnot(None), ActionItem.due_date <= today)
+        .order_by(ActionItem.due_date.asc(), ActionItem.created_at.desc())
+        .all()
+    )
+
+
+def list_open_upcoming(db: Session, *, days: int = 7) -> list[ActionItem]:
+    today = date.today()
+    upper_bound = today + timedelta(days=days)
+    return (
+        db.query(ActionItem)
+        .filter(ActionItem.status == STATUS_OPEN, ActionItem.due_date.isnot(None), ActionItem.due_date > today, ActionItem.due_date <= upper_bound)
+        .order_by(ActionItem.due_date.asc(), ActionItem.created_at.desc())
+        .all()
+    )
+
+
 def _sync_tags(db: Session, item: ActionItem, tag_ids: list[int] | None) -> None:
     if tag_ids is None:
         return
