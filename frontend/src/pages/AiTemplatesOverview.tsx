@@ -1,9 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { withAiSettingsReturn } from '../lib/aiSettingsNavigation'
 import { useAuthStore } from '../store/authStore'
 import type { AiReplyTemplate } from '../types/aiReplyTemplate'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+const AI_HUB_LINKS = [
+  { to: '/settings/brain', label: 'AI Brain', description: 'Browse shared knowledge sections and tokens.' },
+  { to: '/settings/ai-agents', label: 'Agent Profiles', description: 'Planner, checker, drafter, brain writer, and more.' },
+  { to: '/ai-runs', label: 'Planner Runs', description: 'Inspect the planner / drafter / checker logs.' },
+  { to: '/ai-drafts', label: 'AI Drafts', description: 'Review queued and pending auto drafts.' },
+  { to: '/working-memory', label: 'Working Memory', description: 'Open the memory log and replay tools.' },
+  { to: '/settings/ai-tenants', label: 'Tenant AI Settings', description: 'Tune defaults and per-tenant AI behavior.' },
+] as const
 
 export default function AiTemplatesOverview() {
   const token = useAuthStore((state) => state.token)
@@ -29,7 +39,7 @@ export default function AiTemplatesOverview() {
   }, [])
 
   const openEditor = (templateId: number | 'new') => {
-    window.open(`/settings/ai-templates/${templateId}`, '_blank')
+    window.open(withAiSettingsReturn(`/settings/ai-templates/${templateId}`), '_blank')
   }
 
   const deleteTemplate = async (templateId: number) => {
@@ -53,25 +63,61 @@ export default function AiTemplatesOverview() {
           <p className="text-xs">
             <Link to="/settings" className="text-cyan-700 hover:underline">&larr; Settings</Link>
           </p>
-          <h1 className="mt-1 text-lg font-semibold text-gray-900">Shared AI Reply Templates</h1>
+          <h1 className="mt-1 text-lg font-semibold text-gray-900">AI Settings</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Templates used by "Draft with AI" in the reply box, shared across all users. Click Edit to open a template in
-            its own tab &mdash; you can have several open at once.
+            Configure the shared reply templates used by "Draft with AI". The buttons below jump to the rest of the AI workspace: brain, agent profiles, run logs, drafts, and memory.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => openEditor('new')}
-          className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700"
-        >
-          + New template
-        </button>
       </div>
 
-      {message ? <p className="mt-3 text-sm text-rose-600">{message}</p> : null}
+      <section className="mt-4 rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-cyan-50 p-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">AI Hub</p>
+            <h2 className="mt-1 text-xl font-semibold text-gray-900">Tools, logs, and knowledge</h2>
+            <p className="mt-1 text-sm text-gray-600">Jump straight into the parts of the AI system you edit most.</p>
+          </div>
+        </div>
 
-      <div className="mt-4 overflow-x-auto rounded-2xl border border-gray-200 bg-white">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {AI_HUB_LINKS.map((item) => (
+            <Link
+              key={item.to}
+              to={withAiSettingsReturn(item.to)}
+              className="group rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900 group-hover:text-indigo-700">{item.label}</p>
+                  <p className="mt-1 text-sm text-gray-500">{item.description}</p>
+                </div>
+                <span className="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-700">Open</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-4 rounded-3xl border border-indigo-200 bg-white p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">AI Templates</p>
+            <h2 className="mt-1 text-xl font-semibold text-gray-900">Shared reply templates</h2>
+            <p className="mt-1 text-sm text-gray-600">These templates power Draft with AI, the planner, and the template editor.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openEditor('new')}
+            className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700"
+          >
+            + New template
+          </button>
+        </div>
+
+        {message ? <p className="mt-3 text-sm text-rose-600">{message}</p> : null}
+
+        <div className="mt-4 overflow-x-auto rounded-2xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[720px] text-left text-sm">
           <thead>
             <tr className="border-b border-gray-200 text-xs font-semibold uppercase tracking-wide text-gray-500">
               <th className="px-3.5 py-2.5">Name</th>
@@ -118,7 +164,8 @@ export default function AiTemplatesOverview() {
         </table>
         {!loading && !templates.length ? <p className="p-4 text-sm text-gray-500">No AI templates yet.</p> : null}
         {loading ? <p className="p-4 text-sm text-gray-500">Loading...</p> : null}
-      </div>
+        </div>
+      </section>
     </main>
   )
 }

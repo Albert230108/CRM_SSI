@@ -72,6 +72,34 @@ def _planner_draft_status_and_schedule(
     return status_value, scheduled_send_at
 
 
+def apply_planner_result_to_draft(
+    db: Session,
+    draft: AiAutoDraft,
+    *,
+    tenant: Tenant,
+    ai_settings: TenantAiSettings,
+    channel: str,
+    result,
+    inbound_text: str | None,
+) -> AiAutoDraft:
+    planner_mode = ai_settings.planner_mode or "off"
+    status_value, scheduled_send_at = _planner_draft_status_and_schedule(
+        db,
+        channel=channel,
+        planner_mode=planner_mode,
+        ai_settings=ai_settings,
+        result=result,
+    )
+    draft.generated_text = result.generated_text or ""
+    draft.quoted_context = _build_quoted_context(inbound_text)
+    draft.template_id = result.template_id
+    draft.status = status_value
+    draft.scheduled_send_at = scheduled_send_at
+    draft.agent_run_id = result.run_id
+    draft.checker_feedback = result.checker_feedback
+    return draft
+
+
 def _generate_draft_via_planner(
     db: Session,
     trigger: AiAutoDraftTrigger,
@@ -98,22 +126,27 @@ def _generate_draft_via_planner(
         )
         return None
 
-    status_value, scheduled_send_at = _planner_draft_status_and_schedule(
-        db, channel=trigger.channel, planner_mode=planner_mode, ai_settings=ai_settings, result=result
-    )
-
     draft = AiAutoDraft(
         tenant_id=tenant.id,
         channel=trigger.channel,
         template_id=result.template_id,
         email_thread_id=trigger.email_thread_id,
         whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
-        generated_text=result.generated_text,
+        generated_text=result.generated_text or "",
         quoted_context=_build_quoted_context(inbound_text),
-        status=status_value,
-        scheduled_send_at=scheduled_send_at,
+        status="pending",
+        scheduled_send_at=None,
         agent_run_id=result.run_id,
         checker_feedback=result.checker_feedback,
+    )
+    apply_planner_result_to_draft(
+        db,
+        draft,
+        tenant=tenant,
+        ai_settings=ai_settings,
+        channel=trigger.channel,
+        result=result,
+        inbound_text=inbound_text,
     )
     db.add(draft)
     return draft
@@ -157,20 +190,19 @@ def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, instructions: 
         )
         return None
 
-    status_value, _scheduled_send_at = _planner_draft_status_and_schedule(
-        db, channel=draft.channel, planner_mode=planner_mode, ai_settings=ai_settings, result=result
+    apply_planner_result_to_draft(
+        db,
+        draft,
+        tenant=tenant,
+        ai_settings=ai_settings,
+        channel=draft.channel,
+        result=result,
+        inbound_text=inbound_text,
     )
     # A redo never auto-sends, regardless of what the fresh checker pass would have allowed.
-    if status_value == "pending_auto_send":
-        status_value = "pending"
-
-    draft.generated_text = result.generated_text
-    draft.quoted_context = _build_quoted_context(inbound_text)
-    draft.template_id = result.template_id
-    draft.status = status_value
+    if draft.status == "pending_auto_send":
+        draft.status = "pending"
     draft.scheduled_send_at = None
-    draft.agent_run_id = result.run_id
-    draft.checker_feedback = result.checker_feedback
     return draft
 
 

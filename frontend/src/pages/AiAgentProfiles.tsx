@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import { type AgentRole, type AiAgentProfile } from '../types/aiAgentProfile'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -8,6 +9,7 @@ const CARD = 'rounded-2xl border border-gray-200 bg-white p-3.5'
 
 export default function AiAgentProfiles() {
   const token = useAuthStore((state) => state.token)
+  const location = useLocation()
   const [profiles, setProfiles] = useState<AiAgentProfile[]>([])
   const [message, setMessage] = useState('')
 
@@ -122,7 +124,7 @@ export default function AiAgentProfiles() {
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-4">
-      <Link to="/settings" className="text-sm text-cyan-700 hover:underline">
+      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-cyan-700 hover:underline">
         &larr; Back to Settings
       </Link>
       <div className="mt-1.5 flex items-start justify-between gap-3">

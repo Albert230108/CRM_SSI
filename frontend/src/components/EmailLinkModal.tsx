@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
 import { useDraggablePosition } from '../hooks/useDraggablePosition'
@@ -110,6 +110,8 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
   const activeLinks = links.filter((link) => link.is_active)
+  const backdropMouseDownRef = useRef(false)
+  const emailPlaceholder = activeLinks[0]?.email ?? 'guest@example.com'
 
   useEffect(() => {
     if (!open) return
@@ -418,7 +420,17 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
   const tenantSubtitle = [tenantName ? `Tenant: ${tenantName}` : null, bookingId ? `Booking #${bookingId}` : null].filter(Boolean).join(' · ')
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      onMouseDown={(event) => {
+        backdropMouseDownRef.current = event.target === event.currentTarget
+      }}
+      onClick={() => {
+        if (!backdropMouseDownRef.current) return
+        backdropMouseDownRef.current = false
+        onClose()
+      }}
+    >
       <div
         role="dialog"
         aria-modal="true"
@@ -554,7 +566,7 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
                     setEmail(event.target.value)
                     setConflict(null)
                   }}
-                  placeholder="guest@example.com"
+                  placeholder={emailPlaceholder}
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
                 <button

@@ -307,7 +307,7 @@ def test_email_draft_also_quotes_the_inbound_message(db_session, monkeypatch):
     assert draft.quoted_context == 'Replying to: "Is the room still available?"'
 
 
-def test_manual_ai_plan_endpoint_returns_the_final_text(user_client, db_session, monkeypatch):
+def test_manual_ai_plan_endpoint_queues_a_draft_and_completes_it_in_the_background(user_client, db_session, monkeypatch):
     tenant, template = _setup(db_session, planner_mode="manual")
     monkeypatch.setattr(
         ai_agent_orchestrator.gemini_client,
@@ -321,11 +321,17 @@ def test_manual_ai_plan_endpoint_returns_the_final_text(user_client, db_session,
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["generated_text"] == "Manual draft."
-    assert body["status"] == "completed"
-    assert body["checker_passed"] is True
-    assert body["template_id"] == template.id
-    assert db_session.query(AiAgentRun).filter(AiAgentRun.id == body["run_id"]).one().mode == "manual"
+    assert body["status"] == "pending"
+    assert body["draft_id"] is not None
+    assert body["generated_text"] is None
+
+    db_session.expire_all()
+    draft = db_session.query(AiAutoDraft).filter(AiAutoDraft.id == body["draft_id"]).one()
+    assert draft.generated_text == "Manual draft."
+    assert draft.template_id == template.id
+    assert draft.status == "pending"
+    assert draft.agent_run_id is not None
+    assert db_session.query(AiAgentRun).filter(AiAgentRun.id == draft.agent_run_id).one().mode == "manual"
 
 
 def test_ai_plan_is_refused_when_the_planner_is_off(user_client, db_session):
@@ -345,7 +351,7 @@ def test_ai_plan_rejects_an_unknown_channel(user_client, db_session):
     assert response.status_code == 400
 
 
-def test_ai_plan_maps_gemini_failure_to_502(user_client, db_session, monkeypatch):
+def test_ai_plan_background_failure_marks_the_draft_for_review(user_client, db_session, monkeypatch):
     tenant, _ = _setup(db_session, planner_mode="manual")
 
     def _raise(*args, **kwargs):
@@ -356,7 +362,12 @@ def test_ai_plan_maps_gemini_failure_to_502(user_client, db_session, monkeypatch
     response = user_client.post(
         f"/api/communications/tenants/{tenant.id}/ai-plan", json={"channel": "email"}
     )
-    assert response.status_code == 502
+    assert response.status_code == 200, response.text
+    body = response.json()
+    db_session.expire_all()
+    draft = db_session.query(AiAutoDraft).filter(AiAutoDraft.id == body["draft_id"]).one()
+    assert draft.status == "needs_review"
+    assert "not configured" in (draft.checker_feedback or "")
 
 
 # --- manual "Run planner" redo (reply box, no AiAutoDraft involved) ------------------------

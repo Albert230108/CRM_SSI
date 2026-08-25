@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import AiTemplateSectionCanvas from '../components/AiTemplateSectionCanvas'
+import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
@@ -111,6 +112,7 @@ function toFormState(template: AiReplyTemplate): FormState {
 export default function AiTemplateEditor() {
   const { templateId } = useParams<{ templateId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const token = useAuthStore((state) => state.token)
   const isNew = templateId === 'new'
 
@@ -213,7 +215,7 @@ export default function AiTemplateEditor() {
       const next = toFormState(data)
       savedSnapshotRef.current = JSON.stringify(next)
       setForm(next)
-      if (form.id === null) navigate(`/settings/ai-templates/${data.id}`, { replace: true })
+      if (form.id === null) navigate(`${getAiSettingsReturnHref(location.search, '/settings/ai-templates')}/${data.id}`, { replace: true })
       return true
     } catch {
       setMessage('Failed to save template')
@@ -228,7 +230,7 @@ export default function AiTemplateEditor() {
     await saveTemplate()
   }
 
-  const leave = () => navigate('/settings/ai-templates')
+  const leave = () => navigate(getAiSettingsReturnHref(location.search, '/settings/ai-templates'))
 
   const requestLeave = () => {
     if (isDirty) setLeavePrompt(true)
@@ -247,7 +249,7 @@ export default function AiTemplateEditor() {
     return (
       <main className="mx-auto max-w-4xl px-4 py-4">
         <p className="text-sm text-rose-600">This template could not be found. It may have been deleted in another tab.</p>
-        <Link to="/settings/ai-templates" className="mt-2 inline-block text-sm text-cyan-700 hover:underline">&larr; Back to templates</Link>
+        <Link to={getAiSettingsReturnHref(location.search, '/settings/ai-templates')} className="mt-2 inline-block text-sm text-cyan-700 hover:underline">&larr; Back to AI Settings</Link>
       </main>
     )
   }

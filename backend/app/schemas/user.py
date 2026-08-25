@@ -25,11 +25,15 @@ class UserUpdate(BaseModel):
     password: str | None = None
     is_active: bool | None = None
     is_admin: bool | None = None
+    default_gmail_account_id: int | None = None
+    default_whatsapp_account_id: str | None = None
 
 
 class UserRead(UserBase):
     id: int
     whatsapp_notifications_enabled: bool = False
+    default_gmail_account_id: int | None = None
+    default_whatsapp_account_id: str | None = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

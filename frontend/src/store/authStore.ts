@@ -6,6 +6,9 @@ export type AuthUser = {
   full_name: string | null
   is_active: boolean
   is_admin: boolean
+  whatsapp_notifications_enabled: boolean
+  default_gmail_account_id: number | null
+  default_whatsapp_account_id: string | null
 } | null
 
 type AuthState = {

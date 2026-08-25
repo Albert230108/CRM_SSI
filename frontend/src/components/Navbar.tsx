@@ -4,6 +4,7 @@ import ImportModal from './ImportModal'
 import NotificationBell from './NotificationBell'
 import SyncProgressOverlay from './SyncProgressOverlay'
 import ToastCard from './ToastCard'
+import { withAiSettingsReturn } from '../lib/aiSettingsNavigation'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
 import { useSyncStore } from '../store/syncStore'
@@ -43,6 +44,7 @@ export default function Navbar() {
   const actionsActive = location.pathname.startsWith('/actions')
   const workingMemoryActive = location.pathname.startsWith('/working-memory')
   const [pendingAiDraftsCount, setPendingAiDraftsCount] = useState(0)
+  const [pendingActionsCount, setPendingActionsCount] = useState(0)
   const notifySyncCompleted = useSyncStore((state) => state.notifySyncCompleted)
   const notifyImportCompleted = useSyncStore((state) => state.notifyImportCompleted)
   const syncJobId = useSyncStore((state) => state.syncJobId)
@@ -63,28 +65,39 @@ export default function Navbar() {
     if (!token) return
     let cancelled = false
 
-    const pollPendingAiDrafts = async () => {
+    const pollCounts = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!response.ok || cancelled) return
-        const data: unknown[] = await response.json()
-        setPendingAiDraftsCount(data.length)
+        const [draftsResponse, openActionsResponse, pendingSuggestionsResponse] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/ai-auto-drafts`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_BASE_URL}/api/action-items?status=open`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_BASE_URL}/api/action-items/pending-suggestions`, { headers: { Authorization: `Bearer ${token}` } }),
+        ])
+        if (cancelled) return
+        if (draftsResponse.ok) {
+          const data: unknown[] = await draftsResponse.json()
+          setPendingAiDraftsCount(data.length)
+        }
+        if (openActionsResponse.ok && pendingSuggestionsResponse.ok) {
+          const [openActions, pendingSuggestions]: [unknown[], unknown[]] = await Promise.all([
+            openActionsResponse.json(),
+            pendingSuggestionsResponse.json(),
+          ])
+          setPendingActionsCount(openActions.length + pendingSuggestions.length)
+        }
       } catch {
         // Ignore transient poll failures; next interval tick will retry.
       }
     }
 
-    pollPendingAiDrafts()
-    const intervalId = window.setInterval(pollPendingAiDrafts, 15000)
+    pollCounts()
+    const intervalId = window.setInterval(pollCounts, 15000)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
   }, [token])
 
-  const aiDraftsBadgeLabel = pendingAiDraftsCount > 9 ? '9+' : String(pendingAiDraftsCount)
+  const formatBadgeCount = (count: number) => (count > 9 ? '9+' : String(count))
 
   // Intercepts in-app link clicks so leaving with unsaved notes prompts the
   // unsaved-notes modal instead of silently discarding the edit.
@@ -237,16 +250,21 @@ export default function Navbar() {
               <span>AI Drafts</span>
               {pendingAiDraftsCount > 0 ? (
                 <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white">
-                  {aiDraftsBadgeLabel}
+                  {formatBadgeCount(pendingAiDraftsCount)}
                 </span>
               ) : null}
             </Link>
             <Link
               to="/actions"
               onClick={(event) => guardedNavigate(event, '/actions')}
-              className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${actionsActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+              className={`relative inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${actionsActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
             >
               <span>Actions</span>
+              {pendingActionsCount > 0 ? (
+                <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white">
+                  {formatBadgeCount(pendingActionsCount)}
+                </span>
+              ) : null}
             </Link>
             <Link
               to="/working-memory"
@@ -254,6 +272,13 @@ export default function Navbar() {
               className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${workingMemoryActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
             >
               <span>Working Memory</span>
+            </Link>
+            <Link
+              to={withAiSettingsReturn('/settings/ai-templates')}
+              onClick={(event) => guardedNavigate(event, withAiSettingsReturn('/settings/ai-templates'))}
+              className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${location.pathname.startsWith('/settings/ai-templates') ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+            >
+              <span>AI Settings</span>
             </Link>
             <Link
               to="/settings"

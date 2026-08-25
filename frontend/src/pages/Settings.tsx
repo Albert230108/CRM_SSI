@@ -27,6 +27,12 @@ type EmailTemplate = {
   body: string
 }
 
+type WhatsappAccount = {
+  external_account_id: string
+  provider: string
+  label: string
+}
+
 const EMAIL_TEMPLATE_PLACEHOLDERS = [
   'tenant_name', 'first_name', 'last_name', 'email', 'phone', 'check_in', 'check_out',
   'num_nights', 'num_adults', 'num_children', 'room_name', 'property_name', 'booking_id',
@@ -40,13 +46,14 @@ const SETTINGS_TABS: SettingsTab[] = [
   { id: 'gmail', label: 'Gmail' },
   { id: 'folder', label: 'Local Folder' },
   { id: 'templates', label: 'Email Templates' },
-  { id: 'ai', label: 'AI Templates' },
 ]
 
 export default function Settings() {
   const token = useAuthStore((state) => state.token)
-  const userEmail = useAuthStore((state) => state.user?.email)
-  const isAdmin = useAuthStore((state) => state.user?.is_admin)
+  const user = useAuthStore((state) => state.user)
+  const setUser = useAuthStore((state) => state.setUser)
+  const userEmail = user?.email
+  const isAdmin = user?.is_admin
   const userKey = userEmail ?? 'anonymous'
   const { toast, showSuccess, showError, dismiss } = useToast()
   const [activeTab, setActiveTab] = useState('display')
@@ -60,6 +67,11 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [gmailAccounts, setGmailAccounts] = useState<GmailAccount[]>([])
   const [gmailLoading, setGmailLoading] = useState(true)
+  const [defaultGmailAccountId, setDefaultGmailAccountId] = useState('')
+  const [whatsappAccounts, setWhatsappAccounts] = useState<WhatsappAccount[]>([])
+  const [whatsappAccountsLoading, setWhatsappAccountsLoading] = useState(true)
+  const [defaultWhatsappAccountId, setDefaultWhatsappAccountId] = useState('')
+  const [savingDefaultAccounts, setSavingDefaultAccounts] = useState(false)
 
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(true)
@@ -85,6 +97,24 @@ export default function Settings() {
       showError('Failed to load Gmail accounts')
     } finally {
       setGmailLoading(false)
+    }
+  }
+
+  const loadWhatsappAccounts = async () => {
+    setWhatsappAccountsLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/whatsapp/accounts`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (response.ok) {
+        setWhatsappAccounts(await response.json())
+      } else {
+        showError('Failed to load WhatsApp accounts')
+      }
+    } catch {
+      showError('Failed to load WhatsApp accounts')
+    } finally {
+      setWhatsappAccountsLoading(false)
     }
   }
 
@@ -145,6 +175,7 @@ export default function Settings() {
     setPermissionState(null)
     loadHandle()
     loadGmailAccounts()
+    loadWhatsappAccounts()
     loadEmailTemplates()
 
     return () => {
@@ -195,6 +226,41 @@ export default function Settings() {
       return
     } finally {
       setSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    setDefaultGmailAccountId(user?.default_gmail_account_id != null ? String(user.default_gmail_account_id) : '')
+    setDefaultWhatsappAccountId(user?.default_whatsapp_account_id ?? '')
+  }, [user?.default_gmail_account_id, user?.default_whatsapp_account_id])
+
+  const saveDefaultAccounts = async (event: FormEvent) => {
+    event.preventDefault()
+    if (savingDefaultAccounts) return
+    try {
+      setSavingDefaultAccounts(true)
+      const response = await fetch(`${API_BASE_URL}/api/users/me/default-accounts`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          default_gmail_account_id: defaultGmailAccountId ? Number(defaultGmailAccountId) : null,
+          default_whatsapp_account_id: defaultWhatsappAccountId.trim() || null,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        showError(data?.detail ?? 'Failed to save default accounts')
+        return
+      }
+      setUser(data)
+      showSuccess('Default accounts saved')
+    } catch {
+      showError('Failed to save default accounts')
+    } finally {
+      setSavingDefaultAccounts(false)
     }
   }
 
@@ -386,6 +452,59 @@ export default function Settings() {
           <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
             <h2 className="text-lg font-semibold text-gray-900">Display</h2>
             <p className="mt-1.5 text-sm text-gray-500">Choose the order timestamps are shown in the thread view.</p>
+
+            <form onSubmit={saveDefaultAccounts} className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Default accounts</h3>
+                  <p className="text-xs text-gray-500">Pre-select the reply account for new WhatsApp messages and future email compose flows.</p>
+                </div>
+                <button type="submit" disabled={savingDefaultAccounts} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-300">
+                  {savingDefaultAccounts ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Gmail account</span>
+                  {gmailLoading ? (
+                    <p className="text-sm text-gray-500">Loading Gmail accounts...</p>
+                  ) : (
+                    <select
+                      value={defaultGmailAccountId}
+                      onChange={(event) => setDefaultGmailAccountId(event.target.value)}
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900"
+                    >
+                      <option value="">No default Gmail account</option>
+                      {gmailAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.display_name ? `${account.display_name} <${account.email_address}>` : account.email_address}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">WhatsApp account</span>
+                  {whatsappAccountsLoading ? (
+                    <p className="text-sm text-gray-500">Loading WhatsApp accounts...</p>
+                  ) : (
+                    <select
+                      value={defaultWhatsappAccountId}
+                      onChange={(event) => setDefaultWhatsappAccountId(event.target.value)}
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900"
+                    >
+                      <option value="">No default WhatsApp account</option>
+                      {whatsappAccounts.map((account) => (
+                        <option key={account.external_account_id} value={account.external_account_id}>
+                          {account.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              </div>
+            </form>
 
             <label className="mt-3 flex items-center gap-3 text-sm text-gray-700">
               <input
@@ -585,32 +704,6 @@ export default function Settings() {
           </section>
         ) : null}
 
-        {activeTab === 'ai' ? (
-          <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
-            <h2 className="text-lg font-semibold text-gray-900">Shared AI Reply Templates</h2>
-            <p className="mt-1.5 text-sm text-gray-500">
-              Templates used by "Draft with AI" in the reply box, shared across all users. Manage the compact list, and
-              edit each template's subprompts on its own draggable canvas, in a dedicated page.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Link to="/settings/ai-templates" className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700">
-                Manage AI templates &rarr;
-              </Link>
-              <Link to="/settings/ai-tenants" className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
-                Configure per tenant &rarr;
-              </Link>
-              <Link to="/settings/brain" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
-                Edit the AI Brain &rarr;
-              </Link>
-              <Link to="/settings/ai-agents" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
-                AI Agent Templates &rarr;
-              </Link>
-              <Link to="/ai-runs" className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">
-                AI logs &rarr;
-              </Link>
-            </div>
-          </section>
-        ) : null}
       </SettingsSidebarLayout>
 
       {deleteTarget ? (

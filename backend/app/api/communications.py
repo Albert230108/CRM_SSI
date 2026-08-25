@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.admin_settings import AdminSettings
+from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
 from app.models.communication_reply_draft import CommunicationReplyDraft
@@ -21,7 +22,7 @@ from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.communication import CommunicationCreate, CommunicationRead
 from app.schemas.tenant_channel_endpoint import TenantChannelEndpointRead
-from app.services import action_writer_trigger_service, ai_agent_orchestrator, ai_reply_service, memory_redo_service, redo_request_log_service, tenant_brain_trigger_service
+from app.services import action_writer_trigger_service, ai_agent_orchestrator, ai_auto_draft_service, ai_reply_service, memory_redo_service, redo_request_log_service, tenant_brain_trigger_service
 from app.services.attachment_service import (
     AttachmentLimitExceededError,
     AttachmentNotFoundError,
@@ -128,6 +129,7 @@ class AiPlanRedoRequest(BaseModel):
 
 class AiPlanResponse(BaseModel):
     status: str
+    draft_id: int | None = None
     generated_text: str | None = None
     template_id: int | None = None
     run_id: int | None = None
@@ -459,6 +461,85 @@ def resolve_whatsapp_outbound_communication(
         whatsapp_identity_key=whatsapp_identity_key,
         external_account_id=external_account_id,
     )
+
+
+def _run_ai_plan_background(
+    db: Session,
+    draft_id: int,
+    tenant_id: int,
+    channel: str,
+    rough_draft: str | None,
+    attachment_ids: list[int],
+    user_id: int | None,
+) -> None:
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
+    if tenant is None or draft is None:
+        return
+
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    if ai_settings is None or (ai_settings.planner_mode or "off") == "off":
+        draft.status = "needs_review"
+        draft.generated_text = draft.generated_text or ""
+        draft.checker_feedback = "Planner is turned off for this tenant."
+        db.commit()
+        return
+
+    try:
+        outbound_attachments = load_outbound_attachments(
+            db, tenant_id=tenant.id, attachment_ids=attachment_ids, channel=channel
+        )
+    except (AttachmentNotFoundError, AttachmentLimitExceededError) as exc:
+        draft.status = "needs_review"
+        draft.generated_text = draft.generated_text or ""
+        draft.checker_feedback = str(exc)
+        db.commit()
+        return
+
+    try:
+        result = ai_agent_orchestrator.run_planner_loop(
+            db,
+            tenant=tenant,
+            channel=channel,
+            mode="manual",
+            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
+            operator_note=rough_draft,
+            attachments=outbound_attachments,
+            user_id=user_id,
+        )
+    except GeminiClientError as exc:
+        draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
+        if draft is None:
+            return
+        draft.status = "needs_review"
+        draft.generated_text = draft.generated_text or ""
+        draft.checker_feedback = str(exc)
+        db.commit()
+        logger.exception("AI planner run failed draft_id=%s", draft_id)
+        return
+
+    draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
+    if draft is None:
+        return
+
+    if result.generated_text:
+        ai_auto_draft_service.apply_planner_result_to_draft(
+            db,
+            draft,
+            tenant=tenant,
+            ai_settings=ai_settings,
+            channel=channel,
+            result=result,
+            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
+        )
+    else:
+        draft.status = result.status
+        draft.template_id = result.template_id
+        draft.agent_run_id = result.run_id
+        draft.checker_feedback = result.checker_feedback
+        draft.generated_text = draft.generated_text or ""
+        draft.scheduled_send_at = None
+    db.commit()
 
 
 def _persist_whatsapp_send_result(
@@ -1165,14 +1246,14 @@ def generate_tenant_ai_draft(
 def run_tenant_ai_planner(
     tenant_id: int,
     payload: AiPlanRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AiPlanResponse:
     """Run the planner -> drafter -> checker loop on demand for the reply box.
 
-    Unlike /ai-draft the caller does not choose a template: the planner picks one from what the
-    tenant has available. Anything the operator already typed is passed through as the strongest
-    hint about what the reply must say. Nothing is sent; the run log is persisted for auditing.
+    The request now creates a draft row immediately, then completes the planner work in the
+    background so the result survives the modal closing and appears in AI Drafts.
     """
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
@@ -1190,43 +1271,35 @@ def run_tenant_ai_planner(
         )
 
     try:
-        outbound_attachments = load_outbound_attachments(
-            db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel=channel
-        )
+        load_outbound_attachments(db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel=channel)
     except AttachmentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except AttachmentLimitExceededError as exc:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
 
-    try:
-        result = ai_agent_orchestrator.run_planner_loop(
-            db,
-            tenant=tenant,
-            channel=channel,
-            mode="manual",
-            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
-            operator_note=payload.rough_draft,
-            attachments=outbound_attachments,
-            user_id=current_user.id,
-        )
-    except GeminiClientError as exc:
-        db.rollback()
-        logger.exception("AI planner run failed")
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    # The run log is worth keeping even when the loop declined to draft - that decision is
-    # exactly what an operator asking "why didn't it reply?" needs to see.
-    db.commit()
-
-    return AiPlanResponse(
-        status=result.status,
-        generated_text=result.generated_text,
-        template_id=result.template_id,
-        run_id=result.run_id,
-        checker_passed=result.checker_passed,
-        checker_feedback=result.checker_feedback,
-        escalation_reason=result.escalation_reason,
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel=channel,
+        generated_text="",
+        status="pending",
+        scheduled_send_at=None,
     )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+
+    background_tasks.add_task(
+        _run_ai_plan_background,
+        db,
+        draft.id,
+        tenant.id,
+        channel,
+        payload.rough_draft,
+        payload.attachment_ids,
+        current_user.id,
+    )
+
+    return AiPlanResponse(status="pending", draft_id=draft.id)
 
 
 @router.put("/tenants/{tenant_id}/ai-plan/redo", response_model=AiPlanResponse)

@@ -1,15 +1,18 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin_user, get_current_user, get_db
 from app.core.security import generate_secure_token, get_password_hash, hash_token
 from app.core.public_urls import get_public_frontend_base_url
 from app.models.admin_invite import AdminInvite
+from app.models.gmail_integration import GmailAccount
 from app.models.password_reset import PasswordResetToken
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.user import User
+from app.schemas.auth import CurrentUser
 from app.schemas.user import (
     AdminUserCreate,
     PinnedTenantsRead,
@@ -21,6 +24,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.services.email_service import send_email
+from app.services.whatsapp_chat_directory import list_whatsapp_accounts
 
 router = APIRouter(prefix="/users", tags=["users"])
 RESET_HOURS = 24
@@ -45,6 +49,44 @@ def update_tenant_status_filter(
     db.commit()
     db.refresh(current_user)
     return TenantStatusFilterRead(statuses=current_user.tenant_status_filter)
+
+
+@router.get("/me/default-accounts", response_model=CurrentUser)
+def get_default_accounts(current_user: User = Depends(get_current_user)) -> CurrentUser:
+    return current_user
+
+
+class DefaultAccountsUpdate(BaseModel):
+    default_gmail_account_id: int | None = None
+    default_whatsapp_account_id: str | None = None
+
+
+@router.patch("/me/default-accounts", response_model=CurrentUser)
+def update_default_accounts(
+    payload: DefaultAccountsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CurrentUser:
+    if payload.default_gmail_account_id is not None:
+        gmail_account = db.query(GmailAccount).filter(GmailAccount.id == payload.default_gmail_account_id).first()
+        if gmail_account is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account not found")
+        current_user.default_gmail_account_id = gmail_account.id
+    else:
+        current_user.default_gmail_account_id = None
+
+    if payload.default_whatsapp_account_id is not None:
+        connected_ids = {str(account.get("external_account_id") or "").strip() for account in list_whatsapp_accounts()}
+        if payload.default_whatsapp_account_id not in connected_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected WhatsApp account is not connected")
+        current_user.default_whatsapp_account_id = payload.default_whatsapp_account_id
+    else:
+        current_user.default_whatsapp_account_id = None
+
+    target_user = db.merge(current_user)
+    db.commit()
+    db.refresh(target_user)
+    return target_user
 
 
 @router.get("/me/pinned-tenants", response_model=PinnedTenantsRead)
@@ -113,6 +155,22 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         user.phone = payload.phone
     if payload.password is not None:
         user.password_hash = get_password_hash(payload.password)
+    if "default_gmail_account_id" in payload.model_fields_set:
+        if payload.default_gmail_account_id is not None:
+            gmail_account = db.query(GmailAccount).filter(GmailAccount.id == payload.default_gmail_account_id).first()
+            if gmail_account is None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail account not found")
+            user.default_gmail_account_id = gmail_account.id
+        else:
+            user.default_gmail_account_id = None
+    if "default_whatsapp_account_id" in payload.model_fields_set:
+        if payload.default_whatsapp_account_id is not None:
+            connected_ids = {str(account.get("external_account_id") or "").strip() for account in list_whatsapp_accounts()}
+            if payload.default_whatsapp_account_id not in connected_ids:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected WhatsApp account is not connected")
+            user.default_whatsapp_account_id = payload.default_whatsapp_account_id
+        else:
+            user.default_whatsapp_account_id = None
     if payload.is_active is not None:
         if payload.is_active is False and user.is_admin:
             active_admins = db.query(User).filter(User.is_admin.is_(True), User.is_active.is_(True), User.id != user.id).count()

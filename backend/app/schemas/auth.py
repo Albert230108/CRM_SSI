@@ -21,4 +21,7 @@ class CurrentUser(BaseModel):
     full_name: str | None = None
     is_active: bool
     is_admin: bool
+    whatsapp_notifications_enabled: bool = False
+    default_gmail_account_id: int | None = None
+    default_whatsapp_account_id: str | None = None
     model_config = ConfigDict(from_attributes=True)

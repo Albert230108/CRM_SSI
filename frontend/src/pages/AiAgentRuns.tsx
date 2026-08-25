@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -40,6 +41,7 @@ function templateLabel(id: number | null, name?: string | null): string {
 
 export default function AiAgentRuns() {
   const token = useAuthStore((state) => state.token)
+  const location = useLocation()
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [statusFilter, setStatusFilter] = useState('')
   const [loading, setLoading] = useState(true)
@@ -77,7 +79,7 @@ export default function AiAgentRuns() {
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-4">
-      <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
+      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
       <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">AI Planner Runs</h1>
       <p className="mt-1.5 text-sm text-gray-500">
         Every planner &rarr; drafter &rarr; checker execution, with the exact prompts and responses, the template that

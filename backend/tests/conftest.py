@@ -22,8 +22,8 @@ from app.models.user import User
 TEST_DB_PATH = Path("backend_test.db")
 engine = create_engine("sqlite:///./backend_test.db", connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-ADMIN_USER = User(id=1, email="admin@example.com", password_hash="x", is_active=True, is_admin=True)
-NON_ADMIN_USER = User(id=2, email="member@example.com", password_hash="x", is_active=True, is_admin=False)
+ADMIN_USER = User(id=1, email="admin@example.com", password_hash="x", is_active=True, is_admin=True, whatsapp_notifications_enabled=False)
+NON_ADMIN_USER = User(id=2, email="member@example.com", password_hash="x", is_active=True, is_admin=False, whatsapp_notifications_enabled=False)
 
 
 @pytest.fixture(scope="session", autouse=True)

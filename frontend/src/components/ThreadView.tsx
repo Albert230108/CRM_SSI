@@ -9,6 +9,7 @@ import FirstWhatsAppMessageModal from './FirstWhatsAppMessageModal'
 import EmailLinkModal from './EmailLinkModal'
 import TenantBrainQuickChat from './TenantBrainQuickChat'
 import ToastCard from './ToastCard'
+import AiDraftControls from './AiDraftControls'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
 import { MAX_EMAIL_TOTAL_BYTES, formatBytes } from '../lib/attachmentLimits'
 
@@ -634,6 +635,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
   const [draftError, setDraftError] = useState('')
   const emailThreadDrag = useDraggablePosition()
   const whatsappGroupDrag = useDraggablePosition()
+  const emailBackdropMouseDownRef = useRef(false)
+  const whatsappBlockBackdropMouseDownRef = useRef(false)
+  const whatsappGroupBackdropMouseDownRef = useRef(false)
 
   const emailThreadSize = useResizableSize({
     boxType: 'email-thread',
@@ -1203,19 +1207,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       if (!response.ok) {
         throw new Error(data?.detail || 'Failed to run the planner')
       }
-      if (!data?.generated_text) {
-        setPlannerNotice(
-          data?.status === 'escalated'
-            ? `The planner stopped and flagged this for a human${data.escalation_reason ? ` (${data.escalation_reason})` : ''}.`
-            : 'The planner decided no reply was needed.',
-        )
-        return
-      }
-      setReplyMessage(data.generated_text)
-      if (data.template_id) setSelectedAiTemplateId(String(data.template_id))
-      if (data.status === 'needs_review') {
-        setPlannerNotice('The reviewer never approved this draft - read it carefully before sending.')
-      }
+      setPlannerNotice('Planner running - check AI Drafts.')
     } catch (err) {
       setAiDraftError(err instanceof Error ? err.message : 'Failed to run the planner')
     } finally {
@@ -2128,7 +2120,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       {selectedEmailThread ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center gap-4 px-4"
+          onMouseDown={(event) => {
+            emailBackdropMouseDownRef.current = event.target === event.currentTarget
+          }}
           onClick={() => {
+            if (!emailBackdropMouseDownRef.current) return
+            emailBackdropMouseDownRef.current = false
             setSelectedEmailThread(null)
             setSelectedWhatsappBlock(null)
           }}
@@ -2430,51 +2427,21 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     />
                   </div>
                   {renderPendingAutoDraftBanner('email')}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      id="modal-email-ai-template"
-                      value={selectedAiTemplateId}
-                      onChange={(event) => setSelectedAiTemplateId(event.target.value)}
-                      disabled={aiDraftGenerating}
-                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-                    >
-                      <option value="">No AI template</option>
-                      {aiTemplateOptions.map((template) => (
-                        <option key={template.id} value={template.id}>{template.name}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={handleGenerateAiDraft}
-                      disabled={aiDraftGenerating || !selectedAiTemplateId}
-                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
-                    </button>
-                    {plannerEnabled ? (
-                      <button
-                        type="button"
-                        onClick={handleRunPlanner}
-                        disabled={plannerRunning}
-                        title="Let the AI pick the template and draft the reply, then have it reviewed"
-                        className="rounded-lg border border-indigo-500 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {plannerRunning ? 'Planning...' : 'Run planner'}
-                      </button>
-                    ) : null}
-                    {renderPlannerRedoButton()}
-                    <button
-                      type="button"
-                      onClick={handlePreviewAiPayload}
-                      disabled={!selectedAiTemplateId}
-                      title="Preview exact AI payload in a new tab"
-                      className="rounded-lg border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H18a1 1 0 0 1 1 1v4.5M18 6l-7 7M12 6H7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-5" />
-                      </svg>
-                    </button>
-                  </div>
+                  <AiDraftControls
+                    tenantId={tenantId}
+                    channel={replyTarget.type}
+                    message={replyMessage}
+                    selectedTemplateId={selectedAiTemplateId}
+                    onSelectedTemplateIdChange={setSelectedAiTemplateId}
+                    templates={aiTemplateOptions}
+                    aiDraftGenerating={aiDraftGenerating}
+                    plannerEnabled={plannerEnabled}
+                    plannerRunning={plannerRunning}
+                    onGenerateAiDraft={handleGenerateAiDraft}
+                    onRunPlanner={handleRunPlanner}
+                    onPreviewAiPayload={handlePreviewAiPayload}
+                    plannerRedoButton={renderPlannerRedoButton()}
+                  />
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                   {renderPlannerRedoForm()}
@@ -2538,13 +2505,24 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
 
           {selectedWhatsappBlock && selectedWhatsappBlock.threadId === selectedEmailThread.thread_id ? (
             <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="whatsapp-block-panel-title"
-              className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
-              style={whatsappBlockSize.style}
-              onClick={(event) => event.stopPropagation()}
+              className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              onMouseDown={(event) => {
+                whatsappBlockBackdropMouseDownRef.current = event.target === event.currentTarget
+              }}
+              onClick={() => {
+                if (!whatsappBlockBackdropMouseDownRef.current) return
+                whatsappBlockBackdropMouseDownRef.current = false
+                setSelectedWhatsappBlock(null)
+              }}
             >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="whatsapp-block-panel-title"
+                className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
+                style={whatsappBlockSize.style}
+                onClick={(event) => event.stopPropagation()}
+              >
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
@@ -2641,52 +2619,22 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                       </select>
                     </div>
                     {renderPendingAutoDraftBanner('whatsapp')}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <select
-                        id="block-whatsapp-ai-template"
-                        value={selectedAiTemplateId}
-                        onChange={(event) => setSelectedAiTemplateId(event.target.value)}
-                        disabled={aiDraftGenerating}
-                        className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-                      >
-                        <option value="">No AI template</option>
-                        {aiTemplateOptions.map((template) => (
-                          <option key={template.id} value={template.id}>{template.name}</option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={handleGenerateAiDraft}
-                        disabled={aiDraftGenerating || !selectedAiTemplateId}
-                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
-                      </button>
-                      {plannerEnabled ? (
-                        <button
-                          type="button"
-                          onClick={handleRunPlanner}
-                          disabled={plannerRunning}
-                          title="Let the AI pick the template and draft the reply, then have it reviewed"
-                          className="rounded-lg border border-indigo-500 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {plannerRunning ? 'Planning...' : 'Run planner'}
-                        </button>
-                      ) : null}
-                      {renderPlannerRedoButton()}
-                      <button
-                        type="button"
-                        onClick={handlePreviewAiPayload}
-                        disabled={!selectedAiTemplateId}
-                        title="Preview exact AI payload in a new tab"
-                        className="rounded-lg border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H18a1 1 0 0 1 1 1v4.5M18 6l-7 7M12 6H7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-5" />
-                        </svg>
-                      </button>
-                    </div>
-                    {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
+                  <AiDraftControls
+                    tenantId={tenantId}
+                    channel={replyTarget.type}
+                    message={replyMessage}
+                    selectedTemplateId={selectedAiTemplateId}
+                    onSelectedTemplateIdChange={setSelectedAiTemplateId}
+                    templates={aiTemplateOptions}
+                    aiDraftGenerating={aiDraftGenerating}
+                    plannerEnabled={plannerEnabled}
+                    plannerRunning={plannerRunning}
+                    onGenerateAiDraft={handleGenerateAiDraft}
+                    onRunPlanner={handleRunPlanner}
+                    onPreviewAiPayload={handlePreviewAiPayload}
+                    plannerRedoButton={renderPlannerRedoButton()}
+                  />
+                  {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                     {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                     {renderPlannerRedoForm()}
                     <textarea
@@ -2746,6 +2694,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                 </svg>
               </div>
             </div>
+          </div>
           ) : null}
         </div>
       ) : null}
@@ -2753,7 +2702,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
       {selectedWhatsappGroup ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
-          onClick={() => setSelectedWhatsappGroup(null)}
+          onMouseDown={(event) => {
+            whatsappGroupBackdropMouseDownRef.current = event.target === event.currentTarget
+          }}
+          onClick={() => {
+            if (!whatsappGroupBackdropMouseDownRef.current) return
+            whatsappGroupBackdropMouseDownRef.current = false
+            setSelectedWhatsappGroup(null)
+          }}
         >
           <div
             role="dialog"
@@ -2863,51 +2819,21 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, initialThr
                     </select>
                   </div>
                   {renderPendingAutoDraftBanner('whatsapp')}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      id="modal-whatsapp-ai-template"
-                      value={selectedAiTemplateId}
-                      onChange={(event) => setSelectedAiTemplateId(event.target.value)}
-                      disabled={aiDraftGenerating}
-                      className="min-w-[10rem] flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50"
-                    >
-                      <option value="">No AI template</option>
-                      {aiTemplateOptions.map((template) => (
-                        <option key={template.id} value={template.id}>{template.name}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={handleGenerateAiDraft}
-                      disabled={aiDraftGenerating || !selectedAiTemplateId}
-                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
-                    </button>
-                    {plannerEnabled ? (
-                      <button
-                        type="button"
-                        onClick={handleRunPlanner}
-                        disabled={plannerRunning}
-                        title="Let the AI pick the template and draft the reply, then have it reviewed"
-                        className="rounded-lg border border-indigo-500 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {plannerRunning ? 'Planning...' : 'Run planner'}
-                      </button>
-                    ) : null}
-                    {renderPlannerRedoButton()}
-                    <button
-                      type="button"
-                      onClick={handlePreviewAiPayload}
-                      disabled={!selectedAiTemplateId}
-                      title="Preview exact AI payload in a new tab"
-                      className="rounded-lg border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H18a1 1 0 0 1 1 1v4.5M18 6l-7 7M12 6H7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-5" />
-                      </svg>
-                    </button>
-                  </div>
+                  <AiDraftControls
+                    tenantId={tenantId}
+                    channel={replyTarget.type}
+                    message={replyMessage}
+                    selectedTemplateId={selectedAiTemplateId}
+                    onSelectedTemplateIdChange={setSelectedAiTemplateId}
+                    templates={aiTemplateOptions}
+                    aiDraftGenerating={aiDraftGenerating}
+                    plannerEnabled={plannerEnabled}
+                    plannerRunning={plannerRunning}
+                    onGenerateAiDraft={handleGenerateAiDraft}
+                    onRunPlanner={handleRunPlanner}
+                    onPreviewAiPayload={handlePreviewAiPayload}
+                    plannerRedoButton={renderPlannerRedoButton()}
+                  />
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                   {renderPlannerRedoForm()}

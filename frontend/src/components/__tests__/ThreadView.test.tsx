@@ -235,11 +235,9 @@ describe('ThreadView Draft with AI', () => {
     expect(within(dialog).queryByRole('button', { name: 'Run planner' })).not.toBeInTheDocument()
   })
 
-  it('runs the planner and fills the textarea with the final draft', async () => {
+  it('queues the planner and shows the background notice instead of filling the textarea', async () => {
     useAuthStore.setState({ token: 'test-token' })
-    const planSpy = vi.fn(() =>
-      jsonResponse({ status: 'completed', generated_text: 'Planned reply text', template_id: AI_TEMPLATE.id, run_id: 12, checker_passed: true, checker_feedback: null, escalation_reason: null }),
-    )
+    const planSpy = vi.fn(() => jsonResponse({ status: 'pending', draft_id: 12 }))
 
     vi.stubGlobal(
       'fetch',
@@ -268,22 +266,24 @@ describe('ThreadView Draft with AI', () => {
     await user.click(await within(dialog).findByRole('button', { name: 'Run planner' }))
 
     await waitFor(() => expect(planSpy).toHaveBeenCalledTimes(1))
-    expect(await within(dialog).findByDisplayValue('Planned reply text')).toBeInTheDocument()
+    expect(within(dialog).queryByDisplayValue('Planned reply text')).not.toBeInTheDocument()
+    expect(await within(dialog).findByText('Planner running - check AI Drafts.')).toBeInTheDocument()
 
     const [, requestInit] = planSpy.mock.calls[0]
-    // The planner picks its own template, so only the channel and the operator's text go up.
+    // The planner still receives the operator's rough draft and the selected channel.
     expect(JSON.parse((requestInit as RequestInit).body as string)).toEqual({ channel: 'whatsapp', rough_draft: 'mention the lockbox', attachment_ids: [] })
   })
 
-  it('warns when the planner returns a draft the checker never approved', async () => {
+  it('shows the background notice when the planner is queued', async () => {
     useAuthStore.setState({ token: 'test-token' })
+    const planSpy = vi.fn(() => jsonResponse({ status: 'pending', draft_id: 13 }))
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input.toString()
         if (url.includes('/api/tenants/7/ai-settings')) return jsonResponse({ tenant_id: 7, available_template_ids: [], default_email_template_id: null, default_whatsapp_template_id: AI_TEMPLATE.id, auto_draft_email: false, auto_draft_whatsapp: false, auto_send_email: false, auto_send_whatsapp: false, planner_mode: 'manual' })
         if (url.includes('/api/ai-reply-templates')) return jsonResponse([AI_TEMPLATE])
-        if (url.includes('/ai-plan')) return jsonResponse({ status: 'needs_review', generated_text: 'Unreviewed draft', template_id: AI_TEMPLATE.id, run_id: 13, checker_passed: false, checker_feedback: 'Too formal', escalation_reason: 'checker_rejected' })
+        if (url.includes('/ai-plan')) return planSpy(input)
         if (url.includes('/api/tenants/7')) return jsonResponse(TENANT)
         if (url.includes('/grouped-thread')) return jsonResponse({ tenant_id: 7, tenant_name: TENANT.name, items: [WHATSAPP_GROUP] })
         if (url.includes('/whatsapp-endpoints')) return jsonResponse([])
@@ -300,8 +300,8 @@ describe('ThreadView Draft with AI', () => {
     const dialog = await screen.findByRole('dialog')
     await user.click(await within(dialog).findByRole('button', { name: 'Run planner' }))
 
-    expect(await within(dialog).findByDisplayValue('Unreviewed draft')).toBeInTheDocument()
-    expect(await within(dialog).findByText(/reviewer never approved/i)).toBeInTheDocument()
+    expect(await within(dialog).findByText('Planner running - check AI Drafts.')).toBeInTheDocument()
+    expect(within(dialog).queryByText(/reviewer never approved/i)).not.toBeInTheDocument()
   })
 
   it('shows a pending auto-draft banner and fills the textarea when used', async () => {

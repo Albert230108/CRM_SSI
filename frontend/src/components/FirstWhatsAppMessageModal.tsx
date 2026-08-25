@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import AiDraftControls from './AiDraftControls'
 import { useAuthStore } from '../store/authStore'
 import { useDraggablePosition } from '../hooks/useDraggablePosition'
 
@@ -8,6 +9,17 @@ type WhatsappAccount = {
   external_account_id: string
   provider: string
   label: string
+}
+
+type AiTemplateOption = {
+  id: number
+  name: string
+}
+
+type TenantAiSettings = {
+  planner_mode?: 'off' | 'manual' | 'auto-draft' | 'auto-send'
+  available_template_ids: number[]
+  default_whatsapp_template_id: number | null
 }
 
 type FirstWhatsAppMessageModalProps = {
@@ -43,6 +55,7 @@ export default function FirstWhatsAppMessageModal({
   onSent,
 }: FirstWhatsAppMessageModalProps) {
   const token = useAuthStore((state) => state.token)
+  const user = useAuthStore((state) => state.user)
   const [accounts, setAccounts] = useState<WhatsappAccount[]>([])
   const [accountsLoading, setAccountsLoading] = useState(false)
   const [externalAccountId, setExternalAccountId] = useState('')
@@ -50,7 +63,15 @@ export default function FirstWhatsAppMessageModal({
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
+  const [aiTemplates, setAiTemplates] = useState<AiTemplateOption[]>([])
+  const [tenantAiSettings, setTenantAiSettings] = useState<TenantAiSettings | null>(null)
+  const [selectedAiTemplateId, setSelectedAiTemplateId] = useState('')
+  const [aiDraftGenerating, setAiDraftGenerating] = useState(false)
+  const [plannerRunning, setPlannerRunning] = useState(false)
+  const [plannerNotice, setPlannerNotice] = useState('')
+  const [aiDraftError, setAiDraftError] = useState('')
   const drag = useDraggablePosition()
+  const backdropMouseDownRef = useRef(false)
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
 
@@ -59,7 +80,10 @@ export default function FirstWhatsAppMessageModal({
     setPhone(prefillPhone ?? '')
     setMessage('')
     setError('')
-    setExternalAccountId('')
+    setAiDraftError('')
+    setPlannerNotice('')
+    setSelectedAiTemplateId('')
+    setExternalAccountId(user?.default_whatsapp_account_id ?? '')
 
     const controller = new AbortController()
     const loadAccounts = async () => {
@@ -76,7 +100,9 @@ export default function FirstWhatsAppMessageModal({
         const data: WhatsappAccount[] = await readJsonSafely(response)
         const list = Array.isArray(data) ? data : []
         setAccounts(list)
-        if (list.length === 1) setExternalAccountId(list[0].external_account_id)
+        const preferred = user?.default_whatsapp_account_id
+        if (preferred && list.some((account) => account.external_account_id === preferred)) setExternalAccountId(preferred)
+        else if (list.length === 1) setExternalAccountId(list[0].external_account_id)
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load WhatsApp accounts')
@@ -88,7 +114,7 @@ export default function FirstWhatsAppMessageModal({
     loadAccounts()
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tenantId, prefillPhone, token])
+  }, [open, tenantId, prefillPhone, token, user?.default_whatsapp_account_id])
 
   useEffect(() => {
     if (!open) return
@@ -99,9 +125,96 @@ export default function FirstWhatsAppMessageModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
 
+  useEffect(() => {
+    if (!open || !token) return
+    let cancelled = false
+    const loadAiSetup = async () => {
+      const [templatesResponse, settingsResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/ai-reply-templates`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/api/tenants/${tenantId}/ai-settings`, { headers: { Authorization: `Bearer ${token}` } }),
+      ])
+      if (cancelled) return
+      if (templatesResponse.ok) setAiTemplates(await templatesResponse.json())
+      if (settingsResponse.ok) setTenantAiSettings(await settingsResponse.json())
+    }
+    loadAiSetup()
+    return () => {
+      cancelled = true
+    }
+  }, [open, tenantId, token])
+
+  useEffect(() => {
+    if (!open || !tenantAiSettings) return
+    setSelectedAiTemplateId(tenantAiSettings.default_whatsapp_template_id ? String(tenantAiSettings.default_whatsapp_template_id) : '')
+  }, [open, tenantAiSettings])
+
   if (!open) return null
 
+  const aiTemplateOptions = tenantAiSettings && tenantAiSettings.available_template_ids.length
+    ? aiTemplates.filter((template) => tenantAiSettings.available_template_ids.includes(template.id))
+    : aiTemplates
+  const plannerEnabled = (tenantAiSettings?.planner_mode ?? 'off') !== 'off'
   const canSend = Boolean(externalAccountId && phone.trim() && message.trim()) && !sending
+
+  const handleGenerateAiDraft = async () => {
+    if (!token || !selectedAiTemplateId || aiDraftGenerating) return
+    try {
+      setAiDraftGenerating(true)
+      setAiDraftError('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-draft`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeaders ?? {}),
+        },
+        body: JSON.stringify({
+          channel: 'whatsapp',
+          template_id: Number(selectedAiTemplateId),
+          rough_draft: message.trim() || null,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Failed to generate AI draft')
+      }
+      setMessage(data.generated_text)
+      setSelectedAiTemplateId(String(data.template_id))
+    } catch (err) {
+      setAiDraftError(err instanceof Error ? err.message : 'Failed to generate AI draft')
+    } finally {
+      setAiDraftGenerating(false)
+    }
+  }
+
+  const handleRunPlanner = async () => {
+    if (!plannerEnabled || plannerRunning) return
+    try {
+      setPlannerRunning(true)
+      setAiDraftError('')
+      setPlannerNotice('')
+      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-plan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeaders ?? {}),
+        },
+        body: JSON.stringify({
+          channel: 'whatsapp',
+          rough_draft: message.trim() || null,
+          attachment_ids: [],
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Failed to run the planner')
+      }
+      setPlannerNotice('Planner running - check AI Drafts.')
+    } catch (err) {
+      setAiDraftError(err instanceof Error ? err.message : 'Failed to run the planner')
+    } finally {
+      setPlannerRunning(false)
+    }
+  }
 
   const handleSend = async () => {
     if (!canSend) return
@@ -137,7 +250,17 @@ export default function FirstWhatsAppMessageModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      onMouseDown={(event) => {
+        backdropMouseDownRef.current = event.target === event.currentTarget
+      }}
+      onClick={() => {
+        if (!backdropMouseDownRef.current) return
+        backdropMouseDownRef.current = false
+        onClose()
+      }}
+    >
       <div
         role="dialog"
         aria-modal="true"
@@ -206,6 +329,22 @@ export default function FirstWhatsAppMessageModal({
                 className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900"
               />
             </div>
+
+            <AiDraftControls
+              tenantId={tenantId}
+              channel="whatsapp"
+              message={message}
+              selectedTemplateId={selectedAiTemplateId}
+              onSelectedTemplateIdChange={setSelectedAiTemplateId}
+              templates={aiTemplateOptions}
+              aiDraftGenerating={aiDraftGenerating}
+              plannerEnabled={plannerEnabled}
+              plannerRunning={plannerRunning}
+              onGenerateAiDraft={handleGenerateAiDraft}
+              onRunPlanner={handleRunPlanner}
+            />
+            {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
+            {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
 
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
