@@ -2,11 +2,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import Integer, cast, func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.notification import Notification, NotificationReadState
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.schemas.notification import NotificationRead
 
@@ -28,6 +29,19 @@ def _read_notification_ids(db: Session, user_id: int, notification_ids: list[int
     return {row[0] for row in query.all()}
 
 
+
+def _visible_notifications(query, db: Session):
+    hidden = (
+        db.query(TenantConversationLink.id)
+        .filter(TenantConversationLink.tenant_id == Notification.tenant_id)
+        .filter(TenantConversationLink.conversation_id == cast(Notification.thread_ref, Integer))
+        .filter(TenantConversationLink.unlinked_at.is_(None))
+        .filter(TenantConversationLink.is_visible.is_(False))
+        .exists()
+    )
+    return query.filter(~((Notification.channel == "email") & hidden))
+
+
 @router.get("", response_model=list[NotificationRead])
 def list_notifications(
     unread_only: bool = False,
@@ -42,6 +56,7 @@ def list_notifications(
         )
         query = query.filter(~Notification.id.in_(read_subquery))
 
+    query = _visible_notifications(query, db)
     notifications = query.limit(limit).all()
     read_ids = _read_notification_ids(db, current_user.id, [n.id for n in notifications])
 
@@ -67,9 +82,11 @@ def get_unread_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> UnreadCountRead:
-    total = db.query(func.count(Notification.id)).scalar() or 0
+    total = _visible_notifications(db.query(func.count(Notification.id)), db).scalar() or 0
+    visible_notification_ids = _visible_notifications(db.query(Notification.id), db).subquery()
     read_count = (
         db.query(func.count(NotificationReadState.id))
+        .join(visible_notification_ids, visible_notification_ids.c.id == NotificationReadState.notification_id)
         .filter(NotificationReadState.user_id == current_user.id)
         .scalar()
         or 0

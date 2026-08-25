@@ -2,8 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
+from app.models.gmail_integration import Conversation
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.ai_draft_trigger_service import register_inbound_message
 
 
@@ -65,6 +67,35 @@ def test_creates_and_debounces_trigger(db_session):
     triggers = db_session.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.tenant_id == tenant.id).all()
     assert len(triggers) == 1
     assert triggers[0].trigger_at >= first_trigger_at
+
+
+def test_generate_draft_for_hidden_email_thread_returns_none(db_session, monkeypatch):
+    from app.models.ai_reply_template import AiReplyTemplate
+    from app.services import ai_auto_draft_service
+
+    tenant = _create_tenant(db_session)
+    template = AiReplyTemplate(name="Hidden Thread Template", sections=[], created_by_user_id=1)
+    db_session.add(template)
+    db_session.commit()
+    db_session.add(TenantAiSettings(tenant_id=tenant.id, default_email_template_id=template.id, auto_draft_email=True))
+    db_session.commit()
+
+    conversation = Conversation(provider="gmail", provider_thread_id="hidden-thread")
+    db_session.add(conversation)
+    db_session.commit()
+    db_session.refresh(conversation)
+    db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=conversation.id, is_visible=False))
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service.ai_agent_orchestrator, "resolve_drafter_context", lambda *args, **kwargs: ([], None))
+    monkeypatch.setattr(ai_auto_draft_service.ai_agent_orchestrator, "latest_inbound_text", lambda *args, **kwargs: "Should not be used")
+    monkeypatch.setattr(ai_auto_draft_service.ai_reply_service, "build_prompt_and_generate", lambda *args, **kwargs: "unexpected draft")
+
+    trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="email", email_thread_id=conversation.id)
+    result = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
+
+    assert result is None
+    assert db_session.query(AiAutoDraft).count() == 0
 
 
 def test_supersedes_pending_draft_on_new_message(db_session):

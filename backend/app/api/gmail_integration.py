@@ -415,6 +415,20 @@ def _ensure_tenant_conversation_link(
 
 
 
+def _conversation_visible_for_tenant(db: Session, tenant: Tenant, conversation_id: int) -> bool:
+    existing = (
+        db.query(TenantConversationLink)
+        .filter(TenantConversationLink.tenant_id == tenant.id)
+        .filter(TenantConversationLink.conversation_id == conversation_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
+        .first()
+    )
+    if existing is not None:
+        return existing.is_visible
+    return tenant.auto_add_shared_email_threads
+
+
+
 def _find_existing_conversation_for_thread(db: Session, thread: dict[str, Any]) -> Conversation | None:
     for message in thread.get("messages") or []:
         provider_message_id = str(message.get("id") or "")
@@ -555,6 +569,8 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                 )
             if direction == "inbound":
                 for notify_tenant, _ in message_tenants:
+                    if not _conversation_visible_for_tenant(db, notify_tenant, conversation.id):
+                        continue
                     create_notification(
                         db,
                         tenant_id=notify_tenant.id,

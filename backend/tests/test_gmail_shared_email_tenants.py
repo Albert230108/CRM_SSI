@@ -3,6 +3,8 @@ import base64
 import app.api.gmail_integration as gmail_integration
 from app.database import SessionLocal
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
+from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.notification import Notification
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
@@ -139,6 +141,80 @@ def test_two_tenants_sharing_an_email_both_keep_conversation_link():
         cleanup_db.query(Tenant).filter(Tenant.id.in_([old_tenant_id, new_tenant_id])).delete(
             synchronize_session=False
         )
+        cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+        cleanup_db.commit()
+    finally:
+        cleanup_db.close()
+
+
+def test_hidden_shared_thread_skips_notifications_and_triggers():
+    shared_email = "hidden-shared@example.com"
+    thread_id = "thread-hidden-shared"
+
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(email_address="hidden-shared-account@example.com", is_active=True)
+        visible_tenant = Tenant(name="Visible Tenant", email=shared_email, booking_id="booking-hidden-visible")
+        hidden_tenant = Tenant(
+            name="Hidden Tenant",
+            email=shared_email,
+            booking_id="booking-hidden-hidden",
+            auto_add_shared_email_threads=False,
+        )
+        setup_db.add_all([account, visible_tenant, hidden_tenant])
+        setup_db.commit()
+        account_id = account.id
+        visible_tenant_id = visible_tenant.id
+        hidden_tenant_id = hidden_tenant.id
+        _link_email(setup_db, visible_tenant_id, shared_email)
+        _link_email(setup_db, hidden_tenant_id, shared_email)
+        setup_db.add_all(
+            [
+                TenantAiSettings(tenant_id=visible_tenant_id, auto_draft_email=True),
+                TenantAiSettings(tenant_id=hidden_tenant_id, auto_draft_email=True),
+            ]
+        )
+        setup_db.commit()
+        setup_db.add(Conversation(provider="gmail", provider_account_id=account_id, provider_thread_id=thread_id))
+        setup_db.commit()
+        conversation_id = setup_db.query(Conversation).filter(Conversation.provider_thread_id == thread_id).one().id
+        setup_db.add(
+            TenantConversationLink(
+                tenant_id=hidden_tenant_id,
+                conversation_id=conversation_id,
+                matched_email=shared_email,
+                is_visible=False,
+            )
+        )
+        setup_db.commit()
+    finally:
+        setup_db.close()
+
+    thread = {"id": thread_id, "messages": [_message("hidden-shared-msg-1", shared_email)]}
+    db = SessionLocal()
+    try:
+        account_obj = db.get(GmailAccount, account_id)
+        conversation = gmail_integration._upsert_thread(db, account_obj, thread)
+        assert conversation is not None
+        db.commit()
+
+        assert db.query(Notification).filter(Notification.tenant_id == hidden_tenant_id).count() == 0
+        assert db.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.tenant_id == hidden_tenant_id).count() == 0
+        assert db.query(Notification).filter(Notification.tenant_id == visible_tenant_id).count() == 1
+        assert db.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.tenant_id == visible_tenant_id).count() == 1
+    finally:
+        db.close()
+
+    cleanup_db = SessionLocal()
+    try:
+        cleanup_db.query(Notification).filter(Notification.tenant_id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
+        cleanup_db.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.tenant_id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
+        cleanup_db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete()
+        cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
+        cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
+        cleanup_db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
+        cleanup_db.query(Tenant).filter(Tenant.id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
         cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
         cleanup_db.commit()
     finally:
@@ -306,8 +382,12 @@ def test_new_link_respects_tenant_auto_add_preference():
             .filter(TenantConversationLink.tenant_id == opted_out_tenant_id, TenantConversationLink.conversation_id == conversation_id)
             .first()
         )
+        default_notification_count = db.query(Notification).filter(Notification.tenant_id == default_tenant_id).count()
+        opted_out_notification_count = db.query(Notification).filter(Notification.tenant_id == opted_out_tenant_id).count()
         assert default_link is not None and default_link.is_visible is True
         assert opted_out_link is not None and opted_out_link.is_visible is False
+        assert default_notification_count == 1
+        assert opted_out_notification_count == 0
     finally:
         db.close()
 

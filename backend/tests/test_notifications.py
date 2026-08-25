@@ -6,6 +6,8 @@ from app.core.dependencies import get_current_user
 from app.main import app
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.models.notification import NotificationReadState
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.notification import Notification
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
@@ -136,6 +138,53 @@ def test_inbound_email_linked_to_tenant_creates_notification(db_session):
     assert notification.channel == "email"
     assert notification.direction == "inbound"
     assert notification.preview == "Hi, I have a question."
+
+
+def test_hidden_email_notifications_are_filtered_from_lists_and_unread_count(non_admin_client, db_session):
+    tenant = create_tenant(db_session, name="Hidden Tenant", booking_id="B-notif-hidden", email="hidden@example.com")
+    conversation = Conversation(provider="gmail", provider_thread_id="thread-hidden-notification")
+    db_session.add(conversation)
+    db_session.commit()
+    db_session.refresh(conversation)
+
+    hidden_notification = Notification(
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        channel="email",
+        direction="inbound",
+        preview="hidden email",
+        thread_ref=str(conversation.id),
+    )
+    visible_notification = Notification(
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        channel="whatsapp",
+        direction="inbound",
+        preview="visible whatsapp",
+        thread_ref="999",
+    )
+    db_session.add_all([hidden_notification, visible_notification])
+    db_session.commit()
+    db_session.add(
+        TenantConversationLink(
+            tenant_id=tenant.id,
+            conversation_id=conversation.id,
+            is_visible=False,
+        )
+    )
+    db_session.add(NotificationReadState(notification_id=hidden_notification.id, user_id=2))
+    db_session.commit()
+
+    list_response = non_admin_client.get("/api/notifications", params={"limit": 10})
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == visible_notification.id
+    assert payload[0]["channel"] == "whatsapp"
+
+    unread_response = non_admin_client.get("/api/notifications/unread-count")
+    assert unread_response.status_code == 200
+    assert unread_response.json()["count"] == 1
 
 
 def test_inbound_email_notification_uses_message_time_not_import_time(db_session):

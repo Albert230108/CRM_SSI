@@ -10,6 +10,7 @@ from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_agent_run import STATUS_NEEDS_REVIEW
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
@@ -187,6 +188,17 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
     if ai_settings is None:
         return None
+
+    if trigger.channel == "email" and trigger.email_thread_id is not None:
+        link = (
+            db.query(TenantConversationLink)
+            .filter(TenantConversationLink.tenant_id == tenant.id)
+            .filter(TenantConversationLink.conversation_id == trigger.email_thread_id)
+            .filter(TenantConversationLink.unlinked_at.is_(None))
+            .first()
+        )
+        if link is not None and not link.is_visible:
+            return None
 
     if (ai_settings.planner_mode or "off") in ("auto-draft", "auto-send"):
         return _generate_draft_via_planner(db, trigger, tenant, ai_settings)
