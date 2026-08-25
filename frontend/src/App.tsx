@@ -13,6 +13,7 @@ import AiTenantSettings from './pages/AiTenantSettings'
 import AiAgentProfiles from './pages/AiAgentProfiles'
 import AiAgentProfileEditor from './pages/AiAgentProfileEditor'
 import AiAgentRuns from './pages/AiAgentRuns'
+import AiAgentRunDetail from './pages/AiAgentRunDetail'
 import BrainSections from './pages/BrainSections'
 import AiPendingDrafts from './pages/AiPendingDrafts'
 import AiPayloadPreview from './pages/AiPayloadPreview'
@@ -52,6 +53,14 @@ export default function App() {
         <Route path="/invite/:token" element={<InvitationSetup />} />
         <Route path="/invites/:token" element={<InvitationSetup />} />
         <Route path="/reset-password/:token" element={<PasswordReset />} />
+        <Route
+          path="/ai-runs/:runId"
+          element={
+            <ProtectedRoute>
+              <AiAgentRunDetail />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/*"
           element={

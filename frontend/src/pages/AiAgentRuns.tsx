@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 
@@ -22,26 +22,6 @@ type AgentRun = {
   created_at: string
 }
 
-type AgentRunStep = {
-  id: number
-  step_index: number
-  stage: string
-  model: string | null
-  prompt: string | null
-  response: string | null
-  parsed: Record<string, unknown> | null
-  prompt_tokens: number | null
-  output_tokens: number | null
-  latency_ms: number | null
-  error: string | null
-}
-
-type AgentRunDetail = AgentRun & {
-  final_text: string | null
-  steps: AgentRunStep[]
-  template_names: Record<number, string>
-}
-
 const STATUS_STYLES: Record<string, string> = {
   completed: 'bg-emerald-50 text-emerald-700',
   needs_review: 'bg-amber-50 text-amber-700',
@@ -62,43 +42,38 @@ export default function AiAgentRuns() {
   const token = useAuthStore((state) => state.token)
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [statusFilter, setStatusFilter] = useState('')
-  const [selected, setSelected] = useState<AgentRunDetail | null>(null)
-  const [expandedStepId, setExpandedStepId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : undefined), [token])
 
-  const load = useCallback(async () => {
-    const query = statusFilter ? `?status=${statusFilter}` : ''
-    const response = await fetch(`${API_BASE_URL}/api/ai-agent-runs${query}`, { headers: authHeaders })
-    if (!response.ok) {
-      setError('Failed to load runs')
-      setLoading(false)
-      return
-    }
-    setRuns(await response.json())
-    setLoading(false)
-  }, [authHeaders, statusFilter])
-
   useEffect(() => {
-    void load()
-  }, [load])
+    const controller = new AbortController()
 
-  const openRun = async (runId: number) => {
-    const response = await fetch(`${API_BASE_URL}/api/ai-agent-runs/${runId}`, { headers: authHeaders })
-    if (!response.ok) {
-      setError('Failed to load the run')
-      return
+    const load = async () => {
+      try {
+        setLoading(true)
+        const query = statusFilter ? `?status=${statusFilter}` : ''
+        const response = await fetch(`${API_BASE_URL}/api/ai-agent-runs${query}`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          throw new Error('Failed to load runs')
+        }
+        setRuns(await response.json())
+      } catch (err) {
+        if (controller.signal.aborted) return
+        setError(err instanceof Error ? err.message : 'Failed to load runs')
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
     }
-    setSelected(await response.json())
-    setExpandedStepId(null)
-  }
 
-  const plannerStep = selected?.steps.find((step) => step.stage === 'planner')
-  const plan = (plannerStep?.parsed ?? null) as
-    | { reasoning?: string; confidence?: number; extra_instructions?: string; extra_brain_sections?: string[]; alternatives?: { template_id: number; why_not: string }[] }
-    | null
+    setError('')
+    void load()
+    return () => controller.abort()
+  }, [authHeaders, statusFilter])
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-4">
@@ -166,7 +141,11 @@ export default function AiAgentRuns() {
                     <td className="py-1.5 pr-3 text-gray-600">{run.attempts}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{run.total_prompt_tokens + run.total_output_tokens}</td>
                     <td className="py-1.5">
-                      <button type="button" onClick={() => openRun(run.id)} className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700">
+                      <button
+                        type="button"
+                        onClick={() => window.open(`/ai-runs/${run.id}`, '_blank')}
+                        className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700"
+                      >
                         Inspect
                       </button>
                     </td>
@@ -177,100 +156,6 @@ export default function AiAgentRuns() {
           </div>
         )}
       </section>
-
-      {selected ? (
-        <section className="mt-4 rounded-2xl border border-indigo-200 bg-white p-3.5">
-          <div className="flex items-start justify-between gap-3">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Run #{selected.id} — {selected.tenant_name ?? `tenant ${selected.tenant_id}`}
-            </h2>
-            <button type="button" onClick={() => setSelected(null)} className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700">
-              Close
-            </button>
-          </div>
-
-          {plan ? (
-            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Why this template</p>
-              <p className="mt-1 text-sm text-gray-800">{plan.reasoning ?? '—'}</p>
-              <p className="mt-1.5 text-xs text-gray-500">
-                {templateLabel(selected.final_template_id, selected.final_template_name)} · confidence {plan.confidence ?? '—'}
-              </p>
-              {plan.extra_instructions ? (
-                <>
-                  <p className="mt-2.5 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Instruction given to the drafter</p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-gray-800">{plan.extra_instructions}</p>
-                </>
-              ) : null}
-              {plan.extra_brain_sections?.length ? (
-                <p className="mt-2.5 text-xs text-gray-600">
-                  Extra brain sections: <span className="font-mono">{plan.extra_brain_sections.join(', ')}</span>
-                </p>
-              ) : null}
-              {plan.alternatives?.length ? (
-                <>
-                  <p className="mt-2.5 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Rejected alternatives</p>
-                  <ul className="mt-1 space-y-0.5 text-sm text-gray-700">
-                    {plan.alternatives.map((alternative) => (
-                      <li key={alternative.template_id}>
-                        {templateLabel(alternative.template_id, selected.template_names[alternative.template_id])} — {alternative.why_not}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-            </div>
-          ) : null}
-
-          {selected.checker_feedback ? (
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">Unresolved checker feedback</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-amber-900">{selected.checker_feedback}</p>
-            </div>
-          ) : null}
-
-          {selected.final_text ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Final draft</p>
-              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-800">{selected.final_text}</pre>
-            </div>
-          ) : null}
-
-          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Steps</p>
-          <div className="mt-1.5 space-y-2">
-            {selected.steps.map((step) => (
-              <div key={step.id} className="rounded-xl border border-gray-200 p-2.5">
-                <button
-                  type="button"
-                  onClick={() => setExpandedStepId(expandedStepId === step.id ? null : step.id)}
-                  className="flex w-full items-center justify-between gap-3 text-left"
-                >
-                  <span className="text-sm font-semibold text-gray-900">
-                    {step.step_index + 1}. {step.stage}
-                    {step.error ? <span className="ml-2 text-xs text-rose-600">error</span> : null}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {step.model ?? '—'} · {(step.prompt_tokens ?? 0) + (step.output_tokens ?? 0)} tokens · {step.latency_ms ?? '—'}ms
-                  </span>
-                </button>
-                {expandedStepId === step.id ? (
-                  <div className="mt-2 space-y-2">
-                    {step.error ? <p className="text-sm text-rose-600">{step.error}</p> : null}
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Prompt</p>
-                      <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-2.5 text-xs text-gray-800">{step.prompt ?? '—'}</pre>
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Response</p>
-                      <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-2.5 text-xs text-gray-800">{step.response ?? '—'}</pre>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
     </main>
   )
 }
