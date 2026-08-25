@@ -26,6 +26,7 @@ _ASSIGNABLE_FIELDS = (
     "include_payments",
     "include_notes",
     "include_availability",
+    "include_tenant_brain",
     "include_brain_index",
     "match_inbound_language",
     "escalate_keywords",

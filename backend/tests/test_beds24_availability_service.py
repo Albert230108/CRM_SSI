@@ -58,6 +58,10 @@ def test_get_cached_summary_defaults_when_never_refreshed(db_session):
     assert beds24_availability_service.get_cached_summary(db_session) == "Availability has not been fetched yet."
 
 
+def test_get_context_note_defaults_when_never_refreshed(db_session):
+    assert beds24_availability_service.get_context_note(db_session) == ""
+
+
 def test_refresh_availability_summary_upserts_single_row(db_session, monkeypatch):
     async def fake_get_room_availability():
         return [{"roomId": 1, "name": "Studio 1", "availability": {"2026-08-25": True}}]
@@ -80,6 +84,29 @@ def test_refresh_availability_summary_upserts_single_row(db_session, monkeypatch
 
     assert db_session.query(Beds24AvailabilitySummary).count() == 1
     assert beds24_availability_service.get_cached_summary(db_session) == "Studio 1: booked Aug 25"
+
+
+def test_refresh_availability_summary_preserves_context_note(db_session, monkeypatch):
+    db_session.add(
+        Beds24AvailabilitySummary(
+            summary_text="Old summary",
+            context_note="Studio 3 is under renovation until Sept 10.",
+            rooms_json=[],
+        )
+    )
+    db_session.commit()
+
+    async def fake_get_room_availability():
+        return [{"roomId": 1, "name": "Studio 1", "availability": {"2026-08-25": True}}]
+
+    monkeypatch.setattr(beds24_availability_service.beds24_client, "get_room_availability", fake_get_room_availability)
+
+    asyncio.run(beds24_availability_service.refresh_availability_summary(db_session))
+    db_session.commit()
+
+    row = db_session.query(Beds24AvailabilitySummary).one()
+    assert row.summary_text == "Studio 1: free Aug 25"
+    assert row.context_note == "Studio 3 is under renovation until Sept 10."
 
 
 def test_parse_availability_structured_checkout_is_day_after_last_free_night():

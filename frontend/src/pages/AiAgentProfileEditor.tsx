@@ -23,6 +23,7 @@ type FieldRelevance = {
   include_payments: boolean
   include_notes: boolean
   include_availability: boolean
+  include_tenant_brain: boolean
   include_brain_index: boolean
   match_inbound_language: boolean
   escalate_keywords: boolean
@@ -62,6 +63,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_payments: true,
     include_notes: true,
     include_availability: true,
+    include_tenant_brain: true,
     include_brain_index: true,
     match_inbound_language: true,
     escalate_keywords: true,
@@ -83,6 +85,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_payments: true,
     include_notes: true,
     include_availability: true,
+    include_tenant_brain: true,
     include_brain_index: true,
     match_inbound_language: true,
     escalate_keywords: false,
@@ -104,6 +107,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_payments: false,
     include_notes: false,
     include_availability: false,
+    include_tenant_brain: false,
     include_brain_index: false,
     match_inbound_language: false,
     escalate_keywords: false,
@@ -125,6 +129,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_payments: true,
     include_notes: true,
     include_availability: false,
+    include_tenant_brain: false,
     include_brain_index: false,
     match_inbound_language: false,
     escalate_keywords: false,
@@ -146,6 +151,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_payments: false,
     include_notes: true,
     include_availability: false,
+    include_tenant_brain: false,
     include_brain_index: false,
     match_inbound_language: false,
     escalate_keywords: false,
@@ -167,6 +173,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_payments: false,
     include_notes: false,
     include_availability: false,
+    include_tenant_brain: false,
     include_brain_index: false,
     match_inbound_language: false,
     escalate_keywords: false,
@@ -188,6 +195,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_payments: true,
     include_notes: true,
     include_availability: true,
+    include_tenant_brain: false,
     include_brain_index: true,
     match_inbound_language: false,
     escalate_keywords: false,
@@ -218,6 +226,7 @@ function emptyForm(role: AgentRole): ProfileForm {
     include_payments: false,
     include_notes: true,
     include_availability: false,
+    include_tenant_brain: false,
     include_brain_index: true,
     match_inbound_language: true,
     escalate_keywords: '',
@@ -270,6 +279,7 @@ export default function AiAgentProfileEditor() {
     relevance.include_payments ||
     relevance.include_notes ||
     relevance.include_availability ||
+    relevance.include_tenant_brain ||
     relevance.include_brain_index
   const showGuardrails =
     relevance.escalate_keywords ||
@@ -580,7 +590,7 @@ export default function AiAgentProfileEditor() {
                   />
                 </div>
               ) : null}
-              {(relevance.include_beds24 || relevance.include_payments || relevance.include_notes || relevance.include_availability || relevance.include_brain_index) ? (
+              {(relevance.include_beds24 || relevance.include_payments || relevance.include_notes || relevance.include_availability || relevance.include_tenant_brain || relevance.include_brain_index) ? (
                 <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 sm:col-span-2 xl:col-span-2">
                   <p className={LABEL}>Included sources</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -606,6 +616,12 @@ export default function AiAgentProfileEditor() {
                       <label className="flex items-center gap-2 text-sm text-gray-700">
                         <input type="checkbox" checked={form.include_availability} onChange={(event) => set('include_availability', event.target.checked)} />
                         Availability summary
+                      </label>
+                    ) : null}
+                    {relevance.include_tenant_brain ? (
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={form.include_tenant_brain} onChange={(event) => set('include_tenant_brain', event.target.checked)} />
+                        Tenant brain (fields &amp; entries)
                       </label>
                     ) : null}
                     {relevance.include_brain_index ? (

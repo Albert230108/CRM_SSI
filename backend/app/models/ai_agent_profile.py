@@ -62,6 +62,7 @@ class AiAgentProfile(Base):
     include_payments = Column(Boolean, nullable=False, default=False, server_default="false")
     include_notes = Column(Boolean, nullable=False, default=True, server_default="true")
     include_availability = Column(Boolean, nullable=False, default=False, server_default="false")
+    include_tenant_brain = Column(Boolean, nullable=False, default=False, server_default="false")
     # Planner only: whether to show the brain's table of contents so it can request sections.
     include_brain_index = Column(Boolean, nullable=False, default=True, server_default="true")
 

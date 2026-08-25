@@ -21,4 +21,5 @@ class Beds24AvailabilitySummary(Base):
     id = Column(Integer, primary_key=True, index=True)
     refreshed_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     summary_text = Column(Text, nullable=False, default="")
+    context_note = Column(Text, nullable=False, default="", server_default="")
     rooms_json = Column(JSON, nullable=True)

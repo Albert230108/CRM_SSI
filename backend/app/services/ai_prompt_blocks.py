@@ -140,6 +140,20 @@ PLANNER_BLOCKS: tuple[PromptBlock, ...] = (
         ),
     ),
     PromptBlock(
+        key="ctx_fields",
+        label="Structured fields heading",
+        help="Sits above the tenant's named working-memory fields.",
+        default="## Structured Fields",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_entries",
+        label="Free-text entries heading",
+        help="Sits above the tenant's free-text brain entries.",
+        default="## Free-Text Brain Entries",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
         key="operator_note",
         label="Operator note framing",
         help="Sits above whatever a member of staff typed into the reply box. Omitted when they typed nothing.",
@@ -229,6 +243,20 @@ CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
             "above under \"Knowledge Base\", list its path in `extra_brain_sections`. The reply will "
             "be rewritten with that section included and you will review it again."
         ),
+    ),
+    PromptBlock(
+        key="ctx_fields",
+        label="Structured fields heading",
+        help="Sits above the tenant's named working-memory fields.",
+        default="## Structured Fields",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_entries",
+        label="Free-text entries heading",
+        help="Sits above the tenant's free-text brain entries.",
+        default="## Free-Text Brain Entries",
+        group=CONTEXT_GROUP,
     ),
     PromptBlock(
         key="template",

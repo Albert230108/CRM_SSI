@@ -132,3 +132,8 @@ async def refresh_availability_summary(db: Session) -> None:
 def get_cached_summary(db: Session) -> str:
     row = db.query(Beds24AvailabilitySummary).first()
     return row.summary_text if row is not None else "Availability has not been fetched yet."
+
+
+def get_context_note(db: Session) -> str:
+    row = db.query(Beds24AvailabilitySummary).first()
+    return row.context_note if row is not None else ""

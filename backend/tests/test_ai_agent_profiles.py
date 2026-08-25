@@ -33,6 +33,7 @@ def _payload(**overrides):
         "include_beds24": True,
         "include_payments": False,
         "include_notes": True,
+        "include_tenant_brain": False,
         "include_brain_index": True,
         "match_inbound_language": True,
         "escalate_keywords": ["refund", "lawyer"],

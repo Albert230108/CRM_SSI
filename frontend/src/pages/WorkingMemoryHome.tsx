@@ -478,11 +478,15 @@ type Beds24AvailabilityRoom = {
   free_ranges: Array<{ check_in: string; check_out: string }>
 }
 
-function AvailabilityTab({ showError }: { showError: (m: string) => void }) {
+function AvailabilityTab({ showSuccess, showError }: { showSuccess: (m: string) => void; showError: (m: string) => void }) {
   const authHeaders = useAuthHeaders()
   const [rooms, setRooms] = useState<Beds24AvailabilityRoom[]>([])
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
+  const [contextNote, setContextNote] = useState('')
+  const [savedContextNote, setSavedContextNote] = useState('')
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const isDirty = contextNote !== savedContextNote
 
   useEffect(() => {
     ;(async () => {
@@ -493,6 +497,9 @@ function AvailabilityTab({ showError }: { showError: (m: string) => void }) {
         const data = await response.json()
         setRooms(data.rooms ?? [])
         setRefreshedAt(data.refreshed_at ?? null)
+        const note = data.context_note ?? ''
+        setContextNote(note)
+        setSavedContextNote(note)
       } catch {
         showError('Failed to load availability')
       } finally {
@@ -502,11 +509,57 @@ function AvailabilityTab({ showError }: { showError: (m: string) => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const save = async () => {
+    if (!isDirty || saving) return
+    setSaving(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/beds24-availability/context-note`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({ context_note: contextNote }),
+      })
+      if (!response.ok) throw new Error()
+      const data = await response.json()
+      const note = data.context_note ?? ''
+      setContextNote(note)
+      setSavedContextNote(note)
+      showSuccess('Availability note saved')
+    } catch {
+      showError('Failed to save availability note')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
       <h2 className="text-lg font-semibold text-gray-900">Availability</h2>
       <p className="mt-1 text-sm text-gray-500">Free dates only, from Beds24. Shown here as working memory, not in the tenant brain.</p>
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 space-y-3">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="availability-context-note">
+            Staff context note
+          </label>
+          <textarea
+            id="availability-context-note"
+            value={contextNote}
+            onChange={(event) => setContextNote(event.target.value)}
+            rows={4}
+            placeholder='e.g. "Studio 3 is under renovation until Sept 10, treat as unavailable even though Beds24 shows it free."'
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <p className="text-xs text-gray-500">This note is appended to the availability block that the planner/checker can see.</p>
+            <button
+              type="button"
+              onClick={save}
+              disabled={!isDirty || saving || loading}
+              className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+            >
+              {saving ? 'Saving...' : 'Save note'}
+            </button>
+          </div>
+        </div>
         {loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : rooms.length > 0 ? (
@@ -757,7 +810,7 @@ export default function WorkingMemoryHome() {
         {activeTab === 'rules' ? <RulesTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'fields' ? <FieldsTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'tags' ? <TagsTab showSuccess={showSuccess} showError={showError} /> : null}
-        {activeTab === 'availability' ? <AvailabilityTab showError={showError} /> : null}
+        {activeTab === 'availability' ? <AvailabilityTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'suggestions' ? <SuggestionsTab showSuccess={showSuccess} showError={showError} /> : null}
         {activeTab === 'redo-log' ? <RedoLogTab showError={showError} /> : null}
       </SettingsSidebarLayout>

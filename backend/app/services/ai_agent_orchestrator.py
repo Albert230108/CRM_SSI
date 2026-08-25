@@ -282,6 +282,11 @@ def _build_context_blocks(
         parts.append(ai_reply_service._build_notes_context(tenant, blocks))
     if profile.include_availability:
         parts.append(ai_reply_service._build_availability_context(db, blocks))
+    if profile.include_tenant_brain:
+        from app.services import memory_qa_service
+
+        parts.append(memory_qa_service._fields_block(db, tenant.id, blocks))
+        parts.append(memory_qa_service._entries_block(db, tenant.id, blocks))
     if inbound_text:
         parts.append(ai_prompt_blocks.join(blocks["ctx_inbound"], inbound_text))
     return parts

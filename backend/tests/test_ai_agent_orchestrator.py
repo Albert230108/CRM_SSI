@@ -6,11 +6,14 @@ import pytest
 from app.models.ai_agent_profile import AiAgentProfile
 from app.models.ai_agent_run import AiAgentRun, AiAgentRunStep
 from app.models.ai_reply_template import AiReplyTemplate
+from app.models.brain_field_definition import BrainFieldDefinition
 from app.models.brain_section import BrainSection
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
+from app.models.tenant_brain_entry import TenantBrainEntry
+from app.models.tenant_brain_field_value import TenantBrainFieldValue
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services import ai_agent_orchestrator, attachment_service, gemini_client
 
@@ -183,6 +186,41 @@ def test_attachments_reach_every_stage_as_file_parts_and_an_explicit_instruction
     run = db_session.query(AiAgentRun).filter(AiAgentRun.id == result.run_id).one()
     for step in run.steps:
         assert "damage-photo.png (image/png)" in step.prompt
+
+
+def test_tenant_brain_blocks_reach_planner_and_checker_when_enabled(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner", include_tenant_brain=True)
+    _profile(db_session, "checker", include_tenant_brain=True)
+    _settings(db_session, tenant)
+    field = BrainFieldDefinition(
+        key="pets",
+        label="Pets",
+        ai_instruction="Track whether the tenant has pets.",
+        is_active=True,
+    )
+    db_session.add(field)
+    db_session.commit()
+    db_session.add(TenantBrainFieldValue(tenant_id=tenant.id, field_definition_id=field.id, value="Has a dog", source="manual"))
+    db_session.add(TenantBrainEntry(tenant_id=tenant.id, content="Prefers ground floor", source="manual"))
+    db_session.commit()
+
+    fake = fake_gemini([_plan(template.id), "Here's the reply.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Late arrival?"
+    )
+    db_session.commit()
+
+    assert "## Structured Fields" in fake.calls[0]["prompt"]
+    assert "- Pets: Has a dog" in fake.calls[0]["prompt"]
+    assert "## Free-Text Brain Entries" in fake.calls[0]["prompt"]
+    assert "- Prefers ground floor" in fake.calls[0]["prompt"]
+    assert "## Structured Fields" in fake.calls[2]["prompt"]
+    assert "- Pets: Has a dog" in fake.calls[2]["prompt"]
+    assert "## Free-Text Brain Entries" in fake.calls[2]["prompt"]
+    assert "- Prefers ground floor" in fake.calls[2]["prompt"]
 
 
 def test_unsupported_attachment_is_skipped_and_not_sent_to_the_model(db_session, fake_gemini):

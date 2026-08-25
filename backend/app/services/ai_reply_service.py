@@ -99,6 +99,9 @@ def _build_beds24_context(tenant: Tenant, blocks: dict[str, str] | None = None) 
 def _build_availability_context(db: Session, blocks: dict[str, str] | None = None) -> str:
     """The cached, pre-parsed Beds24 availability summary - never the raw per-date JSON."""
     summary = beds24_availability_service.get_cached_summary(db)
+    context_note = beds24_availability_service.get_context_note(db).strip()
+    if context_note:
+        summary = f"{summary}\n\n{context_note}"
     return ai_prompt_blocks.join(_blocks(blocks)["ctx_availability"], summary)
 
 

@@ -29,6 +29,7 @@ class AiAgentProfileBase(BaseModel):
     include_payments: bool = False
     include_notes: bool = True
     include_availability: bool = False
+    include_tenant_brain: bool = False
     include_brain_index: bool = True
 
     match_inbound_language: bool = True

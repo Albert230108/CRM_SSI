@@ -17,6 +17,7 @@ export type AiAgentProfile = {
   include_payments: boolean
   include_notes: boolean
   include_availability: boolean
+  include_tenant_brain: boolean
   include_brain_index: boolean
   match_inbound_language: boolean
   escalate_keywords: string[]
