@@ -86,6 +86,19 @@ def test_update_can_move_the_default(client, db_session):
     assert db_session.query(AiAgentProfile).filter(AiAgentProfile.id == first["id"]).one().is_default is False
 
 
+def test_get_profile_by_id_returns_the_profile_and_404_for_missing_profile(client):
+    created = client.post("/api/ai-agent-profiles", json=_payload(name="Lookup me")).json()
+
+    response = client.get(f"/api/ai-agent-profiles/{created['id']}")
+    assert response.status_code == 200
+    assert response.json()["id"] == created["id"]
+    assert response.json()["name"] == "Lookup me"
+
+    missing = client.get("/api/ai-agent-profiles/999999")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Agent profile not found"
+
+
 def test_deleting_the_default_is_refused(client):
     profile = client.post("/api/ai-agent-profiles", json=_payload()).json()
     response = client.delete(f"/api/ai-agent-profiles/{profile['id']}")

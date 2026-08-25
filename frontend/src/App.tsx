@@ -11,6 +11,7 @@ import AiTemplatesOverview from './pages/AiTemplatesOverview'
 import AiTemplateEditor from './pages/AiTemplateEditor'
 import AiTenantSettings from './pages/AiTenantSettings'
 import AiAgentProfiles from './pages/AiAgentProfiles'
+import AiAgentProfileEditor from './pages/AiAgentProfileEditor'
 import AiAgentRuns from './pages/AiAgentRuns'
 import BrainSections from './pages/BrainSections'
 import AiPendingDrafts from './pages/AiPendingDrafts'
@@ -67,6 +68,7 @@ export default function App() {
                     <Route path="/settings/ai-tenants" element={<AiTenantSettings />} />
                     <Route path="/settings/brain" element={<BrainSections />} />
                     <Route path="/settings/ai-agents" element={<AiAgentProfiles />} />
+                    <Route path="/settings/ai-agents/:profileId" element={<AiAgentProfileEditor />} />
                     <Route path="/ai-runs" element={<ProtectedRoute><AiAgentRuns /></ProtectedRoute>} />
                     <Route path="/ai-drafts" element={<AiPendingDrafts />} />
                     <Route path="/ai-payload-preview" element={<AiPayloadPreview />} />

@@ -95,6 +95,15 @@ def list_agent_profiles(
     return query.order_by(AiAgentProfile.role, AiAgentProfile.name).all()
 
 
+@router.get("/{profile_id}", response_model=AiAgentProfileRead)
+def get_agent_profile(
+    profile_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiAgentProfile:
+    return _get_profile(db, profile_id)
+
+
 @router.post("", response_model=AiAgentProfileRead, status_code=status.HTTP_201_CREATED)
 def create_agent_profile(
     payload: AiAgentProfileCreate,
