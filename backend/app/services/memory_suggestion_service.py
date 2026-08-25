@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models.action_item import STATUS_OPEN as ACTION_ITEM_STATUS_OPEN
 from app.models.action_item import ActionItem
+from app.models.ai_agent_profile import AiAgentProfile
+from app.models.ai_reply_template import AiReplyTemplate
 from app.models.brain_field_definition import BrainFieldDefinition
 from app.models.memory_suggestion import (
     KIND_ACTION_ITEM_COMPLETE,
@@ -18,9 +20,11 @@ from app.models.memory_suggestion import (
     KIND_ACTION_ITEM_MODIFY,
     KIND_BRAIN_ENTRY,
     KIND_FIELD_VALUE,
+    KIND_PROFILE_CHANGE,
     KIND_RULE_ADD,
     KIND_RULE_DELETE,
     KIND_RULE_MODIFY,
+    KIND_TEMPLATE_CHANGE,
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
@@ -109,6 +113,26 @@ def _apply_rule_delete(db: Session, suggestion: MemorySuggestion) -> ApplyResult
     return ApplyResult(True, "Rule dismissed.")
 
 
+def _apply_profile_change(db: Session, suggestion: MemorySuggestion) -> ApplyResult:
+    """Suggestion-only: approving records that a human reviewed and accepted this recommendation.
+    It never rewrites the profile itself - a human edits it by hand in the Agent Profiles editor,
+    since profile instructions/prompt overrides are too consequential to auto-rewrite from a
+    redo's guess.
+    """
+    profile = db.query(AiAgentProfile).filter(AiAgentProfile.id == suggestion.target_id).first()
+    if profile is None:
+        return ApplyResult(False, "The target agent profile no longer exists.")
+    return ApplyResult(True, "Reviewed. Edit this agent profile manually to apply the suggested change.")
+
+
+def _apply_template_change(db: Session, suggestion: MemorySuggestion) -> ApplyResult:
+    """Suggestion-only, same reasoning as _apply_profile_change but for reply templates."""
+    template = db.query(AiReplyTemplate).filter(AiReplyTemplate.id == suggestion.target_id).first()
+    if template is None:
+        return ApplyResult(False, "The target reply template no longer exists.")
+    return ApplyResult(True, "Reviewed. Edit this reply template manually to apply the suggested change.")
+
+
 def _apply_action_item_modify(db: Session, suggestion: MemorySuggestion) -> ApplyResult:
     item = db.query(ActionItem).filter(ActionItem.id == suggestion.target_id).first()
     if item is None or item.status != ACTION_ITEM_STATUS_OPEN:
@@ -158,6 +182,8 @@ def approve(db: Session, suggestion: MemorySuggestion, reviewer_id: int | None =
         KIND_RULE_ADD: lambda: _apply_rule_add(db, suggestion, reviewer_id),
         KIND_RULE_MODIFY: lambda: _apply_rule_modify(db, suggestion),
         KIND_RULE_DELETE: lambda: _apply_rule_delete(db, suggestion),
+        KIND_PROFILE_CHANGE: lambda: _apply_profile_change(db, suggestion),
+        KIND_TEMPLATE_CHANGE: lambda: _apply_template_change(db, suggestion),
         KIND_ACTION_ITEM_MODIFY: lambda: _apply_action_item_modify(db, suggestion),
         KIND_ACTION_ITEM_DELETE: lambda: _apply_action_item_delete(db, suggestion),
         KIND_ACTION_ITEM_COMPLETE: lambda: _apply_action_item_complete(db, suggestion),

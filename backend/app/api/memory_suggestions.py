@@ -6,7 +6,17 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.memory_suggestion import KIND_ACTION_ITEM_COMPLETE, KIND_ACTION_ITEM_DELETE, KIND_ACTION_ITEM_MODIFY, STATUS_PENDING, MemorySuggestion
+from app.models.ai_agent_profile import AiAgentProfile
+from app.models.ai_reply_template import AiReplyTemplate
+from app.models.memory_suggestion import (
+    KIND_ACTION_ITEM_COMPLETE,
+    KIND_ACTION_ITEM_DELETE,
+    KIND_ACTION_ITEM_MODIFY,
+    KIND_PROFILE_CHANGE,
+    KIND_TEMPLATE_CHANGE,
+    STATUS_PENDING,
+    MemorySuggestion,
+)
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import memory_suggestion_service
@@ -20,19 +30,23 @@ class MemorySuggestionRead(BaseModel):
     tenant_id: Optional[int] = None
     tenant_name: Optional[str] = None
     target_id: Optional[int] = None
+    # Human-readable name of the target profile/template for profile_change/template_change
+    # suggestions, since proposed_value only carries the raw id.
+    target_name: Optional[str] = None
     proposed_value: dict[str, Any]
     reasoning: Optional[str] = None
     status: str
     created_at: datetime
 
 
-def _to_read(suggestion: MemorySuggestion, tenant_name: Optional[str]) -> MemorySuggestionRead:
+def _to_read(suggestion: MemorySuggestion, tenant_name: Optional[str], target_name: Optional[str]) -> MemorySuggestionRead:
     return MemorySuggestionRead(
         id=suggestion.id,
         kind=suggestion.kind,
         tenant_id=suggestion.tenant_id,
         tenant_name=tenant_name,
         target_id=suggestion.target_id,
+        target_name=target_name,
         proposed_value=suggestion.proposed_value,
         reasoning=suggestion.reasoning,
         status=suggestion.status,
@@ -49,7 +63,19 @@ def list_memory_suggestions(db: Session = Depends(get_db), current_user: User = 
     tenant_names = {
         t.id: t.name for t in db.query(Tenant).filter(Tenant.id.in_([r.tenant_id for r in rows if r.tenant_id is not None])).all()
     }
-    return [_to_read(row, tenant_names.get(row.tenant_id)) for row in rows]
+    profile_ids = [r.target_id for r in rows if r.kind == KIND_PROFILE_CHANGE and r.target_id is not None]
+    template_ids = [r.target_id for r in rows if r.kind == KIND_TEMPLATE_CHANGE and r.target_id is not None]
+    profile_names = {p.id: f"{p.name} ({p.role})" for p in db.query(AiAgentProfile).filter(AiAgentProfile.id.in_(profile_ids)).all()}
+    template_names = {t.id: t.name for t in db.query(AiReplyTemplate).filter(AiReplyTemplate.id.in_(template_ids)).all()}
+
+    def _target_name(row: MemorySuggestion) -> Optional[str]:
+        if row.kind == KIND_PROFILE_CHANGE:
+            return profile_names.get(row.target_id)
+        if row.kind == KIND_TEMPLATE_CHANGE:
+            return template_names.get(row.target_id)
+        return None
+
+    return [_to_read(row, tenant_names.get(row.tenant_id), _target_name(row)) for row in rows]
 
 
 def _get_suggestion(db: Session, suggestion_id: int) -> MemorySuggestion:

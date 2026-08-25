@@ -492,10 +492,12 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
         default=(
             "A staff member asked to redo an AI-generated reply in a short-stay rental CRM, explaining "
             "what to change and why. Decide whether that feedback reveals something worth permanently "
-            "changing in this tenant's working memory, or in a general rule that would apply across "
-            "tenants. Most redos are one-off wording notes and warrant no suggestion at all - only "
-            "propose a change when the \"why\" points at a durable, generalizable fact or policy, not a "
-            "one-time stylistic tweak."
+            "changing in this tenant's working memory, in a general rule that would apply across "
+            "tenants, or in the agent profile/reply template that produced the draft (compare the "
+            "feedback against the full run log below to tell these apart). Most redos are one-off "
+            "wording notes and warrant no suggestion at all - only propose a change when the \"why\" "
+            "points at a durable, generalizable fact, policy, or misconfiguration, not a one-time "
+            "stylistic tweak."
         ),
     ),
     PromptBlock(
@@ -575,18 +577,34 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
         group=CONTEXT_GROUP,
     ),
     PromptBlock(
+        key="ctx_run_log",
+        label="Full run log heading",
+        help=(
+            "Sits above the full planner/drafter/checker log of the run that produced the draft "
+            "being redone (prompts, responses, and which profile/template were used). Omitted "
+            "when no run is linked."
+        ),
+        default="## Full Run Log Being Redone",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
         key="output",
         label="Output instruction",
         help=(
             "Emitted last. Reword freely, but keep the field names - suggestions, kind, field_key, "
-            "value, content, rule_id, condition_text, action_text, reasoning - because the response "
-            "schema in code enforces them."
+            "value, content, rule_id, condition_text, action_text, profile_id, template_id, field, "
+            "suggested_text, reasoning - because the response schema in code enforces them."
         ),
         default=(
             "## Output\n"
             "Return JSON only. `suggestions` is a list of 0 or more proposed changes, each with a "
             "`kind`, the fields relevant to that kind, and a `reasoning` explaining why it's durable "
-            "and generalizable rather than one-off. Leave `suggestions` empty when in doubt."
+            "and generalizable rather than one-off. Compare the redo feedback against the run log: "
+            "if the planner/drafter/checker's own instructions caused the mistake, propose a "
+            "`profile_change`; if the chosen reply template's guidelines/sections caused it, propose "
+            "a `template_change`; only propose `rule_add`/`rule_modify`/`rule_delete` or "
+            "`field_value`/`brain_entry` for a durable, generalizable fact or policy. Leave "
+            "`suggestions` empty when in doubt."
         ),
     ),
 )

@@ -19,9 +19,11 @@ from app.models.ai_auto_draft import AiAutoDraft
 from app.models.memory_suggestion import (
     KIND_BRAIN_ENTRY,
     KIND_FIELD_VALUE,
+    KIND_PROFILE_CHANGE,
     KIND_RULE_ADD,
     KIND_RULE_DELETE,
     KIND_RULE_MODIFY,
+    KIND_TEMPLATE_CHANGE,
     STATUS_PENDING,
     MemorySuggestion,
 )
@@ -31,8 +33,45 @@ from app.services import ai_agent_orchestrator, ai_prompt_blocks, beds24_availab
 
 logger = logging.getLogger(__name__)
 
-_LEGACY_VALID_KINDS = {KIND_FIELD_VALUE, KIND_BRAIN_ENTRY, KIND_RULE_ADD, KIND_RULE_MODIFY, KIND_RULE_DELETE}
-_RULE_VALID_KINDS = {KIND_RULE_ADD, KIND_RULE_MODIFY, KIND_RULE_DELETE}
+# Truncate each step's prompt/response before putting it in the redo prompt, so a long run log
+# can't blow up the memory_redo call's own token budget.
+_RUN_LOG_STEP_CHAR_LIMIT = 4000
+
+_LEGACY_VALID_KINDS = {
+    KIND_FIELD_VALUE,
+    KIND_BRAIN_ENTRY,
+    KIND_RULE_ADD,
+    KIND_RULE_MODIFY,
+    KIND_RULE_DELETE,
+    KIND_PROFILE_CHANGE,
+    KIND_TEMPLATE_CHANGE,
+}
+# Historically "rule diffs only" - now also covers profile/template suggestions surfaced by
+# comparing the redo feedback against the full run log, so the name no longer describes its
+# whole scope; kept as-is since nothing outside this module references it by name.
+_RULE_VALID_KINDS = {KIND_RULE_ADD, KIND_RULE_MODIFY, KIND_RULE_DELETE, KIND_PROFILE_CHANGE, KIND_TEMPLATE_CHANGE}
+
+_SUGGESTION_ITEM_PROPERTIES = {
+    # field_value only
+    "field_key": {"type": "string"},
+    "value": {"type": "string"},
+    # brain_entry only
+    "content": {"type": "string"},
+    # rule_modify / rule_delete only
+    "rule_id": {"type": "integer"},
+    # rule_add, and rule_modify's replacement text
+    "condition_text": {"type": "string"},
+    "action_text": {"type": "string"},
+    # profile_change only - profile_id must be one of the ids named in the run log
+    "profile_id": {"type": "integer"},
+    # template_change only - template_id must be the final_template_id named in the run log
+    "template_id": {"type": "integer"},
+    # profile_change / template_change: which field to change (e.g. "instructions", "guidelines")
+    # and the suggested replacement text for it
+    "field": {"type": "string"},
+    "suggested_text": {"type": "string"},
+    "reasoning": {"type": "string"},
+}
 
 MEMORY_REDO_SCHEMA = {
     "type": "object",
@@ -47,17 +86,7 @@ MEMORY_REDO_SCHEMA = {
                     # then silently drops - the enum is what actually pins the model to the
                     # literals the code checks for; the comment alone is invisible to it.
                     "kind": {"type": "string", "enum": sorted(_LEGACY_VALID_KINDS)},
-                    # field_value only
-                    "field_key": {"type": "string"},
-                    "value": {"type": "string"},
-                    # brain_entry only
-                    "content": {"type": "string"},
-                    # rule_modify / rule_delete only
-                    "rule_id": {"type": "integer"},
-                    # rule_add, and rule_modify's replacement text
-                    "condition_text": {"type": "string"},
-                    "action_text": {"type": "string"},
-                    "reasoning": {"type": "string"},
+                    **_SUGGESTION_ITEM_PROPERTIES,
                 },
                 "required": ["kind", "reasoning"],
             },
@@ -75,10 +104,7 @@ RULE_REDO_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "kind": {"type": "string", "enum": sorted(_RULE_VALID_KINDS)},
-                    "rule_id": {"type": "integer"},
-                    "condition_text": {"type": "string"},
-                    "action_text": {"type": "string"},
-                    "reasoning": {"type": "string"},
+                    **_SUGGESTION_ITEM_PROPERTIES,
                 },
                 "required": ["kind", "reasoning"],
             },
@@ -86,38 +112,6 @@ RULE_REDO_SCHEMA = {
     },
     "required": ["suggestions"],
 }
-
-_LEGACY_PREAMBLE = (
-    "A staff member asked to redo an AI-generated reply in a short-stay rental CRM, explaining "
-    "what to change and why. Decide whether that feedback reveals something worth permanently "
-    "changing in this tenant's working memory, or in a general rule that would apply across "
-    "tenants. Most redos are one-off wording notes and warrant no suggestion at all - only "
-    "propose a change when the \"why\" points at a durable, generalizable fact or policy, not a "
-    "one-time stylistic tweak."
-)
-
-_RULE_REDO_PREAMBLE = (
-    "You review redo logs from a short-stay rental CRM and propose durable rule changes only. "
-    "Use the persisted redo record, the underlying draft text, and the staff member's explanation "
-    "to decide whether a global rule should be added, modified, or deleted. Do not invent one-off "
-    "tenant memory notes here: this agent only suggests rule diffs."
-)
-
-_OUTPUT_INSTRUCTION = (
-    "## Output\n"
-    "Return JSON only. `suggestions` is a list of 0 or more proposed changes, each with a "
-    "`kind`, the fields relevant to that kind, and a `reasoning` explaining why it's durable "
-    "and generalizable rather than one-off. Leave `suggestions` empty when in doubt."
-)
-
-_RULE_OUTPUT_INSTRUCTION = (
-    "## Output\n"
-    "Return JSON only. `suggestions` is a list of 0 or more proposed rule diffs. Use only "
-    "`rule_add`, `rule_modify`, or `rule_delete`. Each item must include the fields relevant to "
-    "that kind plus a concise `reasoning`. Leave `suggestions` empty when the redo looks like a "
-    "one-off wording change or does not justify a durable rule update."
-)
-
 
 def _recent_decisions_lines(db: Session, tenant_id: int) -> list[str]:
     recent_drafts = (
@@ -152,7 +146,53 @@ def _fields_and_rules_block(db: Session, tenant_id: int, blocks: dict[str, str])
     return "\n\n".join(parts)
 
 
-def _build_legacy_prompt(db: Session, tenant: Tenant, profile: AiAgentProfile, generated_text: str, what: str, why: str | None) -> str:
+def _truncate(text: str | None) -> str:
+    text = text or ""
+    if len(text) <= _RUN_LOG_STEP_CHAR_LIMIT:
+        return text
+    return text[:_RUN_LOG_STEP_CHAR_LIMIT] + "\n[...truncated]"
+
+
+def _run_log_block(db: Session, blocks: dict[str, str], agent_run_id: int | None) -> str:
+    """Render the full planner/drafter/checker log of the run being redone, so the model can
+    tell whether the mistake came from that run's agent instructions or reply template, rather
+    than only ever seeing the redone text in isolation.
+    """
+    if agent_run_id is None:
+        return ""
+    run = db.query(AiAgentRun).filter(AiAgentRun.id == agent_run_id).first()
+    if run is None:
+        return ""
+    steps = (
+        db.query(AiAgentRunStep)
+        .filter(AiAgentRunStep.run_id == run.id)
+        .order_by(AiAgentRunStep.step_index, AiAgentRunStep.id)
+        .all()
+    )
+    lines = [
+        f"run_id={run.id} status={run.status} planner_profile_id={run.planner_profile_id} "
+        f"checker_profile_id={run.checker_profile_id} final_template_id={run.final_template_id} "
+        f"attempts={run.attempts}"
+    ]
+    for step in steps:
+        lines.append(f"--- step {step.step_index} ({step.stage}, model={step.model}) ---")
+        lines.append(f"Prompt:\n{_truncate(step.prompt)}")
+        if step.response:
+            lines.append(f"Response:\n{_truncate(step.response)}")
+        if step.error:
+            lines.append(f"Error: {step.error}")
+    return ai_prompt_blocks.join(blocks["ctx_run_log"], "\n".join(lines))
+
+
+def _build_legacy_prompt(
+    db: Session,
+    tenant: Tenant,
+    profile: AiAgentProfile,
+    generated_text: str,
+    what: str,
+    why: str | None,
+    agent_run_id: int | None = None,
+) -> str:
     blocks = ai_prompt_blocks.resolve_blocks(profile, MEMORY_REDO_ROLE)
     parts: list[str] = []
 
@@ -172,13 +212,17 @@ def _build_legacy_prompt(db: Session, tenant: Tenant, profile: AiAgentProfile, g
         redo_lines.append(f"Why: {why}")
     parts.append(ai_prompt_blocks.join(blocks["ctx_redo"], "\n".join(redo_lines)))
 
+    run_log = _run_log_block(db, blocks, agent_run_id)
+    if run_log:
+        parts.append(run_log)
+
     output = (blocks["output"] or "").strip()
     if output:
         parts.append(output)
     return "\n\n".join(part for part in parts if part.strip())
 
 
-def _build_rule_redo_prompt(db: Session, log: RedoRequestLog, profile: AiAgentProfile, draft_text: str) -> str:
+def _build_rule_redo_prompt(db: Session, log: RedoRequestLog, profile: AiAgentProfile, draft_text: str, agent_run_id: int | None) -> str:
     tenant = db.query(Tenant).filter(Tenant.id == log.tenant_id).first()
     if tenant is None:
         return ""
@@ -207,10 +251,15 @@ def _build_rule_redo_prompt(db: Session, log: RedoRequestLog, profile: AiAgentPr
     redo_lines.append(draft_text or "")
     parts.append(ai_prompt_blocks.join(blocks["ctx_redo"], "\n".join(redo_lines)))
 
+    run_log = _run_log_block(db, blocks, agent_run_id)
+    if run_log:
+        parts.append(run_log)
+
     output = (blocks["output"] or "").strip()
     if output:
         parts.append(output)
     return "\n\n".join(part for part in parts if part.strip())
+
 
 def _build_proposed_value(item: dict) -> dict | None:
     kind = str(item.get("kind") or "").strip()
@@ -243,6 +292,20 @@ def _build_proposed_value(item: dict) -> dict | None:
         if not isinstance(rule_id, int):
             return None
         return {"rule_id": rule_id}
+    if kind == KIND_PROFILE_CHANGE:
+        profile_id = item.get("profile_id")
+        field = str(item.get("field") or "").strip()
+        suggested_text = str(item.get("suggested_text") or "").strip()
+        if not isinstance(profile_id, int) or not field or not suggested_text:
+            return None
+        return {"profile_id": profile_id, "field": field, "suggested_text": suggested_text}
+    if kind == KIND_TEMPLATE_CHANGE:
+        template_id = item.get("template_id")
+        field = str(item.get("field") or "").strip()
+        suggested_text = str(item.get("suggested_text") or "").strip()
+        if not isinstance(template_id, int) or not field or not suggested_text:
+            return None
+        return {"template_id": template_id, "field": field, "suggested_text": suggested_text}
     return None
 
 
@@ -293,13 +356,17 @@ def _create_suggestions(
                 )
                 continue
             target_id = definition.id
+        elif kind == KIND_PROFILE_CHANGE:
+            target_id = proposed_value["profile_id"]
+        elif kind == KIND_TEMPLATE_CHANGE:
+            target_id = proposed_value["template_id"]
 
         if _suggestion_exists(db, redo_log_id=redo_log_id, kind=kind, target_id=target_id, proposed_value=proposed_value):
             continue
 
         suggestion = MemorySuggestion(
             kind=kind,
-            tenant_id=None if kind in (KIND_RULE_ADD, KIND_RULE_MODIFY, KIND_RULE_DELETE) else tenant.id,
+            tenant_id=None if kind in (KIND_RULE_ADD, KIND_RULE_MODIFY, KIND_RULE_DELETE, KIND_PROFILE_CHANGE, KIND_TEMPLATE_CHANGE) else tenant.id,
             target_id=target_id,
             proposed_value=proposed_value,
             reasoning=str((item or {}).get("reasoning") or "").strip() or None,
@@ -368,6 +435,7 @@ def propose_updates(
     what: str,
     why: str | None,
     redo_log_id: int | None = None,
+    agent_run_id: int | None = None,
 ) -> list[MemorySuggestion]:
     """The channel-agnostic core: works from a tenant and whatever text was redone, regardless
     of whether that text lives in a persisted AiAutoDraft or was only ever in the reply box.
@@ -376,7 +444,7 @@ def propose_updates(
     if profile is None:
         return []
 
-    prompt = _build_legacy_prompt(db, tenant, profile, generated_text, what, why)
+    prompt = _build_legacy_prompt(db, tenant, profile, generated_text, what, why, agent_run_id)
     run, result = _run_model_call(db, tenant=tenant, profile=profile, prompt=prompt, schema=MEMORY_REDO_SCHEMA, mode="memory_redo")
     if result is None:
         return []
@@ -409,14 +477,16 @@ def process_redo_request_log(db: Session, redo_log_id: int) -> list[MemorySugges
         return existing
 
     draft_text = ""
+    agent_run_id = log.ai_agent_run_id
     if log.ai_auto_draft_id is not None:
         draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == log.ai_auto_draft_id).first()
         draft_text = draft.generated_text or "" if draft is not None else ""
+        agent_run_id = agent_run_id or (draft.agent_run_id if draft is not None else None)
     elif log.ai_agent_run_id is not None:
         run = db.query(AiAgentRun).filter(AiAgentRun.id == log.ai_agent_run_id).first()
         draft_text = run.final_text or "" if run is not None else ""
 
-    prompt = _build_rule_redo_prompt(db, log, profile, draft_text)
+    prompt = _build_rule_redo_prompt(db, log, profile, draft_text, agent_run_id)
     if not prompt:
         return existing
 
@@ -447,5 +517,6 @@ def propose_updates_from_redo(
         channel=draft.channel,
         what=what,
         why=why,
+        agent_run_id=draft.agent_run_id,
         redo_log_id=redo_log_id,
     )

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
@@ -598,6 +599,7 @@ type MemorySuggestion = {
   tenant_id: number | null
   tenant_name: string | null
   target_id: number | null
+  target_name: string | null
   proposed_value: Record<string, unknown>
   reasoning: string | null
   created_at: string
@@ -616,6 +618,10 @@ function describeSuggestion(suggestion: MemorySuggestion): string {
       return `Modify rule #${value.rule_id}: ${value.condition_text ?? ''} ${value.action_text ?? ''}`.trim()
     case 'rule_delete':
       return `Dismiss rule #${value.rule_id}`
+    case 'profile_change':
+      return `Agent Profile ${suggestion.target_name ?? `#${value.profile_id}`} — ${value.field}: "${value.suggested_text}"`
+    case 'template_change':
+      return `Reply Template ${suggestion.target_name ?? `#${value.template_id}`} — ${value.field}: "${value.suggested_text}"`
     default:
       return suggestion.kind
   }
@@ -674,6 +680,11 @@ function SuggestionsTab({ showSuccess, showError }: { showSuccess: (m: string) =
                 <div className="min-w-0">
                   {suggestion.tenant_name ? <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{suggestion.tenant_name}</p> : null}
                   <p className="text-gray-900">{describeSuggestion(suggestion)}</p>
+                  {suggestion.kind === 'profile_change' && suggestion.target_id ? (
+                    <Link to={`/settings/ai-agents/${suggestion.target_id}`} className="text-xs font-medium text-blue-600 hover:underline">
+                      Edit this profile →
+                    </Link>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <button type="button" onClick={() => review(suggestion.id, 'approve')} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
