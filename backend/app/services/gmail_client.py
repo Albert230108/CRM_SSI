@@ -239,14 +239,31 @@ def list_thread_drafts(credentials: Credentials, thread_id: str) -> list[dict[st
             if str(header.get("name", "")).lower() == "subject":
                 subject = str(header.get("value") or "")
                 break
+        body_html = _extract_message_html(payload)
         matches.append(
             {
                 "draft_id": draft.get("id"),
                 "subject": subject,
                 "body_text": _extract_message_text(payload),
+                "body_html": body_html or None,
+                "body_format": "email_html" if body_html else "plain",
             }
         )
     return matches
+
+
+def _extract_message_html(payload: dict[str, Any]) -> str:
+    body = payload.get("body") or {}
+    data = body.get("data")
+    if data and str(payload.get("mimeType") or "").lower() == "text/html":
+        return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="ignore")
+    for part in payload.get("parts") or []:
+        if part.get("mimeType") == "text/html" and (part.get("body") or {}).get("data"):
+            return base64.urlsafe_b64decode(part["body"]["data"].encode("utf-8")).decode("utf-8", errors="ignore")
+        nested = _extract_message_html(part)
+        if nested:
+            return nested
+    return ""
 
 
 def sync_relevant_threads(db: Session, credentials_info: dict[str, Any], query: str) -> int:

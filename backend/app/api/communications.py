@@ -96,6 +96,8 @@ class GmailDraftRead(BaseModel):
     draft_id: str | None = None
     subject: str
     body_text: str
+    body_html: str | None = None
+    body_format: str = "plain"
 
 
 class AiDraftGenerateRequest(BaseModel):
@@ -106,6 +108,7 @@ class AiDraftGenerateRequest(BaseModel):
 
 class AiDraftGenerateResponse(BaseModel):
     generated_text: str
+    formatted_text: str | None = None
     template_id: int
 
 
@@ -623,8 +626,9 @@ async def send_tenant_communication(
     if channel not in {"email", "whatsapp"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported channel")
 
-    message = payload.message.strip()
-    if not message and not payload.attachment_ids:
+    message, normalized_body_html, normalized_message_format = _normalize_message_format(channel, payload.message, payload.body_html, payload.message_format)
+    message = message.strip()
+    if not message and not (normalized_body_html or "").strip() and not payload.attachment_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty")
 
     try:
@@ -798,6 +802,7 @@ async def send_tenant_communication(
                 to_email=to_email,
                 subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
                 body_text=message,
+                body_html=normalized_body_html if normalized_message_format == "email_html" else None,
                 from_email=account.email_address,
                 in_reply_to_message_id=in_reply_to_message_id,
                 references=references,
@@ -816,6 +821,7 @@ async def send_tenant_communication(
             subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
             message=message,
             gmail_result=gmail_result,
+            body_html=normalized_body_html if normalized_message_format == "email_html" else None,
             attachment_ids=payload.attachment_ids,
         )
 
@@ -1237,7 +1243,8 @@ def generate_tenant_ai_draft(
         logger.exception("AI draft generation failed")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    return AiDraftGenerateResponse(generated_text=generated_text, template_id=template.id)
+    formatted_text = ai_agent_orchestrator.format_generated_draft(db, tenant, channel, generated_text)
+    return AiDraftGenerateResponse(generated_text=generated_text, formatted_text=formatted_text, template_id=template.id)
 
 
 @router.post("/tenants/{tenant_id}/ai-plan", response_model=AiPlanResponse)
@@ -1367,6 +1374,8 @@ class ReplyDraftRead(BaseModel):
     whatsapp_endpoint_id: int | None = None
     subject: str | None = None
     body: str
+    body_html: str | None = None
+    body_format: str = "plain"
     attachment_ids: list[int] = []
     attachments: list[ReplyDraftAttachmentRead] = []
     updated_at: datetime | None = None
@@ -1378,7 +1387,28 @@ class ReplyDraftUpsertRequest(BaseModel):
     whatsapp_endpoint_id: int | None = None
     subject: str | None = None
     body: str | None = None
+    body_html: str | None = None
+    body_format: str | None = None
     attachment_ids: list[int] = []
+
+
+def _normalize_message_format(channel: str, body: str | None, body_html: str | None, body_format: str | None) -> tuple[str, str | None, str]:
+    normalized_channel = (channel or "").strip().lower()
+    normalized_body = body or ""
+    normalized_html = (body_html or "").strip() or None
+    normalized_format = (body_format or "plain").strip().lower() or "plain"
+
+    if normalized_channel == "email":
+        if normalized_format == "email_html" and normalized_html:
+            return normalized_body, normalized_html, "email_html"
+        return normalized_body, None, "plain"
+
+    if normalized_channel == "whatsapp":
+        if normalized_format == "whatsapp_rich" and normalized_body.strip():
+            return normalized_body, normalized_html, "whatsapp_rich"
+        return normalized_body, None, "plain"
+
+    return normalized_body, None, "plain"
 
 
 def _resolve_reply_draft_scope(
@@ -1522,6 +1552,8 @@ def _to_reply_draft_read(draft: CommunicationReplyDraft, attachments: list[Reply
         whatsapp_endpoint_id=draft.whatsapp_endpoint_id,
         subject=draft.subject,
         body=draft.body or "",
+        body_html=draft.body_html,
+        body_format=(draft.body_format or "plain"),
         attachment_ids=attachment_ids,
         attachments=attachments,
         updated_at=draft.updated_at,
@@ -1596,11 +1628,11 @@ def upsert_tenant_reply_draft(
     )
 
     existing = _find_reply_draft(db, tenant_id, channel, email_thread_id, whatsapp_endpoint_id)
-    body = payload.body or ""
+    body, body_html, body_format = _normalize_message_format(channel, payload.body, payload.body_html, payload.body_format)
     subject = payload.subject
     attachment_ids = _clean_reply_draft_attachment_ids(db, tenant_id, payload.attachment_ids)
 
-    if not body.strip() and not (subject or "").strip() and not attachment_ids:
+    if not body.strip() and not (body_html or "").strip() and not (subject or "").strip() and not attachment_ids:
         if existing is not None:
             db.delete(existing)
             db.commit()
@@ -1617,6 +1649,8 @@ def upsert_tenant_reply_draft(
 
     existing.subject = subject
     existing.body = body
+    existing.body_html = body_html
+    existing.body_format = body_format
     existing.attachment_ids = attachment_ids
     existing.updated_by_user_id = current_user.id
     db.commit()

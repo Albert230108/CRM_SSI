@@ -7,6 +7,8 @@ class CommunicationCreate(BaseModel):
     channel: str
     direction: str = "outbound"
     message: str
+    message_format: str | None = None
+    body_html: str | None = None
     subject: str | None = None
     whatsapp_endpoint_id: int | None = None
     external_account_id: str | None = None

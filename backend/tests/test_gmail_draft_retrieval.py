@@ -69,3 +69,29 @@ def test_list_thread_drafts_returns_empty_when_no_match(mock_build):
     results = list_thread_drafts(object(), "thread-1")
 
     assert results == []
+
+
+@patch("app.services.gmail_client.build")
+def test_list_thread_drafts_returns_html_payload_when_present(mock_build):
+    draft_details = {
+        "draft-html": {
+            "id": "draft-html",
+            "message": {
+                "threadId": "thread-1",
+                "payload": {
+                    "headers": [{"name": "Subject", "value": "Re: Booking"}],
+                    "parts": [
+                        {"mimeType": "text/plain", "body": {"data": _encode("Draft body for thread 1")}},
+                        {"mimeType": "text/html", "body": {"data": _encode("<p>Draft body for <strong>thread 1</strong></p>")}},
+                    ],
+                },
+            },
+        },
+    }
+    mock_build.return_value = _fake_service([{"id": "draft-html"}], draft_details)
+
+    results = list_thread_drafts(object(), "thread-1")
+
+    assert results[0]["body_text"] == "Draft body for thread 1"
+    assert results[0]["body_html"] == "<p>Draft body for <strong>thread 1</strong></p>"
+    assert results[0]["body_format"] == "email_html"

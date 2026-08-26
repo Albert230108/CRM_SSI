@@ -45,7 +45,7 @@ def test_generate_with_explicit_template_id(non_admin_client, db_session, monkey
         json={"channel": "email", "template_id": template_id, "rough_draft": "let them know check-in is 3pm"},
     )
     assert response.status_code == 200
-    assert response.json() == {"generated_text": "Hello from Gemini", "template_id": template_id}
+    assert response.json() == {"generated_text": "Hello from Gemini", "formatted_text": None, "template_id": template_id}
 
 
 def test_generate_falls_back_to_tenant_default_template(non_admin_client, db_session, monkeypatch):
@@ -64,6 +64,7 @@ def test_generate_falls_back_to_tenant_default_template(non_admin_client, db_ses
     assert response.status_code == 200
     assert response.json()["template_id"] == template_id
     assert response.json()["generated_text"] == "Default template reply"
+    assert response.json()["formatted_text"] is None
 
 
 def test_generate_without_template_or_default_returns_400(non_admin_client, db_session):

@@ -34,6 +34,7 @@ def persist_gmail_outbound_message(
     subject: str,
     message: str,
     gmail_result: dict[str, Any],
+    body_html: str | None = None,
     ai_generated: bool = False,
     attachment_ids: list[int] | None = None,
 ) -> Communication:
@@ -55,7 +56,7 @@ def persist_gmail_outbound_message(
         subject=subject,
         body=message,
         sent_at=now,
-        raw_payload={"gmail": gmail_result},
+        raw_payload={"gmail": gmail_result, "body_text": message, "body_html": body_html},
     )
     db.add(conversation_message)
     db.commit()

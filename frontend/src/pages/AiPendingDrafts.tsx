@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
+import { whatsappMarkupToHtml } from '../lib/messageFormatting'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -101,7 +102,7 @@ export default function AiPendingDrafts() {
       return (
         <div
           className="mt-1.5 max-h-64 overflow-y-auto break-words text-sm leading-6 text-gray-700"
-          dangerouslySetInnerHTML={{ __html: sanitizeHtml(draft.formatted_text) }}
+          dangerouslySetInnerHTML={{ __html: draft.channel === 'email' ? sanitizeHtml(draft.formatted_text) : whatsappMarkupToHtml(draft.formatted_text) }}
         />
       )
     }

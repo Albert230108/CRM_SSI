@@ -5,6 +5,7 @@ import { useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
 import { useDraggablePosition } from '../hooks/useDraggablePosition'
 import { useResizableSize } from '../hooks/useResizableSize'
 import LinkChatModal from './LinkChatModal'
+import RichMessageComposer from './RichMessageComposer'
 import FirstWhatsAppMessageModal from './FirstWhatsAppMessageModal'
 import EmailLinkModal from './EmailLinkModal'
 import TenantBrainQuickChat from './TenantBrainQuickChat'
@@ -13,6 +14,7 @@ import AiDraftControls from './AiDraftControls'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
 import { MAX_EMAIL_TOTAL_BYTES, formatBytes } from '../lib/attachmentLimits'
 import { removeQuotedReplyElements, sanitizeHtml } from '../lib/sanitizeHtml'
+import { hasComposerContent, type ComposerBodyFormat, whatsappMarkupToHtml } from '../lib/messageFormatting'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
 
@@ -404,9 +406,15 @@ type ReplyDraftAttachmentRead = {
   mime_type: string | null
 }
 
-type ReplyDraftEntry = { subject: string; body: string; attachment_ids: number[] }
+type ReplyDraftEntry = {
+  subject: string
+  body: string
+  body_html: string | null
+  body_format: ComposerBodyFormat
+  attachment_ids: number[]
+}
 
-const EMPTY_REPLY_DRAFT: ReplyDraftEntry = { subject: '', body: '', attachment_ids: [] }
+const EMPTY_REPLY_DRAFT: ReplyDraftEntry = { subject: '', body: '', body_html: null, body_format: 'plain', attachment_ids: [] }
 // Stable identity so the empty case doesn't produce a new array on every render.
 const EMPTY_ATTACHMENTS: PendingAttachment[] = []
 
@@ -433,6 +441,8 @@ type ReplyDraftRead = {
   whatsapp_endpoint_id: number | null
   subject: string | null
   body: string
+  body_html: string | null
+  body_format: ComposerBodyFormat
   attachment_ids: number[]
   attachments: ReplyDraftAttachmentRead[]
 }
@@ -440,7 +450,7 @@ type ReplyDraftRead = {
 const REPLY_DRAFT_AUTOSAVE_DELAY_MS = 800
 
 // JSON rather than concatenation so a subject/body split cannot alias a different pair.
-const serializeReplyDraft = (entry: ReplyDraftEntry) => JSON.stringify([entry.subject, entry.body, entry.attachment_ids])
+const serializeReplyDraft = (entry: ReplyDraftEntry) => JSON.stringify([entry.subject, entry.body, entry.body_html, entry.body_format, entry.attachment_ids])
 
 // Turns a local draft key back into the scope the API validates against the tenant. Returns null
 // for the transient pending-WhatsApp key, which has no linked chat and so is never persisted.
@@ -478,6 +488,8 @@ type GmailDraft = {
   draft_id: string | null
   subject: string
   body_text: string
+  body_html?: string | null
+  body_format?: ComposerBodyFormat
 }
 
 type AiTemplateOption = {
@@ -509,6 +521,30 @@ type AiAutoDraftItem = {
   scheduled_send_at: string | null
   created_at: string
 }
+
+const buildRichReplyDraftContent = (channel: 'email' | 'whatsapp', generatedText: string, formattedText: string | null): Pick<ReplyDraftEntry, 'body' | 'body_html' | 'body_format'> => {
+  const formatted = (formattedText || '').trim()
+  if (channel === 'email') {
+    if (formatted) {
+      const safeHtml = sanitizeHtml(formatted)
+      return { body: htmlToPlainText(safeHtml), body_html: safeHtml, body_format: 'email_html' }
+    }
+    return { body: generatedText, body_html: null, body_format: 'plain' }
+  }
+  if (formatted) {
+    return { body: formatted, body_html: whatsappMarkupToHtml(formatted), body_format: 'whatsapp_rich' }
+  }
+  return { body: generatedText, body_html: null, body_format: 'plain' }
+}
+
+const buildStoredReplyDraftContent = (draft: Pick<ReplyDraftRead, 'body' | 'body_html' | 'body_format'>): Pick<ReplyDraftEntry, 'body' | 'body_html' | 'body_format'> => ({
+  body: draft.body ?? '',
+  body_html: draft.body_html ?? null,
+  body_format: draft.body_format ?? 'plain',
+})
+
+const renderFormattedDraftHtml = (channel: 'email' | 'whatsapp', formattedText: string) =>
+  channel === 'email' ? sanitizeHtml(formattedText) : whatsappMarkupToHtml(formattedText)
 
 export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLoaded, initialThreadTarget, onInitialThreadTargetConsumed }: ThreadViewProps) {
   const token = useAuthStore((state) => state.token)
@@ -647,7 +683,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   const currentDraftKey = draftKeyForTarget(replyTarget, selectedWhatsappEndpointId)
   const currentDraft = (currentDraftKey ? replyDrafts[currentDraftKey] : null) ?? EMPTY_REPLY_DRAFT
   const replyMessage = currentDraft.body
+  const replyBodyHtml = currentDraft.body_html
+  const replyBodyFormat = currentDraft.body_format
   const replySubject = currentDraft.subject
+  const hasReplyBodyContent = hasComposerContent(replyMessage, replyBodyHtml)
   const currentReplyAttachments = (currentDraftKey ? replyAttachments[currentDraftKey] : null) ?? EMPTY_ATTACHMENTS
   const currentReplyAttachmentIds = currentReplyAttachments
     .map((item) => item.id)
@@ -694,8 +733,17 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     setReplyDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? EMPTY_REPLY_DRAFT), ...patch } }))
   }, [])
   const setReplyMessage = useCallback(
-    (body: string) => writeReplyDraft(currentDraftKey, { body }),
+    (body: string) => writeReplyDraft(currentDraftKey, { body, body_html: null, body_format: 'plain' }),
     [writeReplyDraft, currentDraftKey],
+  )
+  const setReplyComposerValue = useCallback(
+    (value: Pick<ReplyDraftEntry, 'body' | 'body_html' | 'body_format'>) => writeReplyDraft(currentDraftKey, value),
+    [writeReplyDraft, currentDraftKey],
+  )
+  const handleReplyComposerChange = useCallback(
+    (value: { body: string; bodyHtml: string | null; bodyFormat: ComposerBodyFormat }) =>
+      setReplyComposerValue({ body: value.body, body_html: value.bodyHtml, body_format: value.bodyFormat }),
+    [setReplyComposerValue],
   )
   const setReplySubject = useCallback(
     (subject: string) => writeReplyDraft(currentDraftKey, { subject }),
@@ -724,7 +772,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ ...scope, subject: entry.subject || null, body: entry.body, attachment_ids: entry.attachment_ids }),
+        body: JSON.stringify({ ...scope, subject: entry.subject || null, body: entry.body, body_html: entry.body_html, body_format: entry.body_format, attachment_ids: entry.attachment_ids }),
         keepalive,
       }).catch(() => {
         // Best-effort: drop the acknowledgement so the next debounce tick retries.
@@ -945,7 +993,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     pendingAutoDrafts.find((draft) => draft.channel === channel) ?? null
 
   const useAutoDraft = async (draft: AiAutoDraftItem) => {
-    setReplyMessage(draft.generated_text)
+    setReplyComposerValue(buildRichReplyDraftContent(draft.channel === 'email' ? 'email' : 'whatsapp', draft.generated_text, draft.formatted_text))
     await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/mark-used`, {
       method: 'PUT',
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -1002,7 +1050,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         {draft.formatted_text ? (
           <div
             className="mt-1.5 max-h-28 overflow-y-auto break-words text-sm leading-5 text-gray-700"
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(draft.formatted_text) }}
+            dangerouslySetInnerHTML={{ __html: renderFormattedDraftHtml(channel, draft.formatted_text) }}
           />
         ) : (
           <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draftText}</p>
@@ -1165,8 +1213,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         const payload = await response.json().catch(() => null)
         throw new Error(payload?.detail || 'Failed to generate AI draft')
       }
-      const data: { generated_text: string; template_id: number } = await response.json()
-      setReplyMessage(data.generated_text)
+      const data: { generated_text: string; formatted_text: string | null; template_id: number } = await response.json()
+      setReplyComposerValue(buildRichReplyDraftContent(replyTarget.type, data.generated_text, data.formatted_text))
       setSelectedAiTemplateId(String(data.template_id))
     } catch (err) {
       setAiDraftError(err instanceof Error ? err.message : 'Failed to generate AI draft')
@@ -1243,7 +1291,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         throw new Error('Failed to redo the planner draft')
       }
       setPlannerDraftId(data.id)
-      setReplyMessage(data.generated_text)
+      setReplyComposerValue(buildRichReplyDraftContent(replyTarget.type, data.generated_text, data.formatted_text))
       if (data.template_id != null) setSelectedAiTemplateId(String(data.template_id))
       if (data.status === 'needs_review') {
         setPlannerNotice('The reviewer never approved this draft - read it carefully before sending.')
@@ -1413,7 +1461,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             const attachmentIds = attachments.length
               ? attachments.map((attachment) => attachment.id).filter((id): id is number => id !== null)
               : (Array.isArray(draft.attachment_ids) ? draft.attachment_ids : []).filter((id): id is number => id !== null)
-            const entry = { subject: draft.subject ?? '', body: draft.body ?? '', attachment_ids: attachmentIds }
+            const entry = { subject: draft.subject ?? '', ...buildStoredReplyDraftContent(draft), attachment_ids: attachmentIds }
             hydratedDrafts[key] = entry
             hydratedAttachments[key] = attachments
             acknowledged[key] = serializeReplyDraft(entry)
@@ -1744,7 +1792,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     event.preventDefault()
     // An attachment-only message is allowed, so an empty body alone no longer blocks the send.
     if (!tenantId || replySending || !replyTarget) return
-    if (!replyMessage.trim() && currentReplyAttachmentIds.length === 0) return
+    if (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0) return
     if (currentReplyAttachments.some((item) => item.error || item.id === null)) {
       setError('Wait for attachments to finish uploading, or remove the failed ones.')
       return
@@ -1759,6 +1807,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
           channel: 'email',
           subject: replySubject.trim() || replyTarget.subject || '',
           message: replyMessage,
+          message_format: replyBodyFormat,
+          body_html: replyBodyHtml,
           email_thread_id: replyTarget.threadId,
           attachment_ids: currentReplyAttachmentIds,
         }
@@ -1783,6 +1833,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         const requestBody = {
           channel: 'whatsapp',
           message: replyMessage,
+          message_format: replyBodyFormat,
+          body_html: replyBodyHtml,
           whatsapp_endpoint_id: Number(selectedWhatsappEndpointId),
           external_account_id: selectedWhatsappEndpoint?.external_account_id ?? null,
           attachment_ids: currentReplyAttachmentIds,
@@ -1947,7 +1999,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     setReplyTarget({ type: 'email', threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, providerAccountId: thread.provider_account_id || 0, subject: thread.subject })
     // Keyed on the thread being opened, not on the current replyTarget, which is still the
     // previously open scope until this render commits.
-    writeReplyDraft(emailDraftKey(thread.thread_id), { subject: draft.subject || '', body: draft.body_text || '' })
+    writeReplyDraft(emailDraftKey(thread.thread_id), { subject: draft.subject || '', ...buildStoredReplyDraftContent({ body: draft.body_text || '', body_html: draft.body_html ?? null, body_format: draft.body_format ?? 'plain' }) })
     setForwardTarget(null)
     setDraftResults(null)
   }
@@ -2296,7 +2348,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       <div key={draft.draft_id ?? index} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
                         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">AI Draft</p>
                         {draft.subject ? <p className="mt-1.5 text-sm font-semibold text-gray-900">{draft.subject}</p> : null}
-                        <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draft.body_text}</p>
+                        {draft.body_html ? (
+                          <div
+                            className="mt-1.5 max-h-28 overflow-y-auto break-words text-sm leading-5 text-gray-700"
+                            dangerouslySetInnerHTML={{ __html: sanitizeHtml(draft.body_html) }}
+                          />
+                        ) : (
+                          <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draft.body_text}</p>
+                        )}
                         <button
                           type="button"
                           onClick={() => useDraftAsReply(draft, selectedEmailThread)}
@@ -2458,13 +2517,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                   {renderPlannerRedoForm()}
-                  <textarea
-                    value={replyMessage}
-                    onChange={(event) => setReplyMessage(event.target.value)}
-                    rows={2}
+                  <RichMessageComposer
+                    channel="email"
+                    value={{ body: replyMessage, bodyHtml: replyBodyHtml, bodyFormat: replyBodyFormat }}
+                    onChange={handleReplyComposerChange}
                     placeholder="Write your reply..."
                     disabled={replySending}
-                    className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                   {tenantId ? (
                     <AttachmentPicker
@@ -2486,7 +2544,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     </button>
                     <button
                       type="submit"
-                      disabled={replySending || (!replyMessage.trim() && currentReplyAttachmentIds.length === 0)}
+                      disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0)}
                       className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
@@ -2588,7 +2646,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                           <span>{formatTimestamp(blockMessage.created_at)}</span>
                         </div>
                         {blockMessage.subject ? <p className="mt-1 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
-                        <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
+                        <div
+                        className="prose prose-sm mt-1 max-w-none text-sm leading-5 text-gray-700 prose-p:my-1 prose-pre:my-2"
+                        dangerouslySetInnerHTML={{ __html: whatsappMarkupToHtml(blockMessage.message) }}
+                      />
                         <AttachmentChips
                           messageId={blockMessage.id}
                           attachments={blockMessage.attachments}
@@ -2650,13 +2711,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                     {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                     {renderPlannerRedoForm()}
-                    <textarea
-                      value={replyMessage}
-                      onChange={(event) => setReplyMessage(event.target.value)}
-                      rows={2}
+                    <RichMessageComposer
+                      channel="whatsapp"
+                      value={{ body: replyMessage, bodyHtml: replyBodyHtml, bodyFormat: replyBodyFormat }}
+                      onChange={handleReplyComposerChange}
                       placeholder="Write your reply..."
                       disabled={replySending}
-                      className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                     />
                     {tenantId ? (
                       <AttachmentPicker
@@ -2678,7 +2738,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       </button>
                       <button
                         type="submit"
-                        disabled={replySending || (!replyMessage.trim() && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
+                        disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
                         className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {replySending ? 'Sending...' : 'Send'}
@@ -2789,7 +2849,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                         <span>{formatTimestamp(blockMessage.created_at)}</span>
                       </div>
                       {blockMessage.subject ? <p className="mt-1 text-sm font-semibold text-gray-900">{blockMessage.subject}</p> : null}
-                      <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-gray-700">{blockMessage.message}</p>
+                      <div
+                        className="prose prose-sm mt-1 max-w-none text-sm leading-5 text-gray-700 prose-p:my-1 prose-pre:my-2"
+                        dangerouslySetInnerHTML={{ __html: whatsappMarkupToHtml(blockMessage.message) }}
+                      />
                       <AttachmentChips
                         messageId={blockMessage.id}
                         attachments={blockMessage.attachments}
@@ -2850,13 +2913,12 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                   {aiDraftError ? <p className="text-xs text-rose-500">{aiDraftError}</p> : null}
                   {plannerNotice ? <p className="text-xs text-amber-600">{plannerNotice}</p> : null}
                   {renderPlannerRedoForm()}
-                  <textarea
-                    value={replyMessage}
-                    onChange={(event) => setReplyMessage(event.target.value)}
-                    rows={2}
+                  <RichMessageComposer
+                    channel="whatsapp"
+                    value={{ body: replyMessage, bodyHtml: replyBodyHtml, bodyFormat: replyBodyFormat }}
+                    onChange={handleReplyComposerChange}
                     placeholder="Write your reply..."
                     disabled={replySending}
-                    className="w-full resize-y rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                   {tenantId ? (
                     <AttachmentPicker
@@ -2878,7 +2940,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     </button>
                     <button
                       type="submit"
-                      disabled={replySending || (!replyMessage.trim() && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
+                      disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
                       className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}

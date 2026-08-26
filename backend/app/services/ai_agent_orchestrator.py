@@ -142,6 +142,19 @@ class _RunRecorder:
             setattr(self.run, key, value)
 
 
+class _NullRecorder:
+    def record(
+        self,
+        stage: str,
+        *,
+        prompt: str,
+        result: gemini_client.GenerationResult | None = None,
+        error: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        return None
+
+
 def resolve_profile(db: Session, role: str, pinned_id: int | None) -> AiAgentProfile | None:
     """A tenant's pinned profile if it is still usable, otherwise the role's active default."""
     if pinned_id is not None:
@@ -160,6 +173,23 @@ def resolve_profile(db: Session, role: str, pinned_id: int | None) -> AiAgentPro
             AiAgentProfile.is_active.is_(True),
         )
         .first()
+    )
+
+
+def format_generated_draft(db: Session, tenant: Tenant, channel: str, draft: str) -> str | None:
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
+    if ai_settings is None or not ai_settings.formatter_enabled:
+        return None
+    formatter_profile = resolve_profile(db, FORMATTER_ROLE, ai_settings.formatter_profile_id if ai_settings else None)
+    if formatter_profile is None:
+        return None
+    return _run_formatter(
+        db,
+        recorder=_NullRecorder(),
+        tenant=tenant,
+        channel=channel,
+        draft=draft,
+        formatter_profile=formatter_profile,
     )
 
 

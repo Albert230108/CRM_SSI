@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, within, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ThreadView from '../ThreadView'
 import { useAuthStore } from '../../store/authStore'
@@ -23,6 +23,14 @@ const ACTIVE_LINK = {
 
 function jsonResponse(body: unknown, ok = true) {
   return Promise.resolve({ ok, json: async () => body } as Response)
+}
+
+const getReplyComposer = (container: HTMLElement) => within(container).getByRole('textbox', { name: 'Write your reply...' })
+const setReplyComposer = (container: HTMLElement, text: string) => {
+  const composer = getReplyComposer(container)
+  composer.innerHTML = text
+  fireEvent.input(composer)
+  return composer
 }
 
 function buildFetchMock(links: unknown[]) {
@@ -166,7 +174,7 @@ describe('ThreadView Draft with AI', () => {
     // The AI template/settings loaders (like the pre-existing forward-flow loaders) only fire
     // once a token is present.
     useAuthStore.setState({ token: 'test-token' })
-    const generateSpy = vi.fn(() => jsonResponse({ generated_text: 'Check-in is at 3pm!', template_id: AI_TEMPLATE.id }))
+    const generateSpy = vi.fn(() => jsonResponse({ generated_text: 'Plain fallback text', formatted_text: '*Check-in* is at 3pm!', template_id: AI_TEMPLATE.id }))
 
     vi.stubGlobal(
       'fetch',
@@ -196,17 +204,17 @@ describe('ThreadView Draft with AI', () => {
     await within(dialog).findByText(AI_TEMPLATE.name)
     await waitFor(() => expect(within(dialog).getByDisplayValue(AI_TEMPLATE.name)).toBeInTheDocument())
 
-    const textarea = within(dialog).getByPlaceholderText('Write your reply...')
-    await user.type(textarea, 'let them know 3pm')
+    setReplyComposer(dialog, 'let them know 3pm')
 
     await user.click(within(dialog).getByRole('button', { name: 'Draft with AI' }))
 
     await waitFor(() => expect(generateSpy).toHaveBeenCalledTimes(1))
-    expect(await within(dialog).findByDisplayValue('Check-in is at 3pm!')).toBeInTheDocument()
+    await waitFor(() => expect(getReplyComposer(dialog)).toHaveTextContent('Check-in is at 3pm!'))
+    expect(getReplyComposer(dialog)).not.toHaveTextContent('Plain fallback text')
 
     const [, requestInit] = generateSpy.mock.calls[0]
     const requestBody = JSON.parse((requestInit as RequestInit).body as string)
-    expect(requestBody).toEqual({ channel: 'whatsapp', template_id: AI_TEMPLATE.id, rough_draft: 'let them know 3pm' })
+    expect(requestBody).toMatchObject({ channel: 'whatsapp', template_id: AI_TEMPLATE.id, rough_draft: 'let them know 3pm' })
   })
 
   it('hides the Run planner button when the planner is off for the tenant', async () => {
@@ -260,8 +268,7 @@ describe('ThreadView Draft with AI', () => {
     await user.click(await screen.findByRole('button', { name: 'Reply' }))
 
     const dialog = await screen.findByRole('dialog')
-    const textarea = within(dialog).getByPlaceholderText('Write your reply...')
-    await user.type(textarea, 'mention the lockbox')
+    setReplyComposer(dialog, 'mention the lockbox')
 
     await user.click(await within(dialog).findByRole('button', { name: 'Run planner' }))
 
@@ -271,7 +278,7 @@ describe('ThreadView Draft with AI', () => {
 
     const [, requestInit] = planSpy.mock.calls[0]
     // The planner still receives the operator's rough draft and the selected channel.
-    expect(JSON.parse((requestInit as RequestInit).body as string)).toEqual({ channel: 'whatsapp', rough_draft: 'mention the lockbox', attachment_ids: [] })
+    expect(JSON.parse((requestInit as RequestInit).body as string)).toMatchObject({ channel: 'whatsapp', rough_draft: 'mention the lockbox', attachment_ids: [] })
   })
 
   it('shows the background notice when the planner is queued', async () => {
@@ -311,7 +318,7 @@ describe('ThreadView Draft with AI', () => {
       tenant_id: 7,
       channel: 'whatsapp',
       generated_text: 'Plain fallback text',
-      formatted_text: '<p>Auto-generated: <strong>check-in</strong> is 3pm</p>',
+      formatted_text: '*Auto-generated:* check-in is 3pm',
       status: 'pending',
       scheduled_send_at: null,
       created_at: '2026-07-20T10:00:00Z',
@@ -343,16 +350,16 @@ describe('ThreadView Draft with AI', () => {
 
     const dialog = await screen.findByRole('dialog')
     await within(dialog).findByText('Pending AI draft')
-    expect(
-      within(dialog).getByText((_, element) => element?.tagName === 'P' && element.textContent === 'Auto-generated: check-in is 3pm'),
-    ).toBeInTheDocument()
+    expect(within(dialog).getByText(/Auto-generated:/)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('Auto-generated: check-in is 3pm')
     expect(dialog).not.toHaveTextContent('<p>')
     expect(within(dialog).queryByText(pendingDraft.generated_text)).not.toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: 'Use this draft' }))
 
     await waitFor(() => expect(markUsedSpy).toHaveBeenCalledTimes(1))
-    expect(within(dialog).getByDisplayValue(pendingDraft.generated_text)).toBeInTheDocument()
+    expect(getReplyComposer(dialog)).toHaveTextContent('Auto-generated: check-in is 3pm')
+    expect(getReplyComposer(dialog)).not.toHaveTextContent(pendingDraft.generated_text)
   })
 })
 
@@ -435,8 +442,8 @@ describe('ThreadView per-thread reply drafts', () => {
 
     await user.click(await screen.findByText('Tenant 7 thread'))
     const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByPlaceholderText('Write your reply...'), 'private to tenant 7')
-    expect(within(dialog).getByDisplayValue('private to tenant 7')).toBeInTheDocument()
+    setReplyComposer(dialog, 'private to tenant 7')
+    expect(getReplyComposer(dialog)).toHaveTextContent('private to tenant 7')
 
     rerender(<ThreadView tenantId={8} />)
 
@@ -447,7 +454,7 @@ describe('ThreadView per-thread reply drafts', () => {
 
     await user.click(await screen.findByText('Tenant 8 thread'))
     const nextDialog = await screen.findByRole('dialog')
-    expect(within(nextDialog).getByPlaceholderText('Write your reply...')).toHaveValue('')
+    expect(getReplyComposer(nextDialog)).toHaveTextContent('')
   })
 
   it("restores each thread's own persisted draft when that thread is opened", async () => {
@@ -463,6 +470,8 @@ describe('ThreadView per-thread reply drafts', () => {
           whatsapp_endpoint_id: null,
           subject: 'Re: stay',
           body: 'saved earlier for 202',
+          body_html: '<p>saved <strong>earlier</strong> for 202</p>',
+          body_format: 'email_html',
           attachment_ids: [55],
           attachments: [{ id: 55, filename: 'contract.pdf', size_bytes: 1234, mime_type: 'application/pdf' }],
         }],
@@ -476,7 +485,7 @@ describe('ThreadView per-thread reply drafts', () => {
     await user.click(await screen.findByText('Tenant 8 thread'))
 
     const dialog = await screen.findByRole('dialog')
-    await waitFor(() => expect(within(dialog).getByPlaceholderText('Write your reply...')).toHaveValue('saved earlier for 202'))
+    await waitFor(() => expect(getReplyComposer(dialog)).toHaveTextContent('saved earlier for 202'))
     expect(within(dialog).getByDisplayValue('Re: stay')).toBeInTheDocument()
     expect(within(dialog).getByTitle('contract.pdf')).toBeInTheDocument()
   })
@@ -521,7 +530,7 @@ describe('ThreadView per-thread reply drafts', () => {
 
     await user.click(await screen.findByText('Tenant 7 thread'))
     const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByPlaceholderText('Write your reply...'), 'autosave me')
+    setReplyComposer(dialog, 'autosave me')
 
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')

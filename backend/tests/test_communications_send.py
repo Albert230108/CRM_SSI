@@ -4,6 +4,7 @@ import pytest
 
 from app.core.dependencies import get_current_user
 from app.main import app
+from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
@@ -70,3 +71,63 @@ def test_email_send_rejects_one_of_our_own_mailboxes(user_client, db_session, mo
 
     assert response.status_code == 400
     assert "Cannot determine recipient email" in response.json()["detail"]
+
+
+def test_manual_email_send_persists_body_html_for_thread_rendering(user_client, db_session, monkeypatch):
+    tenant = create_tenant(db_session, booking_id="B-email-rich")
+    account = GmailAccount(email_address="crm@example.com", is_active=True)
+    db_session.add(account)
+    db_session.flush()
+
+    conversation = Conversation(provider="gmail", provider_account_id=account.id, provider_thread_id="thread-rich-email", subject="Question")
+    db_session.add(conversation)
+    db_session.flush()
+    db_session.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider="gmail",
+            provider_message_id="msg-rich-inbound",
+            direction="inbound",
+            sender_email="guest@example.com",
+            recipient_email=account.email_address,
+            subject="Question",
+            body="Can I check in early?",
+            sent_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+            raw_payload={"gmail": {"payload": {"headers": [{"name": "Message-ID", "value": "<msg-rich-inbound@mail>"}]}}},
+        )
+    )
+    db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=conversation.id, source="email_match"))
+    db_session.commit()
+
+    captured = {}
+
+    monkeypatch.setattr("app.api.communications._build_gmail_credentials", lambda account: object())
+
+    def fake_send_gmail_reply(credentials, **kwargs):
+        captured.update(kwargs)
+        return {"id": "gmail-rich-outbound"}
+
+    monkeypatch.setattr("app.api.communications.send_gmail_reply", fake_send_gmail_reply)
+
+    response = user_client.post(
+        f"/api/communications/tenants/{tenant.id}/send",
+        json={
+            "channel": "email",
+            "message": "Check-in is at 3pm",
+            "message_format": "email_html",
+            "body_html": "<p>Check-in is at <strong>3pm</strong></p>",
+            "email_thread_id": conversation.id,
+        },
+    )
+
+    assert response.status_code == 201
+    assert captured["body_text"] == "Check-in is at 3pm"
+    assert captured["body_html"] == "<p>Check-in is at <strong>3pm</strong></p>"
+
+    saved_thread_message = db_session.query(ConversationMessage).filter(ConversationMessage.provider_message_id == "gmail-rich-outbound").one()
+    assert saved_thread_message.raw_payload["body_text"] == "Check-in is at 3pm"
+    assert saved_thread_message.raw_payload["body_html"] == "<p>Check-in is at <strong>3pm</strong></p>"
+
+    saved_communication = db_session.query(Communication).filter(Communication.tenant_id == tenant.id, Communication.channel == "email").order_by(Communication.id.desc()).first()
+    assert saved_communication is not None
+    assert saved_communication.message == "Check-in is at 3pm"

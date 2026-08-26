@@ -51,6 +51,8 @@ class CommunicationReplyDraft(Base):
     )
     subject = Column(Text, nullable=True)
     body = Column(Text, nullable=True)
+    body_html = Column(Text, nullable=True)
+    body_format = Column(String(20), nullable=False, default="plain", server_default="plain")
     attachment_ids = Column(JSON, nullable=True)
     # Audit only - drafts are shared across users, so this is deliberately not part of the key.
     updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)

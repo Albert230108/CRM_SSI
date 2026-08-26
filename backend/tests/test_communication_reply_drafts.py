@@ -258,6 +258,34 @@ def test_email_and_whatsapp_drafts_on_same_tenant_do_not_collide(non_admin_clien
     assert by_channel == {"email": "email body", "whatsapp": "whatsapp body"}
 
 
+
+def test_rich_formatting_fields_round_trip(non_admin_client, db_session):
+    tenant = create_tenant(db_session, "Draft Tenant Rich", "RD-RICH")
+    thread = create_linked_thread(db_session, tenant.id, "subject-rich")
+
+    saved = non_admin_client.put(
+        f"/api/communications/tenants/{tenant.id}/reply-drafts",
+        json={
+            "channel": "email",
+            "email_thread_id": thread.id,
+            "subject": "Re: rich",
+            "body": "Check-in is at 3pm",
+            "body_html": "<p>Check-in is at <strong>3pm</strong></p>",
+            "body_format": "email_html",
+        },
+    )
+
+    assert saved.status_code == 200
+    payload = saved.json()
+    assert payload["body"] == "Check-in is at 3pm"
+    assert payload["body_html"] == "<p>Check-in is at <strong>3pm</strong></p>"
+    assert payload["body_format"] == "email_html"
+
+    drafts = non_admin_client.get(f"/api/communications/tenants/{tenant.id}/reply-drafts")
+    assert drafts.status_code == 200
+    assert drafts.json()[0]["body_format"] == "email_html"
+    assert drafts.json()[0]["body_html"] == "<p>Check-in is at <strong>3pm</strong></p>"
+
 def test_invalid_attachment_ids_are_ignored(non_admin_client, db_session):
     tenant_a = create_tenant(db_session, "Draft Tenant L2", "RD-L2")
     tenant_b = create_tenant(db_session, "Draft Tenant L3", "RD-L3")
