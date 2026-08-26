@@ -1,15 +1,18 @@
 from collections import defaultdict
+from datetime import datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.ai_agent_run import AiAgentRun
+from app.models.ai_agent_run import AiAgentRun, AiAgentRunStep
+from app.models.ai_model_pricing import AiModelPricing
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.schemas.ai_agent_run import AiAgentRunDetail, AiAgentRunListRead, AiAgentRunRead
+from app.schemas.ai_agent_run import AiAgentRunDetail, AiAgentRunListRead, AiAgentRunRead, AiAgentRunStatsRead, AiModelUsageStat
 
 router = APIRouter(prefix="/ai-agent-runs", tags=["ai-agent-runs"])
 
@@ -91,6 +94,101 @@ def _run_read(db: Session, run: AiAgentRun, *, display_mode: str | None = None, 
             "final_template_name": final_template_name,
             "display_mode": display_mode or run.mode,
         }
+    )
+
+
+def _period_start(period: str) -> datetime | None:
+    now = datetime.now(timezone.utc)
+    if period == "today":
+        return datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
+    if period == "month":
+        return datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    return None
+
+
+@router.get("/stats", response_model=AiAgentRunStatsRead)
+def get_agent_run_stats(
+    period: str = Query("all", pattern="^(all|today|month)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiAgentRunStatsRead:
+    start_at = _period_start(period)
+
+    run_query = db.query(AiAgentRun)
+    step_query = db.query(AiAgentRunStep)
+    if start_at is not None:
+        run_query = run_query.filter(AiAgentRun.created_at >= start_at)
+        step_query = step_query.filter(AiAgentRunStep.created_at >= start_at)
+
+    total_runs = run_query.order_by(None).count()
+
+    rows = (
+        step_query.with_entities(
+            AiAgentRunStep.model,
+            func.coalesce(func.sum(AiAgentRunStep.prompt_tokens), 0),
+            func.coalesce(func.sum(AiAgentRunStep.output_tokens), 0),
+        )
+        .filter(AiAgentRunStep.model.isnot(None))
+        .group_by(AiAgentRunStep.model)
+        .order_by(AiAgentRunStep.model.asc())
+        .all()
+    )
+    pricing_by_model = {row.model: row for row in db.query(AiModelPricing).all()}
+
+    by_model: list[AiModelUsageStat] = []
+    total_prompt_tokens = 0
+    total_output_tokens = 0
+    total_cost = 0.0
+    any_pricing_missing = False
+
+    for model_name, prompt_tokens_raw, output_tokens_raw in rows:
+        prompt_tokens = int(prompt_tokens_raw or 0)
+        output_tokens = int(output_tokens_raw or 0)
+        total_tokens = prompt_tokens + output_tokens
+        if total_tokens == 0:
+            continue
+        total_prompt_tokens += prompt_tokens
+        total_output_tokens += output_tokens
+
+        pricing = pricing_by_model.get(model_name)
+        if pricing is None:
+            any_pricing_missing = True
+            by_model.append(
+                AiModelUsageStat(
+                    model=model_name,
+                    prompt_tokens=prompt_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    pricing_missing=True,
+                )
+            )
+            continue
+
+        input_cost = float(pricing.input_cost_per_million_tokens) * prompt_tokens / 1_000_000
+        output_cost = float(pricing.output_cost_per_million_tokens) * output_tokens / 1_000_000
+        model_total_cost = input_cost + output_cost
+        total_cost += model_total_cost
+        by_model.append(
+            AiModelUsageStat(
+                model=model_name,
+                prompt_tokens=prompt_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                input_cost=input_cost,
+                output_cost=output_cost,
+                total_cost=model_total_cost,
+            )
+        )
+
+    return AiAgentRunStatsRead(
+        period=period,
+        total_runs=total_runs,
+        total_prompt_tokens=total_prompt_tokens,
+        total_output_tokens=total_output_tokens,
+        total_tokens=total_prompt_tokens + total_output_tokens,
+        total_cost=None if not by_model else total_cost,
+        any_pricing_missing=any_pricing_missing,
+        by_model=by_model,
     )
 
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AiAgentRunStepRead(BaseModel):
@@ -52,3 +52,25 @@ class AiAgentRunDetail(AiAgentRunRead):
 class AiAgentRunListRead(BaseModel):
     items: list[AiAgentRunRead]
     total: int
+
+
+class AiModelUsageStat(BaseModel):
+    model: str
+    prompt_tokens: int
+    output_tokens: int
+    total_tokens: int
+    input_cost: float | None = None
+    output_cost: float | None = None
+    total_cost: float | None = None
+    pricing_missing: bool = False
+
+
+class AiAgentRunStatsRead(BaseModel):
+    period: str
+    total_runs: int
+    total_prompt_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+    total_cost: float | None = None
+    any_pricing_missing: bool = False
+    by_model: list[AiModelUsageStat] = Field(default_factory=list)

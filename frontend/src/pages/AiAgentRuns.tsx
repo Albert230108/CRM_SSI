@@ -6,6 +6,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const PAGE_SIZE = 25
+const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 6 })
 
 type AgentRun = {
   id: number
@@ -31,6 +32,36 @@ type AgentRunListResponse = {
   total: number
 }
 
+type StatsPeriod = 'all' | 'today' | 'month'
+
+type AgentRunStatsModel = {
+  model: string
+  prompt_tokens: number
+  output_tokens: number
+  total_tokens: number
+  input_cost: number | null
+  output_cost: number | null
+  total_cost: number | null
+  pricing_missing: boolean
+}
+
+type AgentRunStats = {
+  period: StatsPeriod
+  total_runs: number
+  total_prompt_tokens: number
+  total_output_tokens: number
+  total_tokens: number
+  total_cost: number | null
+  any_pricing_missing: boolean
+  by_model: AgentRunStatsModel[]
+}
+
+const STATS_PERIOD_TABS: Array<{ value: StatsPeriod; label: string; description: string }> = [
+  { value: 'all', label: 'All time', description: 'Everything recorded so far' },
+  { value: 'today', label: 'Today', description: 'UTC calendar day' },
+  { value: 'month', label: 'This month', description: 'UTC month to date' },
+]
+
 const STATUS_STYLES: Record<string, string> = {
   completed: 'bg-emerald-50 text-emerald-700',
   needs_review: 'bg-amber-50 text-amber-700',
@@ -47,16 +78,25 @@ function templateLabel(id: number | null, name?: string | null): string {
   return '—'
 }
 
+function formatCost(value: number | null): string {
+  if (value === null) return '—'
+  return usdFormatter.format(value)
+}
+
 export default function AiAgentRuns() {
   useDocumentTitle('CRM - AI Runs')
   const token = useAuthStore((state) => state.token)
   const location = useLocation()
   const [runs, setRuns] = useState<AgentRun[]>([])
+  const [stats, setStats] = useState<AgentRunStats | null>(null)
+  const [statsPeriod, setStatsPeriod] = useState<StatsPeriod>('all')
   const [statusFilter, setStatusFilter] = useState('')
   const [offset, setOffset] = useState(0)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [statsLoading, setStatsLoading] = useState(true)
   const [error, setError] = useState('')
+  const [statsError, setStatsError] = useState('')
 
   const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : undefined), [token])
 
@@ -97,6 +137,36 @@ export default function AiAgentRuns() {
     return () => controller.abort()
   }, [authHeaders, offset, statusFilter])
 
+  useEffect(() => {
+    const controller = new AbortController()
+
+    const loadStats = async () => {
+      try {
+        setStatsLoading(true)
+        const params = new URLSearchParams()
+        params.set('period', statsPeriod)
+        const response = await fetch(`${API_BASE_URL}/api/ai-agent-runs/stats?${params.toString()}`, {
+          headers: authHeaders,
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          throw new Error('Failed to load AI usage stats')
+        }
+        const data: AgentRunStats = await response.json()
+        setStats(data)
+      } catch (err) {
+        if (controller.signal.aborted) return
+        setStatsError(err instanceof Error ? err.message : 'Failed to load AI usage stats')
+      } finally {
+        if (!controller.signal.aborted) setStatsLoading(false)
+      }
+    }
+
+    setStatsError('')
+    void loadStats()
+    return () => controller.abort()
+  }, [authHeaders, statsPeriod])
+
   const showingStart = total === 0 ? 0 : offset + 1
   const showingEnd = Math.min(offset + runs.length, total)
   const canGoBack = offset > 0
@@ -111,20 +181,105 @@ export default function AiAgentRuns() {
         was chosen and why, and what it cost.
       </p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {STATUS_FILTERS.map((value) => (
-          <button
-            key={value || 'all'}
-            type="button"
-            onClick={() => setStatusFilter(value)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-              statusFilter === value ? 'bg-indigo-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            {value ? value.replace('_', ' ') : 'all'}
-          </button>
-        ))}
-      </div>
+      <section className="mt-4 rounded-3xl border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-sky-50 p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-700">{statsPeriod === 'all' ? 'All time usage' : statsPeriod === 'today' ? 'Today usage' : 'This month usage'}</p>
+            <h2 className="mt-1 text-lg font-semibold text-gray-900">Token and cost overview</h2>
+            <p className="mt-1 max-w-2xl text-sm text-gray-600">
+              Aggregated across recorded AI steps for the selected time window. Pricing comes from Admin Settings, so the dollar figure stays in sync
+              with your configured per-million-token rates.
+            </p>
+          </div>
+          {stats?.any_pricing_missing ? (
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Partial cost: some models are missing pricing</span>
+          ) : null}
+        </div>
+
+        <div className="mt-4 inline-flex rounded-2xl border border-cyan-100 bg-white/80 p-1 shadow-sm">
+          {STATS_PERIOD_TABS.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setStatsPeriod(tab.value)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                statsPeriod === tab.value ? 'bg-cyan-600 text-white shadow-sm' : 'text-gray-600 hover:bg-cyan-50'
+              }`}
+            >
+              <span className="block">{tab.label}</span>
+              <span className={`block text-[11px] font-normal ${statsPeriod === tab.value ? 'text-cyan-100' : 'text-gray-400'}`}>
+                {tab.description}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {statsError ? <p className="mt-3 text-sm text-rose-600">{statsError}</p> : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Runs</p>
+            <p className="mt-2 text-3xl font-semibold text-gray-900">{statsLoading ? '…' : stats?.total_runs ?? 0}</p>
+          </div>
+          <div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Tokens</p>
+            <p className="mt-2 text-3xl font-semibold text-gray-900">{statsLoading ? '…' : stats?.total_tokens ?? 0}</p>
+            <p className="mt-1 text-xs text-gray-500">
+              {statsLoading ? 'Loading usage totals' : `${stats?.total_prompt_tokens ?? 0} prompt · ${stats?.total_output_tokens ?? 0} output`}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Estimated cost</p>
+            <p className="mt-2 text-3xl font-semibold text-gray-900">
+              {statsLoading ? '…' : formatCost(stats?.total_cost ?? null)}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Pricing rows</p>
+            <p className="mt-2 text-3xl font-semibold text-gray-900">{statsLoading ? '…' : stats?.by_model.length ?? 0}</p>
+            <p className="mt-1 text-xs text-gray-500">Edit rates in Admin Settings &rarr; AI Settings.</p>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-x-auto rounded-2xl border border-cyan-100 bg-white/80">
+          {statsLoading ? (
+            <p className="p-4 text-sm text-gray-500">Loading AI usage stats...</p>
+          ) : (stats?.by_model.length ?? 0) === 0 ? (
+            <p className="p-4 text-sm text-gray-500">No AI steps with token usage have been recorded yet.</p>
+          ) : (
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-xs uppercase tracking-[0.12em] text-gray-500">
+                  <th className="px-4 py-3">Model</th>
+                  <th className="px-4 py-3">Prompt</th>
+                  <th className="px-4 py-3">Output</th>
+                  <th className="px-4 py-3">Total tokens</th>
+                  <th className="px-4 py-3">Cost</th>
+                  <th className="px-4 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats?.by_model.map((row) => (
+                  <tr key={row.model} className="border-t border-gray-100">
+                    <td className="px-4 py-3 font-medium text-gray-900">{row.model}</td>
+                    <td className="px-4 py-3 text-gray-600">{row.prompt_tokens.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-gray-600">{row.output_tokens.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-gray-600">{row.total_tokens.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {row.pricing_missing ? '—' : formatCost(row.total_cost)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${row.pricing_missing ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                        {row.pricing_missing ? 'Missing pricing' : 'Priced'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
 
       {error ? <p className="mt-3 text-sm text-rose-600">{error}</p> : null}
 
@@ -151,6 +306,20 @@ export default function AiAgentRuns() {
               Next
             </button>
           </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {STATUS_FILTERS.map((value) => (
+            <button
+              key={value || 'all'}
+              type="button"
+              onClick={() => setStatusFilter(value)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                statusFilter === value ? 'bg-indigo-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {value ? value.replace('_', ' ') : 'all'}
+            </button>
+          ))}
         </div>
         {loading ? (
           <p className="py-3 text-sm text-gray-500">Loading...</p>

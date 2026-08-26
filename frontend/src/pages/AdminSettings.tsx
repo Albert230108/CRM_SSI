@@ -55,6 +55,15 @@ type Beds24WebhookLogRow = {
   parsed_fields: Record<string, unknown> | null
 }
 
+type AiModelPricingRow = {
+  id: number
+  model: string
+  input_cost_per_million_tokens: number
+  output_cost_per_million_tokens: number
+  created_at: string
+  updated_at: string
+}
+
 const logStatuses = ['', 'received', 'processed', 'failed', 'ignored', 'duplicate']
 
 const ADMIN_TABS: SettingsTab[] = [
@@ -144,6 +153,15 @@ export default function AdminSettings() {
   const [actionWriterDefaultEnabled, setActionWriterDefaultEnabled] = useState(false)
   const [formatterDefaultEnabled, setFormatterDefaultEnabled] = useState(false)
   const [savingAutoApplyTemplates, setSavingAutoApplyTemplates] = useState(false)
+  const [modelPricingRows, setModelPricingRows] = useState<AiModelPricingRow[]>([])
+  const [modelPricingModel, setModelPricingModel] = useState('')
+  const [modelPricingInputCost, setModelPricingInputCost] = useState(0)
+  const [modelPricingOutputCost, setModelPricingOutputCost] = useState(0)
+  const [editingPricingId, setEditingPricingId] = useState<number | null>(null)
+  const [savingModelPricing, setSavingModelPricing] = useState(false)
+  const [deletingPricingId, setDeletingPricingId] = useState<number | null>(null)
+  const [modelPricingLoading, setModelPricingLoading] = useState(true)
+  const [modelPricingError, setModelPricingError] = useState('')
 
   const loadLogs = async () => {
     const params = new URLSearchParams()
@@ -162,20 +180,50 @@ export default function AdminSettings() {
     }
   }
 
+
+  const loadModelPricing = async () => {
+    setModelPricingLoading(true)
+    setModelPricingError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ai-model-pricing`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setModelPricingRows(data.items ?? [])
+      } else {
+        setModelPricingError('Failed to load AI model pricing')
+      }
+    } catch {
+      setModelPricingError('Failed to load AI model pricing')
+    } finally {
+      setModelPricingLoading(false)
+    }
+  }
+
   useEffect(() => {
     const load = async () => {
       setLoading(true)
       try {
-        const [usersResponse, invitesResponse, whatsappAccountsResponse] = await Promise.all([
+        const [usersResponse, invitesResponse, whatsappAccountsResponse, modelPricingResponse] = await Promise.all([
           fetch(`${API_BASE_URL}/api/users`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
           fetch(`${API_BASE_URL}/api/admin/invites`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
           fetch(`${API_BASE_URL}/api/whatsapp/accounts`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+          fetch(`${API_BASE_URL}/api/ai-model-pricing`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
         ])
         if (usersResponse.ok) setUsers(await usersResponse.json())
         else showError('Failed to load users')
         if (invitesResponse.ok) setInvites(await invitesResponse.json())
         else showError('Failed to load invites')
         if (whatsappAccountsResponse.ok) setWhatsappAccounts(await whatsappAccountsResponse.json())
+        if (modelPricingResponse.ok) {
+          const data = await modelPricingResponse.json()
+          setModelPricingRows(data.items ?? [])
+          setModelPricingError('')
+        } else {
+          setModelPricingError('Failed to load AI model pricing')
+          showError('Failed to load AI model pricing')
+        }
         await loadLogs()
         const adminSettingsResponse = await fetch(`${API_BASE_URL}/api/admin-settings`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -197,6 +245,7 @@ export default function AdminSettings() {
           showError('Failed to load admin settings')
         }
       } finally {
+        setModelPricingLoading(false)
         setLoading(false)
       }
     }
@@ -227,7 +276,7 @@ export default function AdminSettings() {
     ])
     if (usersResponse.ok) setUsers(await usersResponse.json())
     if (invitesResponse.ok) setInvites(await invitesResponse.json())
-    await loadLogs()
+    await Promise.all([loadLogs(), loadModelPricing()])
   }
 
   const createInvite = async (event: FormEvent) => {
@@ -603,6 +652,83 @@ export default function AdminSettings() {
     }
   }
 
+
+  const saveModelPricing = async (event: FormEvent) => {
+    event.preventDefault()
+    setModelPricingError('')
+    setSavingModelPricing(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ai-model-pricing`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          model: modelPricingModel.trim(),
+          input_cost_per_million_tokens: modelPricingInputCost,
+          output_cost_per_million_tokens: modelPricingOutputCost,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setModelPricingError(typeof data.detail === 'string' ? data.detail : 'Failed to save model pricing')
+        return
+      }
+      setModelPricingRows((current) => {
+        const next = current.filter((row) => row.id !== data.id)
+        return [...next, data].sort((left, right) => left.model.localeCompare(right.model))
+      })
+      setModelPricingModel('')
+      setModelPricingInputCost(0)
+      setModelPricingOutputCost(0)
+      setEditingPricingId(null)
+      showSuccess('Model pricing saved')
+    } catch {
+      setModelPricingError('Failed to save model pricing')
+    } finally {
+      setSavingModelPricing(false)
+    }
+  }
+
+  const editModelPricing = (row: AiModelPricingRow) => {
+    setEditingPricingId(row.id)
+    setModelPricingModel(row.model)
+    setModelPricingInputCost(row.input_cost_per_million_tokens)
+    setModelPricingOutputCost(row.output_cost_per_million_tokens)
+    setModelPricingError('')
+  }
+
+  const resetModelPricingForm = () => {
+    setEditingPricingId(null)
+    setModelPricingModel('')
+    setModelPricingInputCost(0)
+    setModelPricingOutputCost(0)
+    setModelPricingError('')
+  }
+
+  const deleteModelPricing = async (row: AiModelPricingRow) => {
+    setDeletingPricingId(row.id)
+    setModelPricingError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ai-model-pricing/${row.id}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok && response.status !== 204) {
+        const data = await response.json().catch(() => ({}))
+        setModelPricingError(typeof data.detail === 'string' ? data.detail : 'Failed to delete model pricing')
+        return
+      }
+      setModelPricingRows((current) => current.filter((item) => item.id !== row.id))
+      if (editingPricingId === row.id) {
+        resetModelPricingForm()
+      }
+      showSuccess('Model pricing deleted')
+    } catch {
+      setModelPricingError('Failed to delete model pricing')
+    } finally {
+      setDeletingPricingId(null)
+    }
+  }
+
   const confirmClearInvites = async () => {
     setClearInvitesError('')
     setClearingInvites(true)
@@ -901,6 +1027,115 @@ export default function AdminSettings() {
                     on the tenant AI settings page.
                   </p>
                 </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-cyan-100 bg-gradient-to-br from-cyan-50 to-white p-3.5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">AI Model Pricing</h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Keep per-million-token rates here so the runs page can turn stored token counts into a live cost estimate.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={resetModelPricingForm}
+                  className="rounded-xl border border-cyan-200 px-4 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-50"
+                >
+                  New model
+                </button>
+              </div>
+              {modelPricingError ? <p className="mt-3 text-sm text-rose-600">{modelPricingError}</p> : null}
+              <form onSubmit={saveModelPricing} className="mt-4 grid gap-3 md:grid-cols-4 md:items-end">
+                <div className="md:col-span-1">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-model-pricing-model">
+                    Model
+                  </label>
+                  <input
+                    id="ai-model-pricing-model"
+                    type="text"
+                    value={modelPricingModel}
+                    onChange={(event) => setModelPricingModel(event.target.value)}
+                    disabled={editingPricingId !== null}
+                    placeholder="gemini-2.5-flash"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500 disabled:bg-gray-100"
+                  />
+                  {editingPricingId !== null ? <p className="mt-1 text-xs text-gray-500">Model name is locked while editing an existing row.</p> : null}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-model-pricing-input">
+                    Input $ / 1M tokens
+                  </label>
+                  <input
+                    id="ai-model-pricing-input"
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={modelPricingInputCost}
+                    onChange={(event) => setModelPricingInputCost(Number(event.target.value))}
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-model-pricing-output">
+                    Output $ / 1M tokens
+                  </label>
+                  <input
+                    id="ai-model-pricing-output"
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={modelPricingOutputCost}
+                    onChange={(event) => setModelPricingOutputCost(Number(event.target.value))}
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingModelPricing || !modelPricingModel.trim()}
+                  className="rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                >
+                  {savingModelPricing ? 'Saving...' : editingPricingId !== null ? 'Update pricing' : 'Add pricing'}
+                </button>
+              </form>
+              <div className="mt-4 overflow-x-auto rounded-2xl border border-cyan-100 bg-white">
+                {modelPricingLoading ? (
+                  <p className="p-4 text-sm text-gray-500">Loading model pricing...</p>
+                ) : modelPricingRows.length === 0 ? (
+                  <p className="p-4 text-sm text-gray-500">No model pricing rows yet.</p>
+                ) : (
+                  <table className="min-w-full text-sm">
+                    <thead className="text-left text-gray-500">
+                      <tr>
+                        <th className="px-4 py-3">Model</th><th className="px-4 py-3">Input</th><th className="px-4 py-3">Output</th><th className="px-4 py-3">Updated</th><th className="px-4 py-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {modelPricingRows.map((row) => (
+                        <tr key={row.id} className="border-t border-gray-100">
+                          <td className="px-4 py-3 font-medium text-gray-900">{row.model}</td>
+                          <td className="px-4 py-3 text-gray-600">${row.input_cost_per_million_tokens.toFixed(4)}</td>
+                          <td className="px-4 py-3 text-gray-600">${row.output_cost_per_million_tokens.toFixed(4)}</td>
+                          <td className="px-4 py-3 text-gray-600">{new Date(row.updated_at).toLocaleString()}</td>
+                          <td className="space-x-2 px-4 py-3">
+                            <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => editModelPricing(row)}>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-rose-300 px-3 py-1 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                              disabled={deletingPricingId === row.id}
+                              onClick={() => void deleteModelPricing(row)}
+                            >
+                              {deletingPricingId === row.id ? 'Deleting...' : 'Delete'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </section>
 
