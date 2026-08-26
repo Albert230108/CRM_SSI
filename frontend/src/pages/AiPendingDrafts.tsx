@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { sanitizeHtml } from '../lib/sanitizeHtml'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -96,13 +97,11 @@ export default function AiPendingDrafts() {
   const renderDraftPreview = (draft: AiAutoDraftItem) => {
     const text = (draft.formatted_text || draft.generated_text || '').trim()
     if (!text) return null
-    if (draft.channel === 'email' && draft.formatted_text) {
+    if (draft.formatted_text) {
       return (
-        <iframe
-          title={`Formatted email preview for draft ${draft.id}`}
-          sandbox=""
-          srcDoc={`<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#111827;margin:0;padding:0}p{margin:0 0 1em}ul,ol{margin:0 0 1em 1.25em}li{margin:0 0 .35em}a{color:#0f766e}</style></head><body>${draft.formatted_text}</body></html>`}
-          className="mt-1.5 h-56 w-full rounded-lg border border-gray-200 bg-white"
+        <div
+          className="mt-1.5 max-h-64 overflow-y-auto break-words text-sm leading-6 text-gray-700"
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(draft.formatted_text) }}
         />
       )
     }

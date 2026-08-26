@@ -162,6 +162,23 @@ class AiAutoDraftSendNowRequest(BaseModel):
     reason: Optional[str] = None
 
 
+SEND_NOW_CONFIGURATION_FAILURE_DETAILS = {
+    "No email thread is linked for this draft",
+    "Email thread for this draft could not be found",
+    "Gmail account for this thread is inactive",
+    "Could not determine a recipient email for this thread",
+    "Gmail credentials are unavailable for this thread",
+    "No WhatsApp chat is linked for this draft - link one first",
+    "This tenant has multiple WhatsApp chats linked; link a specific one for this draft",
+    "Tenant for this draft could not be found",
+    "Could not determine a destination WhatsApp chat or phone for this draft",
+}
+
+
+def _send_now_status_for_detail(detail: str | None) -> int:
+    return status.HTTP_400_BAD_REQUEST if detail in SEND_NOW_CONFIGURATION_FAILURE_DETAILS else status.HTTP_502_BAD_GATEWAY
+
+
 @router.put("/{draft_id}/send-now", response_model=AiAutoDraftRead)
 def send_ai_auto_draft_now(
     draft_id: int,
@@ -172,9 +189,9 @@ def send_ai_auto_draft_now(
     draft = _get_draft(db, draft_id)
     if draft.status not in DEFAULT_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Draft is not in a sendable state")
-    sent = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_ui", reason=(payload.reason or "").strip() or None)
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_ui", reason=(payload.reason or "").strip() or None)
     if not sent:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send draft")
+        raise HTTPException(status_code=_send_now_status_for_detail(failure_reason), detail=failure_reason or "Failed to send draft")
     db.commit()
     db.refresh(draft)
     return _to_read(db, draft)

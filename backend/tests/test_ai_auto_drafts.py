@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.services import ai_auto_draft_service
@@ -119,11 +120,12 @@ def test_send_scheduled_draft_auto_timer_falls_back_to_checker_feedback(db_sessi
     db_session.add(draft)
     db_session.commit()
 
-    monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: True)
+    monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: (True, None))
 
-    sent = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="auto_timer")
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="auto_timer")
 
     assert sent is True
+    assert failure_reason is None
     assert draft.status == "sent"
     assert draft.resolution_source == "auto_timer"
     assert draft.resolution_reason == "Checker approved: matches template tone."
@@ -135,11 +137,12 @@ def test_send_scheduled_draft_human_ui_uses_explicit_reason(db_session, monkeypa
     db_session.add(draft)
     db_session.commit()
 
-    monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: True)
+    monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: (True, None))
 
-    sent = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui", reason="Confirmed by phone")
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui", reason="Confirmed by phone")
 
     assert sent is True
+    assert failure_reason is None
     assert draft.resolution_source == "human_ui"
     assert draft.resolution_reason == "Confirmed by phone"
 
@@ -175,6 +178,71 @@ def test_cancel_auto_send_is_a_no_op_when_not_scheduled(non_admin_client, db_ses
     response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/cancel-auto-send")
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
+
+
+def test_send_now_rejects_whatsapp_ambiguity_with_actionable_detail(non_admin_client, db_session):
+    tenant = _create_tenant(db_session)
+    db_session.add_all(
+        [
+            TenantChannelEndpoint(tenant_id=tenant.id, channel_type="whatsapp", provider="whatsapp-service", external_account_id="acct-a", external_chat_namespace="a@c.us", is_active=True),
+            TenantChannelEndpoint(tenant_id=tenant.id, channel_type="whatsapp", provider="whatsapp-service", external_account_id="acct-b", external_chat_namespace="b@c.us", is_active=True),
+        ]
+    )
+    db_session.commit()
+
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="whatsapp", generated_text="Hi there", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "This tenant has multiple WhatsApp chats linked; link a specific one for this draft"
+
+
+def test_send_now_returns_502_for_provider_exception(non_admin_client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    account = GmailAccount(email_address="inbox-send-now-fail@example.com", is_active=True)
+    db_session.add(account)
+    db_session.flush()
+    conversation = Conversation(provider="gmail", provider_account_id=account.id, provider_thread_id="thread-send-now-fail", subject="Hi")
+    db_session.add(conversation)
+    db_session.flush()
+    db_session.add(
+        ConversationMessage(
+            conversation_id=conversation.id,
+            provider="gmail",
+            provider_message_id="msg-send-now-fail",
+            direction="inbound",
+            sender_email="tenant-send-now-fail@example.com",
+            subject="Hi",
+            body="When is check-in?",
+            sent_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+    )
+    db_session.commit()
+
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="email",
+        email_thread_id=conversation.id,
+        generated_text="Check-in is at 3pm",
+        status="pending",
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(ai_auto_draft_service, "build_gmail_credentials", lambda account: object())
+
+    def failing_send(credentials, **kwargs):
+        raise RuntimeError("gmail api down")
+
+    monkeypatch.setattr(ai_auto_draft_service, "send_gmail_reply", failing_send)
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Failed to send Gmail reply"
 
 
 def test_send_now_sends_pending_draft_and_marks_sent(non_admin_client, db_session, monkeypatch):
@@ -264,6 +332,7 @@ def test_send_now_failure_leaves_draft_pending_and_returns_502(non_admin_client,
 
     response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
     assert response.status_code == 502
+    assert response.json()["detail"] == "Failed to send Gmail reply"
 
     db_session.refresh(draft)
     assert draft.status == "pending"
@@ -312,7 +381,8 @@ def test_send_now_rejects_when_latest_reply_points_to_our_own_mailbox(non_admin_
     )
 
     response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now")
-    assert response.status_code == 502
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Could not determine a recipient email for this thread"
 
     db_session.refresh(draft)
     assert draft.status == "pending"

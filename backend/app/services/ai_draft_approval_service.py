@@ -441,9 +441,9 @@ def try_handle_admin_reply(
 
         reason = f"{decision.title()} via WhatsApp by {user.full_name or user.email}"
         if decision == "YES":
-            sent = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_whatsapp", reason=reason)
+            sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_whatsapp", reason=reason)
             if not sent:
-                return outcome("⚠️ Failed to send — check the draft in the CRM.")
+                return outcome(failure_reason or "⚠️ Failed to send — check the draft in the CRM.")
             approval_request.responded_at = datetime.now(timezone.utc)
             approval_request.response = decision
             db.commit()
@@ -519,9 +519,9 @@ def try_handle_admin_reply(
     reason = typed_reason or f"{decision.title()} via WhatsApp by {user.full_name or user.email}"
 
     if decision == "YES":
-        sent = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_whatsapp", reason=reason)
+        sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_whatsapp", reason=reason)
         if not sent:
-            return outcome("⚠️ Failed to send — check the draft in the CRM.")
+            return outcome(failure_reason or "⚠️ Failed to send — check the draft in the CRM.")
         approval_request.responded_at = datetime.now(timezone.utc)
         approval_request.response = decision
         db.commit()

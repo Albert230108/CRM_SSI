@@ -195,9 +195,10 @@ def test_sending_a_whatsapp_draft_never_includes_the_quoted_context(db_session, 
     monkeypatch.setattr(ai_auto_draft_service, "send_whatsapp_message", fake_send_whatsapp_message)
     monkeypatch.setattr(ai_auto_draft_service, "persist_whatsapp_outbound_communication", fake_persist)
 
-    sent = send_scheduled_draft(db_session, draft)
+    sent, failure_reason = send_scheduled_draft(db_session, draft)
 
     assert sent is True
+    assert failure_reason is None
     assert sent_messages == ["Yes, still available!"]
     assert "Replying to" not in sent_messages[0]
 

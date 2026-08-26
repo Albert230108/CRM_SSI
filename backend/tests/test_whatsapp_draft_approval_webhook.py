@@ -100,7 +100,7 @@ def test_yes_reply_sends_draft_and_confirms(client, db_session, monkeypatch):
 
     def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
-        return True
+        return True, None
 
     monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
     sent_calls = _patch_confirmation_send(monkeypatch)
@@ -134,7 +134,7 @@ def test_yes_reply_with_trailing_text_is_logged_as_resolution_reason(client, db_
         draft_arg.status = "sent"
         draft_arg.resolution_source = kwargs.get("resolution_source")
         draft_arg.resolution_reason = kwargs.get("reason")
-        return True
+        return True, None
 
     monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
     _patch_confirmation_send(monkeypatch)
@@ -246,7 +246,7 @@ def test_lid_reply_is_matched_by_stored_identity_key(client, db_session, monkeyp
 
     def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
-        return True
+        return True, None
 
     monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
     sent_calls = _patch_confirmation_send(monkeypatch)
@@ -287,7 +287,7 @@ def test_lid_reply_matches_when_canonical_identity_is_the_crm_number(client, db_
 
     def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
-        return True
+        return True, None
 
     monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
     sent_calls = _patch_confirmation_send(monkeypatch)
@@ -608,7 +608,7 @@ def test_redo_then_yes_still_works_after_reset(client, db_session, monkeypatch):
 
     def fake_send_scheduled_draft(db, draft_arg, **kwargs):
         draft_arg.status = "sent"
-        return True
+        return True, None
 
     monkeypatch.setattr(ai_auto_draft_service, "send_scheduled_draft", fake_send_scheduled_draft)
 

@@ -123,10 +123,11 @@ def test_send_scheduled_draft_email_success_marks_sent_and_ai_generated(db_sessi
 
     monkeypatch.setattr(ai_auto_draft_service, "send_gmail_reply", fake_send_gmail_reply)
 
-    result = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
+    result, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
     db_session.commit()
 
     assert result is True
+    assert failure_reason is None
     assert draft.status == "sent"
     assert draft.sent_communication_id is not None
     communication = db_session.query(Communication).filter(Communication.id == draft.sent_communication_id).first()
@@ -176,9 +177,10 @@ def test_send_scheduled_draft_email_failure_leaves_draft_pending_auto_send(db_se
 
     monkeypatch.setattr(ai_auto_draft_service, "send_gmail_reply", failing_send)
 
-    result = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
+    result, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
 
     assert result is False
+    assert failure_reason == "Failed to send Gmail reply"
     assert draft.status == "pending_auto_send"
     assert draft.sent_communication_id is None
 
@@ -216,16 +218,64 @@ def test_send_scheduled_draft_whatsapp_success(db_session, monkeypatch):
 
     monkeypatch.setattr(ai_auto_draft_service, "send_whatsapp_message", fake_send_whatsapp_message)
 
-    result = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
+    result, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
     db_session.commit()
 
     assert result is True
+    assert failure_reason is None
     assert draft.status == "sent"
     communication = db_session.query(Communication).filter(Communication.id == draft.sent_communication_id).first()
     assert communication.ai_generated is True
     assert communication.channel == "whatsapp"
     assert communication.message == "*Check-in* is at 3pm"
     assert sent_payloads[0]["message"] == "*Check-in* is at 3pm"
+
+
+def test_send_scheduled_draft_whatsapp_html_formatted_text_falls_back_to_generated_text(db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-auto-send-wa-html")
+    endpoint = TenantChannelEndpoint(
+        tenant_id=tenant.id,
+        channel_type="whatsapp",
+        provider="whatsapp-service",
+        external_account_id="edi-crm-whatsapp",
+        external_chat_namespace="31612345678@c.us",
+        is_active=True,
+    )
+    db_session.add(endpoint)
+    db_session.commit()
+
+    draft = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="whatsapp",
+        whatsapp_endpoint_id=endpoint.id,
+        generated_text="Check-in is at 3pm",
+        formatted_text="<p>Check-in is at <strong>3pm</strong></p>",
+        status="pending_auto_send",
+        scheduled_send_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    sent_payloads = []
+
+    async def fake_send_whatsapp_message(payload):
+        sent_payloads.append(payload)
+        return {"whatsapp_message_id": "wamid-auto-html-1"}
+
+    def fake_persist(db, **kwargs):
+        class _Result:
+            communication = type("_Communication", (), {"id": 2})()
+
+        return _Result()
+
+    monkeypatch.setattr(ai_auto_draft_service, "send_whatsapp_message", fake_send_whatsapp_message)
+    monkeypatch.setattr(ai_auto_draft_service, "persist_whatsapp_outbound_communication", fake_persist)
+
+    result, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
+
+    assert result is True
+    assert failure_reason is None
+    assert sent_payloads[0]["message"] == "Check-in is at 3pm"
 
 
 def test_send_scheduled_draft_whatsapp_ambiguous_endpoint_fails(db_session):
@@ -249,7 +299,8 @@ def test_send_scheduled_draft_whatsapp_ambiguous_endpoint_fails(db_session):
     db_session.add(draft)
     db_session.commit()
 
-    result = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
+    result, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
 
     assert result is False
+    assert failure_reason == "This tenant has multiple WhatsApp chats linked; link a specific one for this draft"
     assert draft.status == "pending_auto_send"

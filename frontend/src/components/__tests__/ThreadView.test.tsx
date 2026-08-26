@@ -306,7 +306,16 @@ describe('ThreadView Draft with AI', () => {
 
   it('shows a pending auto-draft banner and fills the textarea when used', async () => {
     useAuthStore.setState({ token: 'test-token' })
-    const pendingDraft = { id: 55, tenant_id: 7, channel: 'whatsapp', generated_text: 'Auto-generated: check-in is 3pm', status: 'pending', scheduled_send_at: null, created_at: '2026-07-20T10:00:00Z' }
+    const pendingDraft = {
+      id: 55,
+      tenant_id: 7,
+      channel: 'whatsapp',
+      generated_text: 'Plain fallback text',
+      formatted_text: '<p>Auto-generated: <strong>check-in</strong> is 3pm</p>',
+      status: 'pending',
+      scheduled_send_at: null,
+      created_at: '2026-07-20T10:00:00Z',
+    }
     const markUsedSpy = vi.fn(() => jsonResponse({ ...pendingDraft, status: 'used_as_manual_seed' }))
 
     vi.stubGlobal(
@@ -334,7 +343,11 @@ describe('ThreadView Draft with AI', () => {
 
     const dialog = await screen.findByRole('dialog')
     await within(dialog).findByText('Pending AI draft')
-    expect(within(dialog).getByText(pendingDraft.generated_text)).toBeInTheDocument()
+    expect(
+      within(dialog).getByText((_, element) => element?.tagName === 'P' && element.textContent === 'Auto-generated: check-in is 3pm'),
+    ).toBeInTheDocument()
+    expect(dialog).not.toHaveTextContent('<p>')
+    expect(within(dialog).queryByText(pendingDraft.generated_text)).not.toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: 'Use this draft' }))
 

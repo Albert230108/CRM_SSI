@@ -12,12 +12,11 @@ import ToastCard from './ToastCard'
 import AiDraftControls from './AiDraftControls'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
 import { MAX_EMAIL_TOTAL_BYTES, formatBytes } from '../lib/attachmentLimits'
+import { removeQuotedReplyElements, sanitizeHtml } from '../lib/sanitizeHtml'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/?$/, '').replace(/\/$/, '')
 
 const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'BLOCKQUOTE', 'DIV', 'DL', 'DT', 'DD', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR', 'LI', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL'])
-const ALLOWED_TAGS = new Set(['A', 'B', 'BR', 'CODE', 'DIV', 'EM', 'I', 'LI', 'OL', 'P', 'PRE', 'SPAN', 'STRONG', 'SUB', 'SUP', 'U', 'UL', 'BLOCKQUOTE'])
-const ALLOWED_ATTRS = new Set(['href', 'title', 'target', 'rel'])
 
 type Attachment = {
   attachment_id: string
@@ -166,53 +165,6 @@ const htmlToPlainText = (html: string) => {
   }
   doc.body.childNodes.forEach(walk)
   return decodeHtmlEntities(chunks.join(' ').replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').replace(/[ \t]{2,}/g, ' ').trim())
-}
-
-const QUOTE_CONTAINER_CLASS_PATTERN = /(?:^|\s)(gmail_quote|gmail_quote_container|yahoo_quoted|protonmail_quote|moz-cite-prefix|gmail_attr)(?:\s|$)/i
-
-const removeQuotedReplyElements = (root: HTMLElement) => {
-  Array.from(root.querySelectorAll('*')).forEach((node) => {
-    if (!node.isConnected) return
-    const el = node as HTMLElement
-    const isQuoteContainer =
-      QUOTE_CONTAINER_CLASS_PATTERN.test(el.className || '') ||
-      (el.tagName === 'BLOCKQUOTE' && (el.getAttribute('type') || '').toLowerCase() === 'cite')
-    if (isQuoteContainer) el.remove()
-  })
-}
-
-const sanitizeHtml = (html: string) => {
-  const doc = new DOMParser().parseFromString(html, 'text/html')
-  removeQuotedReplyElements(doc.body)
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) return
-    if (!(node instanceof HTMLElement)) return
-    if (!ALLOWED_TAGS.has(node.tagName)) {
-      const parent = node.parentNode
-      if (!parent) return
-      while (node.firstChild) parent.insertBefore(node.firstChild, node)
-      parent.removeChild(node)
-      return
-    }
-    Array.from(node.attributes).forEach((attr) => {
-      if (!ALLOWED_ATTRS.has(attr.name.toLowerCase())) {
-        node.removeAttribute(attr.name)
-        return
-      }
-      if (attr.name.toLowerCase() === 'href') {
-        const value = attr.value.trim()
-        if (!/^https?:|^mailto:|^tel:/i.test(value)) {
-          node.removeAttribute(attr.name)
-          return
-        }
-        node.setAttribute('target', '_blank')
-        node.setAttribute('rel', 'noreferrer noopener')
-      }
-    })
-    Array.from(node.childNodes).forEach(walk)
-  }
-  Array.from(doc.body.childNodes).forEach(walk)
-  return doc.body.innerHTML
 }
 
 const extractPreviewText = (message: Pick<TimelineMessage, 'body' | 'body_display' | 'body_text' | 'body_html'>) => {
@@ -551,6 +503,7 @@ type AiAutoDraftItem = {
   channel: string
   template_id: number | null
   generated_text: string
+  formatted_text: string | null
   quoted_context: string | null
   status: string
   scheduled_send_at: string | null
@@ -1040,12 +993,20 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   const renderPendingAutoDraftBanner = (channel: 'email' | 'whatsapp') => {
     const draft = pendingAutoDraftForChannel(channel)
     if (!draft) return null
+    const draftText = (draft.formatted_text || draft.generated_text || '').trim()
     return (
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-2">
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
           {draft.status === 'pending_auto_send' ? 'AI draft - sending automatically soon' : 'Pending AI draft'}
         </p>
-        <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draft.generated_text}</p>
+        {draft.formatted_text ? (
+          <div
+            className="mt-1.5 max-h-28 overflow-y-auto break-words text-sm leading-5 text-gray-700"
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(draft.formatted_text) }}
+          />
+        ) : (
+          <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draftText}</p>
+        )}
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           <button
             type="button"
