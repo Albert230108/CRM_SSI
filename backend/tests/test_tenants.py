@@ -711,6 +711,53 @@ def test_list_tenants_empty_status_filter_shows_nothing(db_session):
     assert result == []
 
 
+def test_list_tenants_keeps_pinned_tenant_through_filters_but_not_search(db_session):
+    tenant_pinned = create_tenant(db_session, name="Pinned Tenant", booking_id="PIN-A")
+    tenant_pinned.booking_status = "Confirmed"
+    tenant_pinned.responsible_comm = "Alice"
+    db_session.add(Communication(
+        tenant_id=tenant_pinned.id, channel="whatsapp", direction="inbound",
+        provider="whatsapp-service", message="hello", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    ))
+
+    tenant_match = create_tenant(db_session, name="Matching Tenant", booking_id="PIN-B")
+    tenant_match.booking_status = "Request"
+    tenant_match.responsible_comm = "Bob"
+    db_session.add(Communication(
+        tenant_id=tenant_match.id, channel="whatsapp", direction="outbound",
+        provider="whatsapp-service", message="hi", created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    ))
+    db_session.commit()
+
+    filtered = list_tenants(
+        db=db_session,
+        current_user=None,
+        status=["Request"],
+        status_filter=True,
+        responsible="Bob",
+        last_message_direction="outbound",
+        pinned_ids=[tenant_pinned.id],
+        sort_by_message=False,
+        sort_desc=True,
+    )
+    filtered_ids = {tenant.id for tenant in filtered}
+    assert filtered_ids == {tenant_pinned.id, tenant_match.id}
+
+    search_filtered = list_tenants(
+        db=db_session,
+        current_user=None,
+        search="does-not-match",
+        status=["Request"],
+        status_filter=True,
+        responsible="Bob",
+        last_message_direction="outbound",
+        pinned_ids=[tenant_pinned.id],
+        sort_by_message=False,
+        sort_desc=True,
+    )
+    assert tenant_pinned.id not in {tenant.id for tenant in search_filtered}
+
+
 def test_list_tenant_statuses_returns_distinct_values_from_data(db_session):
     tenant_a = create_tenant(db_session, name="Tenant A", booking_id="STATUS-E")
     tenant_a.booking_status = "confirmed"

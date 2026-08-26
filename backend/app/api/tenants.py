@@ -410,10 +410,11 @@ def list_tenants(
     status_filter: bool = False,
     responsible: str | None = None,
     last_message_direction: str | None = None,
+    pinned_ids: Annotated[list[int] | None, Query()] = None,
     sort_by_message: bool = False,
     sort_desc: bool = True,
 ) -> list[TenantRead]:
-    from sqlalchemy import desc, or_
+    from sqlalchemy import and_, desc, or_
 
     query = db.query(Tenant)
 
@@ -429,18 +430,26 @@ def list_tenants(
             )
         )
 
+    conditions = []
     if status_filter:
         # Explicit multi-status checkbox filter: an empty selection intentionally means
         # "show nothing" rather than "no filter", matching Excel-style checkbox behavior.
-        query = query.filter(Tenant.booking_status.in_(status or []))
+        conditions.append(Tenant.booking_status.in_(status or []))
     elif status:
-        query = query.filter(Tenant.booking_status.in_(status))
+        conditions.append(Tenant.booking_status.in_(status))
 
     if responsible:
         if responsible == "unassigned":
-            query = query.filter(Tenant.responsible_comm.is_(None))
+            conditions.append(Tenant.responsible_comm.is_(None))
         else:
-            query = query.filter(Tenant.responsible_comm == responsible)
+            conditions.append(Tenant.responsible_comm == responsible)
+
+    if conditions:
+        combined_conditions = and_(*conditions)
+        if pinned_ids:
+            query = query.filter(or_(Tenant.id.in_(pinned_ids), combined_conditions))
+        else:
+            query = query.filter(combined_conditions)
 
     query = query.order_by(desc(Tenant.id) if sort_desc else Tenant.id)
     tenants = query.all()
@@ -532,7 +541,8 @@ def list_tenants(
         result.append(TenantRead(**tenant_dict))
 
     if last_message_direction:
-        result = [t for t in result if t.last_message_direction == last_message_direction]
+        pinned_id_set = set(pinned_ids or [])
+        result = [t for t in result if t.last_message_direction == last_message_direction or t.id in pinned_id_set]
 
     if sort_by_message:
         epoch = datetime.min.replace(tzinfo=timezone.utc)

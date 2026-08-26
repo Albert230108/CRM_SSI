@@ -6,7 +6,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const PAGE_SIZE = 25
-const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 6 })
+const eurFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 type AgentRun = {
   id: number
@@ -23,6 +23,8 @@ type AgentRun = {
   attempts: number
   total_prompt_tokens: number
   total_output_tokens: number
+  total_cost: number | null
+  pricing_missing: boolean
   duration_ms: number
   created_at: string
 }
@@ -80,7 +82,7 @@ function templateLabel(id: number | null, name?: string | null): string {
 
 function formatCost(value: number | null): string {
   if (value === null) return '—'
-  return usdFormatter.format(value)
+  return eurFormatter.format(value)
 }
 
 export default function AiAgentRuns() {
@@ -186,10 +188,6 @@ export default function AiAgentRuns() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-700">{statsPeriod === 'all' ? 'All time usage' : statsPeriod === 'today' ? 'Today usage' : 'This month usage'}</p>
             <h2 className="mt-1 text-lg font-semibold text-gray-900">Token and cost overview</h2>
-            <p className="mt-1 max-w-2xl text-sm text-gray-600">
-              Aggregated across recorded AI steps for the selected time window. Pricing comes from Admin Settings, so the dollar figure stays in sync
-              with your configured per-million-token rates.
-            </p>
           </div>
           {stats?.any_pricing_missing ? (
             <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Partial cost: some models are missing pricing</span>
@@ -216,7 +214,7 @@ export default function AiAgentRuns() {
 
         {statsError ? <p className="mt-3 text-sm text-rose-600">{statsError}</p> : null}
 
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Runs</p>
             <p className="mt-2 text-3xl font-semibold text-gray-900">{statsLoading ? '…' : stats?.total_runs ?? 0}</p>
@@ -233,11 +231,6 @@ export default function AiAgentRuns() {
             <p className="mt-2 text-3xl font-semibold text-gray-900">
               {statsLoading ? '…' : formatCost(stats?.total_cost ?? null)}
             </p>
-          </div>
-          <div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Pricing rows</p>
-            <p className="mt-2 text-3xl font-semibold text-gray-900">{statsLoading ? '…' : stats?.by_model.length ?? 0}</p>
-            <p className="mt-1 text-xs text-gray-500">Edit rates in Admin Settings &rarr; AI Settings.</p>
           </div>
         </div>
 
@@ -339,6 +332,7 @@ export default function AiAgentRuns() {
                   <th className="py-1.5 pr-3">Template</th>
                   <th className="py-1.5 pr-3">Tries</th>
                   <th className="py-1.5 pr-3">Tokens</th>
+                  <th className="py-1.5 pr-3">Cost</th>
                   <th className="py-1.5" />
                 </tr>
               </thead>
@@ -361,6 +355,9 @@ export default function AiAgentRuns() {
                     <td className="py-1.5 pr-3 text-gray-600">{templateLabel(run.final_template_id, run.final_template_name)}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{run.attempts}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{run.total_prompt_tokens + run.total_output_tokens}</td>
+                    <td className="py-1.5 pr-3 text-gray-600">
+                      {run.pricing_missing ? '—' : formatCost(run.total_cost)}
+                    </td>
                     <td className="py-1.5">
                       <button
                         type="button"

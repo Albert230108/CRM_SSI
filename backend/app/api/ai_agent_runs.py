@@ -87,12 +87,55 @@ def _redo_display_mode_map(db: Session, runs: list[AiAgentRun]) -> dict[int, str
     return display_modes
 
 
-def _run_read(db: Session, run: AiAgentRun, *, display_mode: str | None = None, final_template_name: str | None = None) -> AiAgentRunRead:
+def _costs_by_run(db: Session, run_ids: list[int]) -> dict[int, tuple[float | None, bool]]:
+    """Per-run (total_cost, pricing_missing), mirroring the /stats cost math but scoped per run."""
+    if not run_ids:
+        return {}
+    rows = (
+        db.query(
+            AiAgentRunStep.run_id,
+            AiAgentRunStep.model,
+            func.coalesce(func.sum(AiAgentRunStep.prompt_tokens), 0),
+            func.coalesce(func.sum(AiAgentRunStep.output_tokens), 0),
+        )
+        .filter(AiAgentRunStep.run_id.in_(run_ids))
+        .filter(AiAgentRunStep.model.isnot(None))
+        .group_by(AiAgentRunStep.run_id, AiAgentRunStep.model)
+        .all()
+    )
+    pricing_by_model = {row.model: row for row in db.query(AiModelPricing).all()}
+
+    cost_by_run: dict[int, float] = defaultdict(float)
+    has_priced_tokens: dict[int, bool] = defaultdict(bool)
+    missing_by_run: dict[int, bool] = defaultdict(bool)
+    for run_id, model_name, prompt_tokens_raw, output_tokens_raw in rows:
+        prompt_tokens = int(prompt_tokens_raw or 0)
+        output_tokens = int(output_tokens_raw or 0)
+        if prompt_tokens + output_tokens == 0:
+            continue
+        pricing = pricing_by_model.get(model_name)
+        if pricing is None:
+            missing_by_run[run_id] = True
+            continue
+        input_cost = float(pricing.input_cost_per_million_tokens) * prompt_tokens / 1_000_000
+        output_cost = float(pricing.output_cost_per_million_tokens) * output_tokens / 1_000_000
+        cost_by_run[run_id] += input_cost + output_cost
+        has_priced_tokens[run_id] = True
+
+    return {
+        run_id: (cost_by_run.get(run_id) if has_priced_tokens.get(run_id) else None, missing_by_run.get(run_id, False))
+        for run_id in set(cost_by_run) | set(missing_by_run)
+    }
+
+
+def _run_read(db: Session, run: AiAgentRun, *, display_mode: str | None = None, final_template_name: str | None = None, total_cost: float | None = None, pricing_missing: bool = False) -> AiAgentRunRead:
     return AiAgentRunRead.model_validate(run).model_copy(
         update={
             **_with_tenant_name(db, run),
             "final_template_name": final_template_name,
             "display_mode": display_mode or run.mode,
+            "total_cost": total_cost,
+            "pricing_missing": pricing_missing,
         }
     )
 
@@ -213,12 +256,15 @@ def list_agent_runs(
         db, {run.final_template_id for run in runs if run.final_template_id is not None}
     )
     display_modes = _redo_display_mode_map(db, runs)
+    costs_by_run = _costs_by_run(db, [run.id for run in runs])
     items = [
         _run_read(
             db,
             run,
             display_mode=display_modes.get(run.id),
             final_template_name=template_names.get(run.final_template_id),
+            total_cost=costs_by_run.get(run.id, (None, False))[0],
+            pricing_missing=costs_by_run.get(run.id, (None, False))[1],
         )
         for run in runs
     ]

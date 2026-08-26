@@ -136,3 +136,48 @@ def test_ai_model_pricing_crud_and_stats(non_admin_client, client, db_session):
     assert delete_response.status_code == 204
     db_session.expire_all()
     assert db_session.query(AiModelPricing).count() == 2
+
+
+def test_ai_agent_runs_list_returns_per_run_cost_and_pricing_missing(non_admin_client, client, db_session):
+    tenant = Tenant(name="Run pricing tenant", booking_id="B-run-pricing-1")
+    db_session.add(tenant)
+    db_session.flush()
+
+    priced_run = _create_run(
+        db_session,
+        tenant,
+        created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        model="gemini-2.5-flash",
+        prompt_tokens=100,
+        output_tokens=20,
+    )
+    unpriced_run = _create_run(
+        db_session,
+        tenant,
+        created_at=datetime.now(timezone.utc).replace(microsecond=0),
+        model="gemini-unpriced",
+        prompt_tokens=40,
+        output_tokens=10,
+    )
+    db_session.commit()
+
+    response = client.put(
+        "/api/ai-model-pricing",
+        json={
+            "model": "gemini-2.5-flash",
+            "input_cost_per_million_tokens": 0.3,
+            "output_cost_per_million_tokens": 1.2,
+        },
+    )
+    assert response.status_code == 200
+
+    listing = non_admin_client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}").json()
+    by_id = {row["id"]: row for row in listing["items"]}
+
+    priced_row = by_id[priced_run.id]
+    assert round(priced_row["total_cost"], 6) == 0.000054
+    assert priced_row["pricing_missing"] is False
+
+    unpriced_row = by_id[unpriced_run.id]
+    assert unpriced_row["total_cost"] is None
+    assert unpriced_row["pricing_missing"] is True

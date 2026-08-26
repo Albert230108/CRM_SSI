@@ -36,6 +36,8 @@ class AiAgentRunRead(BaseModel):
     attempts: int
     total_prompt_tokens: int
     total_output_tokens: int
+    total_cost: float | None = None
+    pricing_missing: bool = False
     duration_ms: int
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)

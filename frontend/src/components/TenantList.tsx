@@ -285,6 +285,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           selectedStatuses.forEach((status) => params.append('status', status))
           if (selectedResponsible) params.append('responsible', selectedResponsible)
           if (selectedDirection) params.append('last_message_direction', selectedDirection)
+          pinnedTenantIds.forEach((id) => params.append('pinned_ids', String(id)))
         }
         params.append('sort_by_message', sortByMessage.toString())
         params.append('sort_desc', sortDesc.toString())
@@ -308,7 +309,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
 
     loadTenants()
     return () => controller.abort()
-  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatuses, statusesResolved, selectedResponsible, selectedDirection, sortByMessage, sortDesc, searchAllTenants])
+  }, [token, reloadSignal, livePollSignal, searchQuery, selectedStatuses, statusesResolved, selectedResponsible, selectedDirection, sortByMessage, sortDesc, searchAllTenants, pinnedTenantIds])
 
   const uniqueResponsibles = useMemo(() => {
     const responsibles = new Set<string>()
