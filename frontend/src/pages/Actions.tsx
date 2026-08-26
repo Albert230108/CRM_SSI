@@ -603,7 +603,7 @@ export default function Actions() {
                       </select>
                     </div>
                     <TagChipSelector
-                      tags={item.tags.length > 0 ? item.tags : []}
+                      tags={allTags}
                       selectedIds={editTagIds}
                       onToggle={(tagId) => toggleSelectedTag(tagId, editTagIds, setEditTagIds)}
                     />
