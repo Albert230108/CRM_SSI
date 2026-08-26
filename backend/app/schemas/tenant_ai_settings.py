@@ -88,3 +88,12 @@ class BulkTenantActionWriterAssignment(BaseModel):
 
 class BulkTenantActionWriterAssignmentResult(BaseModel):
     tenants_affected: int
+
+
+class BulkTenantFormatterAssignment(BaseModel):
+    tenant_ids: list[int]
+    formatter_enabled: bool
+
+
+class BulkTenantFormatterAssignmentResult(BaseModel):
+    tenants_affected: int

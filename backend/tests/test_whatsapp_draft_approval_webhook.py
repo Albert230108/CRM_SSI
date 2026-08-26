@@ -444,10 +444,11 @@ def test_redo_reply_regenerates_draft_in_place_and_rebroadcasts(client, db_sessi
 
     regenerate_calls = []
 
-    def fake_regenerate(db, draft_arg, instructions):
-        regenerate_calls.append((draft_arg.id, instructions))
+    def fake_regenerate(db, draft_arg, what, why):
+        regenerate_calls.append((draft_arg.id, what, why))
         draft_arg.generated_text = "Shorter reply, deposit mentioned."
         draft_arg.status = "pending"
+        draft_arg.agent_run_id = 123
         return draft_arg
 
     monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", fake_regenerate)
@@ -465,14 +466,14 @@ def test_redo_reply_regenerates_draft_in_place_and_rebroadcasts(client, db_sessi
 
     assert response.status_code == 200
     assert response.json()["message"] == "staff draft approval handled"
-    # No what:/why: labels in the message - the whole free-text instructions become "What".
-    assert regenerate_calls == [(draft.id, "What: make it shorter and mention the deposit")]
+    assert regenerate_calls == [(draft.id, "make it shorter and mention the deposit", None)]
 
     log_entry = db_session.query(RedoRequestLog).filter(RedoRequestLog.ai_auto_draft_id == draft.id).one()
     assert log_entry.channel == "whatsapp"
     assert log_entry.what == "make it shorter and mention the deposit"
     assert log_entry.why is None
     assert log_entry.requested_by_user_id == user.id
+    assert log_entry.ai_agent_run_id == 123
 
     # The webhook's own confirmation send is skipped entirely for a successful redo - the
     # acknowledgement and the redone-draft broadcast (both below) already cover it, and the
@@ -514,17 +515,17 @@ def test_redo_reply_extracts_what_and_why_regardless_of_order(client, db_session
     _patch_confirmation_send(monkeypatch)
 
     cases = [
-        ("make it shorter why: they already asked yesterday", "What: make it shorter\nWhy: they already asked yesterday"),
-        ("why: they already asked yesterday what: make it shorter", "What: make it shorter\nWhy: they already asked yesterday"),
-        ("WHAT: make it shorter", "What: make it shorter"),
+        ("make it shorter why: they already asked yesterday", "make it shorter", "they already asked yesterday"),
+        ("why: they already asked yesterday what: make it shorter", "make it shorter", "they already asked yesterday"),
+        ("WHAT: make it shorter", "make it shorter", None),
     ]
-    for suffix, expected_instructions in cases:
+    for suffix, expected_what, expected_why in cases:
         draft = _create_draft(db_session, tenant)
         _create_approval_request(db_session, draft, user)
         regenerate_calls = []
 
-        def fake_regenerate(db, draft_arg, instructions, _calls=regenerate_calls):
-            _calls.append(instructions)
+        def fake_regenerate(db, draft_arg, what, why, _calls=regenerate_calls):
+            _calls.append((what, why))
             draft_arg.generated_text = "Revised."
             draft_arg.status = "pending"
             return draft_arg
@@ -533,8 +534,7 @@ def test_redo_reply_extracts_what_and_why_regardless_of_order(client, db_session
 
         response = _post_reply(client, sender=user.phone, message=f"REDO-{draft.id} {suffix}")
         assert response.status_code == 200
-        assert regenerate_calls == [expected_instructions]
-
+        assert regenerate_calls == [(expected_what, expected_why)]
 
 def test_redo_reply_without_instructions_asks_for_them(client, db_session, monkeypatch):
     tenant = _create_tenant(db_session, booking_id="B-approval-webhook-redo-2")
@@ -548,7 +548,7 @@ def test_redo_reply_without_instructions_asks_for_them(client, db_session, monke
     monkeypatch.setattr(
         ai_auto_draft_service,
         "regenerate_draft_via_planner",
-        lambda db, draft_arg, instructions: regenerate_calls.append(instructions),
+        lambda db, draft_arg, what, why: regenerate_calls.append((what, why)),
     )
     sent_calls = _patch_confirmation_send(monkeypatch)
 
@@ -590,7 +590,7 @@ def test_redo_then_yes_still_works_after_reset(client, db_session, monkeypatch):
     draft = _create_draft(db_session, tenant)
     _create_approval_request(db_session, draft, user)
 
-    def fake_regenerate(db, draft_arg, instructions):
+    def fake_regenerate(db, draft_arg, what, why):
         draft_arg.generated_text = "Revised text."
         draft_arg.status = "pending"
         return draft_arg

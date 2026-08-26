@@ -16,6 +16,8 @@ from app.schemas.tenant_ai_settings import (
     BulkTenantBrainWriterAssignmentResult,
     BulkTenantActionWriterAssignment,
     BulkTenantActionWriterAssignmentResult,
+    BulkTenantFormatterAssignment,
+    BulkTenantFormatterAssignmentResult,
     TenantAiSettingsRead,
     TenantAiSettingsUpdate,
 )
@@ -249,3 +251,19 @@ def bulk_update_tenant_action_writer(
         settings.action_writer_enabled = payload.action_writer_enabled
     db.commit()
     return BulkTenantActionWriterAssignmentResult(tenants_affected=len(tenant_ids))
+
+
+@router.post("/tenant-ai-settings/bulk-formatter", response_model=BulkTenantFormatterAssignmentResult)
+def bulk_update_tenant_formatter(
+    payload: BulkTenantFormatterAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantFormatterAssignmentResult:
+    tenant_ids = sorted(set(payload.tenant_ids))
+    if not tenant_ids:
+        return BulkTenantFormatterAssignmentResult(tenants_affected=0)
+    for tenant_id in tenant_ids:
+        settings = _get_or_create_settings(db, tenant_id)
+        settings.formatter_enabled = payload.formatter_enabled
+    db.commit()
+    return BulkTenantFormatterAssignmentResult(tenants_affected=len(tenant_ids))

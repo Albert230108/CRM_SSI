@@ -11,6 +11,7 @@ from app.models.ai_agent_run import AiAgentRun
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_reply_template import AiReplyTemplate
+from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.user import User
@@ -373,10 +374,12 @@ def test_ai_plan_background_failure_marks_the_draft_for_review(user_client, db_s
 # --- manual "Run planner" redo (reply box, no AiAutoDraft involved) ------------------------
 
 
-def test_ai_plan_redo_returns_regenerated_text_and_logs_the_request(user_client, db_session, monkeypatch):
-    from app.models.redo_request_log import RedoRequestLog
-
+def test_redo_ai_auto_draft_returns_regenerated_text_and_logs_the_request(user_client, db_session, monkeypatch):
     tenant, template = _setup(db_session, planner_mode="manual")
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="Original.", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
     captured_prompts = []
 
     def _fake_generate_capturing(responses):
@@ -395,16 +398,17 @@ def test_ai_plan_redo_returns_regenerated_text_and_logs_the_request(user_client,
     )
 
     response = user_client.put(
-        f"/api/communications/tenants/{tenant.id}/ai-plan/redo",
-        json={"channel": "email", "what": "make it shorter", "why": "guest already knows the basics"},
+        f"/api/ai-auto-drafts/{draft.id}/redo",
+        json={"what": "make it shorter", "why": "guest already knows the basics"},
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["generated_text"] == "Redone draft."
-    assert body["run_id"] is not None
+    assert body["status"] == "pending"
 
-    # The combined What/Why instructions reach the planner as the operator note.
+    # The accumulated redo history is wrapped as numbered blocks before it reaches the planner.
+    assert "Redo #1" in captured_prompts[0]
     assert "What: make it shorter" in captured_prompts[0]
     assert "Why: guest already knows the basics" in captured_prompts[0]
 
@@ -412,26 +416,23 @@ def test_ai_plan_redo_returns_regenerated_text_and_logs_the_request(user_client,
     assert log_entry.channel == "crm"
     assert log_entry.what == "make it shorter"
     assert log_entry.why == "guest already knows the basics"
-    assert log_entry.ai_agent_run_id == body["run_id"]
-    assert log_entry.ai_auto_draft_id is None
+    assert log_entry.ai_auto_draft_id == draft.id
+    assert log_entry.ai_agent_run_id == draft.agent_run_id
 
 
-def test_ai_plan_redo_requires_what(user_client, db_session):
+def test_redo_ai_auto_draft_requires_what(user_client, db_session):
     tenant, _ = _setup(db_session, planner_mode="manual")
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="Original.", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
     response = user_client.put(
-        f"/api/communications/tenants/{tenant.id}/ai-plan/redo",
-        json={"channel": "email", "what": "   "},
+        f"/api/ai-auto-drafts/{draft.id}/redo",
+        json={"what": "   "},
     )
     assert response.status_code == 400
 
 
-def test_ai_plan_redo_is_refused_when_the_planner_is_off(user_client, db_session):
-    tenant, _ = _setup(db_session, planner_mode="off")
-    response = user_client.put(
-        f"/api/communications/tenants/{tenant.id}/ai-plan/redo",
-        json={"channel": "email", "what": "make it shorter"},
-    )
-    assert response.status_code == 400
 
 
 def test_runs_api_exposes_the_planner_decision(non_admin_client, db_session, monkeypatch):
@@ -447,11 +448,14 @@ def test_runs_api_exposes_the_planner_decision(non_admin_client, db_session, mon
     db_session.commit()
 
     listing = non_admin_client.get("/api/ai-agent-runs").json()
-    assert [run["id"] for run in listing] == [result.run_id]
-    assert listing[0]["tenant_name"] == "Wired Tenant"
-    assert listing[0]["final_template_name"] == "Late check-in"
+    assert [run["id"] for run in listing["items"]] == [result.run_id]
+    assert listing["total"] >= 1
+    assert listing["items"][0]["tenant_name"] == "Wired Tenant"
+    assert listing["items"][0]["final_template_name"] == "Late check-in"
+    assert listing["items"][0]["display_mode"] == "manual"
 
     detail = non_admin_client.get(f"/api/ai-agent-runs/{result.run_id}").json()
+    assert detail["display_mode"] == "manual"
     assert [step["stage"] for step in detail["steps"]] == ["planner", "drafter", "checker"]
     assert detail["steps"][0]["parsed"]["reasoning"] == "Guest asked about arrival."
     assert detail["final_text"] == "Draft."
@@ -500,8 +504,8 @@ def test_runs_api_filters_by_status(non_admin_client, db_session):
     db_session.add(AiAgentRun(tenant_id=tenant.id, channel="email", mode="auto", status="needs_review"))
     db_session.commit()
 
-    assert len(non_admin_client.get("/api/ai-agent-runs?status=needs_review").json()) == 1
-    assert len(non_admin_client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}").json()) == 2
+    assert len(non_admin_client.get("/api/ai-agent-runs?status=needs_review").json()["items"]) == 1
+    assert len(non_admin_client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}").json()["items"]) == 2
 
 
 def _step_prompt(db_session, run_id, stage):
@@ -776,3 +780,35 @@ def test_checker_approving_while_naming_extra_sections_does_not_force_a_redraft(
 
     assert result.checker_passed is True
     assert result.attempts == 1
+
+
+def test_runs_api_marks_redo_sequences_and_paginates(non_admin_client, db_session):
+    tenant = Tenant(name="Redo Sequence Tenant", booking_id="B-redo-seq-1")
+    db_session.add(tenant)
+    db_session.commit()
+
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft", status="pending")
+    run_one = AiAgentRun(tenant_id=tenant.id, channel="email", mode="manual", status="completed")
+    run_two = AiAgentRun(tenant_id=tenant.id, channel="email", mode="manual", status="completed")
+    run_three = AiAgentRun(tenant_id=tenant.id, channel="email", mode="manual", status="completed")
+    db_session.add_all([draft, run_one, run_two, run_three])
+    db_session.commit()
+
+    db_session.add_all([
+        RedoRequestLog(ai_auto_draft_id=draft.id, ai_agent_run_id=run_one.id, tenant_id=tenant.id, channel="crm", what="first", why=None, requested_by_user_id=1),
+        RedoRequestLog(ai_auto_draft_id=draft.id, ai_agent_run_id=run_two.id, tenant_id=tenant.id, channel="crm", what="second", why=None, requested_by_user_id=1),
+    ])
+    db_session.commit()
+
+    listing = non_admin_client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}&limit=2&offset=1").json()
+    assert listing["total"] == 3
+    assert len(listing["items"]) == 2
+
+    by_id = {item["id"]: item for item in listing["items"]}
+    assert by_id[run_two.id]["display_mode"] == "redo #2"
+    assert by_id[run_one.id]["display_mode"] == "redo #1"
+
+    first_page = non_admin_client.get(f"/api/ai-agent-runs?tenant_id={tenant.id}&limit=2&offset=0").json()
+    assert first_page["items"][0]["display_mode"] == "manual"
+    assert first_page["items"][0]["id"] == run_three.id
+    assert non_admin_client.get(f"/api/ai-agent-runs/{run_two.id}").json()["display_mode"] == "redo #2"

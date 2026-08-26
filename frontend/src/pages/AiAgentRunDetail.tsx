@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
@@ -11,6 +11,7 @@ type AgentRun = {
   tenant_name: string | null
   channel: string
   mode: string
+  display_mode: string
   status: string
   escalation_reason: string | null
   final_template_id: number | null
@@ -56,6 +57,7 @@ export default function AiAgentRunDetail() {
   const [error, setError] = useState('')
   const [run, setRun] = useState<AgentRunDetail | null>(null)
   const [expandedStepId, setExpandedStepId] = useState<number | null>(null)
+  const stepRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
   useDocumentTitle(run ? `CRM - Run #${run.id} - ${run.tenant_name ?? 'Unknown Tenant'}` : `CRM - Run #${runId}`)
 
@@ -101,6 +103,13 @@ export default function AiAgentRunDetail() {
     return () => controller.abort()
   }, [authHeaders, runId])
 
+  useEffect(() => {
+    if (!expandedStepId) return
+    const step = stepRefs.current[expandedStepId]
+    if (!step) return
+    step.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [expandedStepId])
+
   const plannerStep = run?.steps.find((step) => step.stage === 'planner')
   const plan = (plannerStep?.parsed ?? null) as
     | {
@@ -128,6 +137,11 @@ export default function AiAgentRunDetail() {
           <h2 className="text-lg font-semibold text-gray-900">
             Run #{run.id} — {run.tenant_name ?? `tenant ${run.tenant_id}`}
           </h2>
+          <p className="text-sm text-gray-500">
+            Mode: <span className="font-medium text-gray-700">{run.display_mode}</span> · Status:{' '}
+            <span className="font-medium text-gray-700">{run.status.replace('_', ' ')}</span> · Tokens:{' '}
+            <span className="font-medium text-gray-700">{run.total_prompt_tokens + run.total_output_tokens}</span>
+          </p>
 
           {plan ? (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
@@ -184,9 +198,27 @@ export default function AiAgentRunDetail() {
 
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Steps</p>
-            <div className="mt-1.5 space-y-2">
+            <div className="sticky top-0 z-10 mt-1.5 rounded-xl border border-gray-200 bg-white/95 p-2 backdrop-blur">
+              <div className="flex flex-wrap gap-2">
+                {run.steps.map((step) => (
+                  <button
+                    key={step.id}
+                    type="button"
+                    onClick={() => setExpandedStepId(step.id)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                      expandedStepId === step.id
+                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    {step.step_index + 1}. {step.stage}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-2 space-y-2">
               {run.steps.map((step) => (
-                <div key={step.id} className="rounded-xl border border-gray-200 p-2.5">
+                <div key={step.id} ref={(node) => { stepRefs.current[step.id] = node }} className="rounded-xl border border-gray-200 p-2.5">
                   <button
                     type="button"
                     onClick={() => setExpandedStepId(expandedStepId === step.id ? null : step.id)}

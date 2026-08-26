@@ -95,6 +95,8 @@ export default function AiTenantSettings() {
   const [bulkPlannerModeMessage, setBulkPlannerModeMessage] = useState('')
   const [bulkBrainWriterSaving, setBulkBrainWriterSaving] = useState(false)
   const [bulkBrainWriterMessage, setBulkBrainWriterMessage] = useState('')
+  const [bulkFormatterSaving, setBulkFormatterSaving] = useState(false)
+  const [bulkFormatterMessage, setBulkFormatterMessage] = useState('')
   const [bulkActionWriterSaving, setBulkActionWriterSaving] = useState(false)
   const [bulkActionWriterMessage, setBulkActionWriterMessage] = useState('')
 
@@ -306,6 +308,33 @@ export default function AiTenantSettings() {
       }
     } finally {
       setBulkBrainWriterSaving(false)
+    }
+  }
+
+  const runBulkFormatterAction = async (enabled: boolean) => {
+    if (!bulkTenantIds.size) return
+    setBulkFormatterSaving(true)
+    setBulkFormatterMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenant-ai-settings/bulk-formatter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          tenant_ids: Array.from(bulkTenantIds),
+          formatter_enabled: enabled,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setBulkFormatterMessage(data?.detail ?? 'Failed to run bulk action')
+        return
+      }
+      setBulkFormatterMessage(`${enabled ? 'Activated' : 'Deactivated'} rich formatting for ${data.tenants_affected} tenant(s).`)
+      if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
+        await selectTenant(selectedTenant)
+      }
+    } finally {
+      setBulkFormatterSaving(false)
     }
   }
 
@@ -637,6 +666,31 @@ export default function AiTenantSettings() {
                 Deactivate
               </button>
               {bulkActionWriterMessage ? <p className="text-sm text-gray-600">{bulkActionWriterMessage}</p> : null}
+            </div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk formatter</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Select tenants above, then turn the rich-formatting stage on or off in one go.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => runBulkFormatterAction(true)}
+                disabled={bulkFormatterSaving || !bulkTenantIds.size}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+              >
+                Activate
+              </button>
+              <button
+                type="button"
+                onClick={() => runBulkFormatterAction(false)}
+                disabled={bulkFormatterSaving || !bulkTenantIds.size}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
+              >
+                Deactivate
+              </button>
+              {bulkFormatterMessage ? <p className="text-sm text-gray-600">{bulkFormatterMessage}</p> : null}
             </div>
           </div>
         </div>

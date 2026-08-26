@@ -81,12 +81,6 @@ def _extract_what_why(text: str) -> tuple[str, str | None]:
     return what_text, why_text
 
 
-def _combine_what_why(what: str, why: str | None) -> str:
-    combined = f"What: {what}"
-    if why:
-        combined += f"\nWhy: {why}"
-    return combined
-
 PENDING_STATUSES = ("pending", "needs_review")
 
 
@@ -206,7 +200,6 @@ def _handle_redo_reply(
     what, why = _extract_what_why(redo_match.group(2).strip())
     if not what:
         return outcome(f"Please include what to change, e.g. REDO-{draft_id} make it shorter.")
-    instructions = _combine_what_why(what, why)
 
     approval_request = (
         db.query(AiAutoDraftApprovalRequest)
@@ -236,7 +229,7 @@ def _handle_redo_reply(
         except WhatsAppBridgeError:
             logger.exception("Failed to send redo acknowledgement user_id=%s draft_id=%s", user.id, draft_id)
 
-    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, instructions)
+    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, what, why)
     if regenerated is None:
         # Logged even on failure - the redo log is an accessible record of every attempt, not
         # just the ones that succeeded.
@@ -249,7 +242,7 @@ def _handle_redo_reply(
         )
 
     log_entry = redo_request_log_service.log_redo_request(
-        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id
+        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id, ai_agent_run_id=regenerated.agent_run_id
     )
     db.commit()
     try:

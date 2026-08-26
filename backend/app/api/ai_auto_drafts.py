@@ -136,9 +136,7 @@ def redo_ai_auto_draft(
     if not what:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="what is required")
     why = (payload.why or "").strip() or None
-    instructions = f"What: {what}" + (f"\nWhy: {why}" if why else "")
-
-    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, instructions)
+    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, what, why)
     if regenerated is None:
         redo_request_log_service.log_redo_request(
             db, ai_auto_draft_id=draft_id, tenant_id=draft.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id
@@ -147,7 +145,7 @@ def redo_ai_auto_draft(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Redo failed - planner produced no draft")
 
     log_entry = redo_request_log_service.log_redo_request(
-        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id
+        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id, ai_agent_run_id=regenerated.agent_run_id
     )
     db.commit()
     db.refresh(regenerated)

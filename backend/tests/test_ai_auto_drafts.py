@@ -337,10 +337,12 @@ def test_redo_regenerates_draft_and_logs_the_request(non_admin_client, db_sessio
     db_session.add(draft)
     db_session.commit()
 
-    def fake_regenerate(db, draft_arg, instructions):
-        assert instructions == "What: make it shorter\nWhy: they already asked yesterday"
+    def fake_regenerate(db, draft_arg, what, why):
+        assert what == "make it shorter"
+        assert why == "they already asked yesterday"
         draft_arg.generated_text = "Shorter reply."
         draft_arg.status = "pending"
+        draft_arg.agent_run_id = 22
         return draft_arg
 
     monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", fake_regenerate)
@@ -357,6 +359,7 @@ def test_redo_regenerates_draft_and_logs_the_request(non_admin_client, db_sessio
     assert log_entry.channel == "crm"
     assert log_entry.what == "make it shorter"
     assert log_entry.why == "they already asked yesterday"
+    assert log_entry.ai_agent_run_id == 22
 
 
 def test_redo_requires_what(non_admin_client, db_session):
@@ -376,7 +379,7 @@ def test_redo_logs_failed_attempt_when_planner_produces_nothing(non_admin_client
     db_session.add(draft)
     db_session.commit()
 
-    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", lambda db, draft_arg, instructions: None)
+    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", lambda db, draft_arg, what, why: None)
 
     response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/redo", json={"what": "make it warmer"})
 

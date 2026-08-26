@@ -1,4 +1,5 @@
 from app.models.ai_auto_draft import AiAutoDraft
+from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
@@ -62,11 +63,11 @@ def test_regenerate_updates_draft_in_place_with_operator_note(db_session, monkey
 
     monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", fake_run_planner_loop)
 
-    result = regenerate_draft_via_planner(db_session, draft, "make it shorter and mention the deposit")
+    result = regenerate_draft_via_planner(db_session, draft, "make it shorter and mention the deposit", None)
 
     assert result is draft
     assert draft.id == original_id
-    assert captured_kwargs["operator_note"] == "make it shorter and mention the deposit"
+    assert captured_kwargs["operator_note"] == "Redo #1\nWhat: make it shorter and mention the deposit"
     assert captured_kwargs["channel"] == "whatsapp"
     assert "Shorter reply, deposit mentioned." in draft.generated_text
     assert draft.template_id == 42
@@ -98,7 +99,7 @@ def test_regenerate_never_auto_sends_even_in_auto_send_mode(db_session, monkeypa
 
     monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", fake_run_planner_loop)
 
-    regenerate_draft_via_planner(db_session, draft, "tighten this up")
+    regenerate_draft_via_planner(db_session, draft, "tighten this up", None)
 
     assert draft.status == "pending"
     assert draft.scheduled_send_at is None
@@ -121,7 +122,7 @@ def test_regenerate_keeps_needs_review_status(db_session, monkeypatch):
 
     monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", fake_run_planner_loop)
 
-    regenerate_draft_via_planner(db_session, draft, "try again")
+    regenerate_draft_via_planner(db_session, draft, "try again", None)
 
     assert draft.status == "needs_review"
 
@@ -136,7 +137,7 @@ def test_regenerate_returns_none_and_leaves_draft_untouched_when_planner_produce
 
     monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", fake_run_planner_loop)
 
-    result = regenerate_draft_via_planner(db_session, draft, "try again")
+    result = regenerate_draft_via_planner(db_session, draft, "try again", None)
 
     assert result is None
     assert draft.generated_text == "Untouched original."
@@ -152,7 +153,7 @@ def test_regenerate_returns_none_when_ai_settings_missing(db_session, monkeypatc
 
     monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", fake_run_planner_loop)
 
-    result = regenerate_draft_via_planner(db_session, draft, "try again")
+    result = regenerate_draft_via_planner(db_session, draft, "try again", None)
 
     assert result is None
 
@@ -199,3 +200,34 @@ def test_sending_a_whatsapp_draft_never_includes_the_quoted_context(db_session, 
     assert sent is True
     assert sent_messages == ["Yes, still available!"]
     assert "Replying to" not in sent_messages[0]
+
+
+def test_regenerate_accumulates_prior_redo_history(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _create_ai_settings(db_session, tenant)
+    draft = _create_draft(db_session, tenant)
+    db_session.add(RedoRequestLog(ai_auto_draft_id=draft.id, tenant_id=tenant.id, channel="crm", what="make it friendlier", why="guest is sensitive", requested_by_user_id=1))
+    db_session.commit()
+
+    captured_kwargs = {}
+
+    def fake_run_planner_loop(db, **kwargs):
+        captured_kwargs.update(kwargs)
+        return PlannerRunResult(
+            status="completed",
+            run_id=1003,
+            generated_text="Reworked reply.",
+            template_id=42,
+            checker_passed=True,
+            checker_feedback="tightened per admin note",
+            auto_send_allowed=True,
+        )
+
+    monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", fake_run_planner_loop)
+
+    regenerate_draft_via_planner(db_session, draft, "mention the parking code", "the guest asked twice")
+
+    assert captured_kwargs["operator_note"] == (
+        "Redo #1\nWhat: make it friendlier\nWhy: guest is sensitive\n\n"
+        "Redo #2\nWhat: mention the parking code\nWhy: the guest asked twice"
+    )

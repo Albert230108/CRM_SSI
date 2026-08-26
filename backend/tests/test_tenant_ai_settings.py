@@ -54,6 +54,8 @@ def test_get_creates_default_settings_row(non_admin_client, db_session):
         # Independent of planner_mode and brain_writer_enabled - also opt-in.
         "action_writer_enabled": False,
         "action_writer_profile_id": None,
+        "formatter_enabled": False,
+        "formatter_profile_id": None,
     }
 
 
@@ -154,6 +156,33 @@ def test_bulk_add_links_every_tenant_to_every_template(non_admin_client, db_sess
         json={"tenant_ids": [tenant_a.id, tenant_b.id], "template_ids": [template_a, template_b], "action": "add"},
     )
     assert response.json()["links_added"] == 0
+
+
+def test_bulk_formatter_toggle_updates_all_tenants(non_admin_client, db_session):
+    tenant_a = _create_tenant(db_session, booking_id="B-bulk-fmt-1", name="Bulk Fmt A")
+    tenant_b = _create_tenant(db_session, booking_id="B-bulk-fmt-2", name="Bulk Fmt B")
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-formatter",
+        json={"tenant_ids": [tenant_a.id, tenant_b.id], "formatter_enabled": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["tenants_affected"] == 2
+
+    for tenant in (tenant_a, tenant_b):
+        settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+        assert settings["formatter_enabled"] is True
+
+    response = non_admin_client.post(
+        "/api/tenant-ai-settings/bulk-formatter",
+        json={"tenant_ids": [tenant_a.id, tenant_b.id], "formatter_enabled": False},
+    )
+    assert response.status_code == 200
+    assert response.json()["tenants_affected"] == 2
+
+    for tenant in (tenant_a, tenant_b):
+        settings = non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()
+        assert settings["formatter_enabled"] is False
 
 
 def test_bulk_remove_unlinks_and_clears_dangling_defaults(non_admin_client, db_session):

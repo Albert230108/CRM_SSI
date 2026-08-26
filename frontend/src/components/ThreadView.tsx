@@ -538,6 +538,7 @@ type AiAutoDraftItem = {
   id: number
   tenant_id: number
   channel: string
+  template_id: number | null
   generated_text: string
   quoted_context: string | null
   status: string
@@ -606,6 +607,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   const [plannerRunning, setPlannerRunning] = useState(false)
   const [plannerNotice, setPlannerNotice] = useState('')
   const [aiDraftError, setAiDraftError] = useState('')
+  const [plannerDraftId, setPlannerDraftId] = useState<number | null>(null)
   const [pendingAutoDrafts, setPendingAutoDrafts] = useState<AiAutoDraftItem[]>([])
   const [redoOpenDraftId, setRedoOpenDraftId] = useState<number | null>(null)
   const [redoWhat, setRedoWhat] = useState('')
@@ -686,6 +688,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   const currentReplyAttachmentIds = currentReplyAttachments
     .map((item) => item.id)
     .filter((id): id is number => id !== null)
+  const plannerReplyThreadId = replyTarget && 'threadId' in replyTarget ? replyTarget.threadId : null
+  const plannerReplyGroupId = replyTarget && 'groupId' in replyTarget ? replyTarget.groupId : null
   const setCurrentReplyAttachments = useCallback(
     (next: PendingAttachment[]) => {
       if (!currentDraftKey) return
@@ -944,6 +948,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     setAiDraftError('')
   }, [replyTarget, tenantAiSettings])
 
+
+  useEffect(() => {
+    setPlannerDraftId(null)
+    setPlannerRedoOpen(false)
+    setPlannerRedoWhat('')
+    setPlannerRedoWhy('')
+  }, [tenantId, replyTarget?.type, plannerReplyThreadId, plannerReplyGroupId])
+
   const loadPendingAutoDrafts = useCallback(async () => {
     if (!tenantId || !token) {
       setPendingAutoDrafts([])
@@ -1101,8 +1113,8 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
           setPlannerRedoWhat('')
           setPlannerRedoWhy('')
         }}
-        disabled={plannerRunning}
-        title="Re-run the planner with an explicit change note"
+        disabled={plannerRunning || !plannerDraftId}
+        title={plannerDraftId ? 'Re-run the planner with an explicit change note' : 'Run the planner once before redoing it'}
         className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         Redo
@@ -1192,6 +1204,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
       setPlannerRunning(true)
       setAiDraftError('')
       setPlannerNotice('')
+      setPlannerDraftId(null)
+      setPlannerRedoOpen(false)
+      setPlannerRedoWhat('')
+      setPlannerRedoWhy('')
       const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-plan`, {
         method: 'POST',
         headers: {
@@ -1209,6 +1225,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
       if (!response.ok) {
         throw new Error(data?.detail || 'Failed to run the planner')
       }
+      setPlannerDraftId(data?.draft_id ?? null)
       setPlannerNotice('Planner running - check AI Drafts.')
     } catch (err) {
       setAiDraftError(err instanceof Error ? err.message : 'Failed to run the planner')
@@ -1219,38 +1236,32 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
 
   const handlePlannerRedo = async () => {
     const what = plannerRedoWhat.trim()
-    if (!tenantId || !replyTarget || !what || plannerRedoSubmitting) return
+    if (!tenantId || !replyTarget || !what || plannerRedoSubmitting || !plannerDraftId) return
     try {
       setPlannerRedoSubmitting(true)
       setAiDraftError('')
       setPlannerNotice('')
-      const response = await fetch(`${API_BASE_URL}/api/communications/tenants/${tenantId}/ai-plan/redo`, {
+      const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${plannerDraftId}/redo`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          channel: replyTarget.type,
           what,
           why: plannerRedoWhy.trim() || null,
-          attachment_ids: currentReplyAttachmentIds,
         }),
       })
-      const data = await response.json().catch(() => null)
+      const data = (await response.json().catch(() => null)) as (AiAutoDraftItem & { detail?: string }) | null
       if (!response.ok) {
         throw new Error(data?.detail || 'Failed to redo the planner draft')
       }
-      if (!data?.generated_text) {
-        setPlannerNotice(
-          data?.status === 'escalated'
-            ? `The planner stopped and flagged this for a human${data.escalation_reason ? ` (${data.escalation_reason})` : ''}.`
-            : 'The planner decided no reply was needed.',
-        )
-        return
+      if (!data) {
+        throw new Error('Failed to redo the planner draft')
       }
+      setPlannerDraftId(data.id)
       setReplyMessage(data.generated_text)
-      if (data.template_id) setSelectedAiTemplateId(String(data.template_id))
+      if (data.template_id != null) setSelectedAiTemplateId(String(data.template_id))
       if (data.status === 'needs_review') {
         setPlannerNotice('The reviewer never approved this draft - read it carefully before sending.')
       }

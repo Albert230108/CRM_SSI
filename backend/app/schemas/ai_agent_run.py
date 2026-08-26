@@ -25,6 +25,7 @@ class AiAgentRunRead(BaseModel):
     tenant_name: str | None = None
     channel: str
     mode: str
+    display_mode: str = ""
     status: str
     escalation_reason: str | None = None
     planner_profile_id: int | None = None
@@ -46,3 +47,8 @@ class AiAgentRunDetail(AiAgentRunRead):
     # Names for every template id referenced anywhere in this run - the final choice and any
     # alternatives the planner considered and rejected - keyed by id for the frontend to look up.
     template_names: dict[int, str] = {}
+
+
+class AiAgentRunListRead(BaseModel):
+    items: list[AiAgentRunRead]
+    total: int
