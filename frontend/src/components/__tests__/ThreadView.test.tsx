@@ -375,13 +375,14 @@ const emailThread = (threadId: number, subject: string) => ({
 })
 
 // tenantId -> { thread, drafts } so a rerender with a different tenant serves that tenant's data.
-function buildTenantFetchMock(fixtures: Record<number, { thread: unknown; drafts: unknown[]; draftsOk?: boolean }>) {
+function buildTenantFetchMock(fixtures: Record<number, { thread: unknown; drafts: unknown[]; draftsOk?: boolean; attachments?: unknown[]; attachmentsOk?: boolean }>) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
     const tenantMatch = url.match(/\/tenants\/(\d+)/)
     const tenantId = tenantMatch ? Number(tenantMatch[1]) : null
     const fixture = tenantId != null ? fixtures[tenantId] : null
 
+    if (url.endsWith('/attachments')) return jsonResponse(fixture?.attachments ?? [], fixture?.attachmentsOk ?? true)
     if (url.includes('/reply-drafts')) return jsonResponse(fixture?.drafts ?? [], fixture?.draftsOk ?? true)
     if (url.includes('/grouped-thread')) {
       return jsonResponse({ tenant_id: tenantId, tenant_name: '', items: fixture ? [fixture.thread] : [] })
@@ -436,12 +437,22 @@ describe('ThreadView per-thread reply drafts', () => {
     expect(within(nextDialog).getByPlaceholderText('Write your reply...')).toHaveValue('')
   })
 
-  it('restores each thread\'s own persisted draft when that thread is opened', async () => {
+  it("restores each thread's own persisted draft when that thread is opened", async () => {
     useAuthStore.setState({ token: 'test-token' })
     vi.stubGlobal('fetch', buildTenantFetchMock({
       8: {
         thread: emailThread(202, 'Tenant 8 thread'),
-        drafts: [{ id: 1, tenant_id: 8, channel: 'email', email_thread_id: 202, whatsapp_endpoint_id: null, subject: 'Re: stay', body: 'saved earlier for 202' }],
+        drafts: [{
+          id: 1,
+          tenant_id: 8,
+          channel: 'email',
+          email_thread_id: 202,
+          whatsapp_endpoint_id: null,
+          subject: 'Re: stay',
+          body: 'saved earlier for 202',
+          attachment_ids: [55],
+          attachments: [{ id: 55, filename: 'contract.pdf', size_bytes: 1234, mime_type: 'application/pdf' }],
+        }],
       },
     }))
     const user = userEvent.setup()
@@ -454,6 +465,36 @@ describe('ThreadView per-thread reply drafts', () => {
     const dialog = await screen.findByRole('dialog')
     await waitFor(() => expect(within(dialog).getByPlaceholderText('Write your reply...')).toHaveValue('saved earlier for 202'))
     expect(within(dialog).getByDisplayValue('Re: stay')).toBeInTheDocument()
+    expect(within(dialog).getByTitle('contract.pdf')).toBeInTheDocument()
+  })
+
+  it('persists attachment ids when attachments are added from history', async () => {
+    useAuthStore.setState({ token: 'test-token' })
+    const fetchMock = buildTenantFetchMock({
+      7: {
+        thread: emailThread(101, 'Tenant 7 thread'),
+        drafts: [],
+        attachments: [{ id: 55, filename: 'contract.pdf', mime_type: 'application/pdf', size_bytes: 1234, origin: 'upload', created_at: '2026-08-26T00:00:00Z' }],
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(<ThreadView tenantId={7} />)
+    await screen.findByText('Jane Doe')
+
+    await user.click(await screen.findByText('Tenant 7 thread'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'From history' }))
+    await user.click(await within(dialog).findByRole('button', { name: /contract\.pdf/ }))
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+      expect(put).toBeDefined()
+      const [url, init] = put as [string, RequestInit]
+      expect(url).toContain('/api/communications/tenants/7/reply-drafts')
+      expect(JSON.parse(init.body as string)).toMatchObject({ channel: 'email', email_thread_id: 101, attachment_ids: [55] })
+    }, { timeout: 3000 })
   })
 
   it('persists the draft against the thread it was written for', async () => {

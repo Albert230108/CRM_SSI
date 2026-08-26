@@ -1,3 +1,4 @@
+from app.models.communication_attachment import CommunicationAttachment
 from app.models.communication_reply_draft import CommunicationReplyDraft
 from app.models.gmail_integration import Conversation
 from app.models.tenant import Tenant
@@ -41,6 +42,22 @@ def create_whatsapp_endpoint(db_session, tenant_id, external_account_id, chat_na
     db_session.commit()
     db_session.refresh(endpoint)
     return endpoint
+
+
+def create_attachment(db_session, tenant_id, filename, size_bytes, mime_type):
+    attachment = CommunicationAttachment(
+        tenant_id=tenant_id,
+        storage_key=f"{tenant_id}/{filename}-{size_bytes}",
+        filename=filename,
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        sha256=f"sha-{tenant_id}-{filename}-{size_bytes}",
+        origin="upload",
+    )
+    db_session.add(attachment)
+    db_session.commit()
+    db_session.refresh(attachment)
+    return attachment
 
 
 def test_draft_saved_for_one_tenant_is_not_visible_to_another(non_admin_client, db_session):
@@ -123,6 +140,34 @@ def test_blank_body_deletes_the_draft(non_admin_client, db_session):
     assert cleared.status_code == 200
     assert cleared.json() is None
     assert non_admin_client.get(f"/api/communications/tenants/{tenant.id}/reply-drafts").json() == []
+
+
+def test_attachment_only_draft_is_preserved_and_hydrated(non_admin_client, db_session):
+    tenant = create_tenant(db_session, "Draft Tenant E2", "RD-E2")
+    thread = create_linked_thread(db_session, tenant.id, "subject-e2")
+    attachment = create_attachment(db_session, tenant.id, "contract.pdf", 1234, "application/pdf")
+
+    saved = non_admin_client.put(
+        f"/api/communications/tenants/{tenant.id}/reply-drafts",
+        json={
+            "channel": "email",
+            "email_thread_id": thread.id,
+            "body": "   ",
+            "attachment_ids": [attachment.id],
+        },
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["attachment_ids"] == [attachment.id]
+    assert body["attachments"] == [
+        {"id": attachment.id, "filename": "contract.pdf", "size_bytes": 1234, "mime_type": "application/pdf"}
+    ]
+
+    drafts = non_admin_client.get(f"/api/communications/tenants/{tenant.id}/reply-drafts")
+    assert drafts.status_code == 200
+    assert drafts.json()[0]["attachment_ids"] == [attachment.id]
+    assert drafts.json()[0]["attachments"][0]["filename"] == "contract.pdf"
 
 
 def test_delete_removes_draft_for_scope(non_admin_client, db_session):
@@ -211,6 +256,28 @@ def test_email_and_whatsapp_drafts_on_same_tenant_do_not_collide(non_admin_clien
     ).json()}
 
     assert by_channel == {"email": "email body", "whatsapp": "whatsapp body"}
+
+
+def test_invalid_attachment_ids_are_ignored(non_admin_client, db_session):
+    tenant_a = create_tenant(db_session, "Draft Tenant L2", "RD-L2")
+    tenant_b = create_tenant(db_session, "Draft Tenant L3", "RD-L3")
+    thread = create_linked_thread(db_session, tenant_a.id, "subject-l2")
+    own_attachment = create_attachment(db_session, tenant_a.id, "keep.pdf", 111, "application/pdf")
+    foreign_attachment = create_attachment(db_session, tenant_b.id, "other.pdf", 222, "application/pdf")
+
+    saved = non_admin_client.put(
+        f"/api/communications/tenants/{tenant_a.id}/reply-drafts",
+        json={
+            "channel": "email",
+            "email_thread_id": thread.id,
+            "body": "draft",
+            "attachment_ids": [own_attachment.id, foreign_attachment.id, 999999],
+        },
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["attachment_ids"] == [own_attachment.id]
+    assert saved.json()["attachments"][0]["filename"] == "keep.pdf"
 
 
 def test_reply_drafts_returns_404_for_missing_tenant(non_admin_client):

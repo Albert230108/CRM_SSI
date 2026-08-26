@@ -13,6 +13,7 @@ from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
+from app.models.communication_attachment import CommunicationAttachment
 from app.models.communication_reply_draft import CommunicationReplyDraft
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.tenant import Tenant
@@ -112,6 +113,13 @@ class AiDraftPreviewResponse(BaseModel):
     char_count: int
     approx_token_count: int
     template_id: int
+
+
+class ReplyDraftAttachmentRead(BaseModel):
+    id: int
+    filename: str
+    size_bytes: int
+    mime_type: str | None = None
 
 
 class AiPlanRequest(BaseModel):
@@ -1389,6 +1397,8 @@ class ReplyDraftRead(BaseModel):
     whatsapp_endpoint_id: int | None = None
     subject: str | None = None
     body: str
+    attachment_ids: list[int] = []
+    attachments: list[ReplyDraftAttachmentRead] = []
     updated_at: datetime | None = None
 
 
@@ -1398,6 +1408,7 @@ class ReplyDraftUpsertRequest(BaseModel):
     whatsapp_endpoint_id: int | None = None
     subject: str | None = None
     body: str | None = None
+    attachment_ids: list[int] = []
 
 
 def _resolve_reply_draft_scope(
@@ -1476,7 +1487,63 @@ def _find_reply_draft(
     return query.first()
 
 
-def _to_reply_draft_read(draft: CommunicationReplyDraft) -> ReplyDraftRead:
+def _clean_reply_draft_attachment_ids(db: Session, tenant_id: int, attachment_ids: list[int]) -> list[int]:
+    if not attachment_ids:
+        return []
+    records = (
+        db.query(CommunicationAttachment)
+        .filter(
+            CommunicationAttachment.tenant_id == tenant_id,
+            CommunicationAttachment.id.in_(attachment_ids),
+        )
+        .all()
+    )
+    by_id = {record.id: record for record in records}
+    cleaned: list[int] = []
+    seen: set[int] = set()
+    for attachment_id in attachment_ids:
+        if attachment_id in by_id and attachment_id not in seen:
+            cleaned.append(attachment_id)
+            seen.add(attachment_id)
+    return cleaned
+
+
+def _reply_draft_attachment_reads(
+    db: Session, tenant_id: int, attachment_ids: list[int],
+) -> list[ReplyDraftAttachmentRead]:
+    if not attachment_ids:
+        return []
+    records = (
+        db.query(CommunicationAttachment)
+        .filter(
+            CommunicationAttachment.tenant_id == tenant_id,
+            CommunicationAttachment.id.in_(attachment_ids),
+        )
+        .all()
+    )
+    by_id = {record.id: record for record in records}
+    attachments: list[ReplyDraftAttachmentRead] = []
+    seen: set[int] = set()
+    for attachment_id in attachment_ids:
+        record = by_id.get(attachment_id)
+        if record is None or attachment_id in seen:
+            continue
+        attachments.append(
+            ReplyDraftAttachmentRead(
+                id=record.id,
+                filename=record.filename,
+                size_bytes=record.size_bytes,
+                mime_type=record.mime_type,
+            )
+        )
+        seen.add(attachment_id)
+    return attachments
+
+
+def _to_reply_draft_read(draft: CommunicationReplyDraft, attachments: list[ReplyDraftAttachmentRead] | None = None) -> ReplyDraftRead:
+    attachment_ids = list(draft.attachment_ids or [])
+    if attachments is None:
+        attachments = []
     return ReplyDraftRead(
         id=draft.id,
         tenant_id=draft.tenant_id,
@@ -1485,6 +1552,8 @@ def _to_reply_draft_read(draft: CommunicationReplyDraft) -> ReplyDraftRead:
         whatsapp_endpoint_id=draft.whatsapp_endpoint_id,
         subject=draft.subject,
         body=draft.body or "",
+        attachment_ids=attachment_ids,
+        attachments=attachments,
         updated_at=draft.updated_at,
     )
 
@@ -1510,7 +1579,34 @@ def list_tenant_reply_drafts(
         .order_by(CommunicationReplyDraft.updated_at.desc())
         .all()
     )
-    return [_to_reply_draft_read(draft) for draft in drafts]
+    attachment_ids = [attachment_id for draft in drafts for attachment_id in (draft.attachment_ids or [])]
+    attachments_by_id = {
+        attachment.id: attachment
+        for attachment in (
+            db.query(CommunicationAttachment)
+            .filter(
+                CommunicationAttachment.tenant_id == tenant_id,
+                CommunicationAttachment.id.in_(attachment_ids),
+            )
+            .all()
+        )
+    }
+    return [
+        _to_reply_draft_read(
+            draft,
+            [
+                ReplyDraftAttachmentRead(
+                    id=attachment.id,
+                    filename=attachment.filename,
+                    size_bytes=attachment.size_bytes,
+                    mime_type=attachment.mime_type,
+                )
+                for attachment_id in (draft.attachment_ids or [])
+                if (attachment := attachments_by_id.get(attachment_id)) is not None
+            ],
+        )
+        for draft in drafts
+    ]
 
 
 @router.put("/tenants/{tenant_id}/reply-drafts", response_model=ReplyDraftRead | None)
@@ -1532,8 +1628,9 @@ def upsert_tenant_reply_draft(
     existing = _find_reply_draft(db, tenant_id, channel, email_thread_id, whatsapp_endpoint_id)
     body = payload.body or ""
     subject = payload.subject
+    attachment_ids = _clean_reply_draft_attachment_ids(db, tenant_id, payload.attachment_ids)
 
-    if not body.strip() and not (subject or "").strip():
+    if not body.strip() and not (subject or "").strip() and not attachment_ids:
         if existing is not None:
             db.delete(existing)
             db.commit()
@@ -1550,10 +1647,11 @@ def upsert_tenant_reply_draft(
 
     existing.subject = subject
     existing.body = body
+    existing.attachment_ids = attachment_ids
     existing.updated_by_user_id = current_user.id
     db.commit()
     db.refresh(existing)
-    return _to_reply_draft_read(existing)
+    return _to_reply_draft_read(existing, _reply_draft_attachment_reads(db, tenant_id, attachment_ids))
 
 
 @router.delete("/tenants/{tenant_id}/reply-drafts", status_code=status.HTTP_204_NO_CONTENT)

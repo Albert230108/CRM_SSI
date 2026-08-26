@@ -445,9 +445,16 @@ type ReplyTarget =
 
 type ForwardTarget = { threadId: number; providerThreadId: string; subject: string | null } | null
 
-type ReplyDraftEntry = { subject: string; body: string }
+type ReplyDraftAttachmentRead = {
+  id: number
+  filename: string
+  size_bytes: number
+  mime_type: string | null
+}
 
-const EMPTY_REPLY_DRAFT: ReplyDraftEntry = { subject: '', body: '' }
+type ReplyDraftEntry = { subject: string; body: string; attachment_ids: number[] }
+
+const EMPTY_REPLY_DRAFT: ReplyDraftEntry = { subject: '', body: '', attachment_ids: [] }
 // Stable identity so the empty case doesn't produce a new array on every render.
 const EMPTY_ATTACHMENTS: PendingAttachment[] = []
 
@@ -474,12 +481,14 @@ type ReplyDraftRead = {
   whatsapp_endpoint_id: number | null
   subject: string | null
   body: string
+  attachment_ids: number[]
+  attachments: ReplyDraftAttachmentRead[]
 }
 
 const REPLY_DRAFT_AUTOSAVE_DELAY_MS = 800
 
 // JSON rather than concatenation so a subject/body split cannot alias a different pair.
-const serializeReplyDraft = (entry: ReplyDraftEntry) => JSON.stringify([entry.subject, entry.body])
+const serializeReplyDraft = (entry: ReplyDraftEntry) => JSON.stringify([entry.subject, entry.body, entry.attachment_ids])
 
 // Turns a local draft key back into the scope the API validates against the tenant. Returns null
 // for the transient pending-WhatsApp key, which has no linked chat and so is never persisted.
@@ -503,6 +512,8 @@ const draftKeyForRead = (draft: ReplyDraftRead): string | null => {
   if (draft.channel === 'whatsapp' && draft.whatsapp_endpoint_id != null) return whatsappDraftKey(draft.whatsapp_endpoint_id)
   return null
 }
+
+const draftAttachmentLocalKey = (draftId: number, attachmentId: number, index: number) => `draft-${draftId}-attachment-${attachmentId}-${index}`
 
 type EmailTemplateOption = {
   id: number
@@ -694,6 +705,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     (next: PendingAttachment[]) => {
       if (!currentDraftKey) return
       setReplyAttachments((current) => ({ ...current, [currentDraftKey]: next }))
+      setReplyDrafts((current) => ({
+        ...current,
+        [currentDraftKey]: {
+          ...(current[currentDraftKey] ?? EMPTY_REPLY_DRAFT),
+          attachment_ids: next.map((item) => item.id).filter((id): id is number => id !== null),
+        },
+      }))
     },
     [currentDraftKey],
   )
@@ -753,7 +771,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ ...scope, subject: entry.subject || null, body: entry.body }),
+        body: JSON.stringify({ ...scope, subject: entry.subject || null, body: entry.body, attachment_ids: entry.attachment_ids }),
         keepalive,
       }).catch(() => {
         // Best-effort: drop the acknowledgement so the next debounce tick retries.
@@ -796,7 +814,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   useEffect(() => {
     const timeoutId = window.setTimeout(() => flushReplyDrafts(false), REPLY_DRAFT_AUTOSAVE_DELAY_MS)
     return () => window.clearTimeout(timeoutId)
-  }, [replyDrafts, flushReplyDrafts])
+  }, [replyDrafts, replyAttachments, flushReplyDrafts])
 
   useEffect(() => {
     const handleBeforeUnload = () => flushReplyDrafts(true)
@@ -1302,6 +1320,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
       persistedDraftsRef.current = {}
       hydratedDraftTenantIdRef.current = null
       setReplyDrafts({})
+      setReplyAttachments({})
       setReplyTarget(null)
       setForwardTarget(null)
       setForwardBody('')
@@ -1413,18 +1432,31 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         // typing right now with the last value the server happened to have.
         if (hydratedDraftTenantIdRef.current !== activeTenantId && replyDraftsResponse.ok) {
           const draftData: ReplyDraftRead[] = await replyDraftsResponse.json()
-          const hydrated: Record<string, ReplyDraftEntry> = {}
+          const hydratedDrafts: Record<string, ReplyDraftEntry> = {}
+          const hydratedAttachments: Record<string, PendingAttachment[]> = {}
           const acknowledged: Record<string, string> = {}
           ;(Array.isArray(draftData) ? draftData : []).forEach((draft) => {
             const key = draftKeyForRead(draft)
             if (!key) return
-            const entry = { subject: draft.subject ?? '', body: draft.body ?? '' }
-            hydrated[key] = entry
+            const attachments = (Array.isArray(draft.attachments) ? draft.attachments : []).map((attachment, index) => ({
+              localKey: draftAttachmentLocalKey(draft.id, attachment.id, index),
+              id: attachment.id,
+              filename: attachment.filename,
+              size: attachment.size_bytes,
+              progress: 100,
+            }))
+            const attachmentIds = attachments.length
+              ? attachments.map((attachment) => attachment.id).filter((id): id is number => id !== null)
+              : (Array.isArray(draft.attachment_ids) ? draft.attachment_ids : []).filter((id): id is number => id !== null)
+            const entry = { subject: draft.subject ?? '', body: draft.body ?? '', attachment_ids: attachmentIds }
+            hydratedDrafts[key] = entry
+            hydratedAttachments[key] = attachments
             acknowledged[key] = serializeReplyDraft(entry)
           })
           persistedDraftsRef.current = acknowledged
           hydratedDraftTenantIdRef.current = activeTenantId
-          setReplyDrafts(hydrated)
+          setReplyDrafts(hydratedDrafts)
+          setReplyAttachments(hydratedAttachments)
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return

@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, func, text
 
 from app.database import Base
 
@@ -51,6 +51,7 @@ class CommunicationReplyDraft(Base):
     )
     subject = Column(Text, nullable=True)
     body = Column(Text, nullable=True)
+    attachment_ids = Column(JSON, nullable=True)
     # Audit only - drafts are shared across users, so this is deliberately not part of the key.
     updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
