@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import AiSettingsDropdown from './AiSettingsDropdown'
 import ImportModal from './ImportModal'
 import NotificationBell from './NotificationBell'
 import SyncProgressOverlay from './SyncProgressOverlay'
@@ -273,13 +274,15 @@ export default function Navbar() {
             >
               <span>Working Memory</span>
             </Link>
-            <Link
-              to={withAiSettingsReturn('/settings/ai-templates')}
-              onClick={(event) => guardedNavigate(event, withAiSettingsReturn('/settings/ai-templates'))}
-              className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${location.pathname.startsWith('/settings/ai-templates') ? 'font-medium text-gray-900' : 'text-gray-500'}`}
-            >
-              <span>AI Settings</span>
-            </Link>
+            <AiSettingsDropdown onNavigate={guardedNavigate}>
+              <Link
+                to={withAiSettingsReturn('/settings/ai-templates')}
+                onClick={(event) => guardedNavigate(event, withAiSettingsReturn('/settings/ai-templates'))}
+                className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${location.pathname.startsWith('/settings/ai-templates') ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+              >
+                <span>AI Settings</span>
+              </Link>
+            </AiSettingsDropdown>
             <Link
               to="/settings"
               onClick={(event) => guardedNavigate(event, '/settings')}

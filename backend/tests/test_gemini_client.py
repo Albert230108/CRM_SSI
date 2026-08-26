@@ -86,3 +86,22 @@ def test_generic_malformed_json_retries_identically_and_raises_generic_error(mon
     first_call_cap = generate_content.call_args_list[0].kwargs["config"].max_output_tokens
     second_call_cap = generate_content.call_args_list[1].kwargs["config"].max_output_tokens
     assert first_call_cap == second_call_cap == 1024
+
+
+def test_truncated_free_text_retries_without_cap_and_raises_on_second_failure(monkeypatch):
+    truncated_text = "This draft was cut off mid sentence"
+    generate_content = Mock(
+        side_effect=[
+            _response(truncated_text, "MAX_TOKENS"),
+            _response(truncated_text, "MAX_TOKENS"),
+        ]
+    )
+    _install_fake_client(monkeypatch, generate_content)
+
+    with pytest.raises(gemini_client.GeminiClientError) as exc_info:
+        gemini_client.generate("prompt")
+
+    assert "truncated" in str(exc_info.value).lower()
+    assert len(generate_content.call_args_list) == 2
+    assert generate_content.call_args_list[0].kwargs.get("config") is None
+    assert generate_content.call_args_list[1].kwargs.get("config") is None
