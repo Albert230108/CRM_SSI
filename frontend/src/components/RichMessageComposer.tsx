@@ -59,26 +59,37 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
     editor.innerHTML = desiredHtml
   }, [desiredHtml])
 
+  const readEditorValue = (): ComposerValue | null => {
+    const editor = editorRef.current
+    if (!editor) return null
+    const sanitizedHtml = sanitizeComposerHtml(editor.innerHTML)
+    if (channel === 'email') {
+      const body = htmlToPlainText(sanitizedHtml)
+      return {
+        body,
+        bodyHtml: sanitizedHtml || null,
+        bodyFormat: hasComposerContent(body, sanitizedHtml) ? 'email_html' : 'plain',
+      }
+    }
+    const body = whatsappHtmlToMarkup(sanitizedHtml)
+    return {
+      body,
+      bodyHtml: sanitizedHtml || null,
+      bodyFormat: hasComposerContent(body, sanitizedHtml) ? 'whatsapp_rich' : 'plain',
+    }
+  }
+
   const emitChange = () => {
+    const nextValue = readEditorValue()
+    if (!nextValue) return
+    onChange(nextValue)
+  }
+
+  const normalizeEditorMarkup = () => {
     const editor = editorRef.current
     if (!editor) return
     const sanitizedHtml = sanitizeComposerHtml(editor.innerHTML)
     if (editor.innerHTML !== sanitizedHtml) editor.innerHTML = sanitizedHtml
-    if (channel === 'email') {
-      const body = htmlToPlainText(sanitizedHtml)
-      onChange({
-        body,
-        bodyHtml: sanitizedHtml || null,
-        bodyFormat: hasComposerContent(body, sanitizedHtml) ? 'email_html' : 'plain',
-      })
-      return
-    }
-    const body = whatsappHtmlToMarkup(sanitizedHtml)
-    onChange({
-      body,
-      bodyHtml: sanitizedHtml || null,
-      bodyFormat: hasComposerContent(body, sanitizedHtml) ? 'whatsapp_rich' : 'plain',
-    })
   }
 
   const runCommand = (action: ToolbarAction) => {
@@ -117,7 +128,10 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
           suppressContentEditableWarning
           spellCheck
           onInput={emitChange}
-          onBlur={emitChange}
+          onBlur={() => {
+            normalizeEditorMarkup()
+            emitChange()
+          }}
           className="min-h-[5.5rem] w-full overflow-y-auto rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
         />
       </div>
