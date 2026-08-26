@@ -196,7 +196,9 @@ def test_create_tenant_does_not_crash_on_property_name_field(user_client, db_ses
 def test_create_tenant_seeds_brain_and_action_writer_defaults_when_enabled(user_client, db_session, monkeypatch):
     from app.models.admin_settings import AdminSettings
 
-    db_session.add(AdminSettings(brain_writer_default_enabled=True, action_writer_default_enabled=True))
+    db_session.add(
+        AdminSettings(brain_writer_default_enabled=True, action_writer_default_enabled=True, formatter_default_enabled=True)
+    )
     db_session.commit()
     monkeypatch.setattr(tenant_brain_service, 'scan_tenant_history', lambda *args, **kwargs: None)
 
@@ -206,6 +208,7 @@ def test_create_tenant_seeds_brain_and_action_writer_defaults_when_enabled(user_
     settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == response.json()["id"]).one()
     assert settings.brain_writer_enabled is True
     assert settings.action_writer_enabled is True
+    assert settings.formatter_enabled is True
 
 
 def test_create_tenant_leaves_ai_settings_unseeded_when_defaults_disabled(user_client, db_session, monkeypatch):

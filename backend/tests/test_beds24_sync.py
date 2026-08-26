@@ -2,6 +2,7 @@ import asyncio
 
 from app.models.finance import Finance
 from app.models.tenant import Tenant
+from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_brain_entry import TenantBrainEntry
 from app.services import beds24_sync, tenant_brain_service
 
@@ -93,6 +94,20 @@ def test_sync_runs_initial_brain_scan_only_on_create(db_session, monkeypatch):
 
     assert call_count["n"] == 1
     assert db_session.query(TenantBrainEntry).filter(TenantBrainEntry.tenant_id == tenant.id).count() == 1
+
+
+def test_sync_seeds_formatter_default_for_a_newly_created_tenant(db_session, monkeypatch):
+    from app.models.admin_settings import AdminSettings
+
+    db_session.add(AdminSettings(formatter_default_enabled=True))
+    db_session.commit()
+    monkeypatch.setattr(beds24_sync, "fetch_booking_with_invoice", fake_booking_fetch)
+
+    tenant = asyncio.run(beds24_sync.sync_tenant_from_beds24_booking(db_session, "SYNC-FMT-1"))
+    db_session.commit()
+
+    settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).one()
+    assert settings.formatter_enabled is True
 
 
 def test_sync_returns_none_when_booking_not_found(db_session, monkeypatch):

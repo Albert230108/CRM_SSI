@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -46,6 +47,45 @@ def list_open_upcoming(db: Session, *, days: int = 7) -> list[ActionItem]:
     )
 
 
+@dataclass(frozen=True)
+class ActionItemBuckets:
+    overdue: list[ActionItem]
+    today: list[ActionItem]
+    tomorrow: list[ActionItem]
+    upcoming: list[ActionItem]
+
+
+def list_open_categorized(db: Session) -> ActionItemBuckets:
+    today = date.today()
+    upper_bound = today + timedelta(days=7)
+    rows = (
+        db.query(ActionItem)
+        .filter(
+            ActionItem.status == STATUS_OPEN,
+            ActionItem.due_date.isnot(None),
+            ActionItem.due_date <= upper_bound,
+        )
+        .order_by(ActionItem.due_date.asc(), ActionItem.created_at.desc())
+        .all()
+    )
+    overdue: list[ActionItem] = []
+    today_items: list[ActionItem] = []
+    tomorrow: list[ActionItem] = []
+    upcoming: list[ActionItem] = []
+    for item in rows:
+        if item.due_date is None:
+            continue
+        if item.due_date < today:
+            overdue.append(item)
+        elif item.due_date == today:
+            today_items.append(item)
+        elif item.due_date == today + timedelta(days=1):
+            tomorrow.append(item)
+        else:
+            upcoming.append(item)
+    return ActionItemBuckets(overdue=overdue, today=today_items, tomorrow=tomorrow, upcoming=upcoming)
+
+
 def _sync_tags(db: Session, item: ActionItem, tag_ids: list[int] | None) -> None:
     if tag_ids is None:
         return
@@ -69,7 +109,7 @@ def _sync_tags(db: Session, item: ActionItem, tag_ids: list[int] | None) -> None
 
 def create(
     db: Session,
-    tenant_id: int,
+    tenant_id: int | None,
     title: str,
     *,
     description: str | None = None,
@@ -104,9 +144,31 @@ def create(
     return item
 
 
+def create_general(
+    db: Session,
+    title: str,
+    *,
+    description: str | None = None,
+    due_date: date | None = None,
+    priority: str | None = None,
+    source: str = "manual",
+    created_by_user_id: int | None = None,
+) -> ActionItem | None:
+    return create(
+        db,
+        None,
+        title,
+        description=description,
+        due_date=due_date,
+        priority=priority,
+        source=source,
+        created_by_user_id=created_by_user_id,
+    )
+
+
 def create_ai_item(
     db: Session,
-    tenant_id: int,
+    tenant_id: int | None,
     title: str,
     description: str | None,
     due_date: date | None,

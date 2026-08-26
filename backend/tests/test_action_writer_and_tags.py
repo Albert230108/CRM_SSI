@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -185,6 +185,40 @@ def test_complete_non_recurring_item_creates_no_next_occurrence(db_session):
     db_session.commit()
 
     assert db_session.query(ActionItem).filter(ActionItem.tenant_id == tenant.id).count() == 1
+
+
+def test_list_open_categorized_buckets_by_due_date_boundaries(db_session):
+    tenant = _create_tenant(db_session)
+    today = date.today()
+    overdue = action_item_service.create(db_session, tenant.id, "Overdue", due_date=today - timedelta(days=1))
+    today_item = action_item_service.create(db_session, tenant.id, "Today", due_date=today)
+    tomorrow = action_item_service.create(db_session, tenant.id, "Tomorrow", due_date=today + timedelta(days=1))
+    upcoming = action_item_service.create(db_session, tenant.id, "Upcoming", due_date=today + timedelta(days=2))
+    edge = action_item_service.create(db_session, tenant.id, "Edge", due_date=today + timedelta(days=7))
+    excluded = action_item_service.create(db_session, tenant.id, "Excluded", due_date=today + timedelta(days=8))
+    no_due = action_item_service.create(db_session, tenant.id, "No due")
+    db_session.commit()
+
+    buckets = action_item_service.list_open_categorized(db_session)
+
+    assert [item.title for item in buckets.overdue] == ["Overdue"]
+    assert [item.title for item in buckets.today] == ["Today"]
+    assert [item.title for item in buckets.tomorrow] == ["Tomorrow"]
+    assert [item.title for item in buckets.upcoming] == ["Upcoming", "Edge"]
+    assert excluded not in buckets.overdue + buckets.today + buckets.tomorrow + buckets.upcoming
+    assert no_due not in buckets.overdue + buckets.today + buckets.tomorrow + buckets.upcoming
+
+
+def test_create_general_action_item_and_nullable_tenant_id(db_session):
+    general_item = action_item_service.create_general(db_session, "General follow-up", due_date=date(2026, 8, 27), priority="p2", created_by_user_id=7)
+    explicit_none_item = action_item_service.create(db_session, None, "Explicit none")
+    db_session.commit()
+
+    assert general_item is not None
+    assert general_item.tenant_id is None
+    assert general_item.created_by_user_id == 7
+    assert explicit_none_item is not None
+    assert explicit_none_item.tenant_id is None
 
 
 # --- action_writer_service: creation automatic, modify/delete gated on approval ------------
@@ -524,6 +558,39 @@ def test_parse_action_item_text_endpoint(user_client, db_session, monkeypatch):
     assert body["title"] == "Call guest"
     assert body["due_date"] == "2026-08-05"
     assert body["priority"] == "p2"
+
+
+def test_parse_general_action_item_text_endpoint(user_client, db_session, monkeypatch):
+    from app.services import action_item_parse_service, gemini_client
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        return gemini_client.GenerationResult(
+            text="ignored", parsed={"title": "General task", "due_date": "2026-08-09", "priority": "p3"}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+        )
+
+    monkeypatch.setattr(action_item_parse_service.gemini_client, "generate", fake_generate)
+
+    response = user_client.post("/api/action-items/parse", json={"text": "General task next Sunday"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "General task"
+    assert body["due_date"] == "2026-08-09"
+    assert body["priority"] == "p3"
+
+
+def test_create_general_action_item_endpoint_and_get_action_items_handles_null_tenant(user_client, db_session):
+    create_response = user_client.post("/api/action-items", json={"title": "General item", "due_date": "2026-08-10", "priority": "p2"})
+    assert create_response.status_code == 201
+    body = create_response.json()
+    assert body["tenant_id"] is None
+    assert body["tenant_name"] is None
+    assert body["title"] == "General item"
+
+    get_response = user_client.get("/api/action-items")
+    assert get_response.status_code == 200
+    rows = get_response.json()
+    assert any(row["tenant_id"] is None and row["title"] == "General item" for row in rows)
 
 
 # --- Dedicated action-item pending-suggestions review surface ------------------------------

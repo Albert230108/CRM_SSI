@@ -49,6 +49,26 @@ def apply_default_brain_action_writer_settings(db: Session, tenant_id: int) -> N
         tenant_settings.action_writer_enabled = True
 
 
+def apply_default_formatter_settings(db: Session, tenant_id: int) -> None:
+    """Seed the formatter toggle for a newly created tenant.
+
+    Only new tenants are affected - existing tenants are never retro-fitted - so changing the
+    admin default cannot silently enable rich formatting for live tenants. Does not commit.
+    """
+    settings = db.query(AdminSettings).first()
+    if settings is None or not settings.formatter_default_enabled:
+        return
+
+    # Flush any earlier seeding helpers in the same transaction so we can reuse the same
+    # TenantAiSettings row instead of racing ourselves into a duplicate insert.
+    db.flush()
+    tenant_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    if tenant_settings is None:
+        tenant_settings = TenantAiSettings(tenant_id=tenant_id)
+        db.add(tenant_settings)
+    tenant_settings.formatter_enabled = True
+
+
 def apply_default_ai_templates_if_enabled(db: Session, tenant_id: int) -> None:
     """Links a newly created tenant to every existing shared AI reply template.
 

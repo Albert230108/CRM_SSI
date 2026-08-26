@@ -142,6 +142,7 @@ export default function AdminSettings() {
   const [autoApplyTemplatesToNewTenants, setAutoApplyTemplatesToNewTenants] = useState(false)
   const [brainWriterDefaultEnabled, setBrainWriterDefaultEnabled] = useState(false)
   const [actionWriterDefaultEnabled, setActionWriterDefaultEnabled] = useState(false)
+  const [formatterDefaultEnabled, setFormatterDefaultEnabled] = useState(false)
   const [savingAutoApplyTemplates, setSavingAutoApplyTemplates] = useState(false)
 
   const loadLogs = async () => {
@@ -191,6 +192,7 @@ export default function AdminSettings() {
           if (typeof data.ai_auto_apply_templates_to_new_tenants === 'boolean') setAutoApplyTemplatesToNewTenants(data.ai_auto_apply_templates_to_new_tenants)
           if (typeof data.brain_writer_default_enabled === 'boolean') setBrainWriterDefaultEnabled(data.brain_writer_default_enabled)
           if (typeof data.action_writer_default_enabled === 'boolean') setActionWriterDefaultEnabled(data.action_writer_default_enabled)
+          if (typeof data.formatter_default_enabled === 'boolean') setFormatterDefaultEnabled(data.formatter_default_enabled)
         } else {
           showError('Failed to load admin settings')
         }
@@ -578,6 +580,29 @@ export default function AdminSettings() {
     }
   }
 
+  const saveFormatterDefaultEnabled = async (nextValue: boolean) => {
+    const previousValue = formatterDefaultEnabled
+    setFormatterDefaultEnabled(nextValue)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ formatter_default_enabled: nextValue }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setFormatterDefaultEnabled(previousValue)
+        showError(typeof data.detail === 'string' ? data.detail : 'Failed to save')
+        return
+      }
+      setFormatterDefaultEnabled(data.formatter_default_enabled)
+      showSuccess('Saved')
+    } catch {
+      setFormatterDefaultEnabled(previousValue)
+      showError('Failed to save')
+    }
+  }
+
   const confirmClearInvites = async () => {
     setClearInvitesError('')
     setClearingInvites(true)
@@ -858,6 +883,21 @@ export default function AdminSettings() {
                   </label>
                   <p className="mt-1 text-xs text-gray-500">
                     When off (default), new tenants start with the action writer disabled and must be enabled manually
+                    on the tenant AI settings page.
+                  </p>
+                </div>
+                <div>
+                  <label className="flex items-center gap-3 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={formatterDefaultEnabled}
+                      onChange={(event) => void saveFormatterDefaultEnabled(event.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    Enable the formatter by default for newly created tenants
+                  </label>
+                  <p className="mt-1 text-xs text-gray-500">
+                    When off (default), new tenants start with rich formatting disabled and must be enabled manually
                     on the tenant AI settings page.
                   </p>
                 </div>

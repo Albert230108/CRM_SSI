@@ -1,9 +1,13 @@
 from app.models.admin_settings import AdminSettings
 from app.models.ai_reply_template import AiReplyTemplate
+from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant import Tenant
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
 from app.models.user import User
-from app.services.tenant_ai_template_provisioning import apply_default_ai_templates_if_enabled
+from app.services.tenant_ai_template_provisioning import (
+    apply_default_ai_templates_if_enabled,
+    apply_default_formatter_settings,
+)
 
 
 def _create_template(db_session, name="Template"):
@@ -49,3 +53,19 @@ def test_links_every_existing_template_when_enabled(db_session):
         for row in db_session.query(TenantAiTemplateLink).filter(TenantAiTemplateLink.tenant_id == tenant.id).all()
     }
     assert linked_ids == {template_a.id, template_b.id}
+
+
+def test_formatter_default_seeds_new_tenant_settings_when_enabled(db_session):
+    db_session.add(AdminSettings(formatter_default_enabled=True))
+    db_session.commit()
+
+    tenant = Tenant(name="Provisioning Tenant C", booking_id="B-provision-3")
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+
+    apply_default_formatter_settings(db_session, tenant.id)
+    db_session.commit()
+
+    settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).one()
+    assert settings.formatter_enabled is True

@@ -29,7 +29,7 @@ class ActionTagOut(BaseModel):
 
 class ActionItemRead(BaseModel):
     id: int
-    tenant_id: int
+    tenant_id: int | None = None
     tenant_name: Optional[str] = None
     title: str
     description: Optional[str] = None
@@ -138,7 +138,7 @@ class ActionItemSuggestionSnapshot(BaseModel):
 class ActionItemSuggestionRead(BaseModel):
     id: int
     kind: str  # action_item_modify | action_item_delete | action_item_complete
-    tenant_id: int
+    tenant_id: int | None = None
     tenant_name: Optional[str] = None
     action_item_id: int
     current: ActionItemSuggestionSnapshot
@@ -229,16 +229,14 @@ class ActionItemCreate(BaseModel):
     recurrence_anchor: RecurrenceAnchor = "due_date"
 
 
-@router.post("/tenants/{tenant_id}/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
-def create_tenant_action_item(
-    tenant_id: int,
+def _create_action_item(
+    *,
+    db: Session,
+    tenant_name: Optional[str],
+    tenant_id: int | None,
     payload: ActionItemCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    created_by_user_id: int,
+) -> ActionItemRead:
     try:
         item = action_item_service.create(
             db,
@@ -248,7 +246,7 @@ def create_tenant_action_item(
             responsible_user_id=payload.responsible_user_id,
             due_date=payload.due_date,
             source="manual",
-            created_by_user_id=current_user.id,
+            created_by_user_id=created_by_user_id,
             tag_ids=payload.tag_ids,
             priority=payload.priority,
             recurrence_interval_days=payload.recurrence_interval_days,
@@ -261,7 +259,29 @@ def create_tenant_action_item(
     db.commit()
     db.refresh(item)
     tags_by_id = _tags_by_id(db, [item])
-    return _to_read(item, tenant.name, [tags_by_id[tag_id] for tag_id in item.tag_ids if tag_id in tags_by_id])
+    return _to_read(item, tenant_name, [tags_by_id[tag_id] for tag_id in item.tag_ids if tag_id in tags_by_id])
+
+
+@router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
+def create_action_item(
+    payload: ActionItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _create_action_item(db=db, tenant_name=None, tenant_id=None, payload=payload, created_by_user_id=current_user.id)
+
+
+@router.post("/tenants/{tenant_id}/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
+def create_tenant_action_item(
+    tenant_id: int,
+    payload: ActionItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return _create_action_item(db=db, tenant_name=tenant.name, tenant_id=tenant.id, payload=payload, created_by_user_id=current_user.id)
 
 
 class ActionItemParseRequest(BaseModel):
@@ -293,6 +313,21 @@ def parse_action_item_text(
     return ActionItemParseResult(**parsed)
 
 
+@router.post("/action-items/parse", response_model=ActionItemParseResult)
+def parse_general_action_item_text(
+    payload: ActionItemParseRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is required")
+    parsed = action_item_parse_service.parse_quick_add(text)
+    if parsed is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not parse that into a task")
+    return ActionItemParseResult(**parsed)
+
+
 def _get_item(db: Session, item_id: int) -> ActionItem:
     item = db.query(ActionItem).filter(ActionItem.id == item_id).first()
     if item is None:
@@ -301,7 +336,7 @@ def _get_item(db: Session, item_id: int) -> ActionItem:
 
 
 def _read_with_lookups(db: Session, item: ActionItem) -> ActionItemRead:
-    tenant_name = db.query(Tenant.name).filter(Tenant.id == item.tenant_id).scalar()
+    tenant_name = db.query(Tenant.name).filter(Tenant.id == item.tenant_id).scalar() if item.tenant_id is not None else None
     tags_by_id = _tags_by_id(db, [item])
     return _to_read(item, tenant_name, [tags_by_id[tag_id] for tag_id in item.tag_ids if tag_id in tags_by_id])
 

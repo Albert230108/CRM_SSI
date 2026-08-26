@@ -42,7 +42,7 @@ def _create_user(db_session, **overrides):
 
 def _create_action_item(db_session, tenant, **overrides):
     defaults = dict(
-        tenant_id=tenant.id,
+        tenant_id=tenant.id if tenant is not None else None,
         title="Follow up with guest",
         description="Call back about breakfast",
         due_date=date.today(),
@@ -154,26 +154,40 @@ def test_actions_today_upcoming_and_help_commands(client, db_session, monkeypatc
 
     _create_action_item(db_session, tenant, title="Overdue item", due_date=date.today() - timedelta(days=1))
     _create_action_item(db_session, other_tenant, title="Due today", due_date=date.today())
+    _create_action_item(db_session, tenant, title="Tomorrow item", due_date=date.today() + timedelta(days=1))
     _create_action_item(db_session, tenant, title="Upcoming item", due_date=date.today() + timedelta(days=3))
-    _create_action_item(db_session, tenant, title="Too far out", due_date=date.today() + timedelta(days=10))
+    _create_action_item(db_session, tenant, title="Late item", due_date=date.today() + timedelta(days=7))
+    _create_action_item(db_session, tenant, title="Too far out", due_date=date.today() + timedelta(days=8))
+    _create_action_item(db_session, tenant, title="No due date", due_date=None)
     _create_action_item(db_session, tenant, title="Completed item", due_date=date.today(), status="done")
 
     sent_calls = _patch_confirmation_send(monkeypatch)
 
     response = _post_reply(client, sender="+31611112222", message="actions")
     assert response.status_code == 200
-    assert "Overdue item" in sent_calls[0][1]
-    assert "Due today" in sent_calls[0][1]
-    assert "Upcoming item" not in sent_calls[0][1]
-    assert "Too far out" not in sent_calls[0][1]
-    assert "Completed item" not in sent_calls[0][1]
+    message = sent_calls[0][1]
+    assert "🔴 Overdue" in message
+    assert "📅 Today" in message
+    assert "➡️ Tomorrow" in message
+    assert "🗓️ Upcoming (2-7 days)" in message
+    assert "Overdue item" in message
+    assert "Due today" in message
+    assert "Tomorrow item" in message
+    assert "Upcoming item" in message
+    assert "Late item" in message
+    assert "Too far out" not in message
+    assert "No due date" not in message
+    assert "Completed item" not in message
 
     sent_calls.clear()
     response = _post_reply(client, sender="+31611112222", message="actions today")
     assert response.status_code == 200
-    assert "Overdue item" in sent_calls[0][1]
-    assert "Due today" in sent_calls[0][1]
-    assert "Upcoming item" not in sent_calls[0][1]
+    message = sent_calls[0][1]
+    assert "Overdue item" in message
+    assert "Due today" in message
+    assert "Tomorrow item" in message
+    assert "Upcoming item" in message
+    assert "Too far out" not in message
 
     sent_calls.clear()
     response = _post_reply(client, sender="+31611112222", message="actions upcoming")
@@ -187,7 +201,97 @@ def test_actions_today_upcoming_and_help_commands(client, db_session, monkeypatc
     assert response.status_code == 200
     assert "AI draft approvals" in sent_calls[0][1]
     assert "Action items" in sent_calls[0][1]
+    assert "actions all" in sent_calls[0][1]
+    assert "actions add <text>" in sent_calls[0][1]
 
+
+def test_actions_all_lists_open_items_and_general_items(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-digest-all")
+    other_tenant = _create_tenant(db_session, name="Second Tenant", booking_id="B-digest-all-2")
+    user = _create_user(db_session, email="all-user@example.com")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+
+    _create_action_item(db_session, tenant, title="Tenant open", due_date=date.today())
+    _create_action_item(db_session, tenant, title="Tenant no due")
+    _create_action_item(db_session, other_tenant, title="Other tenant open", due_date=date.today() + timedelta(days=2))
+    _create_action_item(db_session, tenant, title="Done item", due_date=date.today(), status="done")
+    _create_action_item(db_session, tenant, title="Dismissed item", due_date=date.today(), status="dismissed")
+    _create_action_item(db_session, None, title="General item", due_date=None, status="open", source="manual")
+
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message="actions all")
+    assert response.status_code == 200
+    message = sent_calls[0][1]
+    assert "📋 All open actions" in message
+    assert "Tenant open" in message
+    assert "Tenant no due" in message
+    assert "Other tenant open" in message
+    assert "General item" in message
+    assert "General" in message
+    assert "Done item" not in message
+    assert "Dismissed item" not in message
+
+
+def test_actions_add_creates_general_item_and_confirms(client, db_session, monkeypatch):
+    tenant = _create_tenant(db_session, booking_id="B-digest-add")
+    user = _create_user(db_session, email="add-user@example.com")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+
+    from app.services import action_item_parse_service, gemini_client
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        return gemini_client.GenerationResult(
+            text="ignored", parsed={"title": "Call plumber", "due_date": "2026-08-27", "priority": "p2"}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+        )
+
+    monkeypatch.setattr(action_item_parse_service.gemini_client, "generate", fake_generate)
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message="actions add Call plumber tomorrow")
+    assert response.status_code == 200
+    message = sent_calls[0][1]
+    assert "Added general action" in message
+    assert "Call plumber" in message
+    assert "2026-08-27" in message
+    assert "p2" in message
+
+    item = db_session.query(ActionItem).filter(ActionItem.title == "Call plumber").one()
+    assert item.tenant_id is None
+    assert item.created_by_user_id == user.id
+    assert item.due_date == date(2026, 8, 27)
+    assert item.priority == "p2"
+
+
+def test_actions_add_replies_with_usage_when_text_is_missing(client, db_session, monkeypatch):
+    _create_tenant(db_session, booking_id="B-digest-add-missing")
+    user = _create_user(db_session, email="add-missing@example.com")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message="actions add")
+    assert response.status_code == 200
+    assert "Usage: actions add <task description>" in sent_calls[0][1]
+
+
+def test_actions_add_replies_when_parse_fails(client, db_session, monkeypatch):
+    _create_tenant(db_session, booking_id="B-digest-add-fail")
+    user = _create_user(db_session, email="add-fail@example.com")
+    db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
+    db_session.commit()
+
+    from app.services import action_item_parse_service
+
+    monkeypatch.setattr(action_item_parse_service, "parse_quick_add", lambda text: None)
+    sent_calls = _patch_confirmation_send(monkeypatch)
+
+    response = _post_reply(client, sender=user.phone, message="actions add something ambiguous")
+    assert response.status_code == 200
+    assert "Could not parse that into an action item" in sent_calls[0][1]
 
 def test_actions_pending_lists_and_applies_suggestions(client, db_session, monkeypatch):
     tenant = _create_tenant(db_session, booking_id="B-digest-pending")

@@ -8,7 +8,7 @@ import re
 from sqlalchemy.orm import Session
 
 from app.core.phone_normalization import phone_match_candidates
-from app.models.action_item import ActionItem
+from app.models.action_item import ActionItem, STATUS_OPEN
 from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
@@ -21,6 +21,7 @@ from app.models.memory_suggestion import (
 )
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.services import action_item_parse_service
 from app.services import action_item_service
 from app.services import ai_auto_draft_service
 from app.services import ai_draft_notification_service
@@ -274,12 +275,12 @@ def _action_item_suggestion_rows(db: Session, suggestions: list[MemorySuggestion
     for suggestion in suggestions:
         item = db.query(ActionItem).filter(ActionItem.id == suggestion.target_id).first() if suggestion.target_id is not None else None
         tenant = db.query(Tenant).filter(Tenant.id == suggestion.tenant_id).first() if suggestion.tenant_id is not None else None
-        rows.append((suggestion, item, tenant.name if tenant is not None else "Unknown tenant"))
+        rows.append((suggestion, item, tenant.name if tenant is not None else ("General" if suggestion.tenant_id is None else "Unknown tenant")))
     return rows
 
 
 def _action_item_tenant_names(db: Session, items: list[ActionItem]) -> dict[int, str]:
-    tenant_ids = {item.tenant_id for item in items}
+    tenant_ids = {item.tenant_id for item in items if item.tenant_id is not None}
     if not tenant_ids:
         return {}
     tenants = db.query(Tenant).filter(Tenant.id.in_(tenant_ids)).all()
@@ -363,13 +364,13 @@ def try_handle_admin_reply(
 
     command = whatsapp_action_digest_service.resolve_command(text or "")
     if command == "today":
-        items = action_item_service.list_open_today_or_overdue(db)
+        buckets = action_item_service.list_open_categorized(db)
+        tenant_names = _action_item_tenant_names(db, [*buckets.overdue, *buckets.today, *buckets.tomorrow, *buckets.upcoming])
+        return outcome(whatsapp_action_digest_service.format_categorized_actions_message(buckets, tenant_names=tenant_names))
+    if command == "all":
+        items = action_item_service.list_all(db, status_filter=STATUS_OPEN)
         tenant_names = _action_item_tenant_names(db, items)
-        return outcome(
-            whatsapp_action_digest_service.format_open_actions_message(
-                items, tenant_names=tenant_names, heading="📋 Open actions (today & overdue)"
-            )
-        )
+        return outcome(whatsapp_action_digest_service.format_open_actions_message(items, tenant_names=tenant_names, heading="📋 All open actions"))
     if command == "upcoming":
         items = action_item_service.list_open_upcoming(db)
         tenant_names = _action_item_tenant_names(db, items)
@@ -385,6 +386,25 @@ def try_handle_admin_reply(
         )
     if command == "help":
         return outcome(whatsapp_action_digest_service.format_help_message())
+    if command == "add":
+        quick_add_text = whatsapp_action_digest_service.extract_quick_add_text(text or "")
+        if not quick_add_text:
+            return outcome(whatsapp_action_digest_service.format_quick_add_missing_text_message())
+        parsed = action_item_parse_service.parse_quick_add(quick_add_text)
+        if parsed is None:
+            return outcome(whatsapp_action_digest_service.format_quick_add_parse_failed_message())
+        item = action_item_service.create_general(
+            db,
+            parsed["title"],
+            due_date=parsed.get("due_date"),
+            priority=parsed.get("priority"),
+            source="manual",
+            created_by_user_id=user.id,
+        )
+        if item is None:
+            return outcome(whatsapp_action_digest_service.format_quick_add_parse_failed_message())
+        db.commit()
+        return outcome(whatsapp_action_digest_service.format_quick_add_confirmation(item))
 
     redo_match = _REDO_PATTERN.match(text or "")
     if redo_match:

@@ -32,6 +32,9 @@ class AdminSettings(Base):
     # retro-fitted, so toggling these cannot silently enable AI for live tenants.
     brain_writer_default_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     action_writer_default_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Formatter default for newly created tenants only; existing tenants are never retro-fitted,
+    # so toggling this cannot silently turn on rich formatting for live tenants.
+    formatter_default_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     # Ceiling on tokens the planner/checker loop may spend per calendar day (UTC) across all
     # tenants. NULL means unlimited. BigInteger because a busy day can exceed a 32-bit count.
     ai_daily_token_cap = Column(BigInteger, nullable=True)

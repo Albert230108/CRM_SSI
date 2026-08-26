@@ -12,6 +12,7 @@ def test_get_admin_settings_defaults_to_null(non_admin_client):
         "planner_default_mode": "off",
         "brain_writer_default_enabled": False,
         "action_writer_default_enabled": False,
+        "formatter_default_enabled": False,
         "ai_daily_token_cap": None,
         "notification_whatsapp_debounce_seconds": 120,
         "notification_whatsapp_external_account_id": None,
@@ -36,6 +37,12 @@ def test_put_admin_settings_updates_writer_defaults(client, db_session):
     assert response.status_code == 200
     assert response.json()["brain_writer_default_enabled"] is True
     assert response.json()["action_writer_default_enabled"] is True
+
+
+def test_put_admin_settings_updates_formatter_default(client, db_session):
+    response = client.put("/api/admin-settings", json={"formatter_default_enabled": True})
+    assert response.status_code == 200
+    assert response.json()["formatter_default_enabled"] is True
 
 
 def test_put_admin_settings_requires_admin(non_admin_client):

@@ -17,7 +17,7 @@ type ActionTag = {
 
 type ActionItem = {
   id: number
-  tenant_id: number
+  tenant_id: number | null
   tenant_name: string | null
   title: string
   description: string | null
@@ -111,7 +111,7 @@ type ActionItemSuggestionSnapshot = {
 type ActionItemSuggestion = {
   id: number
   kind: 'action_item_modify' | 'action_item_delete' | 'action_item_complete'
-  tenant_id: number
+  tenant_id: number | null
   tenant_name: string | null
   action_item_id: number
   current: ActionItemSuggestionSnapshot
@@ -135,6 +135,26 @@ function joinTagNames(tags: Array<{ name: string }>) {
   return tags.map((tag) => tag.name).join(', ')
 }
 
+function TenantOrGeneralLabel({
+  tenantId,
+  tenantName,
+  className = 'text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline',
+}: {
+  tenantId: number | null
+  tenantName: string | null
+  className?: string
+}) {
+  if (tenantId == null) {
+    return <span className={className}>General</span>
+  }
+
+  return (
+    <Link to={`/dashboard/tenant/${tenantId}`} className={className}>
+      {tenantName ?? `Tenant #${tenantId}`}
+    </Link>
+  )
+}
+
 export default function Actions() {
   useDocumentTitle('CRM - Actions')
   const token = useAuthStore((state) => state.token)
@@ -147,6 +167,13 @@ export default function Actions() {
   const [loading, setLoading] = useState(true)
   const [suggestions, setSuggestions] = useState<ActionItemSuggestion[]>([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(true)
+  const [showAddGeneralForm, setShowAddGeneralForm] = useState(false)
+  const [quickAddText, setQuickAddText] = useState('')
+  const [parsingQuickAdd, setParsingQuickAdd] = useState(false)
+  const [newTitle, setNewTitle] = useState('')
+  const [newDueDate, setNewDueDate] = useState('')
+  const [newPriority, setNewPriority] = useState('')
+  const [addingGeneral, setAddingGeneral] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
@@ -193,8 +220,65 @@ export default function Actions() {
 
   const visibleItems = priorityFilter ? items.filter((item) => item.priority === priorityFilter) : items
 
+  const resetGeneralAddForm = () => {
+    setQuickAddText('')
+    setNewTitle('')
+    setNewDueDate('')
+    setNewPriority('')
+  }
+
   const toggleSelectedTag = (tagId: number, selectedIds: number[], setSelectedIds: (ids: number[]) => void) => {
     setSelectedIds(selectedIds.includes(tagId) ? selectedIds.filter((id) => id !== tagId) : [...selectedIds, tagId])
+  }
+
+  const handleParseGeneralQuickAdd = async () => {
+    const text = quickAddText.trim()
+    if (!text || parsingQuickAdd) return
+    try {
+      setParsingQuickAdd(true)
+      const response = await fetch(`${API_BASE_URL}/api/action-items/parse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({ text }),
+      })
+      const data = (await response.json().catch(() => null)) as { title?: string; due_date?: string | null; priority?: Priority | null; detail?: string | null } | null
+      if (!response.ok) throw new Error(data?.detail ?? 'Could not parse that into an action item')
+      if (!data?.title) throw new Error('Could not parse that into an action item')
+      setNewTitle(data.title)
+      setNewDueDate(data.due_date ?? '')
+      setNewPriority(data.priority ?? '')
+      setQuickAddText('')
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Could not parse that into an action item')
+    } finally {
+      setParsingQuickAdd(false)
+    }
+  }
+
+  const handleAddGeneralAction = async () => {
+    const title = newTitle.trim()
+    if (!title || addingGeneral) return
+    try {
+      setAddingGeneral(true)
+      const response = await fetch(`${API_BASE_URL}/api/action-items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({
+          title,
+          due_date: newDueDate || null,
+          priority: newPriority || null,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.detail ?? 'Failed to add action item')
+      await load()
+      resetGeneralAddForm()
+      setShowAddGeneralForm(false)
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Failed to add action item')
+    } finally {
+      setAddingGeneral(false)
+    }
   }
 
   const startEdit = (item: ActionItem) => {
@@ -265,8 +349,95 @@ export default function Actions() {
   return (
     <>
       <main className="mx-auto max-w-5xl px-6 py-4">
-        <h1 className="text-2xl font-semibold text-gray-900">Actions</h1>
-        <p className="mt-1 text-sm text-gray-500">Checklist items across every tenant, added manually or suggested by AI.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Actions</h1>
+            <p className="mt-1 text-sm text-gray-500">Checklist items across every tenant, added manually or suggested by AI.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAddGeneralForm((current) => !current)}
+            className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100"
+          >
+            {showAddGeneralForm ? 'Close add form' : '+ Add general action'}
+          </button>
+        </div>
+
+        {showAddGeneralForm ? (
+          <div className="mt-3 rounded-2xl border border-cyan-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Add general action</p>
+                <p className="text-xs text-gray-500">Quick parse a free-text note, then review and edit the fields before saving.</p>
+              </div>
+              <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                <input
+                  type="text"
+                  value={quickAddText}
+                  onChange={(event) => setQuickAddText(event.target.value)}
+                  placeholder="Call the plumber tomorrow"
+                  className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-300"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleParseGeneralQuickAdd()}
+                    disabled={parsingQuickAdd || !quickAddText.trim()}
+                    className="rounded-full border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {parsingQuickAdd ? 'Parsing...' : 'Parse'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetGeneralAddForm()
+                      setShowAddGeneralForm(false)
+                    }}
+                    className="rounded-full border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(event) => setNewTitle(event.target.value)}
+                  placeholder="Action title"
+                  className="min-w-0 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-300 md:w-full"
+                />
+                <input
+                  type="date"
+                  value={newDueDate}
+                  onChange={(event) => setNewDueDate(event.target.value)}
+                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-cyan-300"
+                />
+                <select
+                  value={newPriority}
+                  onChange={(event) => setNewPriority(event.target.value)}
+                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-cyan-300"
+                >
+                  <option value="">Priority</option>
+                  <option value="p1">P1</option>
+                  <option value="p2">P2</option>
+                  <option value="p3">P3</option>
+                  <option value="p4">P4</option>
+                </select>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void handleAddGeneralAction()}
+                  disabled={addingGeneral || !newTitle.trim()}
+                  className="rounded-full bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  {addingGeneral ? 'Saving...' : 'Add action'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {!loadingSuggestions && suggestions.length > 0 ? (
           <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3.5">
@@ -286,9 +457,11 @@ export default function Actions() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <Link to={`/dashboard/tenant/${suggestion.tenant_id}`} className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline">
-                            {suggestion.tenant_name ?? `Tenant #${suggestion.tenant_id}`}
-                          </Link>
+                          <TenantOrGeneralLabel
+                            tenantId={suggestion.tenant_id}
+                            tenantName={suggestion.tenant_name}
+                            className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline"
+                          />
                           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${badgeClass}`}>{badgeLabel}</span>
                         </div>
 
@@ -441,9 +614,11 @@ export default function Actions() {
                 ) : (
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <Link to={`/dashboard/tenant/${item.tenant_id}`} className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline">
-                        {item.tenant_name ?? `Tenant #${item.tenant_id}`}
-                      </Link>
+                      <TenantOrGeneralLabel
+                        tenantId={item.tenant_id}
+                        tenantName={item.tenant_name}
+                        className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline"
+                      />
                       <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
                       {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">

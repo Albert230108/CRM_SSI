@@ -12,16 +12,18 @@ SOURCE_AI = "ai"
 
 
 class ActionItem(Base):
-    """A checklist item tied to a tenant - staff can add these manually, and the action writer
-    can propose new ones too (source="ai"), surfacing immediately like brain entries do. AI
-    proposals to modify or delete an *existing* item go through MemorySuggestion approval
-    instead - see action_writer_service.py and memory_suggestion_service.py.
+    """A checklist item tied to a tenant, or a general tenant-less item.
+
+    Staff can add these manually, and the action writer can propose new ones too
+    (source="ai"), surfacing immediately like brain entries do. AI proposals to modify or
+    delete an *existing* item go through MemorySuggestion approval instead - see
+    action_writer_service.py and memory_suggestion_service.py.
     """
 
     __tablename__ = "action_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     responsible_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

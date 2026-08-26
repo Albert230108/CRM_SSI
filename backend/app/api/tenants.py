@@ -31,6 +31,7 @@ from app.services.tenant_ai_template_provisioning import (
     apply_default_ai_templates_if_enabled,
     apply_default_brain_action_writer_settings,
     apply_default_planner_mode,
+    apply_default_formatter_settings,
 )
 from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel_endpoints
 from app.services.tenant_notes_history import SOURCE_BEDS24_IMPORT, SOURCE_MANUAL, set_tenant_notes
@@ -553,6 +554,7 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     apply_default_ai_templates_if_enabled(db, tenant.id)
     apply_default_planner_mode(db, tenant.id)
     apply_default_brain_action_writer_settings(db, tenant.id)
+    apply_default_formatter_settings(db, tenant.id)
     # One immediate initial-brain fill (entries, structured fields, action items) from whatever
     # booking/profile data exists at creation - no inbound message exists yet, so this reuses
     # the manual "scan history" path rather than the debounced per-message trigger.
@@ -1205,6 +1207,7 @@ async def _import_tenant(
         apply_default_ai_templates_if_enabled(db, tenant.id)
         apply_default_planner_mode(db, tenant.id)
         apply_default_brain_action_writer_settings(db, tenant.id)
+        apply_default_formatter_settings(db, tenant.id)
     else:
         tenant = existing
         tenant.first_name = first_name
