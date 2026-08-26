@@ -37,6 +37,7 @@ from app.services.email_outbound_persistence import is_own_mailbox_address, pers
 from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_gmail_attachment_bytes
 from app.services.gemini_client import GeminiClientError
 from app.services.gmail_client import GMAIL_SCOPES, build_gmail_credentials, build_gmail_service_for_account, list_thread_drafts, send_gmail_forward, send_gmail_reply
+from app.services.ai_plan_execution_service import run_ai_plan_for_draft
 from app.services.tenant_channel_resolver import (
     _lookup_whatsapp_endpoint_by_exact_chat_identity,
     _lookup_whatsapp_endpoint_by_normalized_chat_identity,
@@ -521,74 +522,15 @@ def _run_ai_plan_background(
     attachment_ids: list[int],
     user_id: int | None,
 ) -> None:
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
-    if tenant is None or draft is None:
-        return
-
-    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
-    if ai_settings is None or (ai_settings.planner_mode or "off") == "off":
-        draft.status = "needs_review"
-        draft.generated_text = draft.generated_text or ""
-        draft.checker_feedback = "Planner is turned off for this tenant."
-        db.commit()
-        return
-
-    try:
-        outbound_attachments = load_outbound_attachments(
-            db, tenant_id=tenant.id, attachment_ids=attachment_ids, channel=channel
-        )
-    except (AttachmentNotFoundError, AttachmentLimitExceededError) as exc:
-        draft.status = "needs_review"
-        draft.generated_text = draft.generated_text or ""
-        draft.checker_feedback = str(exc)
-        db.commit()
-        return
-
-    try:
-        result = ai_agent_orchestrator.run_planner_loop(
-            db,
-            tenant=tenant,
-            channel=channel,
-            mode="manual",
-            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
-            operator_note=rough_draft,
-            attachments=outbound_attachments,
-            user_id=user_id,
-        )
-    except GeminiClientError as exc:
-        draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
-        if draft is None:
-            return
-        draft.status = "needs_review"
-        draft.generated_text = draft.generated_text or ""
-        draft.checker_feedback = str(exc)
-        db.commit()
-        logger.exception("AI planner run failed draft_id=%s", draft_id)
-        return
-
-    draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
-    if draft is None:
-        return
-
-    if result.generated_text:
-        ai_auto_draft_service.apply_planner_result_to_draft(
-            db,
-            draft,
-            tenant=tenant,
-            ai_settings=ai_settings,
-            channel=channel,
-            result=result,
-            inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
-        )
-    else:
-        draft.status = result.status
-        draft.template_id = result.template_id
-        draft.agent_run_id = result.run_id
-        draft.checker_feedback = result.checker_feedback
-        draft.generated_text = draft.generated_text or ""
-        draft.scheduled_send_at = None
-    db.commit()
+    run_ai_plan_for_draft(
+        db,
+        draft_id=draft_id,
+        tenant_id=tenant_id,
+        channel=channel,
+        operator_note=rough_draft,
+        attachment_ids=attachment_ids,
+        user_id=user_id,
+    )
 
 
 def _persist_whatsapp_send_result(

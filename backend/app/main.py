@@ -21,6 +21,7 @@ from app.api.beds24_availability import router as beds24_availability_router
 from app.api.beds24_webhooks import router as beds24_webhook_router
 from app.api.brain_fields import router as brain_fields_router
 from app.api.brain_sections import router as brain_sections_router
+from app.api.bulk_planner_schedules import router as bulk_planner_schedules_router
 from app.api.communications import router as communications_router
 from app.api.communication_attachments import router as communication_attachments_router
 from app.api.email_templates import router as email_templates_router
@@ -43,9 +44,10 @@ from app.database import SessionLocal
 from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
+from app.models.bulk_planner_schedule import BulkPlannerSchedule
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant_brain_trigger import TenantBrainTrigger
-from app.services import action_writer_service, ai_auto_draft_service, beds24_availability_service, tenant_brain_service
+from app.services import action_writer_service, ai_auto_draft_service, beds24_availability_service, bulk_planner_schedule_service, tenant_brain_service
 from app.services.ai_draft_notification_service import notify_admins_of_new_draft
 from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
 from app.webhooks.gmail import router as gmail_webhook_router
@@ -203,6 +205,33 @@ def _run_due_ai_auto_sends_once() -> None:
         db.close()
 
 
+def _run_due_bulk_planner_schedules_once() -> None:
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        due_schedules = (
+            db.query(BulkPlannerSchedule)
+            .filter(BulkPlannerSchedule.enabled.is_(True), BulkPlannerSchedule.next_run_at <= now)
+            .order_by(BulkPlannerSchedule.next_run_at.asc(), BulkPlannerSchedule.id.asc())
+            .all()
+        )
+        for schedule in due_schedules:
+            schedule_id = schedule.id
+            next_run_at = schedule.next_run_at
+            if next_run_at.tzinfo is None:
+                next_run_at = next_run_at.replace(tzinfo=timezone.utc)
+            trigger_reason = "catch_up" if (now - next_run_at) > timedelta(minutes=5) else "scheduled"
+            try:
+                bulk_planner_schedule_service.execute_due_schedule(db, schedule, trigger_reason=trigger_reason)
+            except Exception:
+                db.rollback()
+                logger.exception("Bulk planner schedule execution failed schedule_id=%s", schedule_id)
+    except Exception:
+        logger.exception("Bulk planner schedule loop failed to load due schedules")
+    finally:
+        db.close()
+
+
 def _run_due_tenant_brain_triggers_once() -> None:
     db = SessionLocal()
     try:
@@ -298,6 +327,7 @@ async def _ai_draft_scheduler_forever() -> None:
         await asyncio.sleep(AI_DRAFT_SCHEDULER_INTERVAL_SECONDS)
         await asyncio.to_thread(_run_due_ai_draft_triggers_once)
         await asyncio.to_thread(_run_due_ai_auto_sends_once)
+        await asyncio.to_thread(_run_due_bulk_planner_schedules_once)
         await asyncio.to_thread(_run_due_tenant_brain_triggers_once)
         await asyncio.to_thread(_run_due_action_writer_triggers_once)
         await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
@@ -337,6 +367,7 @@ app.include_router(communication_attachments_router, prefix="/api")
 app.include_router(email_templates_router, prefix="/api")
 app.include_router(ai_reply_templates_router, prefix="/api")
 app.include_router(brain_sections_router, prefix="/api")
+app.include_router(bulk_planner_schedules_router, prefix="/api")
 app.include_router(tenant_ai_settings_router, prefix="/api")
 app.include_router(ai_auto_drafts_router, prefix="/api")
 app.include_router(ai_agent_profiles_router, prefix="/api")

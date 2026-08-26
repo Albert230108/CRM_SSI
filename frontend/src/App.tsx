@@ -16,6 +16,7 @@ import AiAgentRuns from './pages/AiAgentRuns'
 import AiAgentRunDetail from './pages/AiAgentRunDetail'
 import BrainSections from './pages/BrainSections'
 import AiPendingDrafts from './pages/AiPendingDrafts'
+import ScheduledPlannerRuns from './pages/ScheduledPlannerRuns'
 import AiPayloadPreview from './pages/AiPayloadPreview'
 import Actions from './pages/Actions'
 import WorkingMemoryHome from './pages/WorkingMemoryHome'
@@ -82,6 +83,7 @@ export default function App() {
                     <Route path="/settings/ai-templates" element={<AiTemplatesOverview />} />
                     <Route path="/settings/ai-templates/:templateId" element={<AiTemplateEditor />} />
                     <Route path="/settings/ai-tenants" element={<AiTenantSettings />} />
+                    <Route path="/settings/planner-schedules" element={<ScheduledPlannerRuns />} />
                     <Route path="/settings/brain" element={<BrainSections />} />
                     <Route path="/settings/ai-agents" element={<AiAgentProfiles />} />
                     <Route path="/settings/ai-agents/:profileId" element={<AiAgentProfileEditor />} />

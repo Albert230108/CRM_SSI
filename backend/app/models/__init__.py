@@ -38,3 +38,6 @@ from app.models.tenant_notes_history import TenantNotesHistory
 from app.models.tenant_phone_alias import TenantPhoneAlias
 from app.models.user import User
 from app.models.working_memory_rule import WorkingMemoryRule
+from app.models.bulk_planner_schedule import BulkPlannerSchedule
+from app.models.bulk_planner_schedule_run import BulkPlannerScheduleRun
+from app.models.bulk_planner_schedule_run_result import BulkPlannerScheduleRunResult

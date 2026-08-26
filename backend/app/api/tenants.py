@@ -96,6 +96,67 @@ def _latest_active_email_by_tenant_id(db: Session, tenant_ids: list[int]) -> dic
     )
     return {row.tenant_id: row.email for row in db.query(ranked).filter(ranked.c.rn == 1).all()}
 
+def _normalize_message_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def compute_last_message_by_tenant_id(db: Session, tenant_ids: list[int]) -> dict[int, tuple[datetime, str, str]]:
+    if not tenant_ids:
+        return {}
+
+    from sqlalchemy import func
+
+    last_comm_by_tenant_id: dict[int, tuple[datetime, str, str]] = {}
+    comm_ranked = (
+        db.query(
+            Communication.tenant_id.label("tenant_id"),
+            Communication.created_at.label("created_at"),
+            Communication.channel.label("channel"),
+            Communication.direction.label("direction"),
+            func.row_number()
+            .over(partition_by=Communication.tenant_id, order_by=Communication.created_at.desc())
+            .label("rn"),
+        )
+        .filter(Communication.tenant_id.in_(tenant_ids))
+        .subquery()
+    )
+    for row in db.query(comm_ranked).filter(comm_ranked.c.rn == 1).all():
+        last_comm_by_tenant_id[row.tenant_id] = (
+            _normalize_message_datetime(row.created_at),
+            row.channel,
+            row.direction,
+        )
+
+    email_ranked = (
+        db.query(
+            TenantConversationLink.tenant_id.label("tenant_id"),
+            ConversationMessage.sent_at.label("sent_at"),
+            ConversationMessage.direction.label("direction"),
+            func.row_number()
+            .over(partition_by=TenantConversationLink.tenant_id, order_by=ConversationMessage.sent_at.desc())
+            .label("rn"),
+        )
+        .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+        .join(
+            TenantConversationLink,
+            (TenantConversationLink.conversation_id == Conversation.id)
+            & (TenantConversationLink.unlinked_at.is_(None)),
+        )
+        .filter(TenantConversationLink.tenant_id.in_(tenant_ids))
+        .subquery()
+    )
+
+    result = dict(last_comm_by_tenant_id)
+    for row in db.query(email_ranked).filter(email_ranked.c.rn == 1).all():
+        candidate = (_normalize_message_datetime(row.sent_at), "email", row.direction)
+        existing = result.get(row.tenant_id)
+        if existing is None or candidate[0] > existing[0]:
+            result[row.tenant_id] = candidate
+    return result
+
+
 
 ROOM_ID_MAPPING = {
     "House": 271050,
@@ -457,51 +518,10 @@ def list_tenants(
 
     # Querying the latest Communication/email per tenant one tenant at a time (2 queries x N
     # tenants) meant every tenant-list load did hundreds of sequential DB round trips as the
-    # tenant count grew. A window-function query ranks rows per tenant_id in a single pass, so
-    # this is 2 queries total regardless of how many tenants there are.
-    last_comm_by_tenant_id: dict[int, tuple[datetime, str, str]] = {}
-    last_email_by_tenant_id: dict[int, tuple[datetime, str]] = {}
-    email_by_tenant_id: dict[int, str] = {}
-    if tenant_ids:
-        from sqlalchemy import func
-
-        comm_ranked = (
-            db.query(
-                Communication.tenant_id.label("tenant_id"),
-                Communication.created_at.label("created_at"),
-                Communication.channel.label("channel"),
-                Communication.direction.label("direction"),
-                func.row_number()
-                .over(partition_by=Communication.tenant_id, order_by=Communication.created_at.desc())
-                .label("rn"),
-            )
-            .filter(Communication.tenant_id.in_(tenant_ids))
-            .subquery()
-        )
-        for row in db.query(comm_ranked).filter(comm_ranked.c.rn == 1).all():
-            last_comm_by_tenant_id[row.tenant_id] = (row.created_at, row.channel, row.direction)
-
-        email_ranked = (
-            db.query(
-                TenantConversationLink.tenant_id.label("tenant_id"),
-                ConversationMessage.sent_at.label("sent_at"),
-                ConversationMessage.direction.label("direction"),
-                func.row_number()
-                .over(partition_by=TenantConversationLink.tenant_id, order_by=ConversationMessage.sent_at.desc())
-                .label("rn"),
-            )
-            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-            .join(
-                TenantConversationLink,
-                (TenantConversationLink.conversation_id == Conversation.id)
-                & (TenantConversationLink.unlinked_at.is_(None)),
-            )
-            .filter(TenantConversationLink.tenant_id.in_(tenant_ids))
-            .subquery()
-        )
-        for row in db.query(email_ranked).filter(email_ranked.c.rn == 1).all():
-            last_email_by_tenant_id[row.tenant_id] = (row.sent_at, row.direction)
-        email_by_tenant_id = _latest_active_email_by_tenant_id(db, tenant_ids)
+    # tenant count grew. The shared helper keeps that bulk window-function query in one place so
+    # the tenant list and scheduled planner filters stay in lockstep.
+    last_message_by_tenant_id = compute_last_message_by_tenant_id(db, tenant_ids)
+    email_by_tenant_id = _latest_active_email_by_tenant_id(db, tenant_ids) if tenant_ids else {}
 
     unread_by_tenant_id: dict[int, int] = {}
     if tenant_ids and current_user is not None:
@@ -521,18 +541,11 @@ def list_tenants(
 
     result = []
     for tenant in tenants:
-        candidates: list[tuple[datetime, str, str]] = []
-        last_comm = last_comm_by_tenant_id.get(tenant.id)
-        if last_comm:
-            candidates.append(last_comm)
-        last_email = last_email_by_tenant_id.get(tenant.id)
-        if last_email:
-            candidates.append((last_email[0], "email", last_email[1]))
-
         tenant_dict = TenantRead.from_orm(tenant).model_dump()
         tenant_dict["email"] = tenant.email or email_by_tenant_id.get(tenant.id)
-        if candidates:
-            last_date, last_channel, last_direction = max(candidates, key=lambda c: c[0])
+        last_message = last_message_by_tenant_id.get(tenant.id)
+        if last_message:
+            last_date, last_channel, last_direction = last_message
             tenant_dict["last_message_date"] = last_date
             tenant_dict["last_message_channel"] = last_channel
             tenant_dict["last_message_direction"] = last_direction

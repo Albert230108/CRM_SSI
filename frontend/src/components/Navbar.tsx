@@ -42,6 +42,7 @@ export default function Navbar() {
   const settingsActive = location.pathname.startsWith('/settings')
   const adminActive = location.pathname.startsWith('/admin')
   const aiDraftsActive = location.pathname.startsWith('/ai-drafts')
+  const plannerSchedulesActive = location.pathname.startsWith('/settings/planner-schedules')
   const actionsActive = location.pathname.startsWith('/actions')
   const workingMemoryActive = location.pathname.startsWith('/working-memory')
   const [pendingAiDraftsCount, setPendingAiDraftsCount] = useState(0)
@@ -254,6 +255,13 @@ export default function Navbar() {
                   {formatBadgeCount(pendingAiDraftsCount)}
                 </span>
               ) : null}
+            </Link>
+            <Link
+              to="/settings/planner-schedules"
+              onClick={(event) => guardedNavigate(event, '/settings/planner-schedules')}
+              className={`inline-flex items-center gap-1.5 text-sm transition hover:text-gray-900 ${plannerSchedulesActive ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+            >
+              <span>Planner Schedules</span>
             </Link>
             <Link
               to="/actions"
