@@ -1195,6 +1195,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         },
         body: JSON.stringify({
           channel: replyTarget.type,
+          ...(replyTarget.type === 'email' ? { email_thread_id: replyTarget.threadId } : {}),
+          ...(replyTarget.type === 'whatsapp' && selectedWhatsappEndpointId
+            ? { whatsapp_endpoint_id: Number(selectedWhatsappEndpointId) }
+            : {}),
           // Whatever is already in the box is the operator's intent, so it leads the plan.
           rough_draft: replyMessage.trim() || null,
           attachment_ids: currentReplyAttachmentIds,

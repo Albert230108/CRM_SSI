@@ -124,6 +124,8 @@ class ReplyDraftAttachmentRead(BaseModel):
 
 class AiPlanRequest(BaseModel):
     channel: str
+    email_thread_id: int | None = None
+    whatsapp_endpoint_id: int | None = None
     rough_draft: str | None = None
     attachment_ids: list[int] = []
 
@@ -1324,6 +1326,30 @@ def run_tenant_ai_planner(
             detail="The planner is turned off for this tenant.",
         )
 
+    if channel == "email":
+        if payload.email_thread_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="email_thread_id is required for email planner runs")
+        # Validates the thread belongs to this tenant and the mailbox is sendable.
+        _resolve_tenant_conversation(db, tenant, payload.email_thread_id)
+        if payload.whatsapp_endpoint_id is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="whatsapp_endpoint_id is only valid for WhatsApp planner runs")
+    else:
+        if payload.email_thread_id is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="email_thread_id is only valid for email planner runs")
+        if payload.whatsapp_endpoint_id is not None:
+            endpoint = (
+                db.query(TenantChannelEndpoint)
+                .filter(
+                    TenantChannelEndpoint.id == payload.whatsapp_endpoint_id,
+                    TenantChannelEndpoint.tenant_id == tenant.id,
+                    TenantChannelEndpoint.channel_type == "whatsapp",
+                    TenantChannelEndpoint.is_active.is_(True),
+                )
+                .first()
+            )
+            if endpoint is None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="WhatsApp endpoint not found")
+
     try:
         load_outbound_attachments(db, tenant_id=tenant.id, attachment_ids=payload.attachment_ids, channel=channel)
     except AttachmentNotFoundError as exc:
@@ -1334,6 +1360,8 @@ def run_tenant_ai_planner(
     draft = AiAutoDraft(
         tenant_id=tenant.id,
         channel=channel,
+        email_thread_id=(payload.email_thread_id if channel == "email" else None),
+        whatsapp_endpoint_id=(payload.whatsapp_endpoint_id if channel == "whatsapp" else None),
         generated_text="",
         status="pending",
         scheduled_send_at=None,

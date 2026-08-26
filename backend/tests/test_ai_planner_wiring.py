@@ -11,9 +11,11 @@ from app.models.ai_agent_run import AiAgentRun
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_reply_template import AiReplyTemplate
+from app.models.gmail_integration import Conversation, GmailAccount
 from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
+from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
 from app.services import ai_agent_orchestrator, ai_auto_draft_service, gemini_client
 
@@ -82,6 +84,21 @@ def _setup(db_session, *, planner_mode="auto-send", auto_send=False, max_redraft
     db_session.commit()
     db_session.refresh(template)
     return tenant, template
+
+
+
+
+def _create_linked_email_thread(db_session, tenant: Tenant) -> Conversation:
+    account = GmailAccount(email_address="planner-wiring@example.com", is_active=True)
+    db_session.add(account)
+    db_session.flush()
+    conversation = Conversation(provider="gmail", provider_account_id=account.id, provider_thread_id="thread-planner-wiring", subject="Hi")
+    db_session.add(conversation)
+    db_session.flush()
+    db_session.add(TenantConversationLink(tenant_id=tenant.id, conversation_id=conversation.id, is_visible=True))
+    db_session.commit()
+    db_session.refresh(conversation)
+    return conversation
 
 
 def _plan(template_id, **overrides):
@@ -318,7 +335,7 @@ def test_manual_ai_plan_endpoint_queues_a_draft_and_completes_it_in_the_backgrou
 
     response = user_client.post(
         f"/api/communications/tenants/{tenant.id}/ai-plan",
-        json={"channel": "email", "rough_draft": "Mention the lockbox."},
+        json={"channel": "email", "email_thread_id": _create_linked_email_thread(db_session, tenant).id, "rough_draft": "Mention the lockbox."},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -338,7 +355,7 @@ def test_manual_ai_plan_endpoint_queues_a_draft_and_completes_it_in_the_backgrou
 def test_ai_plan_is_refused_when_the_planner_is_off(user_client, db_session):
     tenant, _ = _setup(db_session, planner_mode="off")
     response = user_client.post(
-        f"/api/communications/tenants/{tenant.id}/ai-plan", json={"channel": "email"}
+        f"/api/communications/tenants/{tenant.id}/ai-plan", json={"channel": "email", "email_thread_id": _create_linked_email_thread(db_session, tenant).id}
     )
     assert response.status_code == 400
     assert "turned off" in response.json()["detail"]
@@ -361,7 +378,7 @@ def test_ai_plan_background_failure_marks_the_draft_for_review(user_client, db_s
     monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", _raise)
 
     response = user_client.post(
-        f"/api/communications/tenants/{tenant.id}/ai-plan", json={"channel": "email"}
+        f"/api/communications/tenants/{tenant.id}/ai-plan", json={"channel": "email", "email_thread_id": _create_linked_email_thread(db_session, tenant).id}
     )
     assert response.status_code == 200, response.text
     body = response.json()
