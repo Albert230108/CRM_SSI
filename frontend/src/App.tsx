@@ -22,12 +22,14 @@ import WorkingMemoryHome from './pages/WorkingMemoryHome'
 import AdminSettings from './pages/AdminSettings'
 import InvitationSetup from './pages/InvitationSetup'
 import PasswordReset from './pages/PasswordReset'
+import { installInactivityLogout } from './lib/inactivityLogout'
 import { useAuthStore } from './store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export default function App() {
   const token = useAuthStore((state) => state.token)
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
   const setUser = useAuthStore((state) => state.setUser)
   const logout = useAuthStore((state) => state.logout)
 
@@ -43,6 +45,11 @@ export default function App() {
       .catch(() => logout())
     return () => controller.abort()
   }, [token, setUser, logout])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    return installInactivityLogout()
+  }, [isAuthenticated])
 
   return (
     <>
