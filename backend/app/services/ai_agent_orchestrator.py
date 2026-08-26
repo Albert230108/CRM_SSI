@@ -289,6 +289,7 @@ def _build_context_blocks(
         parts.append(ai_reply_service._build_payments_context(db, tenant, blocks))
     if profile.include_notes:
         parts.append(ai_reply_service._build_notes_context(tenant, blocks))
+    parts.append(ai_reply_service._build_action_items_context(db, tenant, blocks))
     if profile.include_availability:
         parts.append(ai_reply_service._build_availability_context(db, blocks))
     if profile.include_tenant_brain:

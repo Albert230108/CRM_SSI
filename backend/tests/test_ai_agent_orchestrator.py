@@ -1,9 +1,10 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
 from app.models.ai_agent_profile import AiAgentProfile
+from app.models.action_tag_definition import ActionTagDefinition
 from app.models.ai_agent_run import AiAgentRun, AiAgentRunStep
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.brain_field_definition import BrainFieldDefinition
@@ -15,7 +16,7 @@ from app.models.tenant_ai_template_link import TenantAiTemplateLink
 from app.models.tenant_brain_entry import TenantBrainEntry
 from app.models.tenant_brain_field_value import TenantBrainFieldValue
 from app.models.tenant_conversation_link import TenantConversationLink
-from app.services import ai_agent_orchestrator, attachment_service, gemini_client
+from app.services import action_item_service, ai_agent_orchestrator, attachment_service, gemini_client
 
 
 def _tenant(db_session, **overrides):
@@ -303,6 +304,83 @@ def test_tenant_brain_blocks_reach_planner_and_checker_when_enabled(db_session, 
     assert "- Pets: Has a dog" in fake.calls[2]["prompt"]
     assert "## Free-Text Brain Entries" in fake.calls[2]["prompt"]
     assert "- Prefers ground floor" in fake.calls[2]["prompt"]
+
+
+def test_action_items_reach_planner_and_checker_regardless_of_status(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+
+    tag = ActionTagDefinition(name="Plumbing", color="#0ea5e9")
+    db_session.add(tag)
+    db_session.commit()
+
+    _open_item = action_item_service.create(
+        db_session,
+        tenant.id,
+        "Fix leak in apartment 3",
+        due_date=date(2026, 8, 27),
+        tag_ids=[tag.id],
+        priority="p1",
+    )
+    dismissed_item = action_item_service.create(
+        db_session,
+        tenant.id,
+        "Double-check Wi-Fi extender",
+        due_date=date(2026, 8, 28),
+        priority="p2",
+    )
+    done_item = action_item_service.create(
+        db_session,
+        tenant.id,
+        "Send welcome message",
+        due_date=date(2026, 8, 26),
+        priority="p3",
+    )
+    action_item_service.dismiss(db_session, dismissed_item)
+    action_item_service.complete(db_session, done_item)
+
+    fake = fake_gemini([_plan(template.id), "Here's the reply.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Late arrival?"
+    )
+    db_session.commit()
+
+    expected_open = "- [open] (p1) Fix leak in apartment 3 - due 2026-08-27 [tags: Plumbing]"
+    expected_dismissed = "- [dismissed] (p2) Double-check Wi-Fi extender - due 2026-08-28"
+    expected_done = "- [done] (p3) Send welcome message - due 2026-08-26"
+    planner_prompt = fake.calls[0]["prompt"]
+    checker_prompt = fake.calls[2]["prompt"]
+    for prompt in (planner_prompt, checker_prompt):
+        assert "## Action Items" in prompt
+        assert expected_open in prompt
+        assert expected_dismissed in prompt
+        assert expected_done in prompt
+
+
+def test_tenant_with_no_action_items_gets_a_placeholder_line(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+    fake = fake_gemini([_plan(template.id), "Here's the reply.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Late arrival?"
+    )
+    db_session.commit()
+
+    assert "No action items on file." in fake.calls[0]["prompt"]
+    assert "No action items on file." in fake.calls[2]["prompt"]
+
+
+def test_action_items_block_defaults_match_planner_and_checker_registry():
+    assert ai_agent_orchestrator.ai_prompt_blocks.DEFAULTS_BY_ROLE[ai_agent_orchestrator.PLANNER_ROLE]["ctx_actions"] == "## Action Items"
+    assert ai_agent_orchestrator.ai_prompt_blocks.DEFAULTS_BY_ROLE[ai_agent_orchestrator.CHECKER_ROLE]["ctx_actions"] == "## Action Items"
 
 
 def test_unsupported_attachment_is_skipped_and_not_sent_to_the_model(db_session, fake_gemini):

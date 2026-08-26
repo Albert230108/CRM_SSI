@@ -48,8 +48,8 @@ class PromptBlock:
     group: str = STRUCTURE_GROUP
 
 
-def _context_blocks(*, include_inbound: bool) -> tuple[PromptBlock, ...]:
-    """The `##` headings on the shared context blocks, which every role emits."""
+def _context_blocks(*, include_inbound: bool, include_actions: bool = False) -> tuple[PromptBlock, ...]:
+    """The `##` headings on the shared context blocks. Some callers add action items too."""
     blocks = [
         PromptBlock(
             key="ctx_history",
@@ -87,6 +87,16 @@ def _context_blocks(*, include_inbound: bool) -> tuple[PromptBlock, ...]:
             group=CONTEXT_GROUP,
         ),
     ]
+    if include_actions:
+        blocks.append(
+            PromptBlock(
+                key="ctx_actions",
+                label="Action items heading",
+                help="Sits above the tenant's action items.",
+                default="## Action Items",
+                group=CONTEXT_GROUP,
+            )
+        )
     if include_inbound:
         blocks.append(
             PromptBlock(
@@ -188,7 +198,7 @@ PLANNER_BLOCKS: tuple[PromptBlock, ...] = (
             "considered and why you rejected each. Set `should_reply` to false if no reply is warranted."
         ),
     ),
-) + _context_blocks(include_inbound=True)
+) + _context_blocks(include_inbound=True, include_actions=True)
 
 
 CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
@@ -305,7 +315,7 @@ CHECKER_BLOCKS: tuple[PromptBlock, ...] = (
             "empty if the sections already shown are enough."
         ),
     ),
-) + _context_blocks(include_inbound=True)
+) + _context_blocks(include_inbound=True, include_actions=True)
 
 
 DRAFTER_BLOCKS: tuple[PromptBlock, ...] = (

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from app.models.action_item import ActionItem
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.finance import Finance as FinanceRecord
 from app.models.gmail_integration import ConversationMessage
@@ -171,6 +172,30 @@ def _build_notes_context(tenant: Tenant, blocks: dict[str, str] | None = None) -
     if not notes:
         return ai_prompt_blocks.join(heading, "No internal notes on file.")
     return ai_prompt_blocks.join(heading, notes)
+
+
+def _render_action_item_line(item: ActionItem) -> str:
+    bits = [f"[{item.status}]"]
+    if item.priority:
+        bits.append(f"({item.priority})")
+    bits.append(item.title)
+    if item.due_date:
+        bits.append(f"- due {item.due_date.isoformat()}")
+    tag_names = [link.tag.name for link in item.tag_links if link.tag]
+    if tag_names:
+        bits.append(f"[tags: {', '.join(tag_names)}]")
+    return "- " + " ".join(bits)
+
+
+def _build_action_items_context(db: Session, tenant: Tenant, blocks: dict[str, str] | None = None) -> str:
+    from app.services import action_item_service
+
+    heading = _blocks(blocks)["ctx_actions"]
+    items = action_item_service.list_for_tenant(db, tenant.id)
+    if not items:
+        return ai_prompt_blocks.join(heading, "No action items on file.")
+    lines = [_render_action_item_line(item) for item in items]
+    return ai_prompt_blocks.join(heading, "\n".join(lines))
 
 
 def _build_history_context(
