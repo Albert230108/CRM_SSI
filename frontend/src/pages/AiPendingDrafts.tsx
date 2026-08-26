@@ -11,6 +11,7 @@ type AiAutoDraftItem = {
   tenant_name: string | null
   channel: string
   generated_text: string
+  formatted_text: string | null
   quoted_context: string | null
   status: string
   scheduled_send_at: string | null
@@ -92,6 +93,22 @@ export default function AiPendingDrafts() {
     navigate(`/dashboard/tenant/${draft.tenant_id}`)
   }
 
+  const renderDraftPreview = (draft: AiAutoDraftItem) => {
+    const text = (draft.formatted_text || draft.generated_text || '').trim()
+    if (!text) return null
+    if (draft.channel === 'email' && draft.formatted_text) {
+      return (
+        <iframe
+          title={`Formatted email preview for draft ${draft.id}`}
+          sandbox=""
+          srcDoc={`<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#111827;margin:0;padding:0}p{margin:0 0 1em}ul,ol{margin:0 0 1em 1.25em}li{margin:0 0 .35em}a{color:#0f766e}</style></head><body>${draft.formatted_text}</body></html>`}
+          className="mt-1.5 h-56 w-full rounded-lg border border-gray-200 bg-white"
+        />
+      )
+    }
+    return <p className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{text}</p>
+  }
+
   const submitRedo = async (draft: AiAutoDraftItem) => {
     const what = redoWhat.trim()
     if (!what || redoSubmitting) return
@@ -132,7 +149,7 @@ export default function AiPendingDrafts() {
                   {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
-                <p className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">{draft.generated_text}</p>
+                {renderDraftPreview(draft)}
               </div>
             </div>
             <input

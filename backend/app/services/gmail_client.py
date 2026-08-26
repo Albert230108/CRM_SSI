@@ -120,6 +120,7 @@ def _send_gmail_message(
     to_email: str,
     subject: str,
     body_text: str,
+    body_html: str | None = None,
     from_email: str,
     subject_prefix: str,
     in_reply_to_message_id: str | None = None,
@@ -139,6 +140,8 @@ def _send_gmail_message(
     if references:
         message["References"] = references
     message.set_content(body_text)
+    if body_html:
+        message.add_alternative(body_html, subtype="html")
 
     # add_attachment promotes the message to multipart/mixed on the first call, so a send
     # with no attachments produces exactly the same single-part bytes it always did.
@@ -166,6 +169,7 @@ def send_gmail_reply(
     to_email: str,
     subject: str,
     body_text: str,
+    body_html: str | None = None,
     from_email: str,
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
@@ -177,6 +181,7 @@ def send_gmail_reply(
         to_email=to_email,
         subject=subject,
         body_text=body_text,
+        body_html=body_html,
         from_email=from_email,
         subject_prefix="Re:",
         in_reply_to_message_id=in_reply_to_message_id,
@@ -192,6 +197,7 @@ def send_gmail_forward(
     to_email: str,
     subject: str,
     body_text: str,
+    body_html: str | None = None,
     from_email: str,
     in_reply_to_message_id: str | None = None,
     references: str | None = None,
@@ -203,6 +209,7 @@ def send_gmail_forward(
         to_email=to_email,
         subject=subject,
         body_text=body_text,
+        body_html=body_html,
         from_email=from_email,
         subject_prefix="Fwd:",
         in_reply_to_message_id=in_reply_to_message_id,

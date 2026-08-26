@@ -91,6 +91,7 @@ def apply_planner_result_to_draft(
         result=result,
     )
     draft.generated_text = result.generated_text or ""
+    draft.formatted_text = result.formatted_text
     draft.quoted_context = _build_quoted_context(inbound_text)
     draft.template_id = result.template_id
     draft.status = status_value
@@ -133,6 +134,7 @@ def _generate_draft_via_planner(
         email_thread_id=trigger.email_thread_id,
         whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
         generated_text=result.generated_text or "",
+        formatted_text=result.formatted_text,
         quoted_context=_build_quoted_context(inbound_text),
         status="pending",
         scheduled_send_at=None,
@@ -327,6 +329,7 @@ def _send_email_draft(db: Session, draft: AiAutoDraft) -> bool:
             to_email=to_email,
             subject=conversation.subject or "",
             body_text=draft.generated_text,
+            body_html=draft.formatted_text or None,
             from_email=account.email_address,
             in_reply_to_message_id=in_reply_to_message_id,
             references=references,
@@ -385,12 +388,13 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> bool:
         logger.warning("Cannot auto-send WhatsApp draft: no destination chat/phone draft_id=%s", draft.id)
         return False
 
+    message = draft.formatted_text or draft.generated_text
     try:
         whatsapp_result = asyncio.run(
             send_whatsapp_message(
                 {
                     "to": whatsapp_to,
-                    "message": draft.generated_text,
+                    "message": message,
                     "tenant_id": draft.tenant_id,
                     "whatsapp_endpoint_id": endpoint.id,
                     "external_account_id": endpoint.external_account_id,
@@ -416,7 +420,7 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> bool:
             or (whatsapp_result.get("provider_message_id") if isinstance(whatsapp_result, dict) else None)
         ),
         subject=None,
-        message=draft.generated_text,
+        message=message,
         created_at=datetime.now(timezone.utc),
         ai_generated=True,
     )

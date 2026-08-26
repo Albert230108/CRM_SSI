@@ -155,6 +155,7 @@ export default function AiAgentProfiles() {
       {renderRole('drafter', 'Drafter profiles', 'Writes the reply itself. Prompt text only — model, sampling and context still come from the reply template.')}
       {renderRole('brain_writer', 'Brain writer profiles', 'Decides, independently of the planner, whether a message is worth remembering long-term for a tenant.')}
       {renderRole('action_writer', 'Action writer profiles', 'Decides, independently of the planner and brain writer, whether a tenant’s action-item list needs a new task or a change to an existing one.')}
+      {renderRole('formatter', 'Formatter profiles', 'Turns an approved plain-text reply into HTML for email or markdown for WhatsApp without changing the meaning.')}
       {renderRole('memory_qa', 'Memory QA profiles', 'Answers ad-hoc tenant questions using the context you choose below.')}
       {renderRole('memory_redo', 'Redo log agent profiles', 'Reads redo logs and suggests durable rule changes for review.')}
 

@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AgentRole = Literal["planner", "checker", "drafter", "brain_writer", "action_writer", "memory_redo", "memory_qa"]
+AgentRole = Literal["planner", "checker", "drafter", "brain_writer", "action_writer", "formatter", "memory_redo", "memory_qa"]
 HistoryChannels = Literal["both", "inbound", "email", "whatsapp"]
 NoMatchBehaviour = Literal["escalate", "skip"]
 

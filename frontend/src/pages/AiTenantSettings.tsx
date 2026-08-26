@@ -34,12 +34,14 @@ type TenantAiSettings = {
   brain_writer_profile_id: number | null
   action_writer_enabled: boolean
   action_writer_profile_id: number | null
+  formatter_enabled: boolean
+  formatter_profile_id: number | null
 }
 
 type AgentProfileOption = {
   id: number
   name: string
-  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'memory_redo'
+  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'memory_redo'
   is_default: boolean
 }
 
@@ -62,6 +64,8 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
   brain_writer_profile_id: null,
   action_writer_enabled: false,
   action_writer_profile_id: null,
+  formatter_enabled: false,
+  formatter_profile_id: null,
 })
 
 export default function AiTenantSettings() {
@@ -931,6 +935,46 @@ export default function AiTenantSettings() {
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'action_writer').map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-2.5">
+                <p className="text-sm font-semibold text-gray-900">Formatter</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  Independent of the draft-generation pipeline above: when enabled, the approved plain-text reply is
+                  reformatted into email HTML or WhatsApp markdown before it is sent. If formatting fails, the raw
+                  draft still goes out.
+                </p>
+                <label className="mt-2 flex items-center gap-2 text-sm text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={settings.formatter_enabled}
+                    onChange={(event) =>
+                      setSettings((current) => (current ? { ...current, formatter_enabled: event.target.checked } : current))
+                    }
+                  />
+                  Enable rich formatting for this tenant
+                </label>
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="formatter-profile">
+                    Formatter profile
+                  </label>
+                  <select
+                    id="formatter-profile"
+                    value={settings.formatter_profile_id ?? ''}
+                    disabled={!settings.formatter_enabled}
+                    onChange={(event) =>
+                      setSettings((current) =>
+                        current ? { ...current, formatter_profile_id: event.target.value ? Number(event.target.value) : null } : current,
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                  >
+                    <option value="">Use the default</option>
+                    {agentProfiles.filter((profile) => profile.role === 'formatter').map((profile) => (
                       <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
                     ))}
                   </select>

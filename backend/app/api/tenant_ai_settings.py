@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.ai_agent_profile import ACTION_WRITER_ROLE, BRAIN_WRITER_ROLE, CHECKER_ROLE, DRAFTER_ROLE, PLANNER_ROLE, AiAgentProfile
+from app.models.ai_agent_profile import ACTION_WRITER_ROLE, BRAIN_WRITER_ROLE, CHECKER_ROLE, DRAFTER_ROLE, FORMATTER_ROLE, PLANNER_ROLE, AiAgentProfile
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
@@ -66,6 +66,8 @@ def _to_read(db: Session, settings: TenantAiSettings) -> TenantAiSettingsRead:
         brain_writer_profile_id=settings.brain_writer_profile_id,
         action_writer_enabled=settings.action_writer_enabled,
         action_writer_profile_id=settings.action_writer_profile_id,
+        formatter_enabled=getattr(settings, "formatter_enabled", False),
+        formatter_profile_id=getattr(settings, "formatter_profile_id", None),
     )
 
 
@@ -135,6 +137,8 @@ def update_tenant_ai_settings(
     settings.brain_writer_profile_id = _validated_profile_id(db, payload.brain_writer_profile_id, BRAIN_WRITER_ROLE)
     settings.action_writer_enabled = payload.action_writer_enabled
     settings.action_writer_profile_id = _validated_profile_id(db, payload.action_writer_profile_id, ACTION_WRITER_ROLE)
+    settings.formatter_enabled = payload.formatter_enabled
+    settings.formatter_profile_id = _validated_profile_id(db, payload.formatter_profile_id, FORMATTER_ROLE)
 
     db.commit()
     db.refresh(settings)

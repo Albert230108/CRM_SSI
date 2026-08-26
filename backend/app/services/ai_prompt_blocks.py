@@ -19,6 +19,7 @@ from typing import Any
 PLANNER_ROLE = "planner"
 CHECKER_ROLE = "checker"
 DRAFTER_ROLE = "drafter"
+FORMATTER_ROLE = "formatter"
 MEMORY_REDO_ROLE = "memory_redo"
 MEMORY_QA_ROLE = "memory_qa"
 
@@ -387,6 +388,61 @@ DRAFTER_BLOCKS: tuple[PromptBlock, ...] = (
 ) + _context_blocks(include_inbound=True)
 
 
+FORMATTER_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        key="preamble",
+        label="Role preamble",
+        help="The opening line that tells the model what job it is doing. Emitted first.",
+        default=(
+            "You are the formatter for a short-stay rental CRM. Rewrite an approved plain-text reply "
+            "into channel-appropriate output without changing its meaning."
+        ),
+    ),
+    PromptBlock(
+        key="instructions_header",
+        label="Instructions heading",
+        help="Sits above the Instructions you wrote for this profile. Omitted when Instructions is blank.",
+        default=_INSTRUCTIONS_HEADER_DEFAULT,
+    ),
+    PromptBlock(
+        key="email",
+        label="Email formatting rule",
+        help="Only emitted when formatting an email reply. Keep the result as HTML, without wrapper tags.",
+        default=(
+            "## Email Formatting\n"
+            "Convert the reply to HTML. Preserve paragraphs and line breaks, use simple safe inline "
+            "HTML, and do not add <html> or <body> wrappers."
+        ),
+    ),
+    PromptBlock(
+        key="whatsapp",
+        label="WhatsApp formatting rule",
+        help="Only emitted when formatting a WhatsApp reply. Use WhatsApp markdown, never HTML.",
+        default=(
+            "## WhatsApp Formatting\n"
+            "Convert the reply to WhatsApp markdown. Use *bold*, _italic_, ~strikethrough~, and - "
+            "for bullet lines. Never introduce HTML."
+        ),
+    ),
+    PromptBlock(
+        key="draft",
+        label="Approved draft heading",
+        help="Sits above the plain-text draft being reformatted.",
+        default="## Approved Plain-Text Draft",
+    ),
+    PromptBlock(
+        key="output",
+        label="Output instruction",
+        help="Emitted last. Keep the `formatted_text` field name because the response schema enforces it.",
+        default=(
+            "## Output\n"
+            "Return JSON only with a `formatted_text` field containing the final formatted reply."
+        ),
+    ),
+)
+
+
+
 MEMORY_QA_BLOCKS: tuple[PromptBlock, ...] = (
     PromptBlock(
         key="preamble",
@@ -617,6 +673,7 @@ BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     PLANNER_ROLE: PLANNER_BLOCKS,
     CHECKER_ROLE: CHECKER_BLOCKS,
     DRAFTER_ROLE: DRAFTER_BLOCKS,
+    FORMATTER_ROLE: FORMATTER_BLOCKS,
     MEMORY_QA_ROLE: MEMORY_QA_BLOCKS,
     MEMORY_REDO_ROLE: MEMORY_REDO_BLOCKS,
 }

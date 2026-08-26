@@ -32,4 +32,8 @@ class TenantAiSettings(Base):
     # step runs for this tenant.
     action_writer_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     action_writer_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
+    # Independent of planner_mode and the raw draft/checker pipeline: whether the formatter stage
+    # should turn an approved plain-text reply into channel-specific output.
+    formatter_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    formatter_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

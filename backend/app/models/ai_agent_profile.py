@@ -15,6 +15,9 @@ BRAIN_WRITER_ROLE = "brain_writer"
 # action_writer_service.py. New items are created directly; modify/delete proposals require
 # human approval via MemorySuggestion.
 ACTION_WRITER_ROLE = "action_writer"
+# Formats an already-approved draft into channel-specific output - HTML for email, markdown for
+# WhatsApp. Never changes the meaning of the reply itself.
+FORMATTER_ROLE = "formatter"
 # Reads a redo's "what"/"why" feedback and proposes working-memory/rule changes for a human to
 # approve - see memory_redo_service.py. Never applies anything itself.
 MEMORY_REDO_ROLE = "memory_redo"

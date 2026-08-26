@@ -25,6 +25,10 @@ class TenantAiSettingsRead(BaseModel):
     # agent runs for this tenant.
     action_writer_enabled: bool = False
     action_writer_profile_id: int | None = None
+    # Independent of the raw planner/checker draft pipeline - whether the formatter stage should
+    # create channel-specific rich output for approved drafts.
+    formatter_enabled: bool = False
+    formatter_profile_id: int | None = None
 
 
 class TenantAiSettingsUpdate(BaseModel):
@@ -43,6 +47,8 @@ class TenantAiSettingsUpdate(BaseModel):
     brain_writer_profile_id: int | None = None
     action_writer_enabled: bool = False
     action_writer_profile_id: int | None = None
+    formatter_enabled: bool = False
+    formatter_profile_id: int | None = None
 
 
 class BulkTenantAiTemplateAssignment(BaseModel):

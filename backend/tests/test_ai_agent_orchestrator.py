@@ -149,6 +149,88 @@ def test_happy_path_completes_on_first_check(db_session, fake_gemini):
     assert stages == ["planner", "drafter", "checker"]
 
 
+def test_formatter_disabled_leaves_formatted_text_none(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _profile(db_session, "formatter")
+    _settings(db_session, tenant)
+    fake = fake_gemini([_plan(template.id), "Raw draft text.", {"passed": True, "feedback": ""}])
+
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Can I arrive at 22:00?"
+    )
+    db_session.commit()
+
+    assert result.generated_text == "Raw draft text."
+    assert result.formatted_text is None
+    assert len(fake.calls) == 3
+
+
+@pytest.mark.parametrize(
+    ("channel", "formatted_text"),
+    [("email", "<p><strong>Hello</strong></p>"), ("whatsapp", "*Hello*")],
+)
+def test_formatter_enabled_populates_formatted_text_per_channel(db_session, fake_gemini, channel, formatted_text):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _profile(db_session, "formatter")
+    _settings(db_session, tenant, formatter_enabled=True)
+    fake = fake_gemini([
+        _plan(template.id),
+        "Raw draft text.",
+        {"passed": True, "feedback": ""},
+        {"formatted_text": formatted_text},
+    ])
+
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel=channel, mode="manual", inbound_text="Can I arrive at 22:00?"
+    )
+    db_session.commit()
+
+    assert result.generated_text == "Raw draft text."
+    assert result.formatted_text == formatted_text
+    assert len(fake.calls) == 4
+    assert ("## Email Formatting" if channel == "email" else "## WhatsApp Formatting") in fake.calls[-1]["prompt"]
+    assert "Raw draft text." in fake.calls[-1]["prompt"]
+    assert [step.stage for step in db_session.query(AiAgentRun).filter(AiAgentRun.id == result.run_id).one().steps] == [
+        "planner",
+        "drafter",
+        "checker",
+        "formatter",
+    ]
+
+
+def test_formatter_failure_soft_fails_without_blocking_draft(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _profile(db_session, "formatter")
+    _settings(db_session, tenant, formatter_enabled=True)
+    fake = fake_gemini([
+        _plan(template.id),
+        "Raw draft text.",
+        {"passed": True, "feedback": ""},
+        gemini_client.GeminiClientError("formatter boom"),
+    ])
+
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Can I arrive at 22:00?"
+    )
+    db_session.commit()
+
+    assert result.status == "completed"
+    assert result.generated_text == "Raw draft text."
+    assert result.formatted_text is None
+    assert len(fake.calls) == 4
+    run = db_session.query(AiAgentRun).filter(AiAgentRun.id == result.run_id).one()
+    assert [step.stage for step in run.steps] == ["planner", "drafter", "checker", "formatter"]
+
+
 def test_attachments_reach_every_stage_as_file_parts_and_an_explicit_instruction(db_session, fake_gemini):
     """Regression test: an eligible attachment must not just ride along as an inline file part -
     every stage's prompt needs an explicit instruction telling the model it's there and that it

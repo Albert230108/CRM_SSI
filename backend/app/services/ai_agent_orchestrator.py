@@ -19,7 +19,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.admin_settings import AdminSettings
-from app.models.ai_agent_profile import CHECKER_ROLE, DRAFTER_ROLE, PLANNER_ROLE, AiAgentProfile
+from app.models.ai_agent_profile import CHECKER_ROLE, DRAFTER_ROLE, FORMATTER_ROLE, PLANNER_ROLE, AiAgentProfile
 from app.models.ai_agent_run import (
     STATUS_COMPLETED,
     STATUS_ESCALATED,
@@ -74,12 +74,21 @@ CHECKER_SCHEMA = {
     "required": ["passed", "feedback"],
 }
 
+FORMATTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "formatted_text": {"type": "string"},
+    },
+    "required": ["formatted_text"],
+}
+
 
 @dataclass
 class PlannerRunResult:
     status: str
     run_id: int | None = None
     generated_text: str | None = None
+    formatted_text: str | None = None
     template_id: int | None = None
     checker_passed: bool = False
     checker_feedback: str | None = None
@@ -455,6 +464,70 @@ def _build_checker_prompt(
     return "\n\n".join(part for part in parts if part.strip())
 
 
+def _build_formatter_prompt(
+    db: Session,
+    tenant: Tenant,
+    profile: AiAgentProfile,
+    *,
+    channel: str,
+    draft: str,
+) -> str:
+    """Format an approved draft into channel-specific output without changing its meaning."""
+    text = ai_prompt_blocks.resolve_blocks(profile, FORMATTER_ROLE)
+    parts: list[str] = []
+
+    preamble = (text["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
+
+    instructions = (profile.instructions or "").strip()
+    if instructions:
+        parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
+
+    if channel == "email":
+        channel_block = (text["email"] or "").strip()
+    else:
+        channel_block = (text["whatsapp"] or "").strip()
+    if channel_block:
+        parts.append(channel_block)
+
+    parts.append(ai_prompt_blocks.join(text["draft"], draft))
+
+    output = (text["output"] or "").strip()
+    if output:
+        parts.append(output)
+    return "\n\n".join(part for part in parts if part.strip())
+
+
+def _run_formatter(
+    db: Session,
+    *,
+    recorder: _RunRecorder,
+    tenant: Tenant,
+    channel: str,
+    draft: str,
+    formatter_profile: AiAgentProfile,
+) -> str | None:
+    formatter_prompt = _build_formatter_prompt(db, tenant, formatter_profile, channel=channel, draft=draft)
+    try:
+        formatter_result = gemini_client.generate(
+            formatter_prompt,
+            model=formatter_profile.model,
+            temperature=formatter_profile.temperature,
+            max_output_tokens=formatter_profile.max_output_tokens,
+            response_schema=FORMATTER_SCHEMA,
+        )
+    except Exception as exc:
+        recorder.record("formatter", prompt=formatter_prompt, error=str(exc), model=formatter_profile.model)
+        logger.exception("Formatter failed tenant_id=%s channel=%s", tenant.id, channel)
+        return None
+
+    recorder.record("formatter", prompt=formatter_prompt, result=formatter_result)
+    parsed = formatter_result.parsed or {}
+    formatted_text = str(parsed.get("formatted_text") or "").strip()
+    return formatted_text or None
+
+
 def run_planner_loop(
     db: Session,
     *,
@@ -705,11 +778,29 @@ def run_planner_loop(
         rejected_draft = draft_text
 
     if checker_passed:
+        formatter_profile = None
+        formatted_text = None
+        if ai_settings is not None and ai_settings.formatter_enabled:
+            formatter_profile = resolve_profile(
+                db,
+                FORMATTER_ROLE,
+                ai_settings.formatter_profile_id if ai_settings else None,
+            )
+        if formatter_profile is not None:
+            formatted_text = _run_formatter(
+                db,
+                recorder=recorder,
+                tenant=tenant,
+                channel=channel,
+                draft=draft_text,
+                formatter_profile=formatter_profile,
+            )
         recorder.finish(STATUS_COMPLETED, final_template_id=template.id, final_text=draft_text)
         return PlannerRunResult(
             status=STATUS_COMPLETED,
             run_id=run.id,
             generated_text=draft_text,
+            formatted_text=formatted_text,
             template_id=template.id,
             checker_passed=True,
             attempts=run.attempts,
@@ -729,6 +820,7 @@ def run_planner_loop(
         status=STATUS_NEEDS_REVIEW,
         run_id=run.id,
         generated_text=draft_text,
+        formatted_text=None,
         template_id=template.id,
         checker_passed=False,
         checker_feedback=feedback,

@@ -13,6 +13,9 @@ class AiAutoDraft(Base):
     email_thread_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
     whatsapp_endpoint_id = Column(Integer, ForeignKey("tenant_channel_endpoints.id", ondelete="SET NULL"), nullable=True)
     generated_text = Column(Text, nullable=False)
+    # The formatter's output, if any. Stored separately so generated_text stays the raw draft
+    # used for audit, checker verification and regeneration.
+    formatted_text = Column(Text, nullable=True)
     # The inbound message this draft answers, framed for human display only (e.g. "Replying to:
     # ..."). Never concatenated into generated_text - that column is exactly what gets sent to
     # the tenant, so the quoted context must live separately or it leaks into the outbound message.

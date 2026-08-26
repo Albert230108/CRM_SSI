@@ -131,6 +131,7 @@ class AiPlanResponse(BaseModel):
     status: str
     draft_id: int | None = None
     generated_text: str | None = None
+    formatted_text: str | None = None
     template_id: int | None = None
     run_id: int | None = None
     checker_passed: bool = False
@@ -1434,6 +1435,7 @@ def redo_tenant_ai_planner(
     return AiPlanResponse(
         status=result.status,
         generated_text=result.generated_text,
+        formatted_text=result.formatted_text,
         template_id=result.template_id,
         run_id=result.run_id,
         checker_passed=result.checker_passed,

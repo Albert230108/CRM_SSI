@@ -107,6 +107,7 @@ def test_send_scheduled_draft_email_success_marks_sent_and_ai_generated(db_sessi
         channel="email",
         email_thread_id=conversation.id,
         generated_text="Check-in is at 3pm",
+        formatted_text="<p>Check-in is at <strong>3pm</strong></p>",
         status="pending_auto_send",
         scheduled_send_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
@@ -114,7 +115,13 @@ def test_send_scheduled_draft_email_success_marks_sent_and_ai_generated(db_sessi
     db_session.commit()
 
     monkeypatch.setattr(ai_auto_draft_service, "build_gmail_credentials", lambda account: object())
-    monkeypatch.setattr(ai_auto_draft_service, "send_gmail_reply", lambda credentials, **kwargs: {"id": "gmail-msg-id"})
+    captured = {}
+
+    def fake_send_gmail_reply(credentials, **kwargs):
+        captured.update(kwargs)
+        return {"id": "gmail-msg-id"}
+
+    monkeypatch.setattr(ai_auto_draft_service, "send_gmail_reply", fake_send_gmail_reply)
 
     result = ai_auto_draft_service.send_scheduled_draft(db_session, draft)
     db_session.commit()
@@ -125,6 +132,8 @@ def test_send_scheduled_draft_email_success_marks_sent_and_ai_generated(db_sessi
     communication = db_session.query(Communication).filter(Communication.id == draft.sent_communication_id).first()
     assert communication.ai_generated is True
     assert communication.message == "Check-in is at 3pm"
+    assert captured["body_text"] == "Check-in is at 3pm"
+    assert captured["body_html"] == "<p>Check-in is at <strong>3pm</strong></p>"
 
 
 def test_send_scheduled_draft_email_failure_leaves_draft_pending_auto_send(db_session, monkeypatch):
@@ -192,13 +201,17 @@ def test_send_scheduled_draft_whatsapp_success(db_session, monkeypatch):
         channel="whatsapp",
         whatsapp_endpoint_id=endpoint.id,
         generated_text="Check-in is at 3pm",
+        formatted_text="*Check-in* is at 3pm",
         status="pending_auto_send",
         scheduled_send_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
     db_session.add(draft)
     db_session.commit()
 
+    sent_payloads = []
+
     async def fake_send_whatsapp_message(payload):
+        sent_payloads.append(payload)
         return {"whatsapp_message_id": "wamid-auto-1"}
 
     monkeypatch.setattr(ai_auto_draft_service, "send_whatsapp_message", fake_send_whatsapp_message)
@@ -211,6 +224,8 @@ def test_send_scheduled_draft_whatsapp_success(db_session, monkeypatch):
     communication = db_session.query(Communication).filter(Communication.id == draft.sent_communication_id).first()
     assert communication.ai_generated is True
     assert communication.channel == "whatsapp"
+    assert communication.message == "*Check-in* is at 3pm"
+    assert sent_payloads[0]["message"] == "*Check-in* is at 3pm"
 
 
 def test_send_scheduled_draft_whatsapp_ambiguous_endpoint_fails(db_session):
