@@ -14,6 +14,22 @@ def list_definitions(db: Session, *, active_only: bool = False) -> list[ActionTa
     return query.order_by(ActionTagDefinition.position, ActionTagDefinition.id).all()
 
 
+def resolve_tag_ids(db: Session, tag_names: list[str] | None) -> list[int]:
+    if not tag_names:
+        return []
+    cleaned = [name.strip() for name in tag_names if isinstance(name, str) and name.strip()]
+    unique_names = list(dict.fromkeys(cleaned))
+    if not unique_names:
+        return []
+    tags = (
+        db.query(ActionTagDefinition)
+        .filter(ActionTagDefinition.name.in_(unique_names), ActionTagDefinition.is_active.is_(True))
+        .all()
+    )
+    tags_by_name = {tag.name: tag.id for tag in tags}
+    return [tags_by_name[name] for name in unique_names if name in tags_by_name]
+
+
 def add_definition(db: Session, name: str, color: str) -> ActionTagDefinition:
     name = (name or "").strip()
     color = (color or "").strip()

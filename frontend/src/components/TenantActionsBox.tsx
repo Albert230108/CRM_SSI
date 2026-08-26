@@ -250,10 +250,13 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
         body: JSON.stringify({ text }),
       })
       if (!response.ok) throw new Error('Could not parse that into a task')
-      const parsed: { title: string; due_date: string | null; priority: Priority | null } = await response.json()
+      const parsed: { title: string; due_date: string | null; priority: Priority | null; tag_ids?: number[] | null } = await response.json()
       setNewTitle(parsed.title)
       setNewDueDate(parsed.due_date ?? '')
       setNewPriority(parsed.priority ?? '')
+      if (parsed.tag_ids?.length) {
+        setNewTagIds((prev) => Array.from(new Set([...prev, ...parsed.tag_ids!])))
+      }
       setQuickText('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not parse that into a task')

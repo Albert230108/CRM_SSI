@@ -105,7 +105,9 @@ def format_categorized_actions_message(buckets: ActionItemBuckets, *, tenant_nam
 def format_quick_add_confirmation(item: ActionItem) -> str:
     due = _format_date(item.due_date)
     priority = item.priority or "no priority"
-    return f"✅ Added general action: {item.title} (due: {due}, priority: {priority})"
+    tags = ", ".join(link.tag.name for link in item.tag_links) if item.tag_links else ""
+    extra = f", tags: {tags}" if tags else ""
+    return f"✅ Added general action: {item.title} (due: {due}, priority: {priority}{extra})"
 
 
 def format_quick_add_missing_text_message() -> str:

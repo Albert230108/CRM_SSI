@@ -253,12 +253,15 @@ export default function Actions() {
         headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
         body: JSON.stringify({ text }),
       })
-      const data = (await response.json().catch(() => null)) as { title?: string; due_date?: string | null; priority?: Priority | null; detail?: string | null } | null
+      const data = (await response.json().catch(() => null)) as { title?: string; due_date?: string | null; priority?: Priority | null; tag_ids?: number[] | null; detail?: string | null } | null
       if (!response.ok) throw new Error(data?.detail ?? 'Could not parse that into an action item')
       if (!data?.title) throw new Error('Could not parse that into an action item')
       setNewTitle(data.title)
       setNewDueDate(data.due_date ?? '')
       setNewPriority(data.priority ?? '')
+      if (data.tag_ids?.length) {
+        setNewTagIds((prev) => Array.from(new Set([...prev, ...data.tag_ids!])))
+      }
       setQuickAddText('')
     } catch (error) {
       showError(error instanceof Error ? error.message : 'Could not parse that into an action item')

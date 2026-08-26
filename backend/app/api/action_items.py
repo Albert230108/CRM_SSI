@@ -292,6 +292,7 @@ class ActionItemParseResult(BaseModel):
     title: str
     due_date: Optional[date] = None
     priority: Optional[Priority] = None
+    tag_ids: list[int] = []
 
 
 @router.post("/tenants/{tenant_id}/action-items/parse", response_model=ActionItemParseResult)
@@ -307,7 +308,7 @@ def parse_action_item_text(
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is required")
-    parsed = action_item_parse_service.parse_quick_add(text)
+    parsed = action_item_parse_service.parse_quick_add(text, db)
     if parsed is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not parse that into a task")
     return ActionItemParseResult(**parsed)
@@ -322,7 +323,7 @@ def parse_general_action_item_text(
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is required")
-    parsed = action_item_parse_service.parse_quick_add(text)
+    parsed = action_item_parse_service.parse_quick_add(text, db)
     if parsed is None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not parse that into a task")
     return ActionItemParseResult(**parsed)

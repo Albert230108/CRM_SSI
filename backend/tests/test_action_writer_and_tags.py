@@ -539,14 +539,32 @@ def test_approve_action_item_modify_fails_gracefully_when_item_already_dismissed
 # --- quick natural-language add endpoint ----------------------------------------------------
 
 
+def test_resolve_tag_ids_filters_inactive_dedupes_and_preserves_order(db_session):
+    from app.services import action_tag_service
+
+    active_a = ActionTagDefinition(name="Invoice", color="#0891b2", is_active=True)
+    inactive = ActionTagDefinition(name="Archived", color="#111111", is_active=False)
+    active_b = ActionTagDefinition(name="Follow-up", color="#f97316", is_active=True)
+    db_session.add_all([active_a, inactive, active_b])
+    db_session.commit()
+
+    result = action_tag_service.resolve_tag_ids(db_session, [" Follow-up ", "Invoice", "Invoice", "Archived", "Missing", " "])
+
+    assert result == [active_b.id, active_a.id]
+
+
 def test_parse_action_item_text_endpoint(user_client, db_session, monkeypatch):
     from app.services import action_item_parse_service, gemini_client
 
     tenant = _create_tenant(db_session)
+    tag_a = ActionTagDefinition(name="Invoice", color="#0891b2")
+    tag_b = ActionTagDefinition(name="Follow-up", color="#f97316")
+    db_session.add_all([tag_a, tag_b])
+    db_session.commit()
 
     def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
         return gemini_client.GenerationResult(
-            text="ignored", parsed={"title": "Call guest", "due_date": "2026-08-05", "priority": "p2"}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+            text="ignored", parsed={"title": "Call guest", "due_date": "2026-08-05", "priority": "p2", "tags": ["Invoice", "Follow-up"]}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
         )
 
     monkeypatch.setattr(action_item_parse_service.gemini_client, "generate", fake_generate)
@@ -558,14 +576,19 @@ def test_parse_action_item_text_endpoint(user_client, db_session, monkeypatch):
     assert body["title"] == "Call guest"
     assert body["due_date"] == "2026-08-05"
     assert body["priority"] == "p2"
+    assert body["tag_ids"] == [tag_a.id, tag_b.id]
 
 
 def test_parse_general_action_item_text_endpoint(user_client, db_session, monkeypatch):
     from app.services import action_item_parse_service, gemini_client
 
+    tag = ActionTagDefinition(name="General", color="#111111")
+    db_session.add(tag)
+    db_session.commit()
+
     def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
         return gemini_client.GenerationResult(
-            text="ignored", parsed={"title": "General task", "due_date": "2026-08-09", "priority": "p3"}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+            text="ignored", parsed={"title": "General task", "due_date": "2026-08-09", "priority": "p3", "tags": ["Missing"]}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
         )
 
     monkeypatch.setattr(action_item_parse_service.gemini_client, "generate", fake_generate)
@@ -577,6 +600,7 @@ def test_parse_general_action_item_text_endpoint(user_client, db_session, monkey
     assert body["title"] == "General task"
     assert body["due_date"] == "2026-08-09"
     assert body["priority"] == "p3"
+    assert body["tag_ids"] == []
 
 
 def test_create_general_action_item_endpoint_and_get_action_items_handles_null_tenant(user_client, db_session):

@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from app.models.action_item import ActionItem
+from app.models.action_tag_definition import ActionTagDefinition
 from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
@@ -237,6 +238,8 @@ def test_actions_all_lists_open_items_and_general_items(client, db_session, monk
 def test_actions_add_creates_general_item_and_confirms(client, db_session, monkeypatch):
     tenant = _create_tenant(db_session, booking_id="B-digest-add")
     user = _create_user(db_session, email="add-user@example.com")
+    tag = ActionTagDefinition(name="Invoice", color="#0891b2")
+    db_session.add(tag)
     db_session.add(AdminSettings(notification_whatsapp_external_account_id=NOTIFICATION_ACCOUNT_ID))
     db_session.commit()
 
@@ -244,7 +247,7 @@ def test_actions_add_creates_general_item_and_confirms(client, db_session, monke
 
     def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
         return gemini_client.GenerationResult(
-            text="ignored", parsed={"title": "Call plumber", "due_date": "2026-08-27", "priority": "p2"}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+            text="ignored", parsed={"title": "Call plumber", "due_date": "2026-08-27", "priority": "p2", "tags": ["Invoice"]}, model="fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
         )
 
     monkeypatch.setattr(action_item_parse_service.gemini_client, "generate", fake_generate)
@@ -257,12 +260,14 @@ def test_actions_add_creates_general_item_and_confirms(client, db_session, monke
     assert "Call plumber" in message
     assert "2026-08-27" in message
     assert "p2" in message
+    assert "Invoice" in message
 
     item = db_session.query(ActionItem).filter(ActionItem.title == "Call plumber").one()
     assert item.tenant_id is None
     assert item.created_by_user_id == user.id
     assert item.due_date == date(2026, 8, 27)
     assert item.priority == "p2"
+    assert item.tag_ids == [tag.id]
 
 
 def test_actions_add_replies_with_usage_when_text_is_missing(client, db_session, monkeypatch):
@@ -286,7 +291,7 @@ def test_actions_add_replies_when_parse_fails(client, db_session, monkeypatch):
 
     from app.services import action_item_parse_service
 
-    monkeypatch.setattr(action_item_parse_service, "parse_quick_add", lambda text: None)
+    monkeypatch.setattr(action_item_parse_service, "parse_quick_add", lambda text, db: None)
     sent_calls = _patch_confirmation_send(monkeypatch)
 
     response = _post_reply(client, sender=user.phone, message="actions add something ambiguous")

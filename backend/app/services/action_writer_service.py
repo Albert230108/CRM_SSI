@@ -188,22 +188,6 @@ def _build_prompt(
     return "\n\n".join(part for part in parts if part.strip())
 
 
-def _resolve_tag_ids(db: Session, tag_names: list[str] | None) -> list[int]:
-    if not tag_names:
-        return []
-    cleaned = [name.strip() for name in tag_names if isinstance(name, str) and name.strip()]
-    unique_names = list(dict.fromkeys(cleaned))
-    if not unique_names:
-        return []
-    tags = (
-        db.query(ActionTagDefinition)
-        .filter(ActionTagDefinition.name.in_(unique_names), ActionTagDefinition.is_active.is_(True))
-        .all()
-    )
-    tags_by_name = {tag.name: tag.id for tag in tags}
-    return [tags_by_name[name] for name in unique_names if name in tags_by_name]
-
-
 def _resolve_priority(raw: str | None) -> str | None:
     value = (raw or "").strip().lower()
     return value if value in _VALID_PRIORITIES else None
@@ -247,7 +231,7 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int,
             title,
             description,
             _resolve_due_date((raw_item or {}).get("due_date")),
-            tag_ids=_resolve_tag_ids(db, (raw_item or {}).get("tags")),
+            tag_ids=action_tag_service.resolve_tag_ids(db, (raw_item or {}).get("tags")),
             priority=_resolve_priority((raw_item or {}).get("priority")),
         )
         new_items_written += 1
@@ -270,7 +254,7 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int,
         priority = _resolve_priority((raw_item or {}).get("priority"))
         if priority is not None:
             proposed_value["priority"] = priority
-        tag_ids = _resolve_tag_ids(db, (raw_item or {}).get("tags"))
+        tag_ids = action_tag_service.resolve_tag_ids(db, (raw_item or {}).get("tags"))
         if tag_ids:
             proposed_value["tag_ids"] = tag_ids
         if not proposed_value:

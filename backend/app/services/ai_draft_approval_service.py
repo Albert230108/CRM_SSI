@@ -390,13 +390,14 @@ def try_handle_admin_reply(
         quick_add_text = whatsapp_action_digest_service.extract_quick_add_text(text or "")
         if not quick_add_text:
             return outcome(whatsapp_action_digest_service.format_quick_add_missing_text_message())
-        parsed = action_item_parse_service.parse_quick_add(quick_add_text)
+        parsed = action_item_parse_service.parse_quick_add(quick_add_text, db)
         if parsed is None:
             return outcome(whatsapp_action_digest_service.format_quick_add_parse_failed_message())
         item = action_item_service.create_general(
             db,
             parsed["title"],
             due_date=parsed.get("due_date"),
+            tag_ids=parsed.get("tag_ids"),
             priority=parsed.get("priority"),
             source="manual",
             created_by_user_id=user.id,

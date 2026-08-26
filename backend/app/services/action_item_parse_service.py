@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.services import gemini_client
+from sqlalchemy.orm import Session
+
+from app.services import action_tag_service, gemini_client
 
 _SCHEMA = {
     "type": "object",
@@ -14,6 +16,7 @@ _SCHEMA = {
         "title": {"type": "string"},
         "due_date": {"type": "string"},
         "priority": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["title"],
 }
@@ -21,19 +24,20 @@ _SCHEMA = {
 _VALID_PRIORITIES = {"p1", "p2", "p3", "p4"}
 
 
-def parse_quick_add(text: str) -> dict | None:
+def parse_quick_add(text: str, db: Session) -> dict | None:
     today = date.today().isoformat()
-    prompt = (
-        "Extract a task title and, if present, a due date and priority from this quick-add "
-        "text for a short-stay rental CRM's action-item list.\n"
-        f"Today's date is {today}. Resolve relative dates (e.g. 'tomorrow', 'next Friday') "
-        "against it and return due_date as YYYY-MM-DD, omitted if no date is implied.\n"
-        "priority is one of p1 (most urgent) to p4 (least urgent) - only set it if the text "
-        "clearly implies urgency, otherwise omit it.\n"
-        "Strip the date/time/priority phrase out of the returned title so it reads as a clean "
-        "task description.\n\n"
-        f'Text: "{text}"'
-    )
+    active_tags = action_tag_service.list_definitions(db, active_only=True)
+    prompt_parts = [
+        "Extract a task title and, if present, a due date, priority, and tags from this quick-add text for a short-stay rental CRM's action-item list.",
+        f"Today's date is {today}. Resolve relative dates (e.g. 'tomorrow', 'next Friday') against it and return due_date as YYYY-MM-DD, omitted if no date is implied.",
+        "priority is one of p1 (most urgent) to p4 (least urgent) - only set it if the text clearly implies urgency, otherwise omit it.",
+        "Strip the date/time/priority phrase out of the returned title so it reads as a clean task description.",
+    ]
+    if active_tags:
+        prompt_parts.append("tags must be zero or more exact names from the available tag list below, omitted if none clearly apply:")
+        prompt_parts.extend(f"- {tag.name}" for tag in active_tags)
+    prompt_parts.append(f'Text: "{text}"')
+    prompt = "\n".join(prompt_parts)
     try:
         result = gemini_client.generate(prompt, response_schema=_SCHEMA)
     except gemini_client.GeminiClientError:
@@ -56,4 +60,6 @@ def parse_quick_add(text: str) -> dict | None:
     if priority not in _VALID_PRIORITIES:
         priority = None
 
-    return {"title": title, "due_date": due_date, "priority": priority}
+    tag_ids = action_tag_service.resolve_tag_ids(db, parsed.get("tags"))
+
+    return {"title": title, "due_date": due_date, "priority": priority, "tag_ids": tag_ids}
