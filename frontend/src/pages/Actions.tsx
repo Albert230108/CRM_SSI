@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore'
 import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { formatDisplayDateShortMonth } from '../lib/date'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -170,7 +171,9 @@ export default function Actions() {
   const [showAddGeneralForm, setShowAddGeneralForm] = useState(false)
   const [quickAddText, setQuickAddText] = useState('')
   const [parsingQuickAdd, setParsingQuickAdd] = useState(false)
+  const [allTags, setAllTags] = useState<ActionTag[]>([])
   const [newTitle, setNewTitle] = useState('')
+  const [newTagIds, setNewTagIds] = useState<number[]>([])
   const [newDueDate, setNewDueDate] = useState('')
   const [newPriority, setNewPriority] = useState('')
   const [addingGeneral, setAddingGeneral] = useState(false)
@@ -218,12 +221,21 @@ export default function Actions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/action-tags?active_only=true`, { headers: authHeaders })
+      .then((response) => (response.ok ? response.json() : []))
+      .then(setAllTags)
+      .catch(() => setAllTags([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const visibleItems = priorityFilter ? items.filter((item) => item.priority === priorityFilter) : items
 
   const resetGeneralAddForm = () => {
     setQuickAddText('')
     setNewTitle('')
     setNewDueDate('')
+    setNewTagIds([])
     setNewPriority('')
   }
 
@@ -266,6 +278,7 @@ export default function Actions() {
         body: JSON.stringify({
           title,
           due_date: newDueDate || null,
+          tag_ids: newTagIds,
           priority: newPriority || null,
         }),
       })
@@ -425,6 +438,7 @@ export default function Actions() {
                   <option value="p4">P4</option>
                 </select>
               </div>
+              <TagChipSelector tags={allTags} selectedIds={newTagIds} onToggle={(tagId) => toggleSelectedTag(tagId, newTagIds, setNewTagIds)} />
               <div className="flex justify-end">
                 <button
                   type="button"
@@ -632,7 +646,7 @@ export default function Actions() {
                             {tag.name}
                           </span>
                         ))}
-                        {item.due_date ? <span>Due {item.due_date}</span> : null}
+                        {item.due_date ? <span>Due {formatDisplayDateShortMonth(item.due_date)}</span> : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 gap-2">

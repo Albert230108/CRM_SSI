@@ -10,8 +10,8 @@ class Beds24AvailabilitySummary(Base):
     rather than fetched live per draft - one row, overwritten each refresh, mirroring the
     AdminSettings singleton-row pattern.
 
-    `summary_text` is prose fed to AI-agent prompts as context (free/booked ranges for both
-    directions - see get_cached_summary). `rooms_json` is structured, free-ranges-only data for
+    `summary_text` is prose fed to AI-agent prompts as context (free check-in/check-out lines for
+    each room - see get_cached_summary). `rooms_json` is structured, free-ranges-only data for
     the Availability tab UI, which formats and labels dates itself - see
     beds24_availability_service.parse_availability_structured.
     """

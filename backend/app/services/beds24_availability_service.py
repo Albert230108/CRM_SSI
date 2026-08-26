@@ -25,6 +25,10 @@ def _format_date(value: date) -> str:
     return value.strftime("%b %-d")
 
 
+def _format_date_long(value: date) -> str:
+    return value.strftime("%a %d %b %Y")
+
+
 def _collapse_ranges(day_status: list[tuple[date, bool]]) -> list[tuple[date, date, bool]]:
     ranges: list[tuple[date, date, bool]] = []
     for day, available in sorted(day_status):
@@ -46,8 +50,9 @@ def _format_range(start: date, end: date, available: bool) -> str:
 
 
 def parse_availability_summary(raw_rooms: list[dict[str, Any]]) -> str:
-    """Collapses each room's per-date booleans into free/booked date ranges, e.g.
-    "Studio 1: booked Aug 25-28, free Aug 29-Sep 5" - never the raw per-date JSON.
+    """Collapses each room's per-date booleans into free check-in/check-out prose, e.g.
+    "Studio 1: Check in Mon 06 Aug 2026 — Check out Fri 10 Aug 2026" - never the raw
+    per-date JSON and never booked ranges.
     """
     if not raw_rooms:
         return "No availability data on file."
@@ -67,9 +72,13 @@ def parse_availability_summary(raw_rooms: list[dict[str, Any]]) -> str:
             day_status.append((day, bool(is_available)))
         if not day_status:
             continue
-        ranges = _collapse_ranges(day_status)
-        range_text = ", ".join(_format_range(start, end, available) for start, end, available in ranges)
-        lines.append(f"{name}: {range_text}")
+        free_ranges = [
+            f"Check in {_format_date_long(start)} — Check out {_format_date_long(end + timedelta(days=1))}"
+            for start, end, available in _collapse_ranges(day_status)
+            if available
+        ]
+        if free_ranges:
+            lines.append(f"{name}: {'; '.join(free_ranges)}")
 
     return "\n".join(lines) if lines else "No availability data on file."
 

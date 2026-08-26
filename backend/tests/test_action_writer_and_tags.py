@@ -580,12 +580,20 @@ def test_parse_general_action_item_text_endpoint(user_client, db_session, monkey
 
 
 def test_create_general_action_item_endpoint_and_get_action_items_handles_null_tenant(user_client, db_session):
-    create_response = user_client.post("/api/action-items", json={"title": "General item", "due_date": "2026-08-10", "priority": "p2"})
+    tag = ActionTagDefinition(name="General", color="#111111")
+    db_session.add(tag)
+    db_session.commit()
+
+    create_response = user_client.post(
+        "/api/action-items",
+        json={"title": "General item", "due_date": "2026-08-10", "priority": "p2", "tag_ids": [tag.id]},
+    )
     assert create_response.status_code == 201
     body = create_response.json()
     assert body["tenant_id"] is None
     assert body["tenant_name"] is None
     assert body["title"] == "General item"
+    assert body["tags"] == [{"id": tag.id, "name": "General", "color": "#111111"}]
 
     get_response = user_client.get("/api/action-items")
     assert get_response.status_code == 200

@@ -21,7 +21,7 @@ def test_parse_availability_summary_collapses_consecutive_ranges():
 
     summary = beds24_availability_service.parse_availability_summary(raw)
 
-    assert summary == "Studio 1: booked Aug 25–27, free Aug 28–29"
+    assert summary == "Studio 1: Check in Fri 28 Aug 2026 — Check out Sun 30 Aug 2026"
 
 
 def test_parse_availability_summary_spells_out_month_on_cross_month_range():
@@ -35,7 +35,7 @@ def test_parse_availability_summary_spells_out_month_on_cross_month_range():
 
     summary = beds24_availability_service.parse_availability_summary(raw)
 
-    assert summary == "Studio 1: free Aug 29–Sep 1"
+    assert summary == "Studio 1: Check in Sat 29 Aug 2026 — Check out Wed 02 Sep 2026"
 
 
 def test_parse_availability_summary_handles_multiple_rooms():
@@ -46,8 +46,27 @@ def test_parse_availability_summary_handles_multiple_rooms():
 
     summary = beds24_availability_service.parse_availability_summary(raw)
 
-    assert "Studio 1: free Aug 25" in summary
-    assert "Studio 2: booked Aug 25" in summary
+    assert "Studio 1: Check in Tue 25 Aug 2026 — Check out Wed 26 Aug 2026" in summary
+    assert "Studio 2" not in summary
+
+
+def test_parse_availability_summary_joins_multiple_free_ranges_with_semicolon():
+    raw = [
+        {
+            "roomId": 1,
+            "name": "Studio 1",
+            "availability": {
+                "2026-08-25": True,
+                "2026-08-26": True,
+                "2026-08-28": True,
+                "2026-08-29": True,
+            },
+        }
+    ]
+
+    summary = beds24_availability_service.parse_availability_summary(raw)
+
+    assert summary == "Studio 1: Check in Tue 25 Aug 2026 — Check out Thu 27 Aug 2026; Check in Fri 28 Aug 2026 — Check out Sun 30 Aug 2026"
 
 
 def test_parse_availability_summary_empty_input():
@@ -72,7 +91,7 @@ def test_refresh_availability_summary_upserts_single_row(db_session, monkeypatch
     db_session.commit()
 
     assert db_session.query(Beds24AvailabilitySummary).count() == 1
-    assert beds24_availability_service.get_cached_summary(db_session) == "Studio 1: free Aug 25"
+    assert beds24_availability_service.get_cached_summary(db_session) == "Studio 1: Check in Tue 25 Aug 2026 — Check out Wed 26 Aug 2026"
 
     # A second refresh overwrites the same row rather than adding another.
     async def fake_get_room_availability_updated():
@@ -83,7 +102,7 @@ def test_refresh_availability_summary_upserts_single_row(db_session, monkeypatch
     db_session.commit()
 
     assert db_session.query(Beds24AvailabilitySummary).count() == 1
-    assert beds24_availability_service.get_cached_summary(db_session) == "Studio 1: booked Aug 25"
+    assert beds24_availability_service.get_cached_summary(db_session) == "No availability data on file."
 
 
 def test_refresh_availability_summary_preserves_context_note(db_session, monkeypatch):
@@ -105,7 +124,7 @@ def test_refresh_availability_summary_preserves_context_note(db_session, monkeyp
     db_session.commit()
 
     row = db_session.query(Beds24AvailabilitySummary).one()
-    assert row.summary_text == "Studio 1: free Aug 25"
+    assert row.summary_text == "Studio 1: Check in Tue 25 Aug 2026 — Check out Wed 26 Aug 2026"
     assert row.context_note == "Studio 3 is under renovation until Sept 10."
 
 

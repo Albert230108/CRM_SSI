@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { formatDisplayDateShortMonth } from '../lib/date'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -536,7 +537,7 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
                         </span>
                       ))}
                       {item.recurrence_interval_days ? <span className="text-xs text-gray-400">↻ every {item.recurrence_interval_days}d</span> : null}
-                      {item.due_date ? <span className="text-xs text-gray-400">Due {item.due_date}</span> : null}
+                      {item.due_date ? <span className="text-xs text-gray-400">Due {formatDisplayDateShortMonth(item.due_date)}</span> : null}
                     </div>
                     <div className="flex shrink-0 gap-2">
                       <button type="button" onClick={() => startEdit(item)} className="text-xs font-medium text-gray-500 hover:text-gray-700">
