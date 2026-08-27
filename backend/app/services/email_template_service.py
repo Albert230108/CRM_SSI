@@ -2,6 +2,7 @@ import re
 from typing import Callable
 
 from app.models.tenant import Tenant
+from app.services.datetime_placeholders import resolve_datetime_placeholders
 
 # Curated set of Tenant fields exposed as {{placeholder}} tokens in email templates.
 # Financial fields (total_price, commission, deposit) are deliberately excluded since
@@ -33,6 +34,7 @@ _PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 def resolve_template_text(text: str, tenant: Tenant) -> str:
     """Replace {{placeholder}} tokens with tenant field values. Unknown tokens are left as-is."""
+    text = resolve_datetime_placeholders(text)
 
     def _replace(match: re.Match[str]) -> str:
         key = match.group(1)

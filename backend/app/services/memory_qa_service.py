@@ -12,6 +12,7 @@ from app.models.ai_agent_profile import MEMORY_QA_ROLE, AiAgentProfile
 from app.models.memory_qa_message import ROLE_ASSISTANT, ROLE_USER, MemoryQaMessage
 from app.models.tenant import Tenant
 from app.services import ai_agent_orchestrator, ai_prompt_blocks, ai_reply_service, brain_field_service, brain_service, gemini_client, tenant_brain_service
+from app.services.datetime_placeholders import resolve_datetime_placeholders
 
 _PREAMBLE = (
     "You answer a staff member's question about one tenant in a short-stay rental CRM, using "
@@ -81,7 +82,7 @@ def _build_prompt(db: Session, tenant: Tenant, profile: AiAgentProfile | None, h
     blocks = ai_prompt_blocks.resolve_blocks(profile, MEMORY_QA_ROLE)
     parts: list[str] = [_PREAMBLE]
 
-    instructions = (profile.instructions or "").strip() if profile is not None else ""
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip()) if profile is not None else ""
     if instructions:
         parts.append(ai_prompt_blocks.join(blocks["instructions_header"], instructions))
 

@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.datetime_placeholders import resolve_datetime_placeholders
+
 PLANNER_ROLE = "planner"
 CHECKER_ROLE = "checker"
 DRAFTER_ROLE = "drafter"
@@ -714,6 +716,8 @@ def resolve_blocks(profile: Any | None, role: str) -> dict[str, str]:
             if key in overrides:
                 value = overrides[key]
                 resolved[key] = "" if value is None else str(value)
+    for key, value in list(resolved.items()):
+        resolved[key] = resolve_datetime_placeholders(value)
     return resolved
 
 

@@ -36,6 +36,7 @@ from app.services import (
     brain_field_service,
     gemini_client,
 )
+from app.services.datetime_placeholders import resolve_datetime_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,7 @@ def _build_prompt(
 ) -> str:
     parts: list[str] = [preamble]
 
-    instructions = (profile.instructions or "").strip()
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
     if instructions:
         parts.append(ai_prompt_blocks.join("## Your Instructions", instructions))
 

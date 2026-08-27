@@ -28,6 +28,7 @@ from app.models.memory_suggestion import KIND_ACTION_ITEM_COMPLETE, KIND_ACTION_
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.services import action_item_service, action_tag_service, ai_agent_orchestrator, ai_prompt_blocks, ai_reply_service, gemini_client
+from app.services.datetime_placeholders import resolve_datetime_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ def _build_prompt(
 ) -> str:
     parts: list[str] = [_ACTION_WRITER_PREAMBLE]
 
-    instructions = (profile.instructions or "").strip()
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
     if instructions:
         parts.append(ai_prompt_blocks.join("## Your Instructions", instructions))
 

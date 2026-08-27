@@ -35,6 +35,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.services import ai_prompt_blocks, ai_reply_service, attachment_service, brain_service, gemini_client
+from app.services.datetime_placeholders import resolve_datetime_placeholders
 from app.services.thread_timeline_service import load_tenant_whatsapp_messages
 
 logger = logging.getLogger(__name__)
@@ -202,7 +203,8 @@ def resolve_drafter_context(db: Session, pinned_id: int | None) -> tuple[dict[st
     """
     profile = resolve_profile(db, DRAFTER_ROLE, pinned_id)
     blocks = ai_prompt_blocks.resolve_blocks(profile, DRAFTER_ROLE)
-    return blocks, (profile.instructions if profile is not None else None)
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip()) if profile is not None else ""
+    return blocks, instructions or None
 
 
 def tokens_spent_today(db: Session) -> int:
@@ -394,7 +396,7 @@ def _build_planner_prompt(
     if preamble:
         parts.append(preamble)
 
-    instructions = (profile.instructions or "").strip()
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
     if instructions:
         parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
 
@@ -447,7 +449,7 @@ def _build_checker_prompt(
     if preamble:
         parts.append(preamble)
 
-    instructions = (profile.instructions or "").strip()
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
     if instructions:
         parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
 
@@ -511,7 +513,7 @@ def _build_formatter_prompt(
     if preamble:
         parts.append(preamble)
 
-    instructions = (profile.instructions or "").strip()
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
     if instructions:
         parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
 

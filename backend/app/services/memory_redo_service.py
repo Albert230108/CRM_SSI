@@ -31,6 +31,7 @@ from app.models.memory_suggestion import (
 from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.services import ai_agent_orchestrator, ai_prompt_blocks, beds24_availability_service, brain_field_service, gemini_client, tenant_brain_service, working_memory_rule_service
+from app.services.datetime_placeholders import resolve_datetime_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,7 @@ def _build_legacy_prompt(
     if preamble:
         parts.append(preamble)
 
-    instructions = (profile.instructions or "").strip()
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
     if instructions:
         parts.append(ai_prompt_blocks.join(blocks["instructions_header"], instructions))
 
@@ -237,7 +238,7 @@ def _build_rule_redo_prompt(db: Session, log: RedoRequestLog, profile: AiAgentPr
     if preamble:
         parts.append(preamble)
 
-    instructions = (profile.instructions or "").strip()
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
     if instructions:
         parts.append(ai_prompt_blocks.join(blocks["instructions_header"], instructions))
 
