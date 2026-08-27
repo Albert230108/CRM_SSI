@@ -37,6 +37,7 @@ class ReplayRedoRequestsResult(BaseModel):
 
 class RedoQaMessageRead(BaseModel):
     id: int
+    ai_agent_run_id: int | None = None
     role: str
     content: str
     created_at: datetime

@@ -11,3 +11,9 @@
 - incoming messages with shared thread does not get notification from the thread that is actually visible. 
 - in the redo logs have a new feature that 'ask about this redo' 
     - include full prompt history + your instructions
+
+
+# Fix list 2
+- second message redoQA failed to get an answer
+- include role preamble and model&sampling section to redoQA
+- structured fields having multiple lines

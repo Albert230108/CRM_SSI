@@ -102,6 +102,7 @@ def test_answer_question_persists_both_turns_and_grounds_on_context(db_session, 
     db_session.commit()
 
     assert assistant_message.content == "Because it was too verbose."
+    assert assistant_message.ai_agent_run_id is not None
     assert long_prompt in captured_prompt["prompt"]
     assert long_response in captured_prompt["prompt"]
     assert "Be specific and honest." in captured_prompt["prompt"]
@@ -112,6 +113,57 @@ def test_answer_question_persists_both_turns_and_grounds_on_context(db_session, 
     assert messages[0].content == "Why was this redone?"
     assert messages[1].role == "assistant"
     assert messages[1].content == "Because it was too verbose."
+    assert messages[1].ai_agent_run_id == assistant_message.ai_agent_run_id
+
+    run_row = db_session.query(AiAgentRun).filter(AiAgentRun.id == assistant_message.ai_agent_run_id).one()
+    assert run_row.tenant_id == tenant.id
+    assert run_row.channel == "qa"
+    assert run_row.mode == "manual"
+    assert run_row.status == "completed"
+    assert run_row.total_prompt_tokens == 1
+    assert run_row.total_output_tokens == 1
+
+    step = db_session.query(AiAgentRunStep).filter(AiAgentRunStep.run_id == run_row.id).one()
+    assert step.stage == "qa"
+    assert step.prompt == captured_prompt["prompt"]
+    assert step.response == "Because it was too verbose."
+    assert step.prompt_tokens == 1
+    assert step.output_tokens == 1
+    assert step.error is None
+
+
+def test_answer_question_records_failed_run_when_gemini_errors(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    run, _, _ = _create_run_with_long_step(db_session, tenant)
+    redo_log = _create_redo_log(db_session, tenant, ai_agent_run_id=run.id)
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True, instructions="Be specific and honest."))
+    db_session.commit()
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        raise gemini_client.GeminiClientError("boom")
+
+    monkeypatch.setattr(redo_qa_service.gemini_client, "generate", fake_generate)
+
+    assistant_message = redo_qa_service.answer_question(db_session, redo_log, "Why was this redone?", asked_by_user_id=QA_USER.id)
+    db_session.commit()
+
+    assert assistant_message.content == "Sorry, I couldn't answer that right now - please try again."
+    assert assistant_message.ai_agent_run_id is not None
+
+    run_row = db_session.query(AiAgentRun).filter(AiAgentRun.id == assistant_message.ai_agent_run_id).one()
+    assert run_row.tenant_id == tenant.id
+    assert run_row.channel == "qa"
+    assert run_row.mode == "manual"
+    assert run_row.status == "failed"
+    assert run_row.total_prompt_tokens == 0
+    assert run_row.total_output_tokens == 0
+
+    step = db_session.query(AiAgentRunStep).filter(AiAgentRunStep.run_id == run_row.id).one()
+    assert step.stage == "qa"
+    assert step.error == "boom"
+    assert step.response is None
+    assert step.prompt_tokens is None
+    assert step.output_tokens is None
 
 
 def test_redo_qa_endpoints_return_context_and_persist_history(user_client, db_session, monkeypatch):
@@ -135,12 +187,16 @@ def test_redo_qa_endpoints_return_context_and_persist_history(user_client, db_se
 
     ask_response = user_client.post(f"/api/redo-requests/{redo_log.id}/qa", json={"question": "What exactly was too long?"})
     assert ask_response.status_code == 201
-    assert ask_response.json()["content"] == "It was too long."
+    ask_payload = ask_response.json()
+    assert ask_payload["content"] == "It was too long."
+    assert ask_payload["ai_agent_run_id"] is not None
 
     history_response = user_client.get(f"/api/redo-requests/{redo_log.id}/qa")
     assert history_response.status_code == 200
-    roles = [message["role"] for message in history_response.json()]
+    history = history_response.json()
+    roles = [message["role"] for message in history]
     assert roles == ["user", "assistant"]
+    assert history[1]["ai_agent_run_id"] == ask_payload["ai_agent_run_id"]
 
 
 def test_redo_qa_context_404_for_missing_log(user_client):
