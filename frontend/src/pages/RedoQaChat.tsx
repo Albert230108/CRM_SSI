@@ -158,8 +158,8 @@ export default function RedoQaChat() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden p-3 sm:p-4">
-        <div className="mx-auto flex h-full max-w-6xl flex-col gap-3">
-          <section className="min-h-0 flex flex-[1.05] flex-col overflow-hidden rounded-[28px] border border-cyan-100 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+        <div className="mx-auto grid h-full max-w-6xl min-h-0 gap-3 lg:grid-cols-[1.08fr_0.92fr]">
+          <section className="min-h-0 flex flex-col overflow-hidden rounded-[28px] border border-cyan-100 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
             <div className="border-b border-gray-100 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Seed context</p>
               <p className="mt-1 text-sm text-gray-500">What changed, why it changed, the agent instructions, and the full untruncated run log.</p>
@@ -194,7 +194,7 @@ export default function RedoQaChat() {
             </div>
           </section>
 
-          <section className="min-h-0 flex flex-[0.95] flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          <section className="min-h-0 flex flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
             <div className="border-b border-gray-100 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Conversation</p>
               <p className="mt-1 text-sm text-gray-500">Ask follow-up questions about the redo event and keep the conversation grounded in the original run.</p>
