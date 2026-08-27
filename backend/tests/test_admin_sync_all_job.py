@@ -14,6 +14,7 @@ import time
 import pytest
 
 from app.api import admin_sync
+from app.models.tenant import Tenant
 from app.services import background_jobs
 
 
@@ -62,10 +63,8 @@ def poll_until_done(client, job_id, timeout=5.0):
 
 def test_sync_all_responds_immediately_without_running_phases(non_admin_client, monkeypatch):
     """The POST must return before the work happens - that is the whole point of the fix."""
-    started = asyncio.Event()
 
     async def slow_beds24(db, changed_by_user_id=None, tenant_ids=None):
-        started.set()
         await asyncio.sleep(30)
         return 0
 
@@ -140,6 +139,83 @@ def test_sync_all_phase_failure_is_reported_not_fatal(non_admin_client, stub_pha
     assert "gmail exploded" in steps["email"]["error"]
     # The later phases must still have run.
     assert job["result"]["whatsapp_messages_imported"] == 7
+
+
+def test_sync_all_phase_timeout_is_reported_not_fatal(non_admin_client, monkeypatch):
+    monkeypatch.setattr(admin_sync, "EMAIL_PHASE_TIMEOUT_SECONDS", 0.05)
+
+    async def slow_beds24(db, changed_by_user_id=None, tenant_ids=None):
+        await asyncio.sleep(0.2)
+        return 0
+
+    async def fast_emails(db, tenant_ids=None, progress=None):
+        if progress is not None:
+            progress(0, 0)
+        return 0
+
+    async def fast_whatsapp(db, tenant_ids=None):
+        return {"total_imported": 0, "synced_endpoints": 0, "results": [], "errors": []}
+
+    monkeypatch.setattr(admin_sync, "_sync_beds24", slow_beds24)
+    monkeypatch.setattr(admin_sync, "_sync_emails", fast_emails)
+    monkeypatch.setattr(admin_sync, "_sync_whatsapp_linked_endpoints", fast_whatsapp)
+
+    job_id = non_admin_client.post("/api/admin/sync-all", json={"tenant_ids": None}).json()["job_id"]
+    job = poll_until_done(non_admin_client, job_id)
+
+    assert job["status"] == "done"
+    assert job["error"] is None
+    summary = job["result"]
+    assert summary["bookings_updated"] == 0
+    steps = {failure["step"]: failure for failure in summary["partial_failures"]}
+    assert "beds24" in steps
+    assert "Timed out after 0.05s" in steps["beds24"]["error"]
+
+
+def test_sync_all_thread_timeout_is_reported_not_fatal(non_admin_client, monkeypatch):
+    real_session_local = admin_sync.SessionLocal
+    setup_session = real_session_local()
+    tenant = Tenant(name="Thread timeout", booking_id="B-thread-timeout")
+    setup_session.add(tenant)
+    setup_session.commit()
+    tenant_id = tenant.id
+    setup_session.close()
+
+    try:
+        monkeypatch.setattr(admin_sync, "EMAIL_PHASE_TIMEOUT_SECONDS", 0.05)
+
+        async def fast_beds24(db, changed_by_user_id=None, tenant_ids=None):
+            return 0
+
+        async def fast_emails(db, tenant_ids=None, progress=None):
+            return 0
+
+        async def fast_whatsapp(db, tenant_ids=None):
+            return {"total_imported": 0, "synced_endpoints": 0, "results": [], "errors": []}
+
+        def slow_thread_builder(db, tenant_id):
+            time.sleep(0.2)
+
+        monkeypatch.setattr(admin_sync, "_sync_beds24", fast_beds24)
+        monkeypatch.setattr(admin_sync, "_sync_emails", fast_emails)
+        monkeypatch.setattr(admin_sync, "_sync_whatsapp_linked_endpoints", fast_whatsapp)
+        monkeypatch.setattr(admin_sync, "build_tenant_thread_timeline", slow_thread_builder)
+
+        job_id = non_admin_client.post("/api/admin/sync-all", json={"tenant_ids": None}).json()["job_id"]
+        job = poll_until_done(non_admin_client, job_id)
+
+        assert job["status"] == "done"
+        assert job["error"] is None
+        summary = job["result"]
+        assert summary["tenant_threads_updated"] == 0
+        steps = {failure["step"]: failure for failure in summary["partial_failures"]}
+        assert "tenant_threads" in steps
+        assert f"Tenant {tenant_id} timed out after 0.05s" == steps["tenant_threads"]["error"]
+    finally:
+        cleanup_session = real_session_local()
+        cleanup_session.query(Tenant).filter(Tenant.id == tenant_id).delete()
+        cleanup_session.commit()
+        cleanup_session.close()
 
 
 def test_sync_all_status_unknown_job_is_404(non_admin_client):

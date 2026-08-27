@@ -279,6 +279,24 @@ EMAIL_PHASE_TIMEOUT_SECONDS = 900
 _SYNC_ALL_PHASES = ("beds24", "email", "whatsapp", "threads")
 
 
+def _record_partial_failure(summary: dict[str, Any], step: str, error: str) -> None:
+    summary["partial_failures"].append({"step": step, "error": error})
+
+
+def _rebuild_tenant_thread_timeline(tenant_id: int) -> None:
+    """Build one tenant's timeline in an isolated session.
+
+    sync-all only needs the rebuild side effects to finish and report progress. Giving each
+    tenant its own session keeps a per-tenant timeout safe: if one tenant wedges, the rest of
+    the loop can keep moving without sharing a half-blocked Session object across threads.
+    """
+    db = SessionLocal()
+    try:
+        build_tenant_thread_timeline(db, tenant_id)
+    finally:
+        db.close()
+
+
 async def _run_sync_all(job_id: str, user_id: int | None, tenant_ids: list[int] | None) -> dict[str, Any]:
     """Job body for sync-all. See sync_all() for why this can't run inside the request.
 
@@ -312,11 +330,18 @@ async def _run_sync_all(job_id: str, user_id: int | None, tenant_ids: list[int] 
     try:
         _phase("beds24")
         try:
-            summary["bookings_updated"] = await _sync_beds24(db, user_id, tenant_ids)
+            summary["bookings_updated"] = await asyncio.wait_for(
+                _sync_beds24(db, user_id, tenant_ids),
+                timeout=EMAIL_PHASE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            db.rollback()
+            logger.warning("sync-all beds24 phase timed out after %ss job_id=%s", EMAIL_PHASE_TIMEOUT_SECONDS, job_id)
+            _record_partial_failure(summary, "beds24", f"Timed out after {EMAIL_PHASE_TIMEOUT_SECONDS}s")
         except Exception as exc:
             db.rollback()
             logger.exception("sync-all beds24 phase failed job_id=%s", job_id)
-            summary["partial_failures"].append({"step": "beds24", "error": str(exc)})
+            _record_partial_failure(summary, "beds24", str(exc))
 
         _phase("email")
         try:
@@ -330,17 +355,18 @@ async def _run_sync_all(job_id: str, user_id: int | None, tenant_ids: list[int] 
         except asyncio.TimeoutError:
             db.rollback()
             logger.warning("sync-all email phase timed out after %ss job_id=%s", EMAIL_PHASE_TIMEOUT_SECONDS, job_id)
-            summary["partial_failures"].append(
-                {"step": "email", "error": f"Timed out after {EMAIL_PHASE_TIMEOUT_SECONDS}s"}
-            )
+            _record_partial_failure(summary, "email", f"Timed out after {EMAIL_PHASE_TIMEOUT_SECONDS}s")
         except Exception as exc:
             db.rollback()
             logger.exception("sync-all email phase failed job_id=%s", job_id)
-            summary["partial_failures"].append({"step": "email", "error": str(exc)})
+            _record_partial_failure(summary, "email", str(exc))
 
         _phase("whatsapp")
         try:
-            whatsapp_result = await _sync_whatsapp_linked_endpoints(db, tenant_ids)
+            whatsapp_result = await asyncio.wait_for(
+                _sync_whatsapp_linked_endpoints(db, tenant_ids),
+                timeout=EMAIL_PHASE_TIMEOUT_SECONDS,
+            )
             summary["whatsapp_messages_imported"] = whatsapp_result.get("total_imported", 0)
             summary["whatsapp_endpoints_synced"] = whatsapp_result.get("synced_endpoints", 0)
             summary["whatsapp_endpoint_sync_details"] = whatsapp_result.get("results", [])
@@ -349,10 +375,14 @@ async def _run_sync_all(job_id: str, user_id: int | None, tenant_ids: list[int] 
                     "step": "whatsapp_endpoints",
                     "errors": whatsapp_result.get("errors", []),
                 })
+        except asyncio.TimeoutError:
+            db.rollback()
+            logger.warning("sync-all whatsapp phase timed out after %ss job_id=%s", EMAIL_PHASE_TIMEOUT_SECONDS, job_id)
+            _record_partial_failure(summary, "whatsapp", f"Timed out after {EMAIL_PHASE_TIMEOUT_SECONDS}s")
         except Exception as exc:
             db.rollback()
             logger.exception("sync-all whatsapp phase failed job_id=%s", job_id)
-            summary["partial_failures"].append({"step": "whatsapp", "error": str(exc)})
+            _record_partial_failure(summary, "whatsapp", str(exc))
 
         try:
             summary["tenant_threads_updated"] = 0
@@ -365,13 +395,29 @@ async def _run_sync_all(job_id: str, user_id: int | None, tenant_ids: list[int] 
                 # Rebuilding every tenant's thread timeline synchronously in this loop, with no
                 # yield points, would freeze this worker's event loop (and every other concurrent
                 # request — logins, thread loads, everything) for the whole loop's duration.
-                await run_in_threadpool(build_tenant_thread_timeline, db, tenant.id)
-                summary["tenant_threads_updated"] += 1
+                try:
+                    await asyncio.wait_for(
+                        run_in_threadpool(_rebuild_tenant_thread_timeline, tenant.id),
+                        timeout=EMAIL_PHASE_TIMEOUT_SECONDS,
+                    )
+                    summary["tenant_threads_updated"] += 1
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "sync-all tenant_threads tenant timed out after %ss job_id=%s tenant_id=%s",
+                        EMAIL_PHASE_TIMEOUT_SECONDS,
+                        job_id,
+                        tenant.id,
+                    )
+                    _record_partial_failure(
+                        summary,
+                        "tenant_threads",
+                        f"Tenant {tenant.id} timed out after {EMAIL_PHASE_TIMEOUT_SECONDS}s",
+                    )
                 _phase("threads", current=summary["tenant_threads_updated"], total=len(tenants))
         except Exception as exc:
             db.rollback()
             logger.exception("sync-all tenant_threads phase failed job_id=%s", job_id)
-            summary["partial_failures"].append({"step": "tenant_threads", "error": str(exc)})
+            _record_partial_failure(summary, "tenant_threads", str(exc))
     finally:
         db.close()
 
