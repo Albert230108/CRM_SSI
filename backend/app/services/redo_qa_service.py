@@ -12,11 +12,6 @@ from app.models.redo_request_log import RedoRequestLog
 from app.models.redo_qa_message import ROLE_ASSISTANT, ROLE_USER, RedoQaMessage
 from app.services import ai_agent_orchestrator, ai_prompt_blocks, gemini_client, memory_redo_service
 
-_PREAMBLE = (
-    "You are answering a staff member's questions about one specific redo-agent run in a short-stay rental CRM. "
-    "Use only the context provided below, and say plainly when the context does not support an answer instead of guessing."
-)
-
 _QA_HISTORY_LIMIT = 10
 
 
@@ -157,7 +152,7 @@ def answer_question(db: Session, redo_log: RedoRequestLog, question: str, asked_
     recorder = _QaRunRecorder(run=run, db=db)
 
     context_text = build_context_text(db, redo_log, profile=profile, blocks=blocks)
-    parts: list[str] = [_PREAMBLE]
+    parts: list[str] = [blocks["qa_preamble"]]
     if context_text.strip():
         parts.append(context_text)
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -61,6 +61,7 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
   const [fields, setFields] = useState<TenantBrainFieldValue[]>([])
   const [fieldDrafts, setFieldDrafts] = useState<Record<number, string>>({})
   const [savingFieldId, setSavingFieldId] = useState<number | null>(null)
+  const fieldTextareaRefs = useRef<Record<number, HTMLTextAreaElement | null>>({})
 
 
   const [qaMessages, setQaMessages] = useState<MemoryQaMessage[]>([])
@@ -95,6 +96,14 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
     }
   }
 
+  useLayoutEffect(() => {
+    for (const field of fields) {
+      const textarea = fieldTextareaRefs.current[field.field_definition_id]
+      if (!textarea) continue
+      textarea.style.height = 'auto'
+      textarea.style.height = `${textarea.scrollHeight}px`
+    }
+  }, [fields, fieldDrafts])
 
   const loadQaHistory = async () => {
     if (!tenantId) return
@@ -342,8 +351,10 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
                   <span className="w-28 shrink-0 truncate text-xs font-medium text-gray-600" title={field.ai_instruction}>
                     {field.label}
                   </span>
-                  <input
-                    type="text"
+                  <textarea
+                    ref={(element) => {
+                      fieldTextareaRefs.current[field.field_definition_id] = element
+                    }}
                     value={fieldDrafts[field.field_definition_id] ?? ''}
                     onChange={(event) =>
                       setFieldDrafts((current) => ({ ...current, [field.field_definition_id]: event.target.value }))
@@ -352,7 +363,8 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
                       if ((fieldDrafts[field.field_definition_id] ?? '') !== (field.value ?? '')) void saveField(field.field_definition_id)
                     }}
                     placeholder="Not set"
-                    className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+                    rows={2}
+                    className="min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-hidden rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
                   />
                   {savingFieldId === field.field_definition_id ? <span className="shrink-0 text-[10px] text-gray-400">Saving...</span> : null}
                 </div>

@@ -554,6 +554,16 @@ MEMORY_QA_BLOCKS: tuple[PromptBlock, ...] = (
 
 MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
     PromptBlock(
+        key="qa_preamble",
+        label="RedoQA Chat Preamble",
+        help="The opening line for the redo-question chat. Emitted first.",
+        default=(
+            "You are answering a staff member's questions about one specific redo-agent run in a "
+            "short-stay rental CRM. Use only the context provided below, and say plainly when "
+            "the context does not support an answer instead of guessing."
+        ),
+    ),
+    PromptBlock(
         key="preamble",
         label="Role preamble",
         help="The opening line that tells the model what job it is doing. Emitted first.",
@@ -642,6 +652,13 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
         label="Redo feedback heading",
         help="Sits above the staff member's redo explanation.",
         default="## Redo Feedback",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_history",
+        label="RedoQA history heading",
+        help="Sits above prior redo-QA turns in this session.",
+        default="## Prior Questions In This Redo Session",
         group=CONTEXT_GROUP,
     ),
     PromptBlock(

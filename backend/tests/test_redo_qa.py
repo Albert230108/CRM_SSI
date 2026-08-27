@@ -132,6 +132,46 @@ def test_answer_question_persists_both_turns_and_grounds_on_context(db_session, 
     assert step.error is None
 
 
+def test_answer_question_supports_followup_questions_in_one_session(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    run, _, _ = _create_run_with_long_step(db_session, tenant)
+    redo_log = _create_redo_log(db_session, tenant, ai_agent_run_id=run.id)
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True, instructions="Be specific and honest."))
+    db_session.commit()
+
+    prompts: list[str] = []
+    answers = iter(["First answer.", "Second answer."])
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        prompts.append(prompt)
+        return gemini_client.GenerationResult(
+            text=next(answers),
+            parsed=None,
+            model="fake",
+            prompt_tokens=1,
+            output_tokens=1,
+            latency_ms=1,
+        )
+
+    monkeypatch.setattr(redo_qa_service.gemini_client, "generate", fake_generate)
+
+    first = redo_qa_service.answer_question(db_session, redo_log, "Why was this redone?", asked_by_user_id=QA_USER.id)
+    second = redo_qa_service.answer_question(db_session, redo_log, "What changed in the follow-up?", asked_by_user_id=QA_USER.id)
+    db_session.commit()
+
+    assert first.content == "First answer."
+    assert second.content == "Second answer."
+    assert len(prompts) == 2
+    assert "## Prior Questions In This Redo Session" in prompts[1]
+    assert "Staff: Why was this redone?" in prompts[1]
+    assert "Assistant: First answer." in prompts[1]
+
+    messages = db_session.query(RedoQaMessage).filter(RedoQaMessage.redo_request_log_id == redo_log.id).order_by(RedoQaMessage.id).all()
+    assert [message.role for message in messages] == ["user", "assistant", "user", "assistant"]
+    assert messages[1].content == "First answer."
+    assert messages[3].content == "Second answer."
+
+
 def test_answer_question_records_failed_run_when_gemini_errors(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     run, _, _ = _create_run_with_long_step(db_session, tenant)

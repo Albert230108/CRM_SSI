@@ -682,7 +682,7 @@ function SuggestionsTab({ showSuccess, showError }: { showSuccess: (m: string) =
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   {suggestion.tenant_name ? <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{suggestion.tenant_name}</p> : null}
-                  <p className="text-gray-900">{describeSuggestion(suggestion)}</p>
+                  <p className="whitespace-pre-wrap text-gray-900">{describeSuggestion(suggestion)}</p>
                   {suggestion.kind === 'profile_change' && suggestion.target_id ? (
                     <Link to={`/settings/ai-agents/${suggestion.target_id}`} className="text-xs font-medium text-blue-600 hover:underline">
                       Edit this profile →
