@@ -428,6 +428,17 @@ def _conversation_visible_for_tenant(db: Session, tenant: Tenant, conversation_i
     return tenant.auto_add_shared_email_threads
 
 
+def _tenants_with_visible_link(db: Session, conversation_id: int) -> list[Tenant]:
+    """Tenants that already have an active, visible link to this conversation."""
+    return (
+        db.query(Tenant)
+        .join(TenantConversationLink, TenantConversationLink.tenant_id == Tenant.id)
+        .filter(TenantConversationLink.conversation_id == conversation_id)
+        .filter(TenantConversationLink.unlinked_at.is_(None))
+        .filter(TenantConversationLink.is_visible.is_(True))
+        .all()
+    )
+
 
 def _find_existing_conversation_for_thread(db: Session, thread: dict[str, Any]) -> Conversation | None:
     for message in thread.get("messages") or []:
@@ -503,6 +514,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
     last_message_at = conversation.last_message_at
     tenant = None
     matched_tenants: dict[int, tuple[Tenant, str]] = {}
+    linked_visible_tenants = {linked_tenant.id: linked_tenant for linked_tenant in _tenants_with_visible_link(db, conversation.id)}
 
     for message in messages:
         payload = message.get("payload") or {}
@@ -568,9 +580,11 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                     )
                 )
             if direction == "inbound":
+                notified_tenant_ids: set[int] = set()
                 for notify_tenant, _ in message_tenants:
                     if not _conversation_visible_for_tenant(db, notify_tenant, conversation.id):
                         continue
+                    notified_tenant_ids.add(notify_tenant.id)
                     create_notification(
                         db,
                         tenant_id=notify_tenant.id,
@@ -587,6 +601,22 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                     )
                     register_action_writer_trigger(
                         db, tenant_id=notify_tenant.id, channel="email", direction="inbound", email_thread_id=conversation.id
+                    )
+                    register_notification_for_whatsapp(db)
+                for tenant_id, notify_tenant in linked_visible_tenants.items():
+                    if tenant_id in notified_tenant_ids:
+                        continue
+                    if not _conversation_visible_for_tenant(db, notify_tenant, conversation.id):
+                        continue
+                    create_notification(
+                        db,
+                        tenant_id=notify_tenant.id,
+                        tenant_name=notify_tenant.name,
+                        channel="email",
+                        direction="inbound",
+                        preview=body_text[:255] if body_text else None,
+                        event_at=sent_at,
+                        thread_ref=str(conversation.id),
                     )
                     register_notification_for_whatsapp(db)
         except IntegrityError:

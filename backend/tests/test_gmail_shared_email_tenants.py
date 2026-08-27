@@ -3,8 +3,10 @@ import base64
 import app.api.gmail_integration as gmail_integration
 from app.database import SessionLocal
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
+from app.models.action_writer_trigger import ActionWriterTrigger
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.tenant_ai_settings import TenantAiSettings
+from app.models.tenant_brain_trigger import TenantBrainTrigger
 from app.models.notification import Notification
 from app.models.tenant import Tenant
 from app.models.tenant_conversation_link import TenantConversationLink
@@ -215,6 +217,160 @@ def test_hidden_shared_thread_skips_notifications_and_triggers():
         cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
         cleanup_db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
         cleanup_db.query(Tenant).filter(Tenant.id.in_([visible_tenant_id, hidden_tenant_id])).delete(synchronize_session=False)
+        cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
+        cleanup_db.commit()
+    finally:
+        cleanup_db.close()
+
+
+
+def test_shared_thread_second_message_notifies_all_visible_tenants_without_widening_ai_triggers():
+    """A visible shared thread should notify every tenant that already has access, even if
+    the current inbound message's headers only mention one of them.
+
+    AI trigger scope stays header-based: only the tenant actually addressed by the new
+    message should get its debounced AI rows refreshed.
+    """
+    tenant_a_email = "tenant-a@example.com"
+    tenant_b_email = "tenant-b@example.com"
+    relay_email = "relay@example.com"
+    conversation_id = None
+
+    setup_db = SessionLocal()
+    try:
+        account = GmailAccount(email_address="shared-notify-account@example.com", is_active=True)
+        tenant_a = Tenant(name="Tenant A", booking_id="booking-shared-notify-a")
+        tenant_b = Tenant(name="Tenant B", booking_id="booking-shared-notify-b")
+        setup_db.add_all([account, tenant_a, tenant_b])
+        setup_db.commit()
+        account_id = account.id
+        tenant_a_id = tenant_a.id
+        tenant_b_id = tenant_b.id
+        _link_email(setup_db, tenant_a_id, tenant_a_email)
+        _link_email(setup_db, tenant_b_id, tenant_b_email)
+        setup_db.add_all(
+            [
+                TenantAiSettings(
+                    tenant_id=tenant_a_id,
+                    auto_draft_email=True,
+                    brain_writer_enabled=True,
+                    action_writer_enabled=True,
+                ),
+                TenantAiSettings(
+                    tenant_id=tenant_b_id,
+                    auto_draft_email=True,
+                    brain_writer_enabled=True,
+                    action_writer_enabled=True,
+                ),
+            ]
+        )
+        setup_db.commit()
+    finally:
+        setup_db.close()
+
+    def _thread_message(message_id: str, recipients: list[str]) -> dict:
+        message = _message(message_id, relay_email)
+        message["payload"]["headers"] = [
+            {"name": "From", "value": relay_email},
+            {"name": "To", "value": ", ".join(recipients)},
+            {"name": "Subject", "value": "Booking question"},
+        ]
+        return message
+
+    thread = {"id": "thread-shared-notify", "messages": [_thread_message("shared-notify-msg-1", [tenant_a_email, tenant_b_email])]}
+    db = SessionLocal()
+    try:
+        account_obj = db.get(GmailAccount, account_id)
+        conversation = gmail_integration._upsert_thread(db, account_obj, thread)
+        assert conversation is not None
+        db.commit()
+        conversation_id = conversation.id
+
+        assert db.query(Notification).filter(Notification.tenant_id == tenant_a_id, Notification.thread_ref == str(conversation_id)).count() == 1
+        assert db.query(Notification).filter(Notification.tenant_id == tenant_b_id, Notification.thread_ref == str(conversation_id)).count() == 1
+
+        tenant_a_auto_before = (
+            db.query(AiAutoDraftTrigger)
+            .filter(AiAutoDraftTrigger.tenant_id == tenant_a_id, AiAutoDraftTrigger.channel == "email")
+            .one()
+        )
+        tenant_b_auto_before = (
+            db.query(AiAutoDraftTrigger)
+            .filter(AiAutoDraftTrigger.tenant_id == tenant_b_id, AiAutoDraftTrigger.channel == "email")
+            .one()
+        )
+        tenant_b_brain_before = (
+            db.query(TenantBrainTrigger)
+            .filter(TenantBrainTrigger.tenant_id == tenant_b_id, TenantBrainTrigger.channel == "email")
+            .one()
+        )
+        tenant_b_action_before = (
+            db.query(ActionWriterTrigger)
+            .filter(ActionWriterTrigger.tenant_id == tenant_b_id, ActionWriterTrigger.channel == "email")
+            .one()
+        )
+    finally:
+        db.close()
+
+    thread = {
+        "id": "thread-shared-notify",
+        "messages": [
+            _thread_message("shared-notify-msg-1", [tenant_a_email, tenant_b_email]),
+            _thread_message("shared-notify-msg-2", [tenant_a_email]),
+        ],
+    }
+    db = SessionLocal()
+    try:
+        account_obj = db.get(GmailAccount, account_id)
+        conversation = gmail_integration._upsert_thread(db, account_obj, thread)
+        assert conversation is not None
+        db.commit()
+        conversation_id = conversation.id
+
+        assert db.query(Notification).filter(Notification.tenant_id == tenant_a_id, Notification.thread_ref == str(conversation_id)).count() == 2
+        assert db.query(Notification).filter(Notification.tenant_id == tenant_b_id, Notification.thread_ref == str(conversation_id)).count() == 2
+
+        tenant_b_auto_after = (
+            db.query(AiAutoDraftTrigger)
+            .filter(AiAutoDraftTrigger.tenant_id == tenant_b_id, AiAutoDraftTrigger.channel == "email")
+            .one()
+        )
+        tenant_b_brain_after = (
+            db.query(TenantBrainTrigger)
+            .filter(TenantBrainTrigger.tenant_id == tenant_b_id, TenantBrainTrigger.channel == "email")
+            .one()
+        )
+        tenant_b_action_after = (
+            db.query(ActionWriterTrigger)
+            .filter(ActionWriterTrigger.tenant_id == tenant_b_id, ActionWriterTrigger.channel == "email")
+            .one()
+        )
+
+        assert tenant_b_auto_after.trigger_at == tenant_b_auto_before.trigger_at
+        assert tenant_b_brain_after.trigger_at == tenant_b_brain_before.trigger_at
+        assert tenant_b_action_after.trigger_at == tenant_b_action_before.trigger_at
+        assert (
+            db.query(AiAutoDraftTrigger)
+            .filter(AiAutoDraftTrigger.tenant_id == tenant_a_id, AiAutoDraftTrigger.channel == "email")
+            .one()
+            .trigger_at
+            >= tenant_a_auto_before.trigger_at
+        )
+    finally:
+        db.close()
+
+    cleanup_db = SessionLocal()
+    try:
+        cleanup_db.query(Notification).filter(Notification.thread_ref == str(conversation_id)).delete(synchronize_session=False)
+        cleanup_db.query(TenantConversationLink).filter(TenantConversationLink.conversation_id == conversation_id).delete()
+        cleanup_db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).delete()
+        cleanup_db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+        cleanup_db.query(TenantEmailAddress).filter(TenantEmailAddress.tenant_id.in_([tenant_a_id, tenant_b_id])).delete(synchronize_session=False)
+        cleanup_db.query(AiAutoDraftTrigger).filter(AiAutoDraftTrigger.tenant_id.in_([tenant_a_id, tenant_b_id])).delete(synchronize_session=False)
+        cleanup_db.query(TenantBrainTrigger).filter(TenantBrainTrigger.tenant_id.in_([tenant_a_id, tenant_b_id])).delete(synchronize_session=False)
+        cleanup_db.query(ActionWriterTrigger).filter(ActionWriterTrigger.tenant_id.in_([tenant_a_id, tenant_b_id])).delete(synchronize_session=False)
+        cleanup_db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id.in_([tenant_a_id, tenant_b_id])).delete(synchronize_session=False)
+        cleanup_db.query(Tenant).filter(Tenant.id.in_([tenant_a_id, tenant_b_id])).delete(synchronize_session=False)
         cleanup_db.query(GmailAccount).filter(GmailAccount.id == account_id).delete()
         cleanup_db.commit()
     finally:
