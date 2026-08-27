@@ -1,97 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AiTemplateNote, AiTemplateSection, BrainSectionOption } from '../types/aiReplyTemplate'
-import { EMAIL_TEMPLATE_PLACEHOLDERS } from '../types/aiReplyTemplate'
+import { InsertTokenMenu, insertAtCaret, type InsertTokenGroup, type InsertTokenItem } from '../lib/insertToken'
+import { DATETIME_PLACEHOLDERS, EMAIL_TEMPLATE_PLACEHOLDERS, type AiTemplateNote, type AiTemplateSection, type BrainSectionOption } from '../types/aiReplyTemplate'
 import { NOTE_COLORS } from '../lib/aiTemplateCanvas'
 
 const OVERLAY_CLASS =
   'fixed inset-0 z-[90] flex items-center justify-center bg-gray-900/40 p-4'
 
-/** Inserts `token` at the caret and puts the caret straight after it. */
-function insertAtCaret(
-  element: HTMLTextAreaElement | null,
-  value: string,
-  token: string,
-  onChange: (next: string) => void,
-) {
-  if (!element) {
-    onChange(value + token)
-    return
-  }
-  const start = element.selectionStart ?? value.length
-  const end = element.selectionEnd ?? start
-  onChange(value.slice(0, start) + token + value.slice(end))
-  requestAnimationFrame(() => {
-    element.focus()
-    const caret = start + token.length
-    element.setSelectionRange(caret, caret)
-  })
+function literalTokenItems(placeholders: readonly string[]): InsertTokenItem[] {
+  return placeholders.map((placeholder) => ({ label: `{{${placeholder}}}`, value: `{{${placeholder}}}` }))
 }
 
-type InsertMenuProps = {
-  brainSections: BrainSectionOption[]
-  onInsert: (token: string) => void
+function brainTokenItems(brainSections: BrainSectionOption[]): InsertTokenItem[] {
+  return brainSections.map((section) => ({
+    label: section.title,
+    secondaryLabel: section.path,
+    title: section.path,
+    value: `{{brain:${section.path}}}`,
+  }))
 }
 
-function InsertTokenMenu({ brainSections, onInsert }: InsertMenuProps) {
-  const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handleClickAway = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClickAway)
-    return () => document.removeEventListener('mousedown', handleClickAway)
-  }, [open])
-
-  const choose = (token: string) => {
-    onInsert(token)
-    setOpen(false)
-  }
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
-      >
-        + Insert
-      </button>
-      {open ? (
-        <div className="absolute right-0 z-10 mt-1 max-h-72 w-72 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
-          <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">Tenant</p>
-          {EMAIL_TEMPLATE_PLACEHOLDERS.map((placeholder) => (
-            <button
-              key={placeholder}
-              type="button"
-              onClick={() => choose(`{{${placeholder}}}`)}
-              className="block w-full rounded px-2 py-1 text-left font-mono text-xs text-gray-700 hover:bg-gray-100"
-            >
-              {`{{${placeholder}}}`}
-            </button>
-          ))}
-          <p className="mt-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">Brain</p>
-          {brainSections.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-gray-400">No brain sections yet.</p>
-          ) : (
-            brainSections.map((section) => (
-              <button
-                key={section.id}
-                type="button"
-                onClick={() => choose(`{{brain:${section.path}}}`)}
-                className="block w-full truncate rounded px-2 py-1 text-left text-xs text-gray-700 hover:bg-gray-100"
-                title={section.path}
-              >
-                {section.title} <span className="font-mono text-gray-400">{section.path}</span>
-              </button>
-            ))
-          )}
-        </div>
-      ) : null}
-    </div>
-  )
+function sectionTokenGroups(brainSections: BrainSectionOption[]): InsertTokenGroup[] {
+  return [
+    { label: 'Tenant', tokens: literalTokenItems(EMAIL_TEMPLATE_PLACEHOLDERS) },
+    { label: 'Date & time', tokens: literalTokenItems(DATETIME_PLACEHOLDERS) },
+    {
+      label: 'Brain',
+      tokens: brainTokenItems(brainSections),
+      emptyMessage: 'No brain sections yet.',
+    },
+  ]
 }
 
 type SectionModalProps = {
@@ -155,7 +92,7 @@ export function AiTemplateSectionModal({
             className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500"
           />
           <InsertTokenMenu
-            brainSections={brainSections}
+            groups={sectionTokenGroups(brainSections)}
             onInsert={(token) => insertAtCaret(textareaRef.current, section.content, token, (next) => onChange(id, 'content', next))}
           />
         </div>

@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { InsertTokenMenu, insertAtCaret, type InsertTokenGroup, type InsertTokenItem } from '../lib/insertToken'
+import { DATETIME_PLACEHOLDERS } from '../types/aiReplyTemplate'
 import { type AgentRole, type AiAgentProfile, type PromptBlockDefinition } from '../types/aiAgentProfile'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
@@ -274,6 +276,14 @@ function toFormState(profile: AiAgentProfile): ProfileForm {
   }
 }
 
+function literalTokenItems(placeholders: readonly string[]): InsertTokenItem[] {
+  return placeholders.map((placeholder) => ({ label: `{{${placeholder}}}`, value: `{{${placeholder}}}` }))
+}
+
+function dateTimeTokenGroups(): InsertTokenGroup[] {
+  return [{ label: 'Date & time', tokens: literalTokenItems(DATETIME_PLACEHOLDERS) }]
+}
+
 export default function AiAgentProfileEditor() {
   const { profileId } = useParams<{ profileId: string }>()
   const [searchParams] = useSearchParams()
@@ -282,6 +292,8 @@ export default function AiAgentProfileEditor() {
   const initialRole = (searchParams.get('role') as AgentRole | null) ?? 'planner'
 
   const [form, setForm] = useState<ProfileForm>(() => emptyForm(isNew ? initialRole : 'planner'))
+  const instructionsRef = useRef<HTMLTextAreaElement | null>(null)
+  const promptBlockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   useDocumentTitle(isNew ? 'CRM - New AI Agent' : `CRM - ${form.name || 'Edit AI Agent'}`)
   const [promptBlockDefs, setPromptBlockDefs] = useState<PromptBlockDefinition[]>([])
   const [loading, setLoading] = useState(!isNew)
@@ -315,6 +327,8 @@ export default function AiAgentProfileEditor() {
     relevance.match_inbound_language
   const showCost = relevance.daily_token_cap
   const instructionsPlaceholder = INSTRUCTIONS_PLACEHOLDER[form.role]
+  const dateTimeGroups = dateTimeTokenGroups()
+  const datetimePlaceholderText = DATETIME_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')
 
   useEffect(() => {
     let cancelled = false
@@ -494,10 +508,21 @@ export default function AiAgentProfileEditor() {
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-          <label className={LABEL} htmlFor="profile-instructions">
-            Instructions
-          </label>
+          <div className="flex items-center justify-between gap-3">
+            <label className={LABEL} htmlFor="profile-instructions">
+              Instructions
+            </label>
+            <InsertTokenMenu
+              groups={dateTimeGroups}
+              onInsert={(token) =>
+                insertAtCaret(instructionsRef.current, form.instructions, token, (next) =>
+                  set('instructions', next),
+                )
+              }
+            />
+          </div>
           <textarea
+            ref={instructionsRef}
             id="profile-instructions"
             rows={8}
             value={form.instructions}
@@ -505,6 +530,7 @@ export default function AiAgentProfileEditor() {
             placeholder={instructionsPlaceholder}
             className={INPUT}
           />
+          <p className="mt-1 text-xs text-gray-500">Supports placeholders: {datetimePlaceholderText}</p>
         </div>
 
         {showModelSampling ? (
@@ -810,23 +836,38 @@ export default function AiAgentProfileEditor() {
                             <label className={LABEL} htmlFor={`block-${def.key}`}>
                               {def.label}
                             </label>
-                            {isDefault ? null : (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setForm((current) => {
-                                    if (!current) return current
-                                    const { [def.key]: _removed, ...rest } = current.prompt_blocks
-                                    return { ...current, prompt_blocks: rest }
+                            <div className="flex items-center gap-2">
+                              <InsertTokenMenu
+                                groups={dateTimeGroups}
+                                onInsert={(token) =>
+                                  insertAtCaret(promptBlockRefs.current[def.key], value, token, (next) => {
+                                    setForm((current) =>
+                                      current ? { ...current, prompt_blocks: { ...current.prompt_blocks, [def.key]: next } } : current,
+                                    )
                                   })
                                 }
-                                className="shrink-0 text-xs font-semibold text-cyan-700 hover:underline"
-                              >
-                                Reset to default
-                              </button>
-                            )}
+                              />
+                              {isDefault ? null : (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setForm((current) => {
+                                      if (!current) return current
+                                      const { [def.key]: _removed, ...rest } = current.prompt_blocks
+                                      return { ...current, prompt_blocks: rest }
+                                    })
+                                  }
+                                  className="shrink-0 text-xs font-semibold text-cyan-700 hover:underline"
+                                >
+                                  Reset to default
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <textarea
+                            ref={(element) => {
+                              promptBlockRefs.current[def.key] = element
+                            }}
                             id={`block-${def.key}`}
                             rows={value.split('\n').length > 2 ? 4 : 2}
                             value={value}
@@ -839,6 +880,7 @@ export default function AiAgentProfileEditor() {
                             className={`${INPUT} font-mono text-xs`}
                           />
                           <p className="mt-1 text-xs text-gray-500">{def.help}</p>
+                          <p className="mt-1 text-xs text-gray-500">Supports placeholders: {datetimePlaceholderText}</p>
                         </div>
                       )
                     })}

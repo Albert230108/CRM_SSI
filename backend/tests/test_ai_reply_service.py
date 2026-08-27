@@ -7,7 +7,7 @@ from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.models.tenant_conversation_link import TenantConversationLink
-from app.services import ai_reply_service
+from app.services import ai_reply_service, datetime_placeholders
 
 
 def _create_tenant(db_session, **overrides):
@@ -75,6 +75,34 @@ def test_sections_are_concatenated_in_order(db_session, monkeypatch):
     assert "You are a helpful host." in captured["prompt"]
     assert "Be warm and concise." in captured["prompt"]
     assert "Let them know check-in is at 3pm." in captured["prompt"]
+
+
+def test_datetime_placeholders_resolve_in_guidelines_and_sections(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    fixed_now = datetime(2026, 8, 27, 21, 5, 6, tzinfo=timezone(timedelta(hours=2)))
+    monkeypatch.setattr(datetime_placeholders, '_now', lambda: fixed_now)
+    template = _template(
+        guidelines='Use the current date {{current_date}}, time {{current_time}}, and timestamp {{current_datetime}}.',
+        sections=[
+            {"label": "Persona", "content": "Today is {{current_date}} at {{current_time}}."},
+            {"label": "Tone", "content": "Timestamp: {{current_datetime}}."},
+        ],
+    )
+
+    prompt = ai_reply_service.assemble_prompt(
+        db_session,
+        tenant=tenant,
+        template=template,
+        channel='email',
+        rough_draft='Please help.',
+    )
+
+    assert fixed_now.date().isoformat() in prompt
+    assert fixed_now.time().isoformat(timespec='seconds') in prompt
+    assert fixed_now.isoformat(timespec='seconds') in prompt
+    assert '{{current_date}}' not in prompt
+    assert '{{current_time}}' not in prompt
+    assert '{{current_datetime}}' not in prompt
 
 
 def test_canvas_notes_are_never_sent_to_the_ai(db_session, monkeypatch):

@@ -52,3 +52,5 @@ export const EMAIL_TEMPLATE_PLACEHOLDERS = [
   'num_nights', 'num_adults', 'num_children', 'room_name', 'property_name', 'booking_id',
   'booking_status', 'language', 'arrival_time', 'departure_time', 'city', 'country',
 ]
+
+export const DATETIME_PLACEHOLDERS = ['current_date', 'current_time', 'current_datetime'] as const

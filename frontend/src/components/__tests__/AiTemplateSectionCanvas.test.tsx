@@ -272,6 +272,10 @@ describe('AiTemplateSectionCanvas', () => {
     expect(latest.sections[0].content).toBe('{{tenant_name}}')
 
     await user.click(screen.getByRole('button', { name: '+ Insert' }))
+    await user.click(screen.getByRole('button', { name: '{{current_date}}' }))
+    expect(latest.sections[0].content).toBe('{{tenant_name}}{{current_date}}')
+
+    await user.click(screen.getByRole('button', { name: '+ Insert' }))
     await user.click(screen.getByRole('button', { name: /policies\.cancellation/ }))
     expect(latest.sections[0].content).toContain('{{brain:policies.cancellation}}')
   })

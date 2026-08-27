@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import AiTemplateSectionCanvas from '../components/AiTemplateSectionCanvas'
+import { InsertTokenMenu, insertAtCaret, type InsertTokenGroup, type InsertTokenItem } from '../lib/insertToken'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import {
   CARD_HEIGHT,
@@ -12,6 +13,7 @@ import {
   nextSectionPosition,
 } from '../lib/aiTemplateCanvas'
 import {
+  DATETIME_PLACEHOLDERS,
   EMAIL_TEMPLATE_PLACEHOLDERS,
   type AiReplyTemplate,
   type AiTemplateNote,
@@ -110,6 +112,31 @@ function toFormState(template: AiReplyTemplate): FormState {
   }
 }
 
+function literalTokenItems(placeholders: readonly string[]): InsertTokenItem[] {
+  return placeholders.map((placeholder) => ({ label: `{{${placeholder}}}`, value: `{{${placeholder}}}` }))
+}
+
+function brainTokenItems(brainSections: BrainSectionOption[]): InsertTokenItem[] {
+  return brainSections.map((section) => ({
+    label: section.title,
+    secondaryLabel: section.path,
+    title: section.path,
+    value: `{{brain:${section.path}}}`,
+  }))
+}
+
+function templateTokenGroups(brainSections: BrainSectionOption[]): InsertTokenGroup[] {
+  return [
+    { label: 'Tenant', tokens: literalTokenItems(EMAIL_TEMPLATE_PLACEHOLDERS) },
+    { label: 'Date & time', tokens: literalTokenItems(DATETIME_PLACEHOLDERS) },
+    {
+      label: 'Brain',
+      tokens: brainTokenItems(brainSections),
+      emptyMessage: 'No brain sections yet.',
+    },
+  ]
+}
+
 export default function AiTemplateEditor() {
   const { templateId } = useParams<{ templateId: string }>()
   const navigate = useNavigate()
@@ -118,6 +145,7 @@ export default function AiTemplateEditor() {
   const isNew = templateId === 'new'
 
   const [form, setForm] = useState<FormState>(createEmptyForm)
+  const guidelinesRef = useRef<HTMLTextAreaElement | null>(null)
   useDocumentTitle(isNew ? 'CRM - New Template' : `CRM - ${form.name || 'Edit Template'}`)
   const [brainSections, setBrainSections] = useState<BrainSectionOption[]>([])
   const [loading, setLoading] = useState(!isNew)
@@ -300,8 +328,19 @@ export default function AiTemplateEditor() {
         </div>
 
         <div className="space-y-1.5">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">0. Goal &amp; Guidelines</p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">0. Goal &amp; Guidelines</p>
+            <InsertTokenMenu
+              groups={templateTokenGroups(brainSections)}
+              onInsert={(token) =>
+                insertAtCaret(guidelinesRef.current, form.guidelines, token, (next) =>
+                  setForm((current) => (current ? { ...current, guidelines: next } : current)),
+                )
+              }
+            />
+          </div>
           <textarea
+            ref={guidelinesRef}
             value={form.guidelines}
             onChange={(event) => setForm((current) => ({ ...current, guidelines: event.target.value }))}
             placeholder="Describe this template's goal, e.g. Used for late check-in requests; keep replies under 3 sentences."
@@ -309,7 +348,7 @@ export default function AiTemplateEditor() {
             className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
           />
           <p className="text-xs text-gray-500">
-            Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
+            Supports placeholders: { [...EMAIL_TEMPLATE_PLACEHOLDERS, ...DATETIME_PLACEHOLDERS].map((token) => `{{${token}}}`).join(', ') }
           </p>
           <p className="text-xs text-gray-500">
             Brain references also work here and in every section below, e.g.{' '}
@@ -327,7 +366,7 @@ export default function AiTemplateEditor() {
           viewportKey={templateId ?? 'new'}
         />
         <p className="text-xs text-gray-500">
-          Supports placeholders: {EMAIL_TEMPLATE_PLACEHOLDERS.map((token) => `{{${token}}}`).join(', ')}
+          Supports placeholders: { [...EMAIL_TEMPLATE_PLACEHOLDERS, ...DATETIME_PLACEHOLDERS].map((token) => `{{${token}}}`).join(', ') }
         </p>
 
         <div className="space-y-1.5">

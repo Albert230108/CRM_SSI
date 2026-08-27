@@ -8,6 +8,7 @@ import ToastHost from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SettingsSidebarLayout, { SettingsTab } from '../components/settings/SettingsSidebarLayout'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { DATETIME_PLACEHOLDERS, EMAIL_TEMPLATE_PLACEHOLDERS } from '../types/aiReplyTemplate'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -33,12 +34,6 @@ type WhatsappAccount = {
   provider: string
   label: string
 }
-
-const EMAIL_TEMPLATE_PLACEHOLDERS = [
-  'tenant_name', 'first_name', 'last_name', 'email', 'phone', 'check_in', 'check_out',
-  'num_nights', 'num_adults', 'num_children', 'room_name', 'property_name', 'booking_id',
-  'booking_status', 'language', 'arrival_time', 'departure_time', 'city', 'country',
-]
 
 const emptyTemplateForm = { id: null as number | null, name: '', subject: '', body: '' }
 
@@ -641,7 +636,7 @@ export default function Settings() {
             <h2 className="text-lg font-semibold text-gray-900">Email Templates</h2>
             <p className="mt-1.5 text-sm text-gray-500">
               Personal templates you can select as a starting body when using "AI Reply" to forward an email thread.
-              Use placeholders below and they'll be filled in with the tenant's info: {EMAIL_TEMPLATE_PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}
+              Use placeholders below and they'll be filled in with the tenant's info or current server time: {EMAIL_TEMPLATE_PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}, {DATETIME_PLACEHOLDERS.map((p) => `{{${p}}}`).join(', ')}
             </p>
 
             <div className="mt-3 space-y-2">

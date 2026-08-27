@@ -1,11 +1,12 @@
 """Covers ai_prompt_blocks.resolve_blocks and the /ai-agent-profiles/prompt-blocks registry."""
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from app.core.dependencies import get_current_user
 from app.main import app
 from app.models.ai_agent_profile import AiAgentProfile
 from app.models.user import User
-from app.services import ai_prompt_blocks
+from app.services import ai_prompt_blocks, datetime_placeholders
 
 REGULAR_USER = User(id=2, email="agent@example.com", password_hash="x", is_active=True, is_admin=False)
 
@@ -61,6 +62,30 @@ def test_fill_tolerates_a_stray_brace_in_operator_text():
     """str.replace, not str.format, so an unmatched brace in operator-written text cannot raise."""
     text = ai_prompt_blocks.fill("Note: {unmatched", limit=5)
     assert text == "Note: {unmatched"
+
+
+def test_resolve_datetime_placeholders_expands_known_tokens(monkeypatch):
+    fixed_now = datetime(2026, 8, 27, 9, 8, 7, tzinfo=timezone(timedelta(hours=2)))
+    monkeypatch.setattr(datetime_placeholders, '_now', lambda: fixed_now)
+
+    text = datetime_placeholders.resolve_datetime_placeholders(
+        'Before {{current_date}} / {{current_time}} / {{current_datetime}} / {{brain:keep}} after'
+    )
+
+    assert text == (
+        f"Before {fixed_now.date().isoformat()} / {fixed_now.time().isoformat(timespec='seconds')} / "
+        f"{fixed_now.isoformat(timespec='seconds')} / " + "{{brain:keep}} after"
+    )
+
+
+def test_resolve_blocks_resolves_datetime_placeholders_in_overrides(monkeypatch):
+    fixed_now = datetime(2026, 8, 27, 9, 8, 7, tzinfo=timezone(timedelta(hours=2)))
+    monkeypatch.setattr(datetime_placeholders, '_now', lambda: fixed_now)
+
+    profile = AiAgentProfile(name='P', role='planner', prompt_blocks={'preamble': 'Start {{current_datetime}}'})
+    resolved = ai_prompt_blocks.resolve_blocks(profile, 'planner')
+
+    assert resolved['preamble'] == f"Start {fixed_now.isoformat(timespec='seconds')}"
 
 
 def test_join_omits_the_missing_side():

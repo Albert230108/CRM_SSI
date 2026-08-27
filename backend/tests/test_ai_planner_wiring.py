@@ -1,6 +1,6 @@
 """Covers how the planner loop plugs into the existing auto-draft pipeline and reply box."""
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -17,7 +17,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
-from app.services import ai_agent_orchestrator, ai_auto_draft_service, gemini_client
+from app.services import ai_agent_orchestrator, ai_auto_draft_service, datetime_placeholders, gemini_client
 
 REGULAR_USER = User(id=2, email="agent@example.com", password_hash="x", is_active=True, is_admin=False)
 
@@ -677,6 +677,24 @@ def test_resolve_drafter_context_returns_built_in_defaults_with_no_pinned_profil
 
     assert blocks == ai_prompt_blocks.DEFAULTS_BY_ROLE["drafter"]
     assert instructions is None
+
+
+def test_resolve_drafter_context_resolves_datetime_placeholders_in_instructions(db_session, monkeypatch):
+    fixed_now = datetime(2026, 8, 27, 14, 15, 16, tzinfo=timezone(timedelta(hours=2)))
+    monkeypatch.setattr(datetime_placeholders, '_now', lambda: fixed_now)
+    profile = AiAgentProfile(
+        name='D',
+        role='drafter',
+        is_default=True,
+        escalate_keywords=[],
+        instructions='Now {{current_date}} at {{current_time}}',
+    )
+    db_session.add(profile)
+    db_session.commit()
+
+    _, instructions = ai_agent_orchestrator.resolve_drafter_context(db_session, profile.id)
+
+    assert instructions == f"Now {fixed_now.date().isoformat()} at {fixed_now.time().isoformat(timespec='seconds')}"
 
 
 def _brain_section(db_session, path, title, content):
