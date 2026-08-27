@@ -133,18 +133,11 @@ async def _sync_emails(
 ) -> int:
     accounts = db.query(GmailAccount).filter(GmailAccount.is_active.is_(True)).order_by(GmailAccount.id.asc()).all()
     imported = 0
-    if progress is not None:
-        progress(0, len(accounts))
-    for index, account in enumerate(accounts, start=1):
-        # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
-        # per account) with no yield points of its own. Looping it inline here would monopolize
-        # this worker's event loop for every other concurrent request until all accounts finished.
-        imported += await run_in_threadpool(_sync_gmail_account_in_fresh_session, account.id, tenant_ids)
-        # Reported per account rather than per thread: this is the longest phase by far, and
-        # without any counter the overlay sat on a frozen bar for its whole duration, which is
-        # indistinguishable from being stuck.
-        if progress is not None:
-            progress(index, len(accounts))
+    for account in accounts:
+        # _sync_gmail_account makes blocking, synchronous Gmail API calls. Reporting progress
+        # from inside the worker thread keeps the overlay moving during the longest phase
+        # instead of waiting for the whole account to finish before emitting a new value.
+        imported += await run_in_threadpool(_sync_gmail_account_in_fresh_session, account.id, tenant_ids, progress)
     return imported
 
 
@@ -297,7 +290,11 @@ def _rebuild_tenant_thread_timeline(tenant_id: int) -> None:
         db.close()
 
 
-def _sync_gmail_account_in_fresh_session(account_id: int, tenant_ids: list[int] | None = None) -> int:
+def _sync_gmail_account_in_fresh_session(
+    account_id: int,
+    tenant_ids: list[int] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
     """Sync one Gmail account using a session owned entirely by the worker thread.
 
     _sync_gmail_account commits several times and can run for a while. Keeping its Session
@@ -310,7 +307,7 @@ def _sync_gmail_account_in_fresh_session(account_id: int, tenant_ids: list[int] 
         account = db.query(GmailAccount).filter(GmailAccount.id == account_id).first()
         if account is None:
             return 0
-        return _sync_gmail_account(db, account, tenant_ids)
+        return _sync_gmail_account(db, account, tenant_ids, progress=progress)
     except Exception:
         db.rollback()
         raise

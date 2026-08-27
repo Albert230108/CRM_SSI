@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -150,6 +150,7 @@ def _account_credentials(account: GmailAccount) -> Credentials:
 # client with no socket timeout by default, so one has to be supplied explicitly. Matches
 # the timeout convention already used for Beds24 (services/beds24_client.py).
 GMAIL_HTTP_TIMEOUT_SECONDS = 60
+GMAIL_ACCOUNT_SYNC_QUERY_CHUNK_SIZE = 25
 
 
 def _build_service(credentials: Credentials) -> Any:
@@ -217,6 +218,10 @@ def _list_all_matching_threads(service: Any, query: str) -> list[dict[str, Any]]
         if not page_token:
             break
     return threads
+
+
+def _chunked(items: list[str], size: int) -> list[list[str]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
 
 
 def _start_watch(db: Session, account: GmailAccount) -> None:
@@ -911,7 +916,12 @@ def sync_all_accounts_status(job_id: str, current_user: User = Depends(get_curre
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync job not found")
     return job
 
-def _sync_gmail_account(db: Session, account: GmailAccount, tenant_ids: list[int] | None = None) -> int:
+def _sync_gmail_account(
+    db: Session,
+    account: GmailAccount,
+    tenant_ids: list[int] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
     """Sync a single active Gmail account's threads. Returns count of saved conversations.
 
     Full re-list + re-fetch of every matching thread - used by the manual sync route, the
@@ -930,17 +940,37 @@ def _sync_gmail_account(db: Session, account: GmailAccount, tenant_ids: list[int
     if tenant_ids is not None:
         alias_query = alias_query.filter(TenantEmailAddress.tenant_id.in_(tenant_ids))
     tenant_emails = {email.strip().lower() for (email,) in alias_query.all() if email}
-    query_parts = [f'"{email}"' for email in sorted(tenant_emails)]
-    query = " OR ".join(query_parts) if query_parts else None
-    threads = _list_all_matching_threads(service, query) if query else []
+    if not tenant_emails:
+        account.last_synced_at = datetime.now(timezone.utc)
+        db.commit()
+        return 0
+
+    thread_refs_by_id: dict[str, dict[str, Any]] = {}
+    for query_terms in _chunked(sorted(tenant_emails), GMAIL_ACCOUNT_SYNC_QUERY_CHUNK_SIZE):
+        query = " OR ".join(f'"{email}"' for email in query_terms)
+        if not query:
+            continue
+        for thread_ref in _list_all_matching_threads(service, query):
+            thread_id = str(thread_ref.get("id") or "").strip()
+            if thread_id and thread_id not in thread_refs_by_id:
+                thread_refs_by_id[thread_id] = thread_ref
+
+    threads = list(thread_refs_by_id.values())
+    total_threads = len(threads)
+    if progress is not None:
+        progress(0, total_threads)
+
     saved = 0
-    for thread_ref in threads:
+    for index, thread_ref in enumerate(threads, start=1):
         thread = _execute_gmail_request(
             service.users().threads().get(userId="me", id=thread_ref["id"], format="full")
         )
         conversation = _upsert_thread(db, account, thread)
         if conversation is not None and conversation.tenant_id is not None:
             saved += 1
+        db.commit()
+        if progress is not None:
+            progress(index, total_threads)
 
     account.last_synced_at = datetime.now(timezone.utc)
     db.commit()

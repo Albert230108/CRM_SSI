@@ -123,6 +123,47 @@ def test_sync_gmail_account_includes_active_secondary_email_in_query(db_session,
     assert '"alias@example.com"' in query
 
 
+def test_sync_gmail_account_reports_thread_progress_across_query_chunks(db_session, monkeypatch):
+    account = GmailAccount(email_address="chunked-sync-account@example.com", is_active=True)
+    tenant = Tenant(name="Chunked Tenant", booking_id="booking-chunked-tenant")
+    db_session.add_all([account, tenant])
+    db_session.commit()
+    db_session.add_all([
+        TenantEmailAddress(tenant_id=tenant.id, email="a@example.com", is_active=True),
+        TenantEmailAddress(tenant_id=tenant.id, email="b@example.com", is_active=True),
+        TenantEmailAddress(tenant_id=tenant.id, email="c@example.com", is_active=True),
+    ])
+    db_session.commit()
+
+    fake_service = _FakeThreadsService(
+        list_pages=[
+            {"threads": [{"id": "thread-1"}]},
+            {"threads": [{"id": "thread-2"}]},
+            {"threads": [{"id": "thread-3"}]},
+        ],
+        threads_by_id={
+            "thread-1": {"id": "thread-1", "messages": [_message("msg-1", "a@example.com", "chunked-sync-account@example.com")]},
+            "thread-2": {"id": "thread-2", "messages": [_message("msg-2", "b@example.com", "chunked-sync-account@example.com")]},
+            "thread-3": {"id": "thread-3", "messages": [_message("msg-3", "c@example.com", "chunked-sync-account@example.com")]},
+        },
+    )
+    progress_updates: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(gmail_integration, "_build_service_for_account", lambda acct: fake_service)
+    monkeypatch.setattr(gmail_integration, "GMAIL_ACCOUNT_SYNC_QUERY_CHUNK_SIZE", 1)
+
+    saved = gmail_integration._sync_gmail_account(
+        db_session,
+        account,
+        progress=lambda current, total: progress_updates.append((current, total)),
+    )
+
+    assert saved == 3
+    assert progress_updates == [(0, 3), (1, 3), (2, 3), (3, 3)]
+    assert len(fake_service.list_calls) == 3
+    assert {m.provider_message_id for m in db_session.query(ConversationMessage).all()} == {"msg-1", "msg-2", "msg-3"}
+
+
 def test_sync_gmail_account_for_email_paginates_beyond_first_page(db_session, monkeypatch):
     """Same pagination gap as _sync_gmail_account, but in the narrow one-off search fired
     when a tenant links a new email address."""

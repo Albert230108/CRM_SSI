@@ -56,7 +56,7 @@ def test_sync_emails_uses_a_fresh_session_per_account(monkeypatch):
 
     sync_calls = []
 
-    def fake_sync_gmail_account(db, account, tenant_ids=None):
+    def fake_sync_gmail_account(db, account, tenant_ids=None, progress=None):
         sync_calls.append((db, account.id, tenant_ids))
         assert db is not outer_db
         return 7

@@ -172,6 +172,40 @@ def test_sync_all_phase_timeout_is_reported_not_fatal(non_admin_client, monkeypa
     assert "Timed out after 0.05s" in steps["beds24"]["error"]
 
 
+def test_sync_all_email_progress_updates_within_phase(non_admin_client, monkeypatch):
+    progress_updates: list[tuple[int, int]] = []
+
+    async def fast_beds24(db, changed_by_user_id=None, tenant_ids=None):
+        return 0
+
+    async def slow_email_phase(db, tenant_ids=None, progress=None):
+        if progress is not None:
+            progress(0, 5)
+            progress_updates.append((0, 5))
+            progress(1, 5)
+            progress_updates.append((1, 5))
+            progress(2, 5)
+            progress_updates.append((2, 5))
+            progress(5, 5)
+            progress_updates.append((5, 5))
+        return 2
+
+    async def fast_whatsapp(db, tenant_ids=None):
+        return {"total_imported": 0, "synced_endpoints": 0, "results": [], "errors": []}
+
+    monkeypatch.setattr(admin_sync, "_sync_beds24", fast_beds24)
+    monkeypatch.setattr(admin_sync, "_sync_emails", slow_email_phase)
+    monkeypatch.setattr(admin_sync, "_sync_whatsapp_linked_endpoints", fast_whatsapp)
+
+    job_id = non_admin_client.post("/api/admin/sync-all", json={"tenant_ids": None}).json()["job_id"]
+    job = poll_until_done(non_admin_client, job_id)
+
+    assert job["status"] == "done"
+    assert job["result"]["emails_imported"] == 2
+    assert job["result"]["partial_failures"] == []
+    assert progress_updates == [(0, 5), (1, 5), (2, 5), (5, 5)]
+
+
 def test_sync_all_thread_timeout_is_reported_not_fatal(non_admin_client, monkeypatch):
     real_session_local = admin_sync.SessionLocal
     setup_session = real_session_local()
