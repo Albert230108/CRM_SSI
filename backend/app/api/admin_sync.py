@@ -139,7 +139,7 @@ async def _sync_emails(
         # _sync_gmail_account makes blocking, synchronous Gmail API calls (up to 100 threads
         # per account) with no yield points of its own. Looping it inline here would monopolize
         # this worker's event loop for every other concurrent request until all accounts finished.
-        imported += await run_in_threadpool(_sync_gmail_account, db, account, tenant_ids)
+        imported += await run_in_threadpool(_sync_gmail_account_in_fresh_session, account.id, tenant_ids)
         # Reported per account rather than per thread: this is the longest phase by far, and
         # without any counter the overlay sat on a frozen bar for its whole duration, which is
         # indistinguishable from being stuck.
@@ -293,6 +293,27 @@ def _rebuild_tenant_thread_timeline(tenant_id: int) -> None:
     db = SessionLocal()
     try:
         build_tenant_thread_timeline(db, tenant_id)
+    finally:
+        db.close()
+
+
+def _sync_gmail_account_in_fresh_session(account_id: int, tenant_ids: list[int] | None = None) -> int:
+    """Sync one Gmail account using a session owned entirely by the worker thread.
+
+    _sync_gmail_account commits several times and can run for a while. Keeping its Session
+    local to the thread avoids sharing the request/job coroutine's Session across a
+    cancellable threadpool boundary, which is what led to close()/commit() conflicts when a
+    timeout or cancellation landed mid-flight.
+    """
+    db = SessionLocal()
+    try:
+        account = db.query(GmailAccount).filter(GmailAccount.id == account_id).first()
+        if account is None:
+            return 0
+        return _sync_gmail_account(db, account, tenant_ids)
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
