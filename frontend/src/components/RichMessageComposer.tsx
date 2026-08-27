@@ -132,7 +132,7 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
             normalizeEditorMarkup()
             emitChange()
           }}
-          className="min-h-[5.5rem] w-full overflow-y-auto rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+          className="min-h-[5.5rem] w-full overflow-y-auto rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5"
         />
       </div>
     </div>

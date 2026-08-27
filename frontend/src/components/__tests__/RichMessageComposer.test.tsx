@@ -31,4 +31,22 @@ describe('RichMessageComposer', () => {
 
     expect(composer.innerHTML).toBe('Hello world')
   })
+
+  it('applies list styling utilities to the editor surface', () => {
+    render(
+      <RichMessageComposer
+        channel="email"
+        value={{ body: '', bodyHtml: null, bodyFormat: 'plain' }}
+        placeholder="Write your reply..."
+        onChange={vi.fn()}
+      />,
+    )
+
+    const composer = screen.getByRole('textbox', { name: 'Write your reply...' })
+
+    expect(composer.className).toContain('[&_ul]:list-disc')
+    expect(composer.className).toContain('[&_ol]:list-decimal')
+    expect(composer.className).toContain('[&_ul]:pl-5')
+    expect(composer.className).toContain('[&_ol]:pl-5')
+  })
 })

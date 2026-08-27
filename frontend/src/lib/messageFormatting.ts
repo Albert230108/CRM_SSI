@@ -19,22 +19,39 @@ const decodeHtmlEntities = (value: string) => {
 export const htmlToPlainText = (html: string) => {
   const doc = new DOMParser().parseFromString(html, 'text/html')
   const chunks: string[] = []
+  const append = (value: string) => {
+    if (value) chunks.push(value)
+  }
   const walk = (node: Node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent || ''
-      if (text.trim()) chunks.push(text)
+      if (text.trim()) append(text)
       return
     }
     if (!(node instanceof HTMLElement)) return
     const tag = node.tagName
     if (tag === 'BR') {
-      chunks.push('\n')
+      append('\n')
+      return
+    }
+    if (tag === 'A') {
+      const href = node.getAttribute('href')?.trim()
+      const text = (node.textContent || '').trim()
+      if (!href) {
+        append(text)
+        return
+      }
+      if (!text || text === href) {
+        append(href)
+        return
+      }
+      append(`${text} (${href})`)
       return
     }
     const isBlock = SANITIZE_HTML_BLOCK_TAGS.has(tag)
-    if (isBlock && chunks.length && !chunks[chunks.length - 1]?.endsWith('\n')) chunks.push('\n')
+    if (isBlock && chunks.length && !chunks[chunks.length - 1]?.endsWith('\n')) append('\n')
     node.childNodes.forEach(walk)
-    if (isBlock && !chunks[chunks.length - 1]?.endsWith('\n')) chunks.push('\n')
+    if (isBlock && !chunks[chunks.length - 1]?.endsWith('\n')) append('\n')
   }
   doc.body.childNodes.forEach(walk)
   return decodeHtmlEntities(chunks.join(' ').replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').replace(/[ \t]{2,}/g, ' ').trim())
