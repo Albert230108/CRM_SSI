@@ -17,6 +17,7 @@ from app.models.tenant_brain_field_value import TenantBrainFieldValue
 from app.models.tenant_brain_trigger import TenantBrainTrigger
 from app.models.user import User
 from app.services import tenant_brain_service
+from app.services import brain_field_service, datetime_placeholders
 from app.services.tenant_brain_trigger_service import register_message_trigger
 from app.services.action_writer_trigger_service import register_manual_trigger
 
@@ -211,6 +212,48 @@ def test_generate_brain_update_adds_no_entries_when_should_remember_is_false(db_
     run = db_session.query(AiAgentRun).filter(AiAgentRun.tenant_id == tenant.id).one()
     assert run.status == "skipped"
 
+
+def test_generate_brain_update_resolves_datetime_placeholders_in_field_instructions(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_brain_writer(db_session, tenant)
+    monkeypatch.setattr(tenant_brain_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Anything new?")
+    fixed_now = datetime(2026, 8, 27, 9, 8, 7, tzinfo=timezone.utc)
+    monkeypatch.setattr(datetime_placeholders, "_now", lambda: fixed_now)
+
+    definition = brain_field_service.add_definition(
+        db_session,
+        key="arrival",
+        label="Arrival",
+        ai_instruction="Look for updates on {{current_date}}.",
+    )
+    db_session.commit()
+
+    captured_prompt = {}
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        from app.services import gemini_client
+
+        captured_prompt["prompt"] = prompt
+        return gemini_client.GenerationResult(
+            text="ignored",
+            parsed={"should_remember": False, "entries": [], "reasoning": "No durable info."},
+            model=model or "fake-model",
+            prompt_tokens=1,
+            output_tokens=1,
+            latency_ms=1,
+        )
+
+    monkeypatch.setattr(tenant_brain_service.gemini_client, "generate", fake_generate)
+
+    trigger = TenantBrainTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    added = tenant_brain_service.generate_brain_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    assert added == []
+    assert definition.ai_instruction == "Look for updates on {{current_date}}."
+    assert f"look for: Look for updates on {fixed_now.date().isoformat()}." in captured_prompt["prompt"]
+    assert "{{current_date}}" not in captured_prompt["prompt"]
 
 def test_generate_brain_update_adds_entries_when_should_remember_is_true(db_session, monkeypatch):
     tenant = _create_tenant(db_session)

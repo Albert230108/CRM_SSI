@@ -43,6 +43,7 @@ type Props = {
   primaryPlaceholder: string
   secondaryLabel: string
   secondaryPlaceholder: string
+  showDateTimeTokens?: boolean
   addButtonLabel: string
   viewportKey: string
 }
@@ -54,6 +55,7 @@ export default function WorkingMemoryCanvas({
   primaryPlaceholder,
   secondaryLabel,
   secondaryPlaceholder,
+  showDateTimeTokens = false,
   addButtonLabel,
   viewportKey,
 }: Props) {
@@ -531,6 +533,7 @@ export default function WorkingMemoryCanvas({
           primaryPlaceholder={primaryPlaceholder}
           secondaryLabel={secondaryLabel}
           secondaryPlaceholder={secondaryPlaceholder}
+          showDateTimeTokens={showDateTimeTokens}
           onChange={updateCard}
           onDuplicate={duplicateCard}
           onRemove={removeCard}

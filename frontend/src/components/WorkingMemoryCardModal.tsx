@@ -1,7 +1,17 @@
 import { useEffect, useRef } from 'react'
+import { InsertTokenMenu, insertAtCaret, type InsertTokenGroup, type InsertTokenItem } from '../lib/insertToken'
 import type { WorkingMemoryCard } from '../lib/workingMemoryCanvas'
+import { DATETIME_PLACEHOLDERS } from '../types/aiReplyTemplate'
 
 const OVERLAY_CLASS = 'fixed inset-0 z-[90] flex items-center justify-center bg-gray-900/40 p-4'
+
+function literalTokenItems(placeholders: readonly string[]): InsertTokenItem[] {
+  return placeholders.map((placeholder) => ({ label: `{{${placeholder}}}`, value: `{{${placeholder}}}` }))
+}
+
+function dateTimeTokenGroups(): InsertTokenGroup[] {
+  return [{ label: 'Date & time', tokens: literalTokenItems(DATETIME_PLACEHOLDERS) }]
+}
 
 type Props = {
   card: WorkingMemoryCard
@@ -9,6 +19,7 @@ type Props = {
   primaryPlaceholder: string
   secondaryLabel: string
   secondaryPlaceholder: string
+  showDateTimeTokens?: boolean
   onChange: (id: string, field: 'primary' | 'secondary', value: string) => void
   onDuplicate: (id: string) => void
   onRemove: (id: string) => void
@@ -21,12 +32,14 @@ export default function WorkingMemoryCardModal({
   primaryPlaceholder,
   secondaryLabel,
   secondaryPlaceholder,
+  showDateTimeTokens = false,
   onChange,
   onDuplicate,
   onRemove,
   onClose,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const dateTimeGroups = dateTimeTokenGroups()
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -58,7 +71,17 @@ export default function WorkingMemoryCardModal({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">{secondaryLabel}</label>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500">{secondaryLabel}</label>
+            {showDateTimeTokens ? (
+              <InsertTokenMenu
+                groups={dateTimeGroups}
+                onInsert={(token) =>
+                  insertAtCaret(textareaRef.current, card.secondary, token, (next) => onChange(card.id, 'secondary', next))
+                }
+              />
+            ) : null}
+          </div>
           <textarea
             ref={textareaRef}
             value={card.secondary}

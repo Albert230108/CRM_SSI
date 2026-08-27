@@ -195,7 +195,8 @@ def _fields_block(db: Session, tenant_id: int) -> str:
     for definition in definitions:
         current = values.get(definition.id)
         current_value = current.value if current is not None and current.value else "(not set)"
-        lines.append(f"- key={definition.key} | {definition.label} | look for: {definition.ai_instruction} | current: {current_value}")
+        look_for = resolve_datetime_placeholders((definition.ai_instruction or "").strip())
+        lines.append(f"- key={definition.key} | {definition.label} | look for: {look_for} | current: {current_value}")
     return ai_prompt_blocks.join(_FIELD_GUARDRAILS, "\n".join(lines))
 
 

@@ -178,6 +178,7 @@ function RulesTab({ showSuccess, showError }: { showSuccess: (m: string) => void
               primaryPlaceholder="e.g. Returning customer"
               secondaryLabel="Action"
               secondaryPlaceholder="e.g. Always offer a discount"
+              showDateTimeTokens={true}
               addButtonLabel="+ Rule"
               viewportKey="working-memory-rules"
             />
@@ -297,6 +298,7 @@ function FieldsTab({ showSuccess, showError }: { showSuccess: (m: string) => voi
             primaryPlaceholder="e.g. Pet ownership"
             secondaryLabel="AI Instruction"
             secondaryPlaceholder="e.g. Note whether the tenant mentions having pets."
+            showDateTimeTokens={true}
             addButtonLabel="+ Field"
             viewportKey="working-memory-fields"
           />
