@@ -147,12 +147,43 @@ def execute_due_schedule(
             row.tenant_id: row
             for row in db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id.in_(matched_tenant_ids)).all()
         }
+        last_message_by_tenant_id = compute_last_message_by_tenant_id(db, matched_tenant_ids)
     else:
         settings_by_tenant_id = {}
+        last_message_by_tenant_id = {}
 
     for tenant_id in matched_tenant_ids:
         ai_settings = settings_by_tenant_id.get(tenant_id)
+        last_message = last_message_by_tenant_id.get(tenant_id)
+        if last_message is None:
+            for channel in SCHEDULE_CHANNELS:
+                db.add(
+                    BulkPlannerScheduleRunResult(
+                        run_id=run_id,
+                        tenant_id=tenant_id,
+                        channel=channel,
+                        outcome="skipped",
+                        skip_reason="No communication history for this tenant.",
+                    )
+                )
+                db.commit()
+            continue
+
+        _occurred_at, winning_channel, _direction = last_message
         for channel in SCHEDULE_CHANNELS:
+            if channel != winning_channel:
+                db.add(
+                    BulkPlannerScheduleRunResult(
+                        run_id=run_id,
+                        tenant_id=tenant_id,
+                        channel=channel,
+                        outcome="skipped",
+                        skip_reason="Not the most recent channel for this tenant.",
+                    )
+                )
+                db.commit()
+                continue
+
             eligible, skip_reason = _channel_is_eligible(ai_settings, channel)
             if not eligible:
                 db.add(

@@ -328,19 +328,128 @@ def test_execute_due_schedule_records_success_and_skips(db_session, monkeypatch)
     assert run.status == "completed"
     assert run.matched_tenant_count == 3
     assert set(planned) == {
-        (tenant_both.id, "email"),
         (tenant_both.id, "whatsapp"),
         (tenant_email_off.id, "whatsapp"),
     }
     assert len(results) == 6
-    assert sum(1 for row in results if row.outcome == "success") == 3
+    assert sum(1 for row in results if row.outcome == "success") == 2
     assert any(row.outcome == "skipped" and row.channel == "email" and row.tenant_id == tenant_email_off.id for row in results)
     assert any(row.outcome == "skipped" and row.tenant_id == tenant_planner_off.id for row in results)
-    assert db_session.query(AiAutoDraft).filter(AiAutoDraft.tenant_id == tenant_both.id).count() == 2
+    assert db_session.query(AiAutoDraft).filter(AiAutoDraft.tenant_id == tenant_both.id).count() == 1
     assert db_session.query(AiAutoDraft).filter(AiAutoDraft.tenant_id == tenant_email_off.id).count() == 1
     db_session.refresh(schedule)
     assert schedule.last_run_at is not None
     assert _as_utc(schedule.next_run_at) > frozen_now
+
+
+def test_execute_due_schedule_picks_most_recent_channel_and_records_losers(db_session, monkeypatch):
+    frozen_now = datetime(2026, 8, 26, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(bulk_planner_schedule_service, "_utc_now", lambda: frozen_now)
+
+    tenant_whatsapp_wins = _create_tenant(db_session, name="WhatsApp Wins", booking_id="WIN-A", booking_status="Confirmed")
+    tenant_email_wins = _create_tenant(db_session, name="Email Wins", booking_id="WIN-B", booking_status="Confirmed")
+    tenant_whatsapp_disabled = _create_tenant(db_session, name="WhatsApp Disabled", booking_id="WIN-C", booking_status="Confirmed")
+    tenant_no_history = _create_tenant(db_session, name="No History", booking_id="WIN-D", booking_status="Confirmed")
+
+    _add_email_message(db_session, tenant_whatsapp_wins.id, when=frozen_now - timedelta(hours=2), direction="inbound")
+    _add_whatsapp_message(db_session, tenant_whatsapp_wins.id, when=frozen_now - timedelta(hours=1), direction="outbound")
+
+    _add_whatsapp_message(db_session, tenant_email_wins.id, when=frozen_now - timedelta(hours=2), direction="inbound")
+    _add_email_message(db_session, tenant_email_wins.id, when=frozen_now - timedelta(hours=1), direction="outbound")
+
+    _add_email_message(db_session, tenant_whatsapp_disabled.id, when=frozen_now - timedelta(hours=2), direction="outbound")
+    _add_whatsapp_message(db_session, tenant_whatsapp_disabled.id, when=frozen_now - timedelta(hours=1), direction="inbound")
+
+    db_session.add_all(
+        [
+            TenantAiSettings(
+                tenant_id=tenant_whatsapp_wins.id,
+                planner_mode="manual",
+                auto_draft_email=True,
+                auto_draft_whatsapp=True,
+            ),
+            TenantAiSettings(
+                tenant_id=tenant_email_wins.id,
+                planner_mode="manual",
+                auto_draft_email=True,
+                auto_draft_whatsapp=True,
+            ),
+            TenantAiSettings(
+                tenant_id=tenant_whatsapp_disabled.id,
+                planner_mode="manual",
+                auto_draft_email=True,
+                auto_draft_whatsapp=False,
+            ),
+            TenantAiSettings(
+                tenant_id=tenant_no_history.id,
+                planner_mode="manual",
+                auto_draft_email=True,
+                auto_draft_whatsapp=True,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    planned: list[tuple[int, str]] = []
+
+    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id):
+        planned.append((tenant_id, channel))
+        draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).one()
+        draft.generated_text = f"Draft for {tenant_id}-{channel}"
+        draft.status = "pending"
+        db.commit()
+
+    monkeypatch.setattr(bulk_planner_schedule_service, "run_ai_plan_for_draft", fake_run)
+
+    schedule = _create_schedule(
+        db_session,
+        status_filter=["Confirmed"],
+        next_run_at=frozen_now - timedelta(minutes=1),
+    )
+
+    run = bulk_planner_schedule_service.execute_due_schedule(db_session, schedule, trigger_reason="scheduled")
+    results = (
+        db_session.query(BulkPlannerScheduleRunResult)
+        .filter(BulkPlannerScheduleRunResult.run_id == run.id)
+        .order_by(BulkPlannerScheduleRunResult.id.asc())
+        .all()
+    )
+
+    assert run.status == "completed"
+    assert run.matched_tenant_count == 4
+    assert planned == [
+        (tenant_whatsapp_wins.id, "whatsapp"),
+        (tenant_email_wins.id, "email"),
+    ]
+    assert db_session.query(AiAutoDraft).filter(AiAutoDraft.tenant_id == tenant_whatsapp_wins.id).count() == 1
+    assert db_session.query(AiAutoDraft).filter(AiAutoDraft.tenant_id == tenant_email_wins.id).count() == 1
+    assert db_session.query(AiAutoDraft).filter(AiAutoDraft.tenant_id == tenant_whatsapp_disabled.id).count() == 0
+    assert db_session.query(AiAutoDraft).filter(AiAutoDraft.tenant_id == tenant_no_history.id).count() == 0
+    assert len(results) == 8
+
+    whatsapp_wins_results = [row for row in results if row.tenant_id == tenant_whatsapp_wins.id]
+    assert {(row.channel, row.outcome, row.skip_reason) for row in whatsapp_wins_results} == {
+        ("email", "skipped", "Not the most recent channel for this tenant."),
+        ("whatsapp", "success", None),
+    }
+
+    email_wins_results = [row for row in results if row.tenant_id == tenant_email_wins.id]
+    assert {(row.channel, row.outcome, row.skip_reason) for row in email_wins_results} == {
+        ("email", "success", None),
+        ("whatsapp", "skipped", "Not the most recent channel for this tenant."),
+    }
+
+    whatsapp_disabled_results = [row for row in results if row.tenant_id == tenant_whatsapp_disabled.id]
+    assert {(row.channel, row.outcome, row.skip_reason) for row in whatsapp_disabled_results} == {
+        ("email", "skipped", "Not the most recent channel for this tenant."),
+        ("whatsapp", "skipped", "auto_draft_whatsapp is disabled for this tenant."),
+    }
+
+    no_history_results = [row for row in results if row.tenant_id == tenant_no_history.id]
+    assert {(row.channel, row.outcome, row.skip_reason) for row in no_history_results} == {
+        ("email", "skipped", "No communication history for this tenant."),
+        ("whatsapp", "skipped", "No communication history for this tenant."),
+    }
 
 
 def test_execute_due_schedule_isolates_planner_exceptions(monkeypatch):
@@ -384,7 +493,13 @@ def test_execute_due_schedule_isolates_planner_exceptions(monkeypatch):
         results = db.query(BulkPlannerScheduleRunResult).filter(BulkPlannerScheduleRunResult.run_id == run.id).all()
         assert run.status == "completed"
         assert any(row.outcome == "error" and row.tenant_id == tenant_fail.id and row.channel == "whatsapp" for row in results)
-        assert any(row.outcome == "success" and row.tenant_id == tenant_ok.id and row.channel == "email" for row in results)
+        assert any(
+            row.outcome == "skipped"
+            and row.tenant_id == tenant_ok.id
+            and row.channel == "email"
+            and row.skip_reason == "Not the most recent channel for this tenant."
+            for row in results
+        )
         assert any(row.outcome == "success" and row.tenant_id == tenant_ok.id and row.channel == "whatsapp" for row in results)
     finally:
         if schedule is not None:
