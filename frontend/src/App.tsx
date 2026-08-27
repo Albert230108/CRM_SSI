@@ -14,6 +14,7 @@ import AiAgentProfiles from './pages/AiAgentProfiles'
 import AiAgentProfileEditor from './pages/AiAgentProfileEditor'
 import AiAgentRuns from './pages/AiAgentRuns'
 import AiAgentRunDetail from './pages/AiAgentRunDetail'
+import RedoQaChat from './pages/RedoQaChat'
 import BrainSections from './pages/BrainSections'
 import AiPendingDrafts from './pages/AiPendingDrafts'
 import ScheduledPlannerRuns from './pages/ScheduledPlannerRuns'
@@ -66,6 +67,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <AiAgentRunDetail />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/redo-requests/:redoLogId/chat"
+          element={
+            <ProtectedRoute>
+              <RedoQaChat />
             </ProtectedRoute>
           }
         />

@@ -34,10 +34,6 @@ from app.services import ai_agent_orchestrator, ai_prompt_blocks, beds24_availab
 
 logger = logging.getLogger(__name__)
 
-# Truncate each step's prompt/response before putting it in the redo prompt, so a long run log
-# can't blow up the memory_redo call's own token budget.
-_RUN_LOG_STEP_CHAR_LIMIT = 4000
-
 _LEGACY_VALID_KINDS = {
     KIND_FIELD_VALUE,
     KIND_BRAIN_ENTRY,
@@ -150,11 +146,6 @@ def _fields_and_rules_block(db: Session, tenant_id: int, blocks: dict[str, str])
     return "\n\n".join(parts)
 
 
-def _truncate(text: str | None) -> str:
-    text = text or ""
-    if len(text) <= _RUN_LOG_STEP_CHAR_LIMIT:
-        return text
-    return text[:_RUN_LOG_STEP_CHAR_LIMIT] + "\n[...truncated]"
 
 
 def _run_log_block(db: Session, blocks: dict[str, str], agent_run_id: int | None) -> str:
@@ -188,9 +179,9 @@ def _run_log_block(db: Session, blocks: dict[str, str], agent_run_id: int | None
                     lines.append(f"- section_id={section_id} | {label or '(untitled section)'}")
     for step in steps:
         lines.append(f"--- step {step.step_index} ({step.stage}, model={step.model}) ---")
-        lines.append(f"Prompt:\n{_truncate(step.prompt)}")
+        lines.append(f"Prompt:\n{step.prompt or ''}")
         if step.response:
-            lines.append(f"Response:\n{_truncate(step.response)}")
+            lines.append(f"Response:\n{step.response or ''}")
         if step.error:
             lines.append(f"Error: {step.error}")
     return ai_prompt_blocks.join(blocks["ctx_run_log"], "\n".join(lines))

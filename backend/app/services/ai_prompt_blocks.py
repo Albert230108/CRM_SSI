@@ -643,6 +643,13 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
         group=CONTEXT_GROUP,
     ),
     PromptBlock(
+        key="ctx_question",
+        label="Question heading",
+        help="Sits above the staff member's follow-up question in the redo QA chat.",
+        default="## Question",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
         key="ctx_run_log",
         label="Full run log heading",
         help=(

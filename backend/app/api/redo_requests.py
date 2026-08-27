@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -9,7 +9,7 @@ from app.core.dependencies import get_current_user, get_db
 from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.services import memory_redo_service, memory_suggestion_service, redo_request_log_service
+from app.services import memory_redo_service, memory_suggestion_service, redo_qa_service, redo_request_log_service
 
 router = APIRouter(prefix="/redo-requests", tags=["redo-requests"])
 
@@ -33,6 +33,24 @@ class RedoRequestRead(BaseModel):
 class ReplayRedoRequestsResult(BaseModel):
     processed: int
     remaining: int
+
+
+class RedoQaMessageRead(BaseModel):
+    id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+class RedoQaContextRead(BaseModel):
+    what: str
+    why: Optional[str] = None
+    instructions: str
+    run_log_text: str
+
+
+class RedoQaAskRequest(BaseModel):
+    question: str
 
 
 @router.get("", response_model=list[RedoRequestRead])
@@ -80,3 +98,47 @@ def replay_pending_redo_requests(db: Session = Depends(get_db), current_user: Us
             db.rollback()
     remaining = db.query(RedoRequestLog).filter(RedoRequestLog.processed_at.is_(None)).count()
     return ReplayRedoRequestsResult(processed=processed, remaining=remaining)
+
+
+@router.get("/{redo_request_id}/qa/context", response_model=RedoQaContextRead)
+def get_redo_qa_context(
+    redo_request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    redo_log = db.query(RedoRequestLog).filter(RedoRequestLog.id == redo_request_id).first()
+    if redo_log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Redo request not found")
+    return redo_qa_service.get_context(db, redo_log)
+
+
+@router.get("/{redo_request_id}/qa", response_model=list[RedoQaMessageRead])
+def list_redo_qa_history(
+    redo_request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    redo_log = db.query(RedoRequestLog).filter(RedoRequestLog.id == redo_request_id).first()
+    if redo_log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Redo request not found")
+    return redo_qa_service.list_history(db, redo_log.id)
+
+
+@router.post("/{redo_request_id}/qa", response_model=RedoQaMessageRead, status_code=status.HTTP_201_CREATED)
+def ask_redo_qa(
+    redo_request_id: int,
+    payload: RedoQaAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    redo_log = db.query(RedoRequestLog).filter(RedoRequestLog.id == redo_request_id).first()
+    if redo_log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Redo request not found")
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="question is required")
+
+    assistant_message = redo_qa_service.answer_question(db, redo_log, question, asked_by_user_id=current_user.id)
+    db.commit()
+    db.refresh(assistant_message)
+    return assistant_message

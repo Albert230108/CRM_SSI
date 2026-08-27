@@ -713,6 +713,7 @@ type RedoRequest = {
   what: string
   why: string | null
   requested_by_email: string | null
+  ai_agent_run_id: number | null
   created_at: string
 }
 
@@ -784,6 +785,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
                 <th>What</th>
                 <th>Why</th>
                 <th>Requested by</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -795,11 +797,20 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
                   <td className="max-w-xs">{request.what}</td>
                   <td className="max-w-xs">{request.why ?? '-'}</td>
                   <td>{request.requested_by_email ?? '-'}</td>
+                  <td>
+                    <button
+                      type="button"
+                      onClick={() => window.open(`/redo-requests/${request.id}/chat`, '_blank')}
+                      className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      Ask about redo
+                    </button>
+                  </td>
                 </tr>
               ))}
               {!requests.length ? (
                 <tr>
-                  <td colSpan={6} className="py-3 text-center text-gray-400">No redo requests yet</td>
+                  <td colSpan={7} className="py-3 text-center text-gray-400">No redo requests yet</td>
                 </tr>
               ) : null}
             </tbody>

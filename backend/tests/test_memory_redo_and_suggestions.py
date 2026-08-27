@@ -144,6 +144,45 @@ def test_propose_updates_prompt_includes_recent_send_dismiss_reasoning(db_sessio
     assert "Guest already confirmed by phone" in captured_prompts[0]
     assert "dismissed (human_whatsapp)" in captured_prompts[0]
 
+def test_process_redo_prompt_keeps_full_run_log_without_truncation_marker(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    draft = _create_draft(db_session, tenant, agent_run_id=None)
+    run = AiAgentRun(tenant_id=tenant.id, channel="crm", mode="manual", status="completed", planner_profile_id=None)
+    db_session.add(run)
+    db_session.flush()
+    long_prompt = "P" * 5000
+    long_response = "R" * 5000
+    db_session.add(
+        AiAgentRunStep(
+            run_id=run.id,
+            step_index=0,
+            stage="planner",
+            model="fake-model",
+            prompt=long_prompt,
+            response=long_response,
+        )
+    )
+    draft.agent_run_id = run.id
+    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True))
+    db_session.commit()
+
+    captured_prompts = []
+
+    def _generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        captured_prompts.append(prompt)
+        return gemini_client.GenerationResult(
+            text="ignored", parsed={"suggestions": []}, model=model or "fake-model", prompt_tokens=1, output_tokens=1, latency_ms=1
+        )
+
+    monkeypatch.setattr(memory_redo_service.gemini_client, "generate", _generate)
+
+    memory_redo_service.propose_updates_from_redo(db_session, draft, "make it shorter", None)
+
+    assert len(captured_prompts) == 1
+    assert long_prompt in captured_prompts[0]
+    assert long_response in captured_prompts[0]
+    assert "[...truncated]" not in captured_prompts[0]
+
 
 def test_memory_redo_schema_constrains_kind_to_valid_literals():
     """Regression test for a production bug: an earlier version of MEMORY_REDO_SCHEMA/
