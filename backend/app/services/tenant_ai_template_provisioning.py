@@ -39,6 +39,9 @@ def apply_default_brain_action_writer_settings(db: Session, tenant_id: int) -> N
     if not brain_enabled and not action_enabled:
         return
 
+    # Flush any earlier seeding helpers in the same transaction so we can reuse the same
+    # TenantAiSettings row instead of racing ourselves into a duplicate insert.
+    db.flush()
     tenant_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
     if tenant_settings is None:
         tenant_settings = TenantAiSettings(tenant_id=tenant_id)

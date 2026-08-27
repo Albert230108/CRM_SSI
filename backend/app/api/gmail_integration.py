@@ -869,7 +869,7 @@ def _sync_all_accounts_blocking(user_id: int) -> dict[str, int]:
 
 
 @router.post("/accounts/sync-all")
-def sync_all_accounts(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+async def sync_all_accounts(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
     job_id = start_job("gmail_sync_all", asyncio.to_thread(_sync_all_accounts_blocking, current_user.id))
     return {"queued": True, "job_id": job_id}
 

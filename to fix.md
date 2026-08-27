@@ -5,3 +5,9 @@
     - implement in a way as a placeholder with date/time options.
     - use ISO 8601
 - the planner schedule runs whatsapp and email seperate. not the last message
+    - last outbound sometimes included or not probably because of seperation of channels.
+    - 
+- the page refreshes every 15-20min which causes data to be lost.
+- incoming messages with shared thread does not get notification from the thread that is actually visible. 
+- in the redo logs have a new feature that 'ask about this redo' 
+    - include full prompt history + your instructions

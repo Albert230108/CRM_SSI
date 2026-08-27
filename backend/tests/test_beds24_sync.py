@@ -152,6 +152,38 @@ def test_sync_seeds_planner_default_for_a_newly_created_tenant(db_session, monke
     assert settings.planner_mode == "auto-draft"
 
 
+def test_sync_seeds_planner_and_brain_action_defaults_without_duplicate_row(db_session, monkeypatch):
+    """Regression test: when Admin Settings has both a non-off planner_default_mode and
+    brain/action writer defaults enabled, apply_default_planner_mode and
+    apply_default_brain_action_writer_settings each independently queried for an existing
+    TenantAiSettings row without flushing in between. With autoflush off (SessionLocal is
+    configured with autoflush=False), the second helper's query never saw the first helper's
+    unflushed insert, so both created their own TenantAiSettings row for the same tenant_id
+    and the later commit raised a UniqueViolation on uq_tenant_ai_settings_tenant_id - a 500 on
+    every booking import once both admin defaults were turned on.
+    """
+    from app.models.admin_settings import AdminSettings
+    from app.models.tenant_ai_settings import TenantAiSettings
+
+    db_session.add(AdminSettings(
+        planner_default_mode="auto-draft",
+        brain_writer_default_enabled=True,
+        action_writer_default_enabled=True,
+    ))
+    db_session.commit()
+
+    monkeypatch.setattr(beds24_sync, "fetch_booking_with_invoice", fake_booking_fetch)
+
+    tenant = asyncio.run(beds24_sync.sync_tenant_from_beds24_booking(db_session, "SYNC-PLANNER-BRAIN-DEFAULT"))
+    db_session.commit()
+
+    all_settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).all()
+    assert len(all_settings) == 1
+    assert all_settings[0].planner_mode == "auto-draft"
+    assert all_settings[0].brain_writer_enabled is True
+    assert all_settings[0].action_writer_enabled is True
+
+
 def test_sync_does_not_retrofit_planner_mode_for_an_existing_tenant(db_session, monkeypatch):
     """An existing tenant's planner_mode must never be overwritten by a later sync - switching
     the admin default cannot silently start drafting for bookings already in flight, and an
