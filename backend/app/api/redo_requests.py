@@ -47,6 +47,10 @@ class RedoQaContextRead(BaseModel):
     what: str
     why: Optional[str] = None
     instructions: str
+    qa_preamble: str
+    model: str
+    temperature: float | None = None
+    max_output_tokens: int | None = None
     run_log_text: str
 
 

@@ -68,7 +68,7 @@ def _run_log_text(db: Session, blocks: dict[str, str], redo_log: RedoRequestLog)
     return memory_redo_service._run_log_block(db, blocks, redo_log.ai_agent_run_id)
 
 
-def build_context_parts(db: Session, redo_log: RedoRequestLog) -> dict[str, str]:
+def build_context_parts(db: Session, redo_log: RedoRequestLog) -> dict[str, str | float | int | None]:
     profile, blocks = _resolved_profile_and_blocks(db)
     instructions = (profile.instructions or "").strip() if profile is not None else ""
     run_log_text = _run_log_text(db, blocks, redo_log)
@@ -76,17 +76,25 @@ def build_context_parts(db: Session, redo_log: RedoRequestLog) -> dict[str, str]
         "what": redo_log.what,
         "why": redo_log.why or "",
         "instructions": instructions,
+        "qa_preamble": blocks["qa_preamble"],
+        "model": profile.model if profile is not None and profile.model else gemini_client.GEMINI_MODEL,
+        "temperature": profile.temperature if profile is not None else None,
+        "max_output_tokens": profile.max_output_tokens if profile is not None else None,
         "run_log_text": run_log_text,
         "context_text": build_context_text(db, redo_log, profile=profile, blocks=blocks),
     }
 
 
-def get_context(db: Session, redo_log: RedoRequestLog) -> dict[str, str]:
+def get_context(db: Session, redo_log: RedoRequestLog) -> dict[str, str | float | int | None]:
     parts = build_context_parts(db, redo_log)
     return {
         "what": parts["what"],
         "why": parts["why"],
         "instructions": parts["instructions"],
+        "qa_preamble": parts["qa_preamble"],
+        "model": parts["model"],
+        "temperature": parts["temperature"],
+        "max_output_tokens": parts["max_output_tokens"],
         "run_log_text": parts["run_log_text"],
     }
 

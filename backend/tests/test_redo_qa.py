@@ -67,7 +67,17 @@ def test_build_context_text_includes_instructions_and_full_run_log_without_trunc
     tenant = _create_tenant(db_session)
     run, long_prompt, long_response = _create_run_with_long_step(db_session, tenant)
     redo_log = _create_redo_log(db_session, tenant, ai_agent_run_id=run.id)
-    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True, instructions="Be specific and honest."))
+    db_session.add(
+        AiAgentProfile(
+            name="Memory Redo",
+            role=MEMORY_REDO_ROLE,
+            is_default=True,
+            instructions="Be specific and honest.",
+            model="gemini-test-qa",
+            temperature=0.25,
+            max_output_tokens=321,
+        )
+    )
     db_session.commit()
 
     parts = redo_qa_service.build_context_parts(db_session, redo_log)
@@ -83,11 +93,44 @@ def test_build_context_text_includes_instructions_and_full_run_log_without_trunc
     assert long_prompt in parts["context_text"]
 
 
+def test_get_context_includes_qa_preamble_and_model_settings(db_session):
+    tenant = _create_tenant(db_session)
+    redo_log = _create_redo_log(db_session, tenant)
+    db_session.add(
+        AiAgentProfile(
+            name="Memory Redo",
+            role=MEMORY_REDO_ROLE,
+            is_default=True,
+            instructions="Be specific and honest.",
+            temperature=0.4,
+            max_output_tokens=2048,
+        )
+    )
+    db_session.commit()
+
+    context = redo_qa_service.get_context(db_session, redo_log)
+
+    assert context["qa_preamble"].startswith("You are answering a staff member's questions about one specific redo-agent run")
+    assert context["model"] == gemini_client.GEMINI_MODEL
+    assert context["temperature"] == 0.4
+    assert context["max_output_tokens"] == 2048
+
+
 def test_answer_question_persists_both_turns_and_grounds_on_context(db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     run, long_prompt, long_response = _create_run_with_long_step(db_session, tenant)
     redo_log = _create_redo_log(db_session, tenant, ai_agent_run_id=run.id)
-    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True, instructions="Be specific and honest."))
+    db_session.add(
+        AiAgentProfile(
+            name="Memory Redo",
+            role=MEMORY_REDO_ROLE,
+            is_default=True,
+            instructions="Be specific and honest.",
+            model="gemini-test-qa",
+            temperature=0.25,
+            max_output_tokens=321,
+        )
+    )
     db_session.commit()
 
     captured_prompt = {}
@@ -210,7 +253,17 @@ def test_redo_qa_endpoints_return_context_and_persist_history(user_client, db_se
     tenant = _create_tenant(db_session)
     run, long_prompt, _ = _create_run_with_long_step(db_session, tenant)
     redo_log = _create_redo_log(db_session, tenant, ai_agent_run_id=run.id)
-    db_session.add(AiAgentProfile(name="Memory Redo", role=MEMORY_REDO_ROLE, is_default=True, instructions="Be specific and honest."))
+    db_session.add(
+        AiAgentProfile(
+            name="Memory Redo",
+            role=MEMORY_REDO_ROLE,
+            is_default=True,
+            instructions="Be specific and honest.",
+            model="gemini-test-qa",
+            temperature=0.25,
+            max_output_tokens=321,
+        )
+    )
     db_session.commit()
 
     def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
@@ -223,6 +276,10 @@ def test_redo_qa_endpoints_return_context_and_persist_history(user_client, db_se
     context = context_response.json()
     assert context["what"] == "make it shorter"
     assert context["instructions"] == "Be specific and honest."
+    assert context["qa_preamble"].startswith("You are answering a staff member's questions about one specific redo-agent run")
+    assert context["model"] == "gemini-test-qa"
+    assert context["temperature"] == 0.25
+    assert context["max_output_tokens"] == 321
     assert long_prompt in context["run_log_text"]
 
     ask_response = user_client.post(f"/api/redo-requests/{redo_log.id}/qa", json={"question": "What exactly was too long?"})

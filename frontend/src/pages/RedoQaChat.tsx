@@ -9,6 +9,10 @@ type RedoQaContext = {
   what: string
   why: string | null
   instructions: string
+  qa_preamble: string
+  model: string
+  temperature: number | null
+  max_output_tokens: number | null
   run_log_text: string
 }
 
@@ -183,6 +187,16 @@ export default function RedoQaChat() {
                   <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Your instructions</p>
                     <pre className="mt-1 whitespace-pre-wrap rounded-xl border border-cyan-100 bg-white p-3 text-sm leading-6 text-gray-800">{context.instructions || 'No memory_redo instructions are configured for this profile.'}</pre>
+                  </div>
+
+                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Role preamble</p>
+                    <pre className="mt-1 whitespace-pre-wrap rounded-xl border border-cyan-100 bg-white p-3 text-sm leading-6 text-gray-800">{context.qa_preamble || 'No redo QA preamble is configured for this profile.'}</pre>
+                  </div>
+
+                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Model &amp; sampling</p>
+                    <p className="mt-1 whitespace-pre-wrap rounded-xl border border-cyan-100 bg-white p-3 text-sm leading-6 text-gray-800">{`Model: ${context.model} · Temperature: ${context.temperature === null ? 'Default' : context.temperature} · Max output tokens: ${context.max_output_tokens === null ? 'Default' : context.max_output_tokens}`}</p>
                   </div>
 
                   <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
