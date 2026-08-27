@@ -1,4 +1,5 @@
 import { useAuthStore } from '../store/authStore'
+import { logDiag } from './refreshDiagnostics'
 
 let installed = false
 
@@ -21,6 +22,9 @@ export function installSessionExpiryDetection() {
     const response = await originalFetch(input, init)
 
     if (response.status === 401 && isAuthenticatedRequest(input, init)) {
+      logDiag('401_detected', {
+        url: input instanceof Request ? input.url : String(input),
+      })
       useAuthStore.getState().flagSessionExpired()
     }
 

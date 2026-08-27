@@ -47,5 +47,6 @@ declare global {
       mode?: FileSystemPermissionMode
       startIn?: string | FileSystemHandle
     }): Promise<FileSystemDirectoryHandle>
+    __dumpDiagLog?: () => unknown[]
   }
 }

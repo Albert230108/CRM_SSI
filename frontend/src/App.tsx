@@ -25,6 +25,7 @@ import AdminSettings from './pages/AdminSettings'
 import InvitationSetup from './pages/InvitationSetup'
 import PasswordReset from './pages/PasswordReset'
 import { installInactivityLogout } from './lib/inactivityLogout'
+import { installRefreshDiagnostics } from './lib/refreshDiagnostics'
 import { useAuthStore } from './store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -50,6 +51,7 @@ export default function App() {
 
   useEffect(() => {
     if (!isAuthenticated) return
+    installRefreshDiagnostics()
     return installInactivityLogout()
   }, [isAuthenticated])
 

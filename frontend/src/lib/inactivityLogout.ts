@@ -1,4 +1,5 @@
 import { useAuthStore } from '../store/authStore'
+import { logDiag } from './refreshDiagnostics'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const ACTIVITY_THROTTLE_MS = 30_000
@@ -21,6 +22,8 @@ async function refreshSession() {
   if (!state.isAuthenticated || !state.token) return
   if (lastActivityAt <= lastRefreshAt) return
 
+  logDiag('refresh_attempt')
+
   const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
     method: 'POST',
     headers: {
@@ -28,12 +31,16 @@ async function refreshSession() {
     },
   })
 
-  if (!response.ok) return
+  if (!response.ok) {
+    logDiag('refresh_failed', { status: response.status })
+    return
+  }
 
   const data: { access_token: string } = await response.json()
   const currentUser = useAuthStore.getState().user
   useAuthStore.getState().setAuth(data.access_token, currentUser)
   lastRefreshAt = Date.now()
+  logDiag('refresh_success')
 }
 
 export function installInactivityLogout() {
@@ -49,7 +56,11 @@ export function installInactivityLogout() {
   }
 
   const intervalId = window.setInterval(() => {
-    void refreshSession().catch(() => {})
+    void refreshSession().catch((error: unknown) => {
+      logDiag('refresh_error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+    })
   }, REFRESH_INTERVAL_MS)
 
   cleanup = () => {
