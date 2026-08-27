@@ -1,5 +1,7 @@
 import asyncio
 import base64
+from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import os
@@ -151,6 +153,10 @@ def _account_credentials(account: GmailAccount) -> Credentials:
 # the timeout convention already used for Beds24 (services/beds24_client.py).
 GMAIL_HTTP_TIMEOUT_SECONDS = 60
 GMAIL_ACCOUNT_SYNC_QUERY_CHUNK_SIZE = 25
+# A small batch keeps Gmail fetches moving in parallel without turning the sync into a
+# stampede of concurrent requests.
+GMAIL_ACCOUNT_SYNC_THREAD_BATCH_SIZE = 8
+GMAIL_ACCOUNT_SYNC_THREAD_BATCH_PARALLELISM = 4
 
 
 def _build_service(credentials: Credentials) -> Any:
@@ -222,6 +228,74 @@ def _list_all_matching_threads(service: Any, query: str) -> list[dict[str, Any]]
 
 def _chunked(items: list[str], size: int) -> list[list[str]]:
     return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+def _fetch_gmail_thread_batch_in_fresh_session(account: Any, thread_ids: list[str]) -> list[dict[str, Any]]:
+    """Fetch a batch of Gmail threads using a service owned by the worker thread.
+
+    The batch workers only need the account's Gmail credentials, not a shared SQLAlchemy
+    Session. Passing a lightweight snapshot keeps the fetches parallel without threading the
+    ORM object through the worker pool.
+    """
+    if not thread_ids:
+        return []
+
+    service = _build_service_for_account(account)
+    return [
+        _execute_gmail_request(service.users().threads().get(userId="me", id=thread_id, format="full"))
+        for thread_id in thread_ids
+    ]
+
+
+def _sync_gmail_thread_refs(
+    db: Session,
+    account: GmailAccount,
+    thread_refs: list[dict[str, Any]],
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
+    """Fetch and upsert the Gmail threads referenced by thread_refs.
+
+    The fetches run in small batches with limited parallelism, but upserts and progress
+    reporting stay ordered so the current sync progress UI remains stable and predictable.
+    """
+    thread_ids = [str(thread_ref.get("id") or "").strip() for thread_ref in thread_refs]
+    thread_ids = [thread_id for thread_id in thread_ids if thread_id]
+    total_threads = len(thread_ids)
+    if progress is not None:
+        progress(0, total_threads)
+    if not thread_ids:
+        account.last_synced_at = datetime.now(timezone.utc)
+        db.commit()
+        return 0
+
+    batch_size = min(GMAIL_ACCOUNT_SYNC_THREAD_BATCH_SIZE, total_threads)
+    batches = _chunked(thread_ids, batch_size)
+    saved = 0
+    processed = 0
+    account_snapshot = SimpleNamespace(
+        id=account.id,
+        refresh_token_encrypted=account.refresh_token_encrypted,
+        token_uri=account.token_uri,
+        scopes_json=account.scopes_json,
+    )
+
+    def _fetch_batch(batch_thread_ids: list[str]) -> list[dict[str, Any]]:
+        return _fetch_gmail_thread_batch_in_fresh_session(account_snapshot, batch_thread_ids)
+
+    with ThreadPoolExecutor(max_workers=min(GMAIL_ACCOUNT_SYNC_THREAD_BATCH_PARALLELISM, len(batches))) as executor:
+        for batch_threads in executor.map(_fetch_batch, batches):
+            for thread in batch_threads:
+                conversation = _upsert_thread(db, account, thread)
+                if conversation is not None and conversation.tenant_id is not None:
+                    saved += 1
+                db.commit()
+                processed += 1
+                if progress is not None:
+                    progress(processed, total_threads)
+
+    account.last_synced_at = datetime.now(timezone.utc)
+    db.commit()
+    return saved
 
 
 def _start_watch(db: Session, account: GmailAccount) -> None:
@@ -956,25 +1030,7 @@ def _sync_gmail_account(
                 thread_refs_by_id[thread_id] = thread_ref
 
     threads = list(thread_refs_by_id.values())
-    total_threads = len(threads)
-    if progress is not None:
-        progress(0, total_threads)
-
-    saved = 0
-    for index, thread_ref in enumerate(threads, start=1):
-        thread = _execute_gmail_request(
-            service.users().threads().get(userId="me", id=thread_ref["id"], format="full")
-        )
-        conversation = _upsert_thread(db, account, thread)
-        if conversation is not None and conversation.tenant_id is not None:
-            saved += 1
-        db.commit()
-        if progress is not None:
-            progress(index, total_threads)
-
-    account.last_synced_at = datetime.now(timezone.utc)
-    db.commit()
-    return saved
+    return _sync_gmail_thread_refs(db, account, threads, progress=progress)
 
 
 def sync_gmail_account_for_email(db: Session, account: GmailAccount, email: str) -> int:
@@ -989,16 +1045,7 @@ def sync_gmail_account_for_email(db: Session, account: GmailAccount, email: str)
     """
     service = _build_service_for_account(account)
     threads = _list_all_matching_threads(service, f'"{email}"')
-    saved = 0
-    for thread_ref in threads:
-        thread = _execute_gmail_request(
-            service.users().threads().get(userId="me", id=thread_ref["id"], format="full")
-        )
-        conversation = _upsert_thread(db, account, thread)
-        if conversation is not None and conversation.tenant_id is not None:
-            saved += 1
-    db.commit()
-    return saved
+    return _sync_gmail_thread_refs(db, account, threads)
 
 
 def sync_email_across_gmail_accounts(email: str) -> dict[str, Any]:

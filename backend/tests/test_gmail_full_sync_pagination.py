@@ -1,4 +1,5 @@
 import base64
+from types import SimpleNamespace
 
 import app.api.gmail_integration as gmail_integration
 from app.models.gmail_integration import ConversationMessage, GmailAccount
@@ -194,3 +195,60 @@ def test_sync_gmail_account_for_email_paginates_beyond_first_page(db_session, mo
     assert len(fake_service.list_calls) == 2
     assert fake_service.list_calls[1]["pageToken"] == "page-2"
     assert {m.provider_message_id for m in db_session.query(ConversationMessage).all()} == {"msg-a", "msg-b"}
+
+
+def test_sync_gmail_thread_refs_batches_fetches_without_reordering(db_session, monkeypatch):
+    account = GmailAccount(email_address="batch-sync-account@example.com", is_active=True)
+    db_session.add(account)
+    db_session.commit()
+
+    thread_refs = [
+        {"id": "thread-1"},
+        {"id": "thread-2"},
+        {"id": "thread-3"},
+        {"id": "thread-4"},
+        {"id": "thread-5"},
+    ]
+    fetch_batches: list[list[str]] = []
+    upserted_threads: list[str] = []
+    progress_updates: list[tuple[int, int]] = []
+
+    class FakeExecutor:
+        def __init__(self, max_workers):
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def map(self, func, iterable):
+            return [func(item) for item in iterable]
+
+    def fake_fetch(account_snapshot, batch_thread_ids):
+        assert account_snapshot.id == account.id
+        fetch_batches.append(list(batch_thread_ids))
+        return [{"id": thread_id, "messages": []} for thread_id in batch_thread_ids]
+
+    def fake_upsert(db, account_obj, thread):
+        upserted_threads.append(thread["id"])
+        return SimpleNamespace(tenant_id=1)
+
+    monkeypatch.setattr(gmail_integration, "ThreadPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(gmail_integration, "_fetch_gmail_thread_batch_in_fresh_session", fake_fetch)
+    monkeypatch.setattr(gmail_integration, "_upsert_thread", fake_upsert)
+    monkeypatch.setattr(gmail_integration, "GMAIL_ACCOUNT_SYNC_THREAD_BATCH_SIZE", 2)
+    monkeypatch.setattr(gmail_integration, "GMAIL_ACCOUNT_SYNC_THREAD_BATCH_PARALLELISM", 3)
+
+    saved = gmail_integration._sync_gmail_thread_refs(
+        db_session,
+        account,
+        thread_refs,
+        progress=lambda current, total: progress_updates.append((current, total)),
+    )
+
+    assert saved == 5
+    assert fetch_batches == [["thread-1", "thread-2"], ["thread-3", "thread-4"], ["thread-5"]]
+    assert upserted_threads == ["thread-1", "thread-2", "thread-3", "thread-4", "thread-5"]
+    assert progress_updates == [(0, 5), (1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
