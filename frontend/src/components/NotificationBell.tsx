@@ -153,7 +153,7 @@ export default function NotificationBell() {
                   filter === option ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50',
                 ].join(' ')}
               >
-                {option === 'all' ? 'All' : 'Unread only'}
+                {option === 'all' ? 'All' : 'Unread'}
               </button>
             ))}
           </div>

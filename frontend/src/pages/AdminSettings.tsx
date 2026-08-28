@@ -1017,7 +1017,7 @@ export default function AdminSettings() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-cyan-100 bg-gradient-to-br from-cyan-50 to-white p-3.5 shadow-sm">
+            <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900">AI Model Pricing</h2>

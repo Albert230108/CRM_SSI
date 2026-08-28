@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   type ComposerBodyFormat,
   hasComposerContent,
@@ -25,25 +25,27 @@ type RichMessageComposerProps = {
 
 type ToolbarAction = {
   label: string
+  ariaLabel: string
   command: string
   value?: string
 }
 
 const EMAIL_ACTIONS: ToolbarAction[] = [
-  { label: 'B', command: 'bold' },
-  { label: 'I', command: 'italic' },
-  { label: 'U', command: 'underline' },
-  { label: 'List', command: 'insertUnorderedList' },
+  { label: 'B', ariaLabel: 'Bold', command: 'bold' },
+  { label: 'I', ariaLabel: 'Italic', command: 'italic' },
+  { label: 'U', ariaLabel: 'Underline', command: 'underline' },
+  { label: '☷', ariaLabel: 'Bulleted list', command: 'insertUnorderedList' },
 ]
 
 const WHATSAPP_ACTIONS: ToolbarAction[] = [
-  { label: 'B', command: 'bold' },
-  { label: 'I', command: 'italic' },
-  { label: 'S', command: 'strikeThrough' },
+  { label: 'B', ariaLabel: 'Bold', command: 'bold' },
+  { label: 'I', ariaLabel: 'Italic', command: 'italic' },
+  { label: 'S', ariaLabel: 'Strikethrough', command: 'strikeThrough' },
 ]
 
 export default function RichMessageComposer({ channel, value, placeholder, disabled = false, onChange }: RichMessageComposerProps) {
   const editorRef = useRef<HTMLDivElement | null>(null)
+  const [activeCommands, setActiveCommands] = useState<Set<string>>(new Set())
   const desiredHtml = useMemo(() => {
     if (value.bodyFormat === 'email_html' && value.bodyHtml) return sanitizeComposerHtml(value.bodyHtml)
     if (value.bodyFormat === 'whatsapp_rich') return sanitizeComposerHtml(value.bodyHtml || whatsappMarkupToHtml(value.body))
@@ -96,6 +98,12 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
     if (disabled || !editorRef.current || typeof document.execCommand !== 'function') return
     editorRef.current.focus()
     document.execCommand(action.command, false, action.value)
+    setActiveCommands((current) => {
+      const next = new Set(current)
+      if (document.queryCommandState(action.command)) next.add(action.command)
+      else next.delete(action.command)
+      return next
+    })
     emitChange()
   }
 
@@ -111,7 +119,13 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runCommand(action)}
             disabled={disabled}
-            className="rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={action.ariaLabel}
+            aria-pressed={activeCommands.has(action.command)}
+            className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              activeCommands.has(action.command)
+                ? 'border-cyan-500 bg-cyan-50 text-cyan-700'
+                : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
+            }`}
           >
             {action.label}
           </button>

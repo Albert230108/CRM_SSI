@@ -1071,7 +1071,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             <button
               type="button"
               onClick={() => cancelAutoSend(draft)}
-              className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+              className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
             >
               Cancel auto-send
             </button>
@@ -1083,14 +1083,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
               setRedoWhat('')
               setRedoWhy('')
             }}
-            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
           >
             Redo
           </button>
           <button
             type="button"
             onClick={() => dismissAutoDraft(draft)}
-            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+            className="rounded-lg px-2.5 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-50 hover:text-rose-600"
           >
             Dismiss
           </button>
@@ -2039,21 +2039,21 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
               <button
                 type="button"
                 onClick={() => setShowFirstMessageModal(true)}
-                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700"
               >
                 New WhatsApp
               </button>
               <button
                 type="button"
                 onClick={() => setShowLinkChatModal(true)}
-                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
               >
                 {whatsappLinks.some((link) => link.is_active) ? 'Manage chats' : 'Link chat'}
               </button>
               <button
                 type="button"
                 onClick={() => setShowEmailLinkModal(true)}
-                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
               >
                 Manage emails
               </button>
@@ -3060,4 +3060,3 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     </div>
   )
 }
-

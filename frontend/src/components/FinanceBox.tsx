@@ -484,7 +484,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                   href={`https://beds24.com/control2.php?ajax=bookedit&id=${encodeURIComponent(tenant.booking_id)}&tab=1`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs font-medium text-cyan-700 hover:underline"
+                  className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-xs font-medium text-cyan-700 hover:bg-cyan-50"
                 >
                   Open in Beds24
                 </a>

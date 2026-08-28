@@ -314,7 +314,7 @@ export default function Navbar() {
             </button>
             <button
               onClick={guardedLogout}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 transition hover:border-gray-400 hover:bg-gray-50"
+              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 transition hover:border-gray-400 hover:bg-gray-50"
             >
               Logout
             </button>

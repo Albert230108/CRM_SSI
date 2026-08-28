@@ -305,7 +305,7 @@ export default function AiAgentRuns() {
               key={value || 'all'}
               type="button"
               onClick={() => setStatusFilter(value)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold capitalize ${
                 statusFilter === value ? 'bg-indigo-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
               }`}
             >

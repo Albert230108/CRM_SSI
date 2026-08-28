@@ -318,11 +318,9 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
             type="button"
             disabled={togglingConversationId === thread.conversation_id}
             onClick={() => handleToggleThreadVisibility(thread)}
-            className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold transition disabled:opacity-50 ${
-              thread.is_visible ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
-            }`}
+            className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
           >
-            {thread.is_visible ? 'Visible' : 'Hidden'}
+            {thread.is_visible ? 'Hide' : 'Show'}
           </button>
         </div>
       </div>
@@ -472,12 +470,12 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
               type="button"
               disabled={autoAddSaving}
               onClick={handleToggleAutoAdd}
-              aria-pressed={autoAdd}
-              className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition disabled:opacity-50 ${
-                autoAdd ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
-              }`}
+              role="switch"
+              aria-checked={autoAdd}
+              aria-label="Auto-add new shared threads"
+              className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50 ${autoAdd ? 'bg-emerald-600' : 'bg-gray-300'}`}
             >
-              {autoAdd ? 'On' : 'Off'}
+              <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${autoAdd ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
           </div>
 

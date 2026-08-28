@@ -470,7 +470,7 @@ export default function LinkChatModal({ open, threadId, tenantName, bookingId, o
                     <p className="text-sm font-semibold text-gray-900">{account.label}</p>
                     <p className="mt-1 font-mono text-xs text-gray-500">{account.external_account_id}</p>
                   </div>
-                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-gray-600 shadow-sm">Select</span>
+                  <span className="text-lg text-gray-400" aria-hidden="true">&rsaquo;</span>
                 </button>
               ))}
             </div>

@@ -385,11 +385,11 @@ export default function ScheduledPlannerRuns() {
     <main className="mx-auto max-w-7xl px-6 py-4">
       <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
       <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="mt-1.5 text-2xl font-semibold text-slate-900">Planner schedules</h1>
-              <p className="mt-1 text-sm text-slate-500">
+              <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">Planner schedules</h1>
+              <p className="mt-1 text-sm text-gray-500">
                 Run the existing tenant planner in bulk every day at a fixed Europe/Amsterdam time.
               </p>
             </div>
@@ -399,25 +399,25 @@ export default function ScheduledPlannerRuns() {
                 setForm(emptyForm())
                 setMessage('')
               }}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
             >
               New schedule
             </button>
           </div>
 
           <div className="mt-4 space-y-3">
-            {loading && !schedules.length ? <p className="text-sm text-slate-500">Loading schedules...</p> : null}
-            {!loading && !schedules.length ? <p className="text-sm text-slate-500">No schedules yet.</p> : null}
+            {loading && !schedules.length ? <p className="text-sm text-gray-500">Loading schedules...</p> : null}
+            {!loading && !schedules.length ? <p className="text-sm text-gray-500">No schedules yet.</p> : null}
             {schedules.map((schedule) => {
               const expanded = expandedScheduleIds.has(schedule.id)
               const runList = runsByScheduleId[schedule.id]
               return (
-                <div key={schedule.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                <div key={schedule.id} className="rounded-2xl border border-gray-200 bg-gray-50/70 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-base font-semibold text-slate-900">{schedule.name}</h2>
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${schedule.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-white text-slate-500'}`}>
+                        <h2 className="text-base font-semibold text-gray-900">{schedule.name}</h2>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${schedule.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-300 bg-white text-gray-500'}`}>
                           {schedule.enabled ? 'Enabled' : 'Disabled'}
                         </span>
                         {schedule.last_run_status ? (
@@ -427,34 +427,34 @@ export default function ScheduledPlannerRuns() {
                           </span>
                         ) : null}
                       </div>
-                      <p className="mt-1 text-sm text-slate-600">
+                      <p className="mt-1 text-sm text-gray-600">
                         Daily at {schedule.run_time_local.slice(0, 5)} Amsterdam time. Next run {formatDateTime(schedule.next_run_at)}.
                       </p>
-                      <p className="mt-1 text-xs text-slate-500">
+                      <p className="mt-1 text-xs text-gray-500">
                         Last run {formatDateTime(schedule.last_run_at)}. Last matched {schedule.last_matched_tenant_count ?? 'n/a'} tenant(s).
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700">
+                      <label className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700">
                         <input
                           type="checkbox"
                           checked={schedule.enabled}
                           onChange={(event) => toggleScheduleEnabled(schedule, event.target.checked)}
-                          className="h-4 w-4 rounded border-slate-300"
+                          className="h-4 w-4 rounded border-gray-300"
                         />
                         Enabled
                       </label>
                       <button
                         type="button"
                         onClick={() => loadScheduleDetail(schedule.id)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                       >
                         Edit
                       </button>
                       <button
                         type="button"
                         onClick={() => toggleScheduleExpanded(schedule.id)}
-                        className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800"
+                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-800"
                       >
                         {expanded ? 'Hide history' : 'Show history'}
                       </button>
@@ -462,50 +462,50 @@ export default function ScheduledPlannerRuns() {
                   </div>
 
                   {expanded ? (
-                    <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
-                      {loadingRuns[schedule.id] && !runList ? <p className="text-sm text-slate-500">Loading run history...</p> : null}
-                      {!loadingRuns[schedule.id] && (!runList || !runList.items.length) ? <p className="text-sm text-slate-500">No runs yet.</p> : null}
+                    <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
+                      {loadingRuns[schedule.id] && !runList ? <p className="text-sm text-gray-500">Loading run history...</p> : null}
+                      {!loadingRuns[schedule.id] && (!runList || !runList.items.length) ? <p className="text-sm text-gray-500">No runs yet.</p> : null}
                       <div className="space-y-2">
                         {runList?.items.map((run) => {
                           const runExpanded = expandedRunIds.has(run.id)
                           const results = resultsByRunId[run.id]
                           return (
-                            <div key={run.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div key={run.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-sm font-semibold text-slate-900">Run #{run.id}</span>
+                                  <span className="text-sm font-semibold text-gray-900">Run #{run.id}</span>
                                   <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${badgeClasses(run.status)}`}>
                                     {run.status === 'running' ? <InlineSpinner className="h-3 w-3" /> : null}
                                     {run.status}
                                   </span>
-                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">
+                                  <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-600">
                                     {run.trigger_reason === 'catch_up' ? 'Catch-up' : 'Scheduled'}
                                   </span>
                                 </div>
                                 <button
                                   type="button"
                                   onClick={() => toggleRunExpanded(schedule.id, run.id)}
-                                  className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                  className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                                 >
                                   {runExpanded ? 'Hide results' : 'Show results'}
                                 </button>
                               </div>
-                              <p className="mt-1 text-xs text-slate-500">
+                              <p className="mt-1 text-xs text-gray-500">
                                 Started {formatDateTime(run.started_at)}. Completed {formatDateTime(run.completed_at)}. Matched {run.matched_tenant_count} tenant(s).
                               </p>
                               {runExpanded ? (
                                 <div className="mt-2 space-y-2">
-                                  {loadingResults[run.id] && !results ? <p className="text-sm text-slate-500">Loading results...</p> : null}
-                                  {!loadingResults[run.id] && results && !results.length ? <p className="text-sm text-slate-500">No per-tenant results.</p> : null}
+                                  {loadingResults[run.id] && !results ? <p className="text-sm text-gray-500">Loading results...</p> : null}
+                                  {!loadingResults[run.id] && results && !results.length ? <p className="text-sm text-gray-500">No per-tenant results.</p> : null}
                                   {results?.map((result) => (
-                                    <div key={result.id} className="rounded-xl border border-slate-200 bg-white p-2.5">
+                                    <div key={result.id} className="rounded-xl border border-gray-200 bg-white p-2.5">
                                       <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-sm font-semibold text-slate-900">{result.tenant_name ?? `Tenant #${result.tenant_id}`}</span>
-                                        <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{result.channel}</span>
+                                        <span className="text-sm font-semibold text-gray-900">{result.tenant_name ?? `Tenant #${result.tenant_id}`}</span>
+                                        <span className="text-xs uppercase tracking-[0.2em] text-gray-500">{result.channel}</span>
                                         <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${badgeClasses(result.outcome)}`}>
                                           {result.outcome}
                                         </span>
-                                        {result.draft_id ? <span className="text-xs text-slate-500">Draft #{result.draft_id}</span> : null}
+                                        {result.draft_id ? <span className="text-xs text-gray-500">Draft #{result.draft_id}</span> : null}
                                       </div>
                                       {result.skip_reason ? <p className="mt-1 text-xs text-amber-700">{result.skip_reason}</p> : null}
                                       {result.error_message ? <p className="mt-1 text-xs text-rose-700">{result.error_message}</p> : null}
@@ -526,15 +526,15 @@ export default function ScheduledPlannerRuns() {
         </section>
 
         <section className="space-y-4">
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">{form.id === null ? 'Create schedule' : `Edit schedule #${form.id}`}</h2>
-            <p className="mt-1 text-sm text-slate-500">
+          <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+            <h2 className="text-lg font-semibold text-gray-900">{form.id === null ? 'Create schedule' : `Edit schedule #${form.id}`}</h2>
+            <p className="mt-1 text-sm text-gray-500">
               Filters are re-evaluated fresh at each run and combined with AND.
             </p>
 
             <div className="mt-4 space-y-4">
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500" htmlFor="planner-schedule-name">
+                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-schedule-name">
                   Name
                 </label>
                 <input
@@ -543,12 +543,12 @@ export default function ScheduledPlannerRuns() {
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                   placeholder="Confirmed recent inbound replies"
-                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500"
+                  className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500" htmlFor="planner-schedule-extra-instructions">
+                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-schedule-extra-instructions">
                   Extra instructions
                 </label>
                 <textarea
@@ -557,14 +557,14 @@ export default function ScheduledPlannerRuns() {
                   onChange={(event) => setForm((current) => ({ ...current, extra_instructions: event.target.value }))}
                   placeholder="Add extra guidance that should be threaded into the planner prompt."
                   rows={4}
-                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500"
+                  className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                 />
-                <p className="mt-1 text-xs text-slate-500">This is passed to the planner like an operator note.</p>
+                <p className="mt-1 text-xs text-gray-500">This is passed to the planner like an operator note.</p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500" htmlFor="planner-schedule-time">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-schedule-time">
                     Daily time
                   </label>
                   <input
@@ -572,29 +572,29 @@ export default function ScheduledPlannerRuns() {
                     type="time"
                     value={form.run_time_local}
                     onChange={(event) => setForm((current) => ({ ...current, run_time_local: event.target.value }))}
-                    className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                   />
-                  <p className="mt-1 text-xs text-slate-500">Europe/Amsterdam wall-clock time.</p>
+                  <p className="mt-1 text-xs text-gray-500">Europe/Amsterdam wall-clock time.</p>
                 </div>
 
-                <label className="mt-6 inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700 sm:mt-0 sm:self-end">
+                <label className="mt-6 inline-flex items-center gap-2 rounded-xl border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-700 sm:mt-0 sm:self-end">
                   <input
                     type="checkbox"
                     checked={form.enabled}
                     onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
-                    className="h-4 w-4 rounded border-slate-300"
+                    className="h-4 w-4 rounded border-gray-300"
                   />
                   Enabled
                 </label>
               </div>
 
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Booking status</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Booking status</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {statuses.map((status) => {
                     const checked = form.status_filter.includes(status)
                     return (
-                      <label key={status} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-300 bg-white text-slate-700'}`}>
+                      <label key={status} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-gray-300 bg-white text-gray-700'}`}>
                         <input
                           type="checkbox"
                           checked={checked}
@@ -606,20 +606,20 @@ export default function ScheduledPlannerRuns() {
                                 : [...current.status_filter, status],
                             }))
                           }
-                          className="h-4 w-4 rounded border-slate-300"
+                          className="h-4 w-4 rounded border-gray-300"
                         />
                         {status}
                       </label>
                     )
                   })}
-                  {!statuses.length ? <span className="text-sm text-slate-500">No statuses loaded yet.</span> : null}
+                  {!statuses.length ? <span className="text-sm text-gray-500">No statuses loaded yet.</span> : null}
                 </div>
-                <p className="mt-1 text-xs text-slate-500">Leave empty to match any tenant status.</p>
+                <p className="mt-1 text-xs text-gray-500">Leave empty to match any tenant status.</p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500" htmlFor="planner-schedule-last-days">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-schedule-last-days">
                     Last message within days
                   </label>
                   <input
@@ -629,19 +629,19 @@ export default function ScheduledPlannerRuns() {
                     value={form.last_message_within_days}
                     onChange={(event) => setForm((current) => ({ ...current, last_message_within_days: event.target.value }))}
                     placeholder="7"
-                    className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500" htmlFor="planner-schedule-direction">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="planner-schedule-direction">
                     Direction
                   </label>
                   <select
                     id="planner-schedule-direction"
                     value={form.last_message_direction}
                     onChange={(event) => setForm((current) => ({ ...current, last_message_direction: event.target.value as LastMessageDirection }))}
-                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
                   >
                     <option value="">No filter</option>
                     <option value="either">Either inbound or outbound</option>
@@ -671,31 +671,31 @@ export default function ScheduledPlannerRuns() {
                 </button>
               ) : null}
             </div>
-            {message ? <p className="mt-3 text-sm text-slate-600">{message}</p> : null}
+            {message ? <p className="mt-3 text-sm text-gray-600">{message}</p> : null}
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Live preview</h2>
-                <p className="mt-1 text-sm text-slate-500">Updates as you change the filter fields.</p>
+                <h2 className="text-lg font-semibold text-gray-900">Live preview</h2>
+                <p className="mt-1 text-sm text-gray-500">Updates as you change the filter fields.</p>
               </div>
               {previewLoading ? <span className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-700">Refreshing...</span> : null}
             </div>
-            <p className="mt-3 text-3xl font-semibold text-slate-900">{preview.matched_tenant_count}</p>
-            <p className="text-sm text-slate-500">matching tenant(s)</p>
+            <p className="mt-3 text-3xl font-semibold text-gray-900">{preview.matched_tenant_count}</p>
+            <p className="text-sm text-gray-500">matching tenant(s)</p>
             {previewError ? <p className="mt-2 text-sm text-rose-600">{previewError}</p> : null}
             <div className="mt-4 space-y-2">
               {preview.tenants.map((tenant) => (
-                <div key={tenant.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-sm font-semibold text-slate-900">{tenant.name}</p>
-                  <p className="text-xs text-slate-500">
+                <div key={tenant.id} className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+                  <p className="text-sm font-semibold text-gray-900">{tenant.name}</p>
+                  <p className="text-xs text-gray-500">
                     {tenant.booking_id}
                     {tenant.booking_status ? ` • ${tenant.booking_status}` : ''}
                   </p>
                 </div>
               ))}
-              {!preview.tenants.length ? <p className="text-sm text-slate-500">No preview tenants for the current filters.</p> : null}
+              {!preview.tenants.length ? <p className="text-sm text-gray-500">No preview tenants for the current filters.</p> : null}
             </div>
           </div>
         </section>

@@ -181,16 +181,16 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
         >
           {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         </button>
-        <button
-          type="button"
-          onClick={() => setShowAddModal(true)}
-          disabled={!tenantId}
-          aria-label="Add new task"
-          title="Add new task"
-          className="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          +
-        </button>
+        {!fullscreen ? (
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            disabled={!tenantId}
+            className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            + Add
+          </button>
+        ) : null}
       </div>,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -339,9 +339,9 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
             disabled={!tenantId}
             aria-label="Add new task"
             title="Add new task"
-            className="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            +
+            + Add
           </button>
         </div>
       ) : null}

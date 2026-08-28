@@ -559,7 +559,7 @@ export default function Actions() {
               type="button"
               onClick={() => setPriorityFilter(filter.id)}
               className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                priorityFilter === filter.id ? 'bg-gray-800 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-100'
+                priorityFilter === filter.id ? 'bg-cyan-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
               }`}
             >
               {filter.label}

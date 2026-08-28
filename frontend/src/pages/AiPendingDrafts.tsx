@@ -164,7 +164,7 @@ export default function AiPendingDrafts() {
               <button
                 type="button"
                 onClick={() => openTenant(draft)}
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
               >
                 Open thread
               </button>
@@ -172,7 +172,7 @@ export default function AiPendingDrafts() {
                 <button
                   type="button"
                   onClick={() => cancelAutoSend(draft)}
-                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   Cancel auto-send
                 </button>
@@ -180,7 +180,7 @@ export default function AiPendingDrafts() {
               <button
                 type="button"
                 onClick={() => sendNow(draft)}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700"
               >
                 Send
               </button>
@@ -191,14 +191,14 @@ export default function AiPendingDrafts() {
                   setRedoWhat('')
                   setRedoWhy('')
                 }}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
               >
                 Redo
               </button>
               <button
                 type="button"
                 onClick={() => dismiss(draft)}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-50 hover:text-rose-600"
               >
                 Dismiss
               </button>
