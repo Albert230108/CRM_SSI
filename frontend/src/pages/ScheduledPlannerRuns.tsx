@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import InlineSpinner from '../components/InlineSpinner'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
@@ -382,11 +383,12 @@ export default function ScheduledPlannerRuns() {
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-4">
+      <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
       <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Planner schedules</h1>
+              <h1 className="mt-1.5 text-2xl font-semibold text-slate-900">Planner schedules</h1>
               <p className="mt-1 text-sm text-slate-500">
                 Run the existing tenant planner in bulk every day at a fixed Europe/Amsterdam time.
               </p>

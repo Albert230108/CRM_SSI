@@ -1,5 +1,4 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
 import { useLocalFolderRootPath, useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
@@ -50,7 +49,6 @@ export default function Settings() {
   const user = useAuthStore((state) => state.user)
   const setUser = useAuthStore((state) => state.setUser)
   const userEmail = user?.email
-  const isAdmin = user?.is_admin
   const userKey = userEmail ?? 'anonymous'
   const { toast, showSuccess, showError, dismiss } = useToast()
   const [activeTab, setActiveTab] = useState('display')
@@ -437,13 +435,6 @@ export default function Settings() {
         tabs={SETTINGS_TABS}
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        crossLink={
-          isAdmin ? (
-            <Link to="/admin/settings" className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">
-              Admin settings &rarr;
-            </Link>
-          ) : null
-        }
       >
         {activeTab === 'display' ? (
           <section className="rounded-2xl border border-gray-200 bg-white p-3.5">

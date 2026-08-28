@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { aiSettingsLinks } from '../lib/aiSettingsLinks'
 import { withAiSettingsReturn } from '../lib/aiSettingsNavigation'
 import { useAuthStore } from '../store/authStore'
 import type { AiReplyTemplate } from '../types/aiReplyTemplate'
@@ -58,39 +57,8 @@ export default function AiTemplatesOverview() {
             <Link to="/settings" className="text-cyan-700 hover:underline">&larr; Settings</Link>
           </p>
           <h1 className="mt-1 text-lg font-semibold text-gray-900">AI Settings</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Configure the shared reply templates used by "Draft with AI". The buttons below jump to the rest of the AI workspace: brain, agent profiles, run logs, drafts, and memory.
-          </p>
         </div>
       </div>
-
-      <section className="mt-4 rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-cyan-50 p-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">AI Hub</p>
-            <h2 className="mt-1 text-xl font-semibold text-gray-900">Tools, logs, and knowledge</h2>
-            <p className="mt-1 text-sm text-gray-600">Jump straight into the parts of the AI system you edit most.</p>
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {aiSettingsLinks.map((item) => (
-            <Link
-              key={item.to}
-              to={withAiSettingsReturn(item.to)}
-              className="group rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-gray-900 group-hover:text-indigo-700">{item.label}</p>
-                  <p className="mt-1 text-sm text-gray-500">{item.description}</p>
-                </div>
-                <span className="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-700">Open</span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
 
       <section className="mt-4 rounded-3xl border border-indigo-200 bg-white p-4">
         <div className="flex items-start justify-between gap-3">

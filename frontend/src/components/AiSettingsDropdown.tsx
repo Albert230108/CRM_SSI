@@ -58,15 +58,10 @@ export default function AiSettingsDropdown({ children, onNavigate }: AiSettingsD
               key={item.to}
               to={withAiSettingsReturn(item.to)}
               onClick={(event) => onNavigate(event, withAiSettingsReturn(item.to))}
-              className="group flex items-start justify-between gap-3 rounded-md px-3 py-2 text-left transition hover:bg-gray-50"
+              className="group block rounded-md px-3 py-2 text-left transition hover:bg-gray-50"
             >
-              <div>
-                <p className="text-sm font-semibold text-gray-900 group-hover:text-indigo-700">{item.label}</p>
-                <p className="mt-0.5 text-xs leading-5 text-gray-500">{item.description}</p>
-              </div>
-              <span className="mt-0.5 rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-700">
-                Open
-              </span>
+              <p className="text-sm font-semibold text-gray-900 group-hover:text-indigo-700">{item.label}</p>
+              <p className="mt-0.5 text-xs leading-5 text-gray-500">{item.description}</p>
             </Link>
           ))}
         </div>

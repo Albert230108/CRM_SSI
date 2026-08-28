@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
@@ -132,7 +132,8 @@ export default function AiPendingDrafts() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-4">
-      <h1 className="text-2xl font-semibold text-gray-900">Pending AI Drafts</h1>
+      <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
+      <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">Pending AI Drafts</h1>
       <p className="mt-1.5 text-sm text-gray-500">
         AI-generated replies waiting for review across every tenant with auto-drafting enabled.
       </p>

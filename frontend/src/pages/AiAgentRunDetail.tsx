@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
@@ -123,7 +123,8 @@ export default function AiAgentRunDetail() {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-4">
-      <h1 className="text-lg font-semibold text-gray-900">AI Planner Run Detail</h1>
+      <Link to="/ai-runs" className="text-sm text-cyan-700 hover:underline">&larr; Back to Planner Runs</Link>
+      <h1 className="mt-1.5 text-lg font-semibold text-gray-900">AI Planner Run Detail</h1>
       <p className="mt-1 text-sm text-gray-500">
         Run information fetched directly from the URL, with the planning rationale, checker feedback, final draft,
         and every step in sequence.
