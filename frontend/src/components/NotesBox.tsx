@@ -219,8 +219,6 @@ export default function NotesBox({ tenantId, onReady, isActive = true, onActions
 
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
       {syncWarning ? <p className="text-sm text-amber-500">{syncWarning}</p> : null}
-      {isDirty ? <p className="text-xs text-amber-500">Unsaved changes are auto-saved as a draft.</p> : null}
-
       <textarea
         value={draftNotes}
         onChange={(event) => setDraftNotes(event.target.value)}

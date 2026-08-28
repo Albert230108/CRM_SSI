@@ -124,10 +124,11 @@ export default function AiAgentRunDetail() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-4">
       <Link to="/ai-runs" className="text-sm text-cyan-700 hover:underline">&larr; Back to Planner Runs</Link>
-      <h1 className="mt-1.5 text-lg font-semibold text-gray-900">AI Planner Run Detail</h1>
+      <h1 className="mt-1.5 text-lg font-semibold text-gray-900">
+        {run ? `AI Planner Run #${run.id} - ${run.tenant_name ?? `tenant ${run.tenant_id}`}` : 'AI Planner Run Detail'}
+      </h1>
       <p className="mt-1 text-sm text-gray-500">
-        Run information fetched directly from the URL, with the planning rationale, checker feedback, final draft,
-        and every step in sequence.
+        Planning rationale, checker feedback, the final draft, and every step in sequence.
       </p>
 
       {status === 'loading' ? <p className="mt-4 text-sm text-gray-500">Loading...</p> : null}
@@ -135,9 +136,6 @@ export default function AiAgentRunDetail() {
 
       {status === 'ready' && run ? (
         <div className="mt-3 space-y-3">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Run #{run.id} — {run.tenant_name ?? `tenant ${run.tenant_id}`}
-          </h2>
           <p className="text-sm text-gray-500">
             Mode: <span className="font-medium text-gray-700">{run.display_mode}</span> · Status:{' '}
             <span className="font-medium text-gray-700">{run.status.replace('_', ' ')}</span> · Tokens:{' '}

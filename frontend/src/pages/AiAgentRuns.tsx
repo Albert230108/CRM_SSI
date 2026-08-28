@@ -186,8 +186,7 @@ export default function AiAgentRuns() {
       <section className="mt-4 rounded-3xl border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-sky-50 p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-700">{statsPeriod === 'all' ? 'All time usage' : statsPeriod === 'today' ? 'Today usage' : 'This month usage'}</p>
-            <h2 className="mt-1 text-lg font-semibold text-gray-900">Token and cost overview</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Token and cost overview</h2>
           </div>
           {stats?.any_pricing_missing ? (
             <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Partial cost: some models are missing pricing</span>
@@ -279,7 +278,7 @@ export default function AiAgentRuns() {
       <section className="mt-3 rounded-2xl border border-gray-200 bg-white p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">
           <p className="text-sm text-gray-500">
-            {total ? `Showing ${showingStart}-${showingEnd} of ${total}` : 'No runs recorded yet.'}
+            {total ? `Showing ${showingStart}-${showingEnd} of ${total}` : '0 runs'}
           </p>
           <div className="flex gap-2">
             <button

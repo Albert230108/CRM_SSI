@@ -7,6 +7,16 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const CARD = 'rounded-2xl border border-gray-200 bg-white p-3.5'
+const ROLE_LABELS: Record<AgentRole, string> = {
+  planner: 'Planner',
+  checker: 'Checker',
+  drafter: 'Drafter',
+  brain_writer: 'Brain writer',
+  action_writer: 'Action writer',
+  formatter: 'Formatter',
+  memory_redo: 'Redo log agent',
+  memory_qa: 'Memory QA',
+}
 
 export default function AiAgentProfiles() {
   useDocumentTitle('CRM - AI Agents')
@@ -55,7 +65,7 @@ export default function AiAgentProfiles() {
           }}
           className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
         >
-          + New {role}
+          + New {ROLE_LABELS[role]}
         </button>
       </div>
 
@@ -118,7 +128,9 @@ export default function AiAgentProfiles() {
             </div>
           ))}
         {!profiles.some((profile) => profile.role === role) ? (
-          <p className="text-sm text-gray-500">No {role} profiles yet. The planner cannot run without one.</p>
+          <p className="text-sm text-gray-500">
+            No {ROLE_LABELS[role].toLowerCase()} profiles yet.{role === 'planner' ? ' The planner cannot run without one.' : ''}
+          </p>
         ) : null}
       </div>
     </section>

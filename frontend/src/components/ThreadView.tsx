@@ -2041,7 +2041,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                 onClick={() => setShowFirstMessageModal(true)}
                 className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
               >
-                New WhatsApp message
+                New WhatsApp
               </button>
               <button
                 type="button"
@@ -3060,5 +3060,4 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     </div>
   )
 }
-
 

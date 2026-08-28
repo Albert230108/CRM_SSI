@@ -74,9 +74,9 @@ export default function TenantMoreFiltersPopover({
             onChange={(e) => onDirectionChange(e.target.value || null)}
             className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
           >
-            <option value="">All Last Messages</option>
-            <option value="inbound">Last Message Inbound ⬇</option>
-            <option value="outbound">Last Message Outbound ⬆</option>
+            <option value="">Any</option>
+            <option value="inbound">Inbound</option>
+            <option value="outbound">Outbound</option>
           </select>
 
           {hasActiveFilters ? (

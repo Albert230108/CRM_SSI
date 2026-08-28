@@ -287,7 +287,7 @@ export default function BrainSections() {
                         className="rounded px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-200"
                         title="Copy the {{brain:...}} token"
                       >
-                        {copiedPath === node.path ? 'copied' : 'token'}
+                        {copiedPath === node.path ? 'Copied' : 'Copy token'}
                       </button>
                       <button
                         type="button"

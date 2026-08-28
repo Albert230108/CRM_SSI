@@ -288,7 +288,7 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
           disabled={!tenantId || scanning}
           className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {scanning ? (hasPriorScan ? 'Updating...' : 'Scanning...') : (hasPriorScan ? 'Update brain' : 'Generate initial brain')}
+          {scanning ? (hasPriorScan ? 'Updating...' : 'Generating...') : (hasPriorScan ? 'Update' : 'Generate')}
         </button>
       </div>,
     )
@@ -429,7 +429,6 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
 
       {tenantId ? (
         <div className="shrink-0 space-y-1.5 border-t border-gray-100 pt-1.5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ask AI about this tenant</p>
           {qaMessages.length > 0 ? (
             <div className="max-h-32 space-y-1.5 overflow-auto rounded-lg border border-gray-100 bg-gray-50/60 p-1.5">
               {qaMessages.map((message) => (

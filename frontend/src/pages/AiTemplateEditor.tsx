@@ -365,10 +365,6 @@ export default function AiTemplateEditor() {
           brainSections={brainSections}
           viewportKey={templateId ?? 'new'}
         />
-        <p className="text-xs text-gray-500">
-          Supports placeholders: { [...EMAIL_TEMPLATE_PLACEHOLDERS, ...DATETIME_PLACEHOLDERS].map((token) => `{{${token}}}`).join(', ') }
-        </p>
-
         <div className="space-y-1.5">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1b. Knowledge base (brain sections)</p>
           {brainSections.length === 0 ? (

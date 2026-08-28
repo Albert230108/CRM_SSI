@@ -86,7 +86,7 @@ export default function AiPayloadPreview() {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-4">
-      <h1 className="text-lg font-semibold text-gray-900">Exact AI Payload Preview</h1>
+      <h1 className="text-lg font-semibold text-gray-900">AI Payload Preview</h1>
       <p className="mt-1 text-sm text-gray-500">
         This is exactly the text that will be sent to Gemini if you click "Draft with AI" now, in the fixed order:
         0. Goal &amp; Guidelines, 1. Template text, 1b. Knowledge base (brain sections), 2. Message history,

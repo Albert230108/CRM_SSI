@@ -56,16 +56,14 @@ export default function AiTemplatesOverview() {
           <p className="text-xs">
             <Link to="/settings" className="text-cyan-700 hover:underline">&larr; Settings</Link>
           </p>
-          <h1 className="mt-1 text-lg font-semibold text-gray-900">AI Settings</h1>
+          <h1 className="mt-1 text-lg font-semibold text-gray-900">AI Templates</h1>
         </div>
       </div>
 
       <section className="mt-4 rounded-3xl border border-indigo-200 bg-white p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">AI Templates</p>
-            <h2 className="mt-1 text-xl font-semibold text-gray-900">Shared reply templates</h2>
-            <p className="mt-1 text-sm text-gray-600">These templates power Draft with AI, the planner, and the template editor.</p>
+            <p className="text-sm text-gray-600">Shared reply templates for Draft with AI and the planner.</p>
           </div>
           <button
             type="button"

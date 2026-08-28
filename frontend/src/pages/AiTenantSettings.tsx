@@ -549,7 +549,7 @@ export default function AiTenantSettings() {
             Bulk actions ({bulkTenantIds.size} tenant{bulkTenantIds.size === 1 ? '' : 's'} selected)
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            Select tenants above, pick templates below, and add or remove them from all selected tenants at once.
+            Apply templates and AI modes to all selected tenants.
           </p>
 
           <div className="mt-2 flex flex-wrap gap-3">
@@ -591,9 +591,6 @@ export default function AiTenantSettings() {
         <div className="mt-3 grid gap-3 border-t border-gray-200 pt-3 lg:grid-cols-3">
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk planner mode</p>
-            <p className="mt-1 text-xs text-gray-500">
-              Select tenants above, then set their Planner &amp; Checker mode all at once.
-            </p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <select
                 value={bulkPlannerMode}
@@ -619,9 +616,6 @@ export default function AiTenantSettings() {
 
           <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk brain writer</p>
-            <p className="mt-1 text-xs text-gray-500">
-              Select tenants above, then turn Tenant Brain updates on or off in one go.
-            </p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <button
                 type="button"
@@ -645,9 +639,6 @@ export default function AiTenantSettings() {
 
           <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk action writer</p>
-            <p className="mt-1 text-xs text-gray-500">
-              Select tenants above, then turn Action Writer updates on or off in one go.
-            </p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <button
                 type="button"
@@ -670,9 +661,6 @@ export default function AiTenantSettings() {
           </div>
           <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk formatter</p>
-            <p className="mt-1 text-xs text-gray-500">
-              Select tenants above, then turn the rich-formatting stage on or off in one go.
-            </p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <button
                 type="button"

@@ -567,7 +567,7 @@ export default function Settings() {
           <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
             <h2 className="text-lg font-semibold text-gray-900">Local Folder</h2>
             <p className="mt-1.5 text-sm text-gray-500">
-              Select the root folder on your computer where tenant files are stored. This setting is saved per user and restored on each visit.
+              Select the tenant-files root folder; it is saved for your account and restored on future visits.
             </p>
 
             {unsupported ? (
@@ -606,7 +606,7 @@ export default function Settings() {
                     Root folder path (for "Copy Explorer path")
                   </label>
                   <p className="mt-1 text-sm text-gray-500">
-                    Browsers can't read the absolute disk path of the folder you selected above, and can't open File Explorer directly for security reasons. Enter the path here manually (e.g. C:\Users\you\Tenants) so the tenant tile's button can copy the full folder path - paste it into Explorer's address bar (Win+E, then Ctrl+V, Enter) to jump straight there.
+                    Enter the full path manually so the tenant tile can copy it for pasting into File Explorer.
                   </p>
                   <input
                     id="local-folder-root-path"

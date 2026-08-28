@@ -168,11 +168,6 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
 
             <div className="min-h-0 flex-1 overflow-auto bg-gradient-to-b from-cyan-50/40 to-white px-4 py-4">
               <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-3">
-                <div className="rounded-2xl border border-cyan-100 bg-white p-3 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Chat prompt</p>
-                  <p className="mt-1 text-sm text-gray-600">Ask about a booking, memory, note, action item, or recent tenant message.</p>
-                </div>
-
                 {previewMessages.length ? (
                   <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-2xl border border-gray-200 bg-white p-3">
                     {previewMessages.map((message) => (

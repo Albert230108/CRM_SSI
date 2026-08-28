@@ -754,7 +754,7 @@ export default function AdminSettings() {
     <>
       <SettingsSidebarLayout
         title="Admin Settings"
-        subtitle="User management, invite onboarding, password resets, and Beds24 webhook logs."
+        subtitle="Manage users, invites, password resets, and integrations."
         tabs={ADMIN_TABS}
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -840,7 +840,7 @@ export default function AdminSettings() {
                   <option value="non-admin">Non-admin</option>
                   <option value="admin">Admin</option>
                 </select>
-                <button className="rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white">Generate invite link</button>
+                <button className="rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white">Generate</button>
               </form>
             </section>
 
@@ -855,7 +855,7 @@ export default function AdminSettings() {
                     setShowClearInvitesModal(true)
                   }}
                 >
-                  Clear all pending invite links
+                  Clear pending invites
                 </button>
               </div>
               <div className="mt-3 overflow-x-auto">
@@ -966,6 +966,9 @@ export default function AdminSettings() {
               </form>
 
               <div className="mt-3 border-t border-gray-200 pt-3 space-y-3">
+                <p className="text-xs text-gray-500">
+                  These defaults apply to newly created tenants and can be changed later in tenant AI settings.
+                </p>
                 <div>
                   <label className="flex items-center gap-3 text-sm text-gray-700">
                     <input
@@ -977,10 +980,6 @@ export default function AdminSettings() {
                     />
                     Automatically make every shared AI reply template available to newly created tenants
                   </label>
-                  <p className="mt-1 text-xs text-gray-500">
-                    When off (default), a new tenant starts with no AI templates available and must be configured manually
-                    on the tenant AI settings page.
-                  </p>
                 </div>
                 <div>
                   <label className="flex items-center gap-3 text-sm text-gray-700">
@@ -992,10 +991,6 @@ export default function AdminSettings() {
                     />
                     Enable the brain writer by default for newly created tenants
                   </label>
-                  <p className="mt-1 text-xs text-gray-500">
-                    When off (default), new tenants start with the brain writer disabled and must be enabled manually
-                    on the tenant AI settings page.
-                  </p>
                 </div>
                 <div>
                   <label className="flex items-center gap-3 text-sm text-gray-700">
@@ -1007,10 +1002,6 @@ export default function AdminSettings() {
                     />
                     Enable the action writer by default for newly created tenants
                   </label>
-                  <p className="mt-1 text-xs text-gray-500">
-                    When off (default), new tenants start with the action writer disabled and must be enabled manually
-                    on the tenant AI settings page.
-                  </p>
                 </div>
                 <div>
                   <label className="flex items-center gap-3 text-sm text-gray-700">
@@ -1022,10 +1013,6 @@ export default function AdminSettings() {
                     />
                     Enable the formatter by default for newly created tenants
                   </label>
-                  <p className="mt-1 text-xs text-gray-500">
-                    When off (default), new tenants start with rich formatting disabled and must be enabled manually
-                    on the tenant AI settings page.
-                  </p>
                 </div>
               </div>
             </section>
@@ -1452,7 +1439,7 @@ export default function AdminSettings() {
 
       {showClearInvitesModal ? (
         <ConfirmDialog
-          title="Clear all pending invite links?"
+          title="Clear pending invites?"
           description="This will invalidate all pending invite links. People who already received an invite link will no longer be able to use it. Existing users are not affected."
           confirmLabel="Clear pending invite links"
           confirmingLabel="Clearing..."

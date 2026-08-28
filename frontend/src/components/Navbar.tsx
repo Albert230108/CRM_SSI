@@ -307,9 +307,10 @@ export default function Navbar() {
             <button
               type="button"
               onClick={() => setImportModalOpen(true)}
+              title="Import Beds24 bookings"
               className="rounded-lg border border-cyan-500/40 bg-cyan-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-cyan-700"
             >
-              Import Beds24 bookings
+              Import
             </button>
             <button
               onClick={guardedLogout}

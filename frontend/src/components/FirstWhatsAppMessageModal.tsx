@@ -280,7 +280,7 @@ export default function FirstWhatsAppMessageModal({
             </h2>
             {tenantName ? <p className="mt-1 text-sm text-gray-500">Tenant: {tenantName}</p> : null}
             <p className="mt-1 text-sm text-gray-500">
-              Sends the first message to a phone number and links the resulting chat automatically.
+              Send a first message and link the new chat automatically.
             </p>
           </div>
           <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={onClose} className="text-sm text-gray-500 hover:text-gray-900">
