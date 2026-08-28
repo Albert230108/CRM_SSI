@@ -144,9 +144,6 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const [showWhatsappMenu, setShowWhatsappMenu] = useState(false)
   const [gmailAccounts, setGmailAccounts] = useState<GmailAccountOption[]>([])
   const [showGmailMenu, setShowGmailMenu] = useState(false)
-  const [showQuoteNotice, setShowQuoteNotice] = useState(false)
-  const [quoteNoticeText, setQuoteNoticeText] = useState('')
-  const [quoteLoading, setQuoteLoading] = useState(false)
   const whatsappMenuRef = useRef<HTMLDivElement>(null)
   const gmailMenuRef = useRef<HTMLDivElement>(null)
 
@@ -395,26 +392,6 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
     }
   }
 
-  const handleQuoteClick = async () => {
-    if (!tenantId || quoteLoading) return
-    setQuoteLoading(true)
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}/quotation-token`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      })
-      if (!response.ok) throw new Error('Failed to open Quotation Manager')
-      const data: { quotation_url: string } = await response.json()
-      window.open(data.quotation_url, '_blank', 'noopener,noreferrer')
-    } catch (err) {
-      setQuoteNoticeText(err instanceof Error ? err.message : 'Failed to open Quotation Manager')
-      setShowQuoteNotice(true)
-      window.setTimeout(() => setShowQuoteNotice(false), 3000)
-    } finally {
-      setQuoteLoading(false)
-    }
-  }
-
   const totals = useMemo(() => {
     const totalPayments = payments.reduce((sum, item) => {
       const amount = Number(item.amount)
@@ -488,25 +465,6 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                     {account.email_address}
                   </button>
                 ))}
-              </div>
-            ) : null}
-          </div>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={handleQuoteClick}
-              disabled
-              title="Quotation Manager temporarily disabled"
-              className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white"
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-cyan-700">
-                <path d="M7 2h8l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V8h4.5L14 3.5zM8 13h8v1.5H8V13zm0 3.5h8V18H8v-1.5zm0-7h4v1.5H8V9.5z" />
-              </svg>
-              {quoteLoading ? 'Opening...' : 'Quote'}
-            </button>
-            {showQuoteNotice ? (
-              <div className="absolute right-0 z-10 mt-1 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg">
-                {quoteNoticeText}
               </div>
             ) : null}
           </div>
@@ -647,4 +605,3 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
     </div>
   )
 }
-

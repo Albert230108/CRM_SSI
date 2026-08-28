@@ -100,7 +100,7 @@ export default function WorkingMemoryCardModal({
             Delete
           </button>
           <button type="button" onClick={onClose} className="ml-auto rounded-lg bg-cyan-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700">
-            Done
+            Close
           </button>
         </div>
         <p className="text-xs text-gray-500">Esc closes. Changes apply immediately, but still need Save.</p>

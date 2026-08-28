@@ -2149,7 +2149,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                           }}
                           className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
                         >
-                          AI Reply
+                          Draft with AI
                         </button>
                       </div>
                     </div>
@@ -2354,7 +2354,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     onClick={() => openForwardPanel(selectedEmailThread)}
                     className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
                   >
-                    AI Reply
+                    Draft with AI
                   </button>
                   <button
                     type="button"
@@ -2402,7 +2402,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
               {forwardTarget && forwardTarget.threadId === selectedEmailThread.thread_id ? (
                 <form onSubmit={handleSendForward} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
                   <p className="text-xs text-gray-500">
-                    Forwards this thread to {forwardToEmail || 'the configured AI Reply address (set it in Admin Settings)'}.
+                    Sends this thread to {forwardToEmail || 'the configured AI address (set it in Admin Settings)'}.
                   </p>
                   {emailTemplates.length ? (
                     <div className="space-y-2">
@@ -2509,7 +2509,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       disabled={forwardSending || !forwardBody.trim()}
                       className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {forwardSending ? 'Forwarding...' : 'Forward'}
+                      {forwardSending ? 'Sending...' : 'Send to AI'}
                     </button>
                   </div>
                 </form>
@@ -3060,6 +3060,5 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     </div>
   )
 }
-
 
 

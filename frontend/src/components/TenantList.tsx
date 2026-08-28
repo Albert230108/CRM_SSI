@@ -12,6 +12,7 @@ import TenantMoreFiltersPopover from './TenantMoreFiltersPopover'
 import TenantContextMenu from './TenantContextMenu'
 import TenantAiTemplatesModal from './TenantAiTemplatesModal'
 import ToastHost from './Toast'
+import ConfirmDialog from './ConfirmDialog'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const TENANT_ROW_ENTRY_OFFSET_PX = 8
@@ -95,6 +96,9 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
   const [contextMenuPlannerMode, setContextMenuPlannerMode] = useState<PlannerMode | null>(null)
   const [contextMenuPlannerModeLoading, setContextMenuPlannerModeLoading] = useState(false)
   const [aiTemplatesTenant, setAiTemplatesTenant] = useState<{ id: number; name: string } | null>(null)
+  const [deleteTenant, setDeleteTenant] = useState<{ id: number; name: string } | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [pinnedTenantIds, setPinnedTenantIds] = useState<number[]>([])
   const listContainerRef = useRef<HTMLDivElement>(null)
   const prefersReducedMotion = usePrefersReducedMotion()
@@ -400,16 +404,25 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
     useNotesDraftStore.getState().guardNavigation(() => navigate(`/dashboard/tenant/${nextTenant.id}`))
   }
 
-  const handleDelete = async (tenantId: number) => {
-    if (!confirm('Delete this tenant? This cannot be undone.')) return
-    const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
-      method: 'DELETE',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    })
-    if (response.ok) {
-      setTenants((current) => current.filter((tenant) => tenant.id !== tenantId))
-    } else {
-      alert('Failed to delete tenant')
+  const handleDelete = async () => {
+    if (!deleteTenant || deleteLoading) return
+    setDeleteLoading(true)
+    setDeleteError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenants/${deleteTenant.id}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) throw new Error('Failed to delete tenant.')
+      setTenants((current) => current.filter((tenant) => tenant.id !== deleteTenant.id))
+      setDeleteTenant(null)
+      showSuccess('Tenant deleted.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete tenant.'
+      setDeleteError(message)
+      showError(message)
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -632,7 +645,8 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation()
-                        handleDelete(tenant.id)
+                        setDeleteError('')
+                        setDeleteTenant({ id: tenant.id, name: tenant.name })
                       }}
                       className="rounded-lg p-1 text-rose-400 transition hover:bg-rose-50 hover:text-rose-600"
                       aria-label={`Delete tenant ${tenant.id}`}
@@ -671,6 +685,23 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
           tenantId={aiTemplatesTenant.id}
           tenantName={aiTemplatesTenant.name}
           onClose={() => setAiTemplatesTenant(null)}
+        />
+      ) : null}
+
+      {deleteTenant ? (
+        <ConfirmDialog
+          title="Delete tenant?"
+          description={`Delete ${deleteTenant.name}? This cannot be undone.`}
+          confirmLabel="Delete tenant"
+          confirmingLabel="Deleting..."
+          loading={deleteLoading}
+          error={deleteError}
+          onConfirm={() => void handleDelete()}
+          onCancel={() => {
+            if (deleteLoading) return
+            setDeleteTenant(null)
+            setDeleteError('')
+          }}
         />
       ) : null}
 

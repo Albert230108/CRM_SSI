@@ -1043,7 +1043,7 @@ export default function AdminSettings() {
                   onClick={resetModelPricingForm}
                   className="rounded-xl border border-cyan-200 px-4 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-50"
                 >
-                  New model
+                  Clear form
                 </button>
               </div>
               {modelPricingError ? <p className="mt-3 text-sm text-rose-600">{modelPricingError}</p> : null}
