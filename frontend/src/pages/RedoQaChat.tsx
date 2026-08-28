@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import AiChatComposer from '../components/AiChatComposer'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -127,11 +128,6 @@ export default function RedoQaChat() {
     }
   }
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    void submitQuestion()
-  }
-
   const renderMessage = (message: RedoQaMessage) => (
     <div
       key={message.id}
@@ -229,25 +225,15 @@ export default function RedoQaChat() {
             <div className="border-t border-gray-100 px-4 py-3">
               {historyError ? <p className="mb-2 text-xs font-medium text-amber-700">{historyError}</p> : null}
               {error && status !== 'error' ? <p className="mb-2 text-xs font-medium text-rose-600">{error}</p> : null}
-              <form className="flex flex-col gap-2 sm:flex-row" onSubmit={submit}>
-                <textarea
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  placeholder="Ask a question about this redo..."
-                  disabled={sending || status !== 'ready'}
-                  rows={3}
-                  className="min-h-24 min-w-0 flex-1 resize-none rounded-2xl border border-cyan-100 bg-cyan-50/40 px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-300 focus:bg-white disabled:cursor-not-allowed"
-                />
-                <div className="flex shrink-0 flex-row gap-2 sm:flex-col">
-                  <button
-                    type="submit"
-                    disabled={!question.trim() || sending || status !== 'ready'}
-                    className="rounded-2xl border border-cyan-200 bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {sending ? 'Sending...' : 'Ask'}
-                  </button>
-                </div>
-              </form>
+              <AiChatComposer
+                value={question}
+                onChange={setQuestion}
+                onSubmit={() => void submitQuestion()}
+                placeholder="Ask a question about this redo..."
+                disabled={sending || status !== 'ready'}
+                busy={sending}
+                multiline
+              />
             </div>
           </section>
         </div>

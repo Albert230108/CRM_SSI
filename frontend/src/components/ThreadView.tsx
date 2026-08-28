@@ -9,7 +9,7 @@ import RichMessageComposer from './RichMessageComposer'
 import FirstWhatsAppMessageModal from './FirstWhatsAppMessageModal'
 import EmailLinkModal from './EmailLinkModal'
 import TenantBrainQuickChat from './TenantBrainQuickChat'
-import ToastCard from './ToastCard'
+import { ToastCard, ToastStack } from './Toast'
 import AiDraftControls from './AiDraftControls'
 import InlineSpinner from './InlineSpinner'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
@@ -82,7 +82,7 @@ const AttachmentChips = ({ messageId, attachments, downloadingAttachmentId, onDo
           >
             {isDownloading ? (
               <>
-                <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                <InlineSpinner className="text-gray-400" />
                 Downloading {attachment.filename}…
               </>
             ) : (
@@ -2063,7 +2063,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
       </div>
 
       {emailSyncToast ? (
-        <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+        <ToastStack>
           <ToastCard toastKey={emailSyncToastKeyRef.current} tone={emailSyncToast.status === 'error' ? 'error' : emailSyncToast.status === 'done' ? 'success' : 'info'} durationMs={8000}>
             {emailSyncToast.status === 'running' ? (
               <p className="font-medium">Syncing Gmail history for {emailSyncToast.email}...</p>
@@ -2083,7 +2083,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
               <p className="font-semibold">Gmail sync for {emailSyncToast.email} failed{emailSyncToast.error ? `: ${emailSyncToast.error}` : ''}</p>
             )}
           </ToastCard>
-        </div>
+        </ToastStack>
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-width:thin] [scrollbar-color:rgba(6,182,212,0.35)_transparent]">

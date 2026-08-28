@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import InlineSpinner from './InlineSpinner'
 import type { SyncProgress } from '../store/syncStore'
 
 type SyncProgressOverlayProps = {
@@ -85,7 +86,7 @@ export default function SyncProgressOverlay({ active, progress, onDismiss }: Syn
       aria-label="Syncing data"
       className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-white/60 backdrop-blur-md"
     >
-      <span className="h-12 w-12 animate-spin rounded-full border-4 border-cyan-600 border-t-transparent" />
+      <InlineSpinner size="lg" className="text-cyan-600" />
       <p className="text-lg font-semibold text-gray-800">
         {phaseLabel}
         {counter}... {Math.round(displayPercent)}%

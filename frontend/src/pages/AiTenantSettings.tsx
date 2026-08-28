@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import TenantAiSettingsControls from '../components/TenantAiSettingsControls'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -147,46 +148,6 @@ export default function AiTenantSettings() {
     } finally {
       setLoadingSettings(false)
     }
-  }
-
-  const toggleAvailableTemplate = (templateId: number) => {
-    setSettings((current) => {
-      if (!current) return current
-      const isAvailable = current.available_template_ids.includes(templateId)
-      const available_template_ids = isAvailable
-        ? current.available_template_ids.filter((id) => id !== templateId)
-        : [...current.available_template_ids, templateId]
-      // Clearing availability for a template that's currently a default clears the default too,
-      // so the UI never leaves a "default" pointing at a template no longer offered here.
-      return {
-        ...current,
-        available_template_ids,
-        default_email_template_id: !isAvailable || current.default_email_template_id !== templateId ? current.default_email_template_id : null,
-        default_whatsapp_template_id: !isAvailable || current.default_whatsapp_template_id !== templateId ? current.default_whatsapp_template_id : null,
-      }
-    })
-  }
-
-  const setAutoDraft = (channel: 'email' | 'whatsapp', value: boolean) => {
-    setSettings((current) => {
-      if (!current) return current
-      return {
-        ...current,
-        [channel === 'email' ? 'auto_draft_email' : 'auto_draft_whatsapp']: value,
-        // Mirrors the server-side rule so the UI never shows an enabled auto-send toggle that a
-        // save would silently revert.
-        ...(value ? {} : { [channel === 'email' ? 'auto_send_email' : 'auto_send_whatsapp']: false }),
-      }
-    })
-  }
-
-  const setAutoSend = (channel: 'email' | 'whatsapp', value: boolean) => {
-    setSettings((current) => {
-      if (!current) return current
-      const draftEnabled = channel === 'email' ? current.auto_draft_email : current.auto_draft_whatsapp
-      if (value && (!draftEnabled || current.planner_mode === 'auto-draft')) return current
-      return { ...current, [channel === 'email' ? 'auto_send_email' : 'auto_send_whatsapp']: value }
-    })
   }
 
   const setPlannerMode = (value: TenantAiSettings['planner_mode']) => {
@@ -692,115 +653,12 @@ export default function AiTenantSettings() {
             <p className="mt-2 text-sm text-gray-500">Loading...</p>
           ) : (
             <div className="mt-3 space-y-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Available templates</p>
-                <div className="mt-1.5 space-y-1.5">
-                  {templates.map((template) => (
-                    <label key={template.id} className="flex items-center gap-3 text-sm text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={settings.available_template_ids.includes(template.id)}
-                        onChange={() => toggleAvailableTemplate(template.id)}
-                        className="h-4 w-4 rounded border-gray-300"
-                      />
-                      {template.name}
-                    </label>
-                  ))}
-                  {!templates.length ? <p className="text-sm text-gray-500">No shared templates yet - add one in Settings.</p> : null}
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="default-email-template">
-                    Default template - Email
-                  </label>
-                  <select
-                    id="default-email-template"
-                    value={settings.default_email_template_id ?? ''}
-                    onChange={(event) => setSettings((current) => current && { ...current, default_email_template_id: event.target.value ? Number(event.target.value) : null })}
-                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
-                  >
-                    <option value="">No default</option>
-                    {templates.filter((template) => settings.available_template_ids.includes(template.id)).map((template) => (
-                      <option key={template.id} value={template.id}>{template.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="default-whatsapp-template">
-                    Default template - WhatsApp
-                  </label>
-                  <select
-                    id="default-whatsapp-template"
-                    value={settings.default_whatsapp_template_id ?? ''}
-                    onChange={(event) => setSettings((current) => current && { ...current, default_whatsapp_template_id: event.target.value ? Number(event.target.value) : null })}
-                    className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
-                  >
-                    <option value="">No default</option>
-                    {templates.filter((template) => settings.available_template_ids.includes(template.id)).map((template) => (
-                      <option key={template.id} value={template.id}>{template.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-gray-200 p-2.5">
-                  <p className="text-sm font-semibold text-gray-900">Email automation</p>
-                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={settings.auto_draft_email}
-                      disabled={settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'}
-                      onChange={(event) => setAutoDraft('email', event.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
-                    />
-                    {settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'
-                      ? 'Auto-draft on new email (required by the Planner mode below)'
-                      : 'Auto-draft on new email'}
-                  </label>
-                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={settings.auto_send_email}
-                      disabled={!settings.auto_draft_email || settings.planner_mode === 'auto-draft'}
-                      onChange={(event) => setAutoSend('email', event.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
-                    />
-                    {settings.planner_mode === 'auto-draft'
-                      ? 'Auto-send (overridden — Auto-draft mode never sends automatically)'
-                      : 'Auto-send (requires auto-draft)'}
-                  </label>
-                </div>
-                <div className="rounded-xl border border-gray-200 p-2.5">
-                  <p className="text-sm font-semibold text-gray-900">WhatsApp automation</p>
-                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={settings.auto_draft_whatsapp}
-                      disabled={settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'}
-                      onChange={(event) => setAutoDraft('whatsapp', event.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
-                    />
-                    {settings.planner_mode === 'auto-draft' || settings.planner_mode === 'auto-send'
-                      ? 'Auto-draft on new WhatsApp message (required by the Planner mode below)'
-                      : 'Auto-draft on new WhatsApp message'}
-                  </label>
-                  <label className="mt-1.5 flex items-center gap-3 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={settings.auto_send_whatsapp}
-                      disabled={!settings.auto_draft_whatsapp || settings.planner_mode === 'auto-draft'}
-                      onChange={(event) => setAutoSend('whatsapp', event.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed"
-                    />
-                    {settings.planner_mode === 'auto-draft'
-                      ? 'Auto-send (overridden — Auto-draft mode never sends automatically)'
-                      : 'Auto-send (requires auto-draft)'}
-                  </label>
-                </div>
-              </div>
+              <TenantAiSettingsControls
+                templates={templates}
+                settings={settings}
+                onChange={setSettings}
+                idPrefix="tenant-settings"
+              />
 
               <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-2.5">
                 <p className="text-sm font-semibold text-gray-900">Planner &amp; Checker</p>

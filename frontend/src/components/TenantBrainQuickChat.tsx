@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import ToastCard from './ToastCard'
+import { useEffect, useState } from 'react'
+import { ToastCard, ToastStack } from './Toast'
+import AiChatComposer from './AiChatComposer'
 import { useAuthStore } from '../store/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -103,50 +104,37 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
 
   const previewMessages = messages.slice(-4)
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    void askQuestion()
-  }
-
   return (
     <>
       <div className="w-full min-w-0 rounded-2xl border border-cyan-200 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
         {error ? <p className="mb-1.5 text-xs font-medium text-rose-500">{error}</p> : null}
 
-        <form className="flex items-center gap-2" onSubmit={submit}>
-          <div className="min-w-0 flex-1 rounded-full border border-cyan-100 bg-cyan-50/60 px-3 py-2 transition focus-within:border-cyan-300 focus-within:bg-white">
-            <input
-              type="text"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask about this tenant..."
-              disabled={sending}
-              className="w-full border-0 bg-transparent p-0 text-sm text-gray-900 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => setFullscreen(true)}
-            className="shrink-0 rounded-full border border-cyan-100 bg-cyan-50 px-3.5 py-2 text-xs font-semibold text-cyan-700 transition hover:border-cyan-200 hover:bg-cyan-100"
-          >
-            Fullscreen
-          </button>
-          <button
-            type="submit"
-            disabled={!question.trim() || sending}
-            className="shrink-0 rounded-full border border-cyan-200 bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {sending ? 'Sending...' : 'Send'}
-          </button>
-        </form>
+        <AiChatComposer
+          value={question}
+          onChange={setQuestion}
+          onSubmit={() => void askQuestion()}
+          placeholder="Ask about this tenant..."
+          disabled={sending}
+          busy={sending}
+          className="border-0 p-0 shadow-none"
+          secondaryAction={(
+            <button
+              type="button"
+              onClick={() => setFullscreen(true)}
+              className="shrink-0 rounded-full border border-cyan-100 bg-cyan-50 px-3.5 py-2 text-xs font-semibold text-cyan-700 transition hover:border-cyan-200 hover:bg-cyan-100"
+            >
+              Fullscreen
+            </button>
+          )}
+        />
       </div>
 
       {!fullscreen && responseToast ? (
-        <div className="fixed right-4 top-4 z-50 w-[min(32rem,calc(100vw-2rem))]">
+        <ToastStack>
           <ToastCard toastKey={responseToast.id} tone={responseToast.tone} durationMs={8000} className="w-full">
             <p className="font-medium">{responseToast.message}</p>
           </ToastCard>
-        </div>
+        </ToastStack>
       ) : null}
 
       {fullscreen ? (
@@ -192,25 +180,14 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
 
                 {error ? <p className="text-xs font-medium text-rose-500">{error}</p> : null}
 
-                <form className="flex items-center gap-2 rounded-2xl border border-cyan-100 bg-white p-2 shadow-sm" onSubmit={submit}>
-                  <div className="min-w-0 flex-1 rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-2 transition focus-within:border-cyan-300 focus-within:bg-white">
-                    <input
-                      type="text"
-                      value={question}
-                      onChange={(event) => setQuestion(event.target.value)}
-                      placeholder="Ask about this tenant..."
-                      disabled={sending}
-                      className="w-full border-0 bg-transparent p-0 text-sm text-gray-900 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={!question.trim() || sending}
-                    className="shrink-0 rounded-full border border-cyan-200 bg-cyan-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {sending ? 'Sending...' : 'Send'}
-                  </button>
-                </form>
+                <AiChatComposer
+                  value={question}
+                  onChange={setQuestion}
+                  onSubmit={() => void askQuestion()}
+                  placeholder="Ask about this tenant..."
+                  disabled={sending}
+                  busy={sending}
+                />
               </div>
             </div>
           </div>

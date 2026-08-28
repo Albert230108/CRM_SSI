@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useAuthStore } from '../store/authStore'
+import AiChatComposer from './AiChatComposer'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -439,27 +440,15 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
               ))}
             </div>
           ) : null}
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={qaQuestion}
-              onChange={(event) => setQaQuestion(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void askQuestion()
-              }}
-              disabled={qaAsking}
-              placeholder="Ask a question about this tenant..."
-              className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
-            />
-            <button
-              type="button"
-              onClick={askQuestion}
-              disabled={!qaQuestion.trim() || qaAsking}
-              className="shrink-0 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {qaAsking ? 'Asking...' : 'Ask'}
-            </button>
-          </div>
+          <AiChatComposer
+            value={qaQuestion}
+            onChange={setQaQuestion}
+            onSubmit={() => void askQuestion()}
+            placeholder="Ask a question about this tenant..."
+            disabled={qaAsking}
+            busy={qaAsking}
+            className="rounded-lg border-gray-200 p-1 shadow-none"
+          />
         </div>
       ) : null}
     </div>

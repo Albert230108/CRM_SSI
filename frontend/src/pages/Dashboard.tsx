@@ -6,7 +6,7 @@ import TenantNotesPanel from '../components/TenantNotesPanel'
 import OneDriveBox from '../components/OneDriveBox'
 import TenantList from '../components/TenantList'
 import ThreadView from '../components/ThreadView'
-import ToastCard from '../components/ToastCard'
+import { ToastCard, ToastStack } from '../components/Toast'
 import TileLoadingOverlay from '../components/TileLoadingOverlay'
 import {
   clampMiddleColumnWidth,
@@ -276,13 +276,13 @@ export default function Dashboard() {
 
   return (
     <main className="flex h-full w-full flex-col overflow-hidden px-3 py-2">
-      <div className="fixed right-4 top-4 z-50 flex flex-col gap-2">
+      <ToastStack>
         {messageToasts.map((toast) => (
           <ToastCard key={toast.id} toastKey={toast.id} tone="info" durationMs={MESSAGE_TOAST_DURATION_MS}>
             <p className="font-medium">{toast.text}</p>
           </ToastCard>
         ))}
-      </div>
+      </ToastStack>
 
       <div ref={columnsContainerRef} className="flex flex-row flex-1 min-h-0 overflow-hidden">
         <section

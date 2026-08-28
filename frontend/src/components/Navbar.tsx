@@ -4,7 +4,7 @@ import AiSettingsDropdown from './AiSettingsDropdown'
 import ImportModal from './ImportModal'
 import NotificationBell from './NotificationBell'
 import SyncProgressOverlay from './SyncProgressOverlay'
-import ToastCard from './ToastCard'
+import { ToastCard, ToastStack } from './Toast'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
 import { useSyncStore } from '../store/syncStore'
@@ -331,7 +331,7 @@ export default function Navbar() {
       />
 
       {toastVisible && (syncSummary || syncError) ? (
-        <div className="fixed right-4 top-20 z-50 flex flex-col gap-2">
+        <ToastStack>
           <ToastCard toastKey={syncToken} tone={syncError ? 'error' : 'success'} durationMs={8000}>
             {syncError ? (
               <p className="font-semibold">{syncError}</p>
@@ -347,7 +347,7 @@ export default function Navbar() {
               </>
             ) : null}
           </ToastCard>
-        </div>
+        </ToastStack>
       ) : null}
     </>
   )
