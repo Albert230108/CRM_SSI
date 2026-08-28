@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Time, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, Time, func
 
 from app.database import Base
 
@@ -8,6 +8,7 @@ class BulkPlannerSchedule(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False)
+    extra_instructions = Column(Text, nullable=True)
     enabled = Column(Boolean, nullable=False, default=True, server_default="true")
     run_time_local = Column(Time, nullable=False)
     status_filter = Column(JSON, nullable=True)

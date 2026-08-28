@@ -71,6 +71,7 @@ def create_bulk_planner_schedule(
 ) -> BulkPlannerScheduleRead:
     schedule = BulkPlannerSchedule(
         name=payload.name.strip(),
+        extra_instructions=(payload.extra_instructions or "").strip() or None,
         enabled=payload.enabled,
         run_time_local=payload.run_time_local,
         status_filter=list(payload.status_filter or []),
@@ -157,6 +158,8 @@ def update_bulk_planner_schedule(
 
     if "name" in updates:
         schedule.name = (updates["name"] or "").strip()
+    if "extra_instructions" in updates:
+        schedule.extra_instructions = (updates["extra_instructions"] or "").strip() or None
     if "enabled" in updates:
         schedule.enabled = bool(updates["enabled"])
     if "status_filter" in updates:

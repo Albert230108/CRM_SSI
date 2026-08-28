@@ -216,7 +216,7 @@ def execute_due_schedule(
                     draft_id=draft_id,
                     tenant_id=tenant_id,
                     channel=channel,
-                    operator_note=None,
+                    operator_note=schedule.extra_instructions,
                     attachment_ids=[],
                     user_id=None,
                 )

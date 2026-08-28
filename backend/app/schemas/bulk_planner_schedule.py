@@ -17,12 +17,14 @@ class BulkPlannerScheduleFilterFields(BaseModel):
 
 class BulkPlannerScheduleCreate(BulkPlannerScheduleFilterFields):
     name: str = Field(min_length=1, max_length=200)
+    extra_instructions: str | None = None
     enabled: bool = True
     run_time_local: time
 
 
 class BulkPlannerScheduleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    extra_instructions: str | None = None
     enabled: bool | None = None
     run_time_local: time | None = None
     status_filter: list[str] | None = None
@@ -46,6 +48,7 @@ class BulkPlannerSchedulePreviewResponse(BaseModel):
 class BulkPlannerScheduleRead(BulkPlannerScheduleFilterFields):
     id: int
     name: str
+    extra_instructions: str | None = None
     enabled: bool
     run_time_local: time
     last_run_at: datetime | None = None

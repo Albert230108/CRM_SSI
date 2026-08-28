@@ -1,21 +1,25 @@
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import json
+
 import app.main as main_module
 import pytest
 
 from app.database import SessionLocal
+from app.models.ai_agent_profile import AiAgentProfile
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.bulk_planner_schedule import BulkPlannerSchedule
 from app.models.bulk_planner_schedule_run import BulkPlannerScheduleRun
 from app.models.bulk_planner_schedule_run_result import BulkPlannerScheduleRunResult
+from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.user import User
-from app.services import bulk_planner_schedule_service
+from app.services import ai_agent_orchestrator, bulk_planner_schedule_service, gemini_client
 
 AMSTERDAM = ZoneInfo("Europe/Amsterdam")
 
@@ -76,6 +80,7 @@ def _create_schedule(
     db,
     *,
     name: str = "Morning run",
+    extra_instructions: str | None = None,
     enabled: bool = True,
     run_time_local: time = time(9, 30),
     status_filter: list[str] | None = None,
@@ -86,6 +91,7 @@ def _create_schedule(
 ) -> BulkPlannerSchedule:
     schedule = BulkPlannerSchedule(
         name=name,
+        extra_instructions=extra_instructions,
         enabled=enabled,
         run_time_local=run_time_local,
         status_filter=status_filter,
@@ -116,6 +122,27 @@ def _expected_next_run(now_utc: datetime, run_time_local: time) -> datetime:
     return candidate.astimezone(timezone.utc)
 
 
+def _create_profile(db, *, role: str, name: str, **overrides) -> AiAgentProfile:
+    profile = AiAgentProfile(name=name, role=role, is_default=True, is_active=True, **overrides)
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+def _create_template(db, *, name: str = "Late check-in") -> AiReplyTemplate:
+    template = AiReplyTemplate(
+        name=name,
+        description="Use for late arrival requests.",
+        sections=[{"label": "Body", "content": "Hello!"}],
+        created_by_user_id=2,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return template
+
+
 def test_schedule_crud_and_next_run_at_computation(non_admin_client, db_session, monkeypatch):
     _ensure_user(db_session, 2)
     frozen_now = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
@@ -125,6 +152,7 @@ def test_schedule_crud_and_next_run_at_computation(non_admin_client, db_session,
         "/api/bulk-planner-schedules",
         json={
             "name": "Daily confirmed",
+            "extra_instructions": "Please be extra warm and concise.",
             "enabled": True,
             "run_time_local": "09:30:00",
             "status_filter": ["Confirmed"],
@@ -135,6 +163,7 @@ def test_schedule_crud_and_next_run_at_computation(non_admin_client, db_session,
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["name"] == "Daily confirmed"
+    assert created["extra_instructions"] == "Please be extra warm and concise."
     assert created["status_filter"] == ["Confirmed"]
     assert _as_utc(datetime.fromisoformat(created["next_run_at"])) == _expected_next_run(frozen_now, time(9, 30))
 
@@ -147,11 +176,12 @@ def test_schedule_crud_and_next_run_at_computation(non_admin_client, db_session,
     monkeypatch.setattr(bulk_planner_schedule_service, "_utc_now", lambda: updated_now)
     patch_response = non_admin_client.patch(
         f"/api/bulk-planner-schedules/{schedule_id}",
-        json={"run_time_local": "07:15:00", "enabled": False, "status_filter": []},
+        json={"run_time_local": "07:15:00", "enabled": False, "status_filter": [], "extra_instructions": "Keep it brief."},
     )
     assert patch_response.status_code == 200
     patched = patch_response.json()
     assert patched["enabled"] is False
+    assert patched["extra_instructions"] == "Keep it brief."
     assert patched["status_filter"] == []
     assert _as_utc(datetime.fromisoformat(patched["next_run_at"])) == _expected_next_run(updated_now, time(7, 15))
 
@@ -162,6 +192,87 @@ def test_schedule_crud_and_next_run_at_computation(non_admin_client, db_session,
     delete_response = non_admin_client.delete(f"/api/bulk-planner-schedules/{schedule_id}")
     assert delete_response.status_code == 204
     assert db_session.query(BulkPlannerSchedule).filter(BulkPlannerSchedule.id == schedule_id).first() is None
+
+
+def test_execute_due_schedule_passes_schedule_extra_instructions_into_planner_prompt(db_session, monkeypatch):
+    _ensure_user(db_session, 2)
+    frozen_now = datetime(2026, 8, 26, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(bulk_planner_schedule_service, "_utc_now", lambda: frozen_now)
+
+    tenant = _create_tenant(db_session, name="Prompt Tenant", booking_id="PROMPT-A", booking_status="Confirmed")
+    _add_whatsapp_message(db_session, tenant.id, when=frozen_now - timedelta(hours=1), direction="inbound")
+    planner_profile = _create_profile(db_session, role="planner", name="Planner")
+    checker_profile = _create_profile(db_session, role="checker", name="Checker", max_redraft_attempts=0)
+    template = _create_template(db_session)
+    db_session.add(
+        TenantAiSettings(
+            tenant_id=tenant.id,
+            planner_mode="manual",
+            auto_draft_email=False,
+            auto_draft_whatsapp=True,
+            planner_profile_id=planner_profile.id,
+            checker_profile_id=checker_profile.id,
+        )
+    )
+    db_session.commit()
+
+    captured_prompts: list[str] = []
+
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None, file_parts=None):
+        captured_prompts.append(prompt)
+        if response_schema is ai_agent_orchestrator.PLANNER_SCHEMA:
+            payload = {
+                "should_reply": True,
+                "template_id": template.id,
+                "extra_brain_sections": [],
+                "extra_instructions": "Planner should ignore this test helper.",
+                "confidence": 0.99,
+                "reasoning": "Looks good.",
+                "alternatives": []
+            }
+            return gemini_client.GenerationResult(
+                text=json.dumps(payload),
+                parsed=payload,
+                model=model or "fake-model",
+                prompt_tokens=10,
+                output_tokens=5,
+                latency_ms=1,
+            )
+        if response_schema is ai_agent_orchestrator.CHECKER_SCHEMA:
+            payload = {"passed": True, "feedback": ""}
+            return gemini_client.GenerationResult(
+                text=json.dumps(payload),
+                parsed=payload,
+                model=model or "fake-model",
+                prompt_tokens=10,
+                output_tokens=5,
+                latency_ms=1,
+            )
+        return gemini_client.GenerationResult(
+            text="Draft text.",
+            parsed=None,
+            model=model or "fake-model",
+            prompt_tokens=10,
+            output_tokens=5,
+            latency_ms=1,
+        )
+
+    monkeypatch.setattr(ai_agent_orchestrator.gemini_client, "generate", fake_generate)
+
+    schedule = _create_schedule(
+        db_session,
+        extra_instructions="Please keep the reply warm and mention the late check-in window.",
+        status_filter=["Confirmed"],
+        last_message_direction="either",
+        next_run_at=frozen_now - timedelta(minutes=1),
+    )
+
+    run = bulk_planner_schedule_service.execute_due_schedule(db_session, schedule, trigger_reason="scheduled")
+    db_session.refresh(run)
+
+    assert run.status == "completed"
+    assert captured_prompts
+    assert "Please keep the reply warm and mention the late check-in window." in captured_prompts[0]
 
 
 def test_preview_endpoint_returns_light_tenant_list(non_admin_client, db_session):

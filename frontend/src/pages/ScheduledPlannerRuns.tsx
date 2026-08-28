@@ -10,6 +10,7 @@ type LastMessageDirection = 'inbound' | 'outbound' | 'either' | ''
 type ScheduleForm = {
   id: number | null
   name: string
+  extra_instructions: string
   enabled: boolean
   run_time_local: string
   status_filter: string[]
@@ -20,6 +21,7 @@ type ScheduleForm = {
 type BulkPlannerSchedule = {
   id: number
   name: string
+  extra_instructions: string | null
   enabled: boolean
   run_time_local: string
   status_filter: string[]
@@ -78,6 +80,7 @@ type PreviewResponse = {
 const emptyForm = (): ScheduleForm => ({
   id: null,
   name: '',
+  extra_instructions: '',
   enabled: true,
   run_time_local: '09:00',
   status_filter: [],
@@ -89,6 +92,7 @@ function toForm(schedule: BulkPlannerSchedule): ScheduleForm {
   return {
     id: schedule.id,
     name: schedule.name,
+    extra_instructions: schedule.extra_instructions ?? '',
     enabled: schedule.enabled,
     run_time_local: schedule.run_time_local.slice(0, 5),
     status_filter: schedule.status_filter || [],
@@ -108,6 +112,7 @@ function previewPayload(form: ScheduleForm) {
 function savePayload(form: ScheduleForm) {
   return {
     name: form.name.trim(),
+    extra_instructions: form.extra_instructions.trim() || null,
     enabled: form.enabled,
     run_time_local: `${form.run_time_local}:00`,
     ...previewPayload(form),
@@ -489,6 +494,21 @@ export default function ScheduledPlannerRuns() {
                   placeholder="Confirmed recent inbound replies"
                   className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500" htmlFor="planner-schedule-extra-instructions">
+                  Extra instructions
+                </label>
+                <textarea
+                  id="planner-schedule-extra-instructions"
+                  value={form.extra_instructions}
+                  onChange={(event) => setForm((current) => ({ ...current, extra_instructions: event.target.value }))}
+                  placeholder="Add extra guidance that should be threaded into the planner prompt."
+                  rows={4}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-cyan-500"
+                />
+                <p className="mt-1 text-xs text-slate-500">This is passed to the planner like an operator note.</p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
