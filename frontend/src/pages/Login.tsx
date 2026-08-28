@@ -55,7 +55,7 @@ export default function Login() {
 
           <div>
             <label className="mb-1.5 block text-sm text-gray-700">Password</label>
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500" placeholder="????????" required />
+            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500" required />
           </div>
 
           {error ? <p className="text-sm text-rose-400">{error}</p> : null}

@@ -25,6 +25,18 @@ type OneDriveBoxProps = {
   onReady?: (tenantId: number) => void
 }
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+}
+
 export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
   const token = useAuthStore((state) => state.token)
   const userEmail = useAuthStore((state) => state.user?.email)
@@ -38,6 +50,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
   const [items, setItems] = useState<LocalFolderItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [emptyMessage, setEmptyMessage] = useState('')
   const [unsupported, setUnsupported] = useState(false)
 
   useEffect(() => {
@@ -52,6 +65,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
       setTenantHandle(null)
       setItems([])
       setError('')
+      setEmptyMessage('')
       setLoading(false)
       return
     }
@@ -62,6 +76,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
       try {
         setLoading(true)
         setError('')
+        setEmptyMessage('')
         const response = await fetch(`${API_BASE_URL}/api/tenants/${tenantId}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           signal: controller.signal,
@@ -85,6 +100,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
   const tenantBookingId = tenant?.booking_id?.trim() || ''
 
   const resolveTenantFiles = async (selectedRoot: FileSystemDirectoryHandle) => {
+    setEmptyMessage('')
     const yearName = new Date().getFullYear().toString()
 
     let selectedYear: FileSystemDirectoryHandle | null = null
@@ -98,7 +114,8 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
       setYearHandle(null)
       setTenantHandle(null)
       setItems([])
-      setError('Year folder not found')
+      setError('')
+      setEmptyMessage('Year folder not found.')
       return
     }
 
@@ -117,7 +134,8 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
     if (!matchedTenant) {
       setTenantHandle(null)
       setItems([])
-      setError('Tenant folder not found')
+      setError('')
+      setEmptyMessage('Tenant folder not found.')
       return
     }
 
@@ -142,7 +160,8 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
     })
 
     setItems(nextItems)
-    setError(nextItems.length === 0 ? 'No files in tenant folder' : '')
+    setError('')
+    setEmptyMessage(nextItems.length === 0 ? 'No files in tenant folder.' : '')
   }
 
   useEffect(() => {
@@ -169,6 +188,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
     setTenantHandle(null)
     setItems([])
     setError('')
+    setEmptyMessage('')
     restoreHandle()
 
     return () => {
@@ -252,7 +272,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
 
       {tenantId ? (
         <ul className="space-y-1">
-          {items.length === 0 && !loading && !error ? <li className="text-sm text-gray-500">No files in tenant folder.</li> : null}
+          {emptyMessage && !loading ? <li className="text-sm text-gray-500">{emptyMessage}</li> : null}
           {items.map((item) => (
             <li key={item.name} className="rounded-xl border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50">
               <div className="flex items-start justify-between gap-3">
@@ -260,7 +280,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
                   <p className="break-words text-sm font-medium text-gray-900">{item.name}</p>
                   <p className="mt-0.5 text-[11px] uppercase tracking-[0.15em] text-gray-500">
                     {item.kind}
-                    {item.size !== undefined ? ` - ${item.size} bytes` : ''}
+                    {item.size !== undefined ? ` - ${formatBytes(item.size)}` : ''}
                   </p>
                 </div>
                 {item.kind === 'file' ? (
@@ -282,4 +302,3 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
     </div>
   )
 }
-

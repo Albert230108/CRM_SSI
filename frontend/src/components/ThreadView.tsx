@@ -2030,7 +2030,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
           <div className="min-w-0">
             <h2 className="truncate text-xl font-semibold text-gray-900">{tenant ? tenant.name : 'Messages'}</h2>
             <p className="mt-1 truncate text-sm text-gray-500">
-              {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' � ') : 'Select a tenant'}
+              {tenant ? [tenant.email || 'No email on file', tenant.phone || 'No phone on file'].join(' Â· ') : 'Select a tenant'}
             </p>
           </div>
           {tenantId ? <TenantBrainQuickChat tenantId={tenantId} /> : null}

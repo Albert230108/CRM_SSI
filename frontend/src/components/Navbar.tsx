@@ -30,7 +30,7 @@ function formatSyncSummary(summary: SyncSummary | null) {
     `Emails imported: ${summary.emails_imported}`,
     `WhatsApp messages imported: ${summary.whatsapp_messages_imported}`,
     `Tenant threads updated: ${summary.tenant_threads_updated}`,
-  ].join(' � ')
+  ].join(' Â· ')
 }
 
 export default function Navbar() {

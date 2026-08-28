@@ -614,7 +614,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
 
                 <div className="flex items-center gap-3">
                   {booking.imported ? (
-                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
                       Already Imported
                     </span>
                   ) : null}
@@ -650,7 +650,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         </div>
 
         {confirmBooking && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center bg-gray-900/50 px-4 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-900/50 px-4 backdrop-blur-sm">
             <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="mb-4 text-xl font-semibold text-gray-900">Confirm import</h3>
               <p className="mb-6 text-xs text-gray-400">
@@ -710,7 +710,6 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
     </div>
   )
 }
-
 
 
 
