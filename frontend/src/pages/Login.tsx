@@ -6,7 +6,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export default function Login() {
-  useDocumentTitle('CRM - Login')
+  useDocumentTitle('CRM - Sign In')
   const navigate = useNavigate()
   const setAuth = useAuthStore((state) => state.setAuth)
   const [email, setEmail] = useState('')
@@ -34,7 +34,7 @@ export default function Login() {
       setAuth(data.access_token)
       navigate('/', { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : 'Sign-in failed')
     } finally {
       setLoading(false)
     }
@@ -43,7 +43,6 @@ export default function Login() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
       <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-        <p className="mb-1.5 text-sm uppercase tracking-[0.35em] text-cyan-600">CRM Access</p>
         <h2 className="text-3xl font-semibold text-gray-900">Sign in</h2>
         <p className="mt-1.5 text-sm text-gray-500">Use your CRM credentials to continue.</p>
 
@@ -61,7 +60,7 @@ export default function Login() {
           {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
           <button type="submit" disabled={loading} className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-70">
-            {loading ? 'Signing in...' : 'Login'}
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
       </div>

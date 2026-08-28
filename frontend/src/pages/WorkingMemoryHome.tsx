@@ -159,8 +159,7 @@ function RulesTab({ showSuccess, showError }: { showSuccess: (m: string) => void
           <div>
             <h2 className="text-lg font-semibold text-gray-900">If This Then That Rules</h2>
             <p className="mt-1 text-sm text-gray-500">
-              Plain condition/action text, not a structured builder - handed to the AI as-is whenever rules are wired into a
-              drafting prompt (not yet in this build).
+              Plain condition/action text for the AI to use as drafting rules.
             </p>
           </div>
           <button type="button" onClick={save} disabled={saving} className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
@@ -436,7 +435,7 @@ function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void;
         {loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : tags.length === 0 ? (
-          <p className="text-sm text-gray-400">No tags configured yet.</p>
+          <p className="text-sm text-gray-400">No tags yet.</p>
         ) : (
           tags.map((tag, index) => (
             <div key={tag.id} className="flex items-center gap-2 rounded-xl border border-gray-200 p-2">
@@ -580,14 +579,14 @@ function AvailabilityTab({ showSuccess, showError }: { showSuccess: (m: string) 
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-1.5 text-sm text-gray-400">No free dates on file.</p>
+                  <p className="mt-1.5 text-sm text-gray-400">No free dates yet.</p>
                 )}
               </div>
             ))}
             {refreshedAt ? <p className="text-xs text-gray-500">Refreshed {new Date(refreshedAt).toLocaleString()}</p> : null}
           </>
         ) : (
-          <p className="text-sm text-gray-400">No availability data on file.</p>
+          <p className="text-sm text-gray-400">No availability data yet.</p>
         )}
       </div>
     </section>
@@ -675,7 +674,7 @@ function SuggestionsTab({ showSuccess, showError }: { showSuccess: (m: string) =
         {loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : suggestions.length === 0 ? (
-          <p className="text-sm text-gray-400">Nothing pending.</p>
+          <p className="text-sm text-gray-400">No suggestions yet.</p>
         ) : (
           suggestions.map((suggestion) => (
             <div key={suggestion.id} className="rounded-xl border border-gray-200 p-2.5 text-sm">
@@ -811,7 +810,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
         {loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : filteredRequests.length === 0 ? (
-          <p className="text-sm text-gray-500">No redo requests match this filter.</p>
+          <p className="text-sm text-gray-500">{requests.length ? 'No matching redo requests.' : 'No redo requests yet.'}</p>
         ) : (
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
@@ -857,11 +856,6 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
                   </td>
                 </tr>
               ))}
-              {!requests.length ? (
-                <tr>
-                  <td colSpan={8} className="py-3 text-center text-gray-400">No redo requests yet</td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         )}

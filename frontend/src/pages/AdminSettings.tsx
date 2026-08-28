@@ -794,7 +794,7 @@ export default function AdminSettings() {
                     <tbody>
                       {users.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-3 text-center text-gray-400">No users yet</td>
+                          <td colSpan={8} className="py-3 text-center text-gray-400">No users yet.</td>
                         </tr>
                       ) : (
                         users.map((user) => (
@@ -886,7 +886,7 @@ export default function AdminSettings() {
                       ))}
                       {!invites.length ? (
                         <tr>
-                          <td colSpan={7} className="py-3 text-center text-gray-400">No invites yet</td>
+                          <td colSpan={7} className="py-3 text-center text-gray-400">No invites yet.</td>
                         </tr>
                       ) : null}
                     </tbody>
@@ -1309,7 +1309,7 @@ export default function AdminSettings() {
                     ))}
                     {!webhookLogs.length ? (
                       <tr>
-                        <td colSpan={9} className="py-3 text-center text-gray-400">No webhook logs match these filters</td>
+                        <td colSpan={9} className="py-3 text-center text-gray-400">No matching webhook logs.</td>
                       </tr>
                     ) : null}
                   </tbody>

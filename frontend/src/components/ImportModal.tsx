@@ -543,7 +543,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                     disabled={unimportedFiltered.length === 0}
                     className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
                   >
-                    {allSelected ? 'Deselect all' : 'Select all'}
+                    {allSelected ? 'Clear all' : 'Select all'}
                   </button>
                   {selectedIds.size > 0 && (
                     <span className="text-xs text-gray-500">{selectedIds.size} selected</span>
@@ -565,6 +565,11 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
         )}
 
         <div className="mt-4 space-y-3">
+          {!loading && filteredBookings.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+              No bookings match your filters.
+            </p>
+          ) : null}
           {filteredBookings.map((booking) => (
             <div key={booking.booking_id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -710,6 +715,4 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
     </div>
   )
 }
-
-
 

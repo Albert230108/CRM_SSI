@@ -571,7 +571,7 @@ export default function Actions() {
           {loading ? (
             <p className="text-sm text-gray-500">Loading...</p>
           ) : visibleItems.length === 0 ? (
-            <p className="text-sm text-gray-400">Nothing here.</p>
+            <p className="text-sm text-gray-400">No actions yet.</p>
           ) : (
             visibleItems.map((item) => (
               <div

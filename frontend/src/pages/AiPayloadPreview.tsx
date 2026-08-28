@@ -89,7 +89,7 @@ export default function AiPayloadPreview() {
       <h1 className="text-lg font-semibold text-gray-900">AI Payload Preview</h1>
       <p className="mt-1 text-sm text-gray-500">
         This is exactly the text that will be sent to Gemini if you click "Draft with AI" now, in the fixed order:
-        0. Goal &amp; Guidelines, 1. Template text, 1b. Knowledge base (brain sections), 2. Message history,
+        0. Goal &amp; Guidelines, 1. Template text, 1b. AI Brain sections, 2. Message history,
         3. Beds24 info, 4. Your typed reply.
       </p>
 

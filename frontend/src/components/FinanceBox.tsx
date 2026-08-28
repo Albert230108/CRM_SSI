@@ -338,7 +338,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
   const summaryCheckOut = formatDisplayDate(tenant?.check_out)
   const summaryBookingId = tenant?.booking_id || 'Unknown'
   const summaryStatus = tenant?.booking_status || getRawField(tenant, 'status') || 'Unknown'
-  const summarySubStatus = getRawField(tenant, 'subStatus') || 'N/A'
+  const summarySubStatus = getRawField(tenant, 'subStatus') || 'Unknown'
   const summaryReferer = tenant?.referer || getRawField(tenant, 'referer') || 'Unknown'
   const summaryRefererEditable = getRawField(tenant, 'refererEditable') || 'Unknown'
 

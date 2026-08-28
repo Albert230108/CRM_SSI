@@ -179,7 +179,7 @@ export default function TenantActionsBox({ tenantId, isActive = true, onActionsC
           title={fullscreen ? 'Exit fullscreen (Esc)' : 'Open tenant actions fullscreen'}
           className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
         >
-          {fullscreen ? 'Exit' : 'Fullscreen'}
+          {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         </button>
         <button
           type="button"

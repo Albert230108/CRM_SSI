@@ -146,7 +146,7 @@ export function AiTemplateSectionModal({
               className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-white"
               title="Edit previous section"
             >
-              &lsaquo; Prev
+              &lsaquo; Previous
             </button>
             <button
               type="button"

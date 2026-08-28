@@ -553,7 +553,7 @@ export default function Settings() {
                     ))}
                     {!gmailAccounts.length ? (
                       <tr>
-                        <td colSpan={5} className="py-3 text-center text-gray-400">No Gmail accounts connected yet</td>
+                        <td colSpan={5} className="py-3 text-center text-gray-400">No Gmail accounts yet.</td>
                       </tr>
                     ) : null}
                   </tbody>
@@ -650,7 +650,7 @@ export default function Settings() {
                       </div>
                     </div>
                   ))}
-                  {!emailTemplates.length ? <p className="text-sm text-gray-500">No templates yet.</p> : null}
+                  {!emailTemplates.length ? <p className="text-sm text-gray-500">No email templates yet.</p> : null}
                 </>
               )}
             </div>

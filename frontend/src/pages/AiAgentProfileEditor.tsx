@@ -837,7 +837,7 @@ export default function AiAgentProfileEditor() {
                     {relevance.include_brain_index ? (
                       <label className="flex items-center gap-2 text-sm text-gray-700">
                         <input type="checkbox" checked={form.include_brain_index} onChange={(event) => set('include_brain_index', event.target.checked)} />{' '}
-                        {form.role === 'planner' ? 'Brain index' : 'Knowledge base'}
+                        AI Brain index
                       </label>
                     ) : null}
                   </div>
@@ -847,8 +847,8 @@ export default function AiAgentProfileEditor() {
                 <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 sm:col-span-2 xl:col-span-2">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className={LABEL}>Always included brain sections</p>
-                      <p className="mt-1 text-xs text-gray-500">These paths are always rendered in full for the planner, in addition to the index.</p>
+                      <p className={LABEL}>Always included AI Brain sections</p>
+                      <p className="mt-1 text-xs text-gray-500">These paths are always rendered in full for the planner, in addition to the AI Brain index.</p>
                     </div>
                     {brainSectionsLoading ? <span className="text-xs uppercase tracking-[0.24em] text-gray-400">Loading...</span> : null}
                   </div>

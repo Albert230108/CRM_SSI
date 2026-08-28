@@ -366,7 +366,7 @@ export default function AiTemplateEditor() {
           viewportKey={templateId ?? 'new'}
         />
         <div className="space-y-1.5">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1b. Knowledge base (brain sections)</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1b. AI Brain sections</p>
           {brainSections.length === 0 ? (
             <p className="text-xs text-gray-500">
               No brain sections yet. <Link to="/settings/brain" className="text-cyan-700 hover:underline">Create some</Link> to

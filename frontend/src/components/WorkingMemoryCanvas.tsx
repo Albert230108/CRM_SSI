@@ -521,7 +521,7 @@ export default function WorkingMemoryCanvas({
 
         {cards.length === 0 ? (
           <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-            Nothing here yet &mdash; add one to get started.
+            No cards yet. Add one to get started.
           </p>
         ) : null}
       </div>

@@ -69,7 +69,7 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
 })
 
 export default function AiTenantSettings() {
-  useDocumentTitle('CRM - AI Tenant Settings')
+  useDocumentTitle('CRM - Tenant AI Settings')
   const token = useAuthStore((state) => state.token)
   const location = useLocation()
   const [searchQuery, setSearchQuery] = useState('')
@@ -397,7 +397,7 @@ export default function AiTenantSettings() {
   return (
     <main className="mx-auto max-w-4xl px-6 py-4">
       <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
-      <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">AI Reply - Tenant Configuration</h1>
+      <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">Tenant AI Settings</h1>
       <p className="mt-1.5 text-sm text-gray-500">
         Choose which shared AI templates are available for a tenant, set the default template per channel, and control
         automatic drafting/sending for that tenant.
@@ -485,7 +485,7 @@ export default function AiTenantSettings() {
               ))}
               {!pagedTenants.length ? (
                 <tr>
-                  <td colSpan={4} className="py-2 text-sm text-gray-500">No tenants found.</td>
+                  <td colSpan={4} className="py-2 text-sm text-gray-500">No tenants yet.</td>
                 </tr>
               ) : null}
             </tbody>
@@ -539,7 +539,7 @@ export default function AiTenantSettings() {
               onClick={() => setBulkTenantIds(new Set())}
               className="font-semibold text-cyan-700 hover:underline"
             >
-              Clear selection
+              Clear all
             </button>
           </p>
         ) : null}
