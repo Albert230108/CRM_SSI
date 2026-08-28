@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -423,7 +422,7 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> tuple[bool, str | N
 
     message = draft.generated_text
     if draft.formatted_text:
-        if re.search(r'<[A-Za-z][^>]*>', draft.formatted_text):
+        if ai_agent_orchestrator.formatter_output_looks_like_html(draft.formatted_text):
             logger.warning(
                 "WhatsApp auto-draft formatted_text looks like HTML; falling back to generated_text draft_id=%s",
                 draft.id,

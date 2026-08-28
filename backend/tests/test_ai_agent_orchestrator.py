@@ -9,6 +9,8 @@ from app.models.ai_agent_run import AiAgentRun, AiAgentRunStep
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.brain_field_definition import BrainFieldDefinition
 from app.models.brain_section import BrainSection
+from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
@@ -16,7 +18,7 @@ from app.models.tenant_ai_template_link import TenantAiTemplateLink
 from app.models.tenant_brain_entry import TenantBrainEntry
 from app.models.tenant_brain_field_value import TenantBrainFieldValue
 from app.models.tenant_conversation_link import TenantConversationLink
-from app.services import action_item_service, ai_agent_orchestrator, attachment_service, gemini_client
+from app.services import action_item_service, ai_agent_orchestrator, ai_auto_draft_service, attachment_service, gemini_client
 
 
 def _tenant(db_session, **overrides):
@@ -198,6 +200,39 @@ def test_formatter_enabled_populates_formatted_text_per_channel(db_session, fake
     assert ("## Email Formatting" if channel == "email" else "## WhatsApp Formatting") in fake.calls[-1]["prompt"]
     assert "Raw draft text." in fake.calls[-1]["prompt"]
     assert [step.stage for step in db_session.query(AiAgentRun).filter(AiAgentRun.id == result.run_id).one().steps] == [
+        "planner",
+        "drafter",
+        "checker",
+        "formatter",
+    ]
+
+
+def test_whatsapp_formatter_html_falls_back_before_persisting(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _profile(db_session, "formatter")
+    _settings(db_session, tenant, planner_mode="auto-draft", formatter_enabled=True)
+    fake = fake_gemini([
+        _plan(template.id),
+        "Raw draft text.",
+        {"passed": True, "feedback": ""},
+        {"formatted_text": "<p>Raw draft text.</p>"},
+    ])
+
+    trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="whatsapp", trigger_at=datetime.now(timezone.utc))
+    draft = ai_auto_draft_service.generate_draft_for_trigger(db_session, trigger)
+    assert draft is not None
+
+    db_session.commit()
+    stored_draft = db_session.query(AiAutoDraft).filter(AiAutoDraft.id == draft.id).one()
+
+    assert stored_draft.generated_text == "Raw draft text."
+    assert stored_draft.formatted_text == "Raw draft text."
+    assert "<" not in stored_draft.formatted_text
+    assert len(fake.calls) == 4
+    assert [step.stage for step in db_session.query(AiAgentRun).filter(AiAgentRun.id == stored_draft.agent_run_id).one().steps] == [
         "planner",
         "drafter",
         "checker",

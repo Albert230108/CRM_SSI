@@ -11,6 +11,7 @@ the reply box, or scheduling an auto-send is the caller's job.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -39,6 +40,8 @@ from app.services.datetime_placeholders import resolve_datetime_placeholders
 from app.services.thread_timeline_service import load_tenant_whatsapp_messages
 
 logger = logging.getLogger(__name__)
+
+_HTML_TAG_RE = re.compile(r"<[A-Za-z][^>]*>")
 
 PLANNER_SCHEMA = {
     "type": "object",
@@ -558,7 +561,17 @@ def _run_formatter(
     recorder.record("formatter", prompt=formatter_prompt, result=formatter_result)
     parsed = formatter_result.parsed or {}
     formatted_text = str(parsed.get("formatted_text") or "").strip()
+    if channel == "whatsapp" and formatted_text and formatter_output_looks_like_html(formatted_text):
+        logger.warning(
+            "WhatsApp formatter output looks like HTML; falling back to generated_text tenant_id=%s",
+            tenant.id,
+        )
+        return draft
     return formatted_text or None
+
+
+def formatter_output_looks_like_html(value: str | None) -> bool:
+    return bool(value and _HTML_TAG_RE.search(value))
 
 
 def run_planner_loop(
