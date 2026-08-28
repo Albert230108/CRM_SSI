@@ -211,6 +211,33 @@ def test_updating_prompt_blocks_round_trips(client):
     assert updated.json()["prompt_blocks"] == {"output": ""}
 
 
+def test_profile_redo_overrides_and_brain_sections_round_trip(client):
+    payload = _payload(
+        name="Planner with redo",
+        role="planner",
+        redo_model="planner-redo",
+        redo_temperature=0.8,
+        redo_max_output_tokens=1024,
+        always_include_brain_sections=["policies.checkin", "policies.house-rules"],
+    )
+    response = client.post("/api/ai-agent-profiles", json=payload)
+    assert response.status_code == 201, response.text
+    created = response.json()
+    assert created["redo_model"] == "planner-redo"
+    assert created["redo_temperature"] == 0.8
+    assert created["redo_max_output_tokens"] == 1024
+    assert created["always_include_brain_sections"] == ["policies.checkin", "policies.house-rules"]
+
+    updated = client.put(
+        f"/api/ai-agent-profiles/{created['id']}",
+        json={**payload, "redo_temperature": 0.6, "always_include_brain_sections": ["policies.house-rules"]},
+    )
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body["redo_temperature"] == 0.6
+    assert body["always_include_brain_sections"] == ["policies.house-rules"]
+
+
 def test_tenant_can_pin_a_drafter_profile(client, db_session):
     tenant = Tenant(name="Drafter pin tenant", booking_id="B-drafter-1")
     db_session.add(tenant)

@@ -180,6 +180,20 @@ def resolve_profile(db: Session, role: str, pinned_id: int | None) -> AiAgentPro
     )
 
 
+def _generation_kwargs(profile: AiAgentProfile | None, *, is_redo: bool = False) -> dict[str, str | float | int | None]:
+    if profile is None:
+        return {"model": None, "temperature": None, "max_output_tokens": None}
+    return {
+        "model": profile.redo_model if is_redo and profile.redo_model is not None else profile.model,
+        "temperature": profile.redo_temperature if is_redo and profile.redo_temperature is not None else profile.temperature,
+        "max_output_tokens": (
+            profile.redo_max_output_tokens
+            if is_redo and profile.redo_max_output_tokens is not None
+            else profile.max_output_tokens
+        ),
+    }
+
+
 def format_generated_draft(db: Session, tenant: Tenant, channel: str, draft: str) -> str | None:
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
     if ai_settings is None or not ai_settings.formatter_enabled:
@@ -411,6 +425,17 @@ def _build_planner_prompt(
 
     if profile.include_brain_index:
         parts.append(ai_prompt_blocks.join(text["brain_index"], brain_service.build_brain_index(db)))
+    pinned_sections = [str(path).strip() for path in (profile.always_include_brain_sections or []) if str(path).strip()]
+    if pinned_sections:
+        rendered = brain_service.render_paths(db, pinned_sections)
+        if rendered.text.strip():
+            parts.append(ai_prompt_blocks.join(text["brain_sections"], rendered.text.strip()))
+        if rendered.missing_paths:
+            logger.warning(
+                "Planner profile requested missing brain sections tenant_id=%s missing=%s",
+                tenant.id,
+                ", ".join(rendered.missing_paths),
+            )
 
     parts += _build_context_blocks(db, tenant, profile, channel=channel, inbound_text=inbound_text, blocks=text)
 
@@ -543,18 +568,17 @@ def _run_formatter(
     channel: str,
     draft: str,
     formatter_profile: AiAgentProfile,
+    is_redo: bool = False,
 ) -> str | None:
     formatter_prompt = _build_formatter_prompt(db, tenant, formatter_profile, channel=channel, draft=draft)
     try:
         formatter_result = gemini_client.generate(
             formatter_prompt,
-            model=formatter_profile.model,
-            temperature=formatter_profile.temperature,
-            max_output_tokens=formatter_profile.max_output_tokens,
+            **_generation_kwargs(formatter_profile, is_redo=is_redo),
             response_schema=FORMATTER_SCHEMA,
         )
     except Exception as exc:
-        recorder.record("formatter", prompt=formatter_prompt, error=str(exc), model=formatter_profile.model)
+        recorder.record("formatter", prompt=formatter_prompt, error=str(exc), model=_generation_kwargs(formatter_profile, is_redo=is_redo)["model"])
         logger.exception("Formatter failed tenant_id=%s channel=%s", tenant.id, channel)
         return None
 
@@ -584,11 +608,13 @@ def run_planner_loop(
     operator_note: str | None = None,
     attachments: list[attachment_service.OutboundAttachment] | None = None,
     user_id: int | None = None,
+    is_redo: bool = False,
 ) -> PlannerRunResult:
     """Plan, draft and review a reply. Adds an AiAgentRun to the session but does not commit."""
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
     planner_profile = resolve_profile(db, PLANNER_ROLE, ai_settings.planner_profile_id if ai_settings else None)
     checker_profile = resolve_profile(db, CHECKER_ROLE, ai_settings.checker_profile_id if ai_settings else None)
+    drafter_profile = resolve_profile(db, DRAFTER_ROLE, ai_settings.drafter_profile_id if ai_settings else None)
     drafter_blocks, drafter_instructions = resolve_drafter_context(
         db, ai_settings.drafter_profile_id if ai_settings else None
     )
@@ -667,14 +693,12 @@ def run_planner_loop(
     try:
         planner_result = gemini_client.generate(
             planner_prompt,
-            model=planner_profile.model,
-            temperature=planner_profile.temperature,
-            max_output_tokens=planner_profile.max_output_tokens,
+            **_generation_kwargs(planner_profile, is_redo=is_redo),
             response_schema=PLANNER_SCHEMA,
             file_parts=file_parts or None,
         )
     except gemini_client.GeminiClientError as exc:
-        recorder.record("planner", prompt=planner_prompt, error=str(exc), model=planner_profile.model)
+        recorder.record("planner", prompt=planner_prompt, error=str(exc), model=_generation_kwargs(planner_profile, is_redo=is_redo)["model"])
         recorder.finish(STATUS_FAILED, escalation_reason="planner_error")
         return PlannerRunResult(status=STATUS_FAILED, run_id=run.id, escalation_reason="planner_error")
 
@@ -748,7 +772,11 @@ def run_planner_loop(
             attachment_names=attachment_names,
         )
         try:
-            draft_result = gemini_client.generate(draft_prompt, file_parts=file_parts or None)
+            draft_result = gemini_client.generate(
+                draft_prompt,
+                **_generation_kwargs(drafter_profile, is_redo=is_redo),
+                file_parts=file_parts or None,
+            )
         except gemini_client.GeminiClientError as exc:
             recorder.record("drafter", prompt=draft_prompt, error=str(exc))
             recorder.finish(STATUS_FAILED, escalation_reason="drafter_error", final_template_id=template.id)
@@ -781,14 +809,12 @@ def run_planner_loop(
         try:
             checker_result = gemini_client.generate(
                 checker_prompt,
-                model=checker_profile.model,
-                temperature=checker_profile.temperature,
-                max_output_tokens=checker_profile.max_output_tokens,
+                **_generation_kwargs(checker_profile, is_redo=is_redo),
                 response_schema=CHECKER_SCHEMA,
                 file_parts=file_parts or None,
             )
         except gemini_client.GeminiClientError as exc:
-            recorder.record("checker", prompt=checker_prompt, error=str(exc), model=checker_profile.model)
+            recorder.record("checker", prompt=checker_prompt, error=str(exc), model=_generation_kwargs(checker_profile, is_redo=is_redo)["model"])
             recorder.finish(
                 STATUS_NEEDS_REVIEW,
                 escalation_reason="checker_error",
@@ -840,6 +866,7 @@ def run_planner_loop(
                 channel=channel,
                 draft=draft_text,
                 formatter_profile=formatter_profile,
+                is_redo=is_redo,
             )
         recorder.finish(STATUS_COMPLETED, final_template_id=template.id, final_text=draft_text)
         return PlannerRunResult(

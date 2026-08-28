@@ -32,7 +32,7 @@ def _create_template(non_admin_client, name="Template"):
 
 
 def _mock_generate_text(monkeypatch, text="Generated reply"):
-    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt: text)
+    monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", lambda prompt, **kwargs: text)
 
 
 def test_generate_with_explicit_template_id(non_admin_client, db_session, monkeypatch):
@@ -98,7 +98,7 @@ def test_gemini_failure_returns_502(non_admin_client, db_session, monkeypatch):
     tenant = _create_tenant(db_session)
     template_id = _create_template(non_admin_client)
 
-    def failing_generate_text(prompt: str) -> str:
+    def failing_generate_text(prompt: str, **kwargs) -> str:
         raise GeminiClientError("boom")
 
     monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", failing_generate_text)
@@ -114,7 +114,7 @@ def test_preview_returns_exact_payload_without_calling_gemini(non_admin_client, 
     tenant = _create_tenant(db_session)
     template_id = _create_template(non_admin_client)
 
-    def unexpected_call(prompt: str) -> str:
+    def unexpected_call(prompt: str, **kwargs) -> str:
         raise AssertionError("preview must not call Gemini")
 
     monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", unexpected_call)
@@ -137,7 +137,7 @@ def test_preview_payload_matches_generated_call_exactly(non_admin_client, db_ses
     template_id = _create_template(non_admin_client)
     captured = {}
 
-    def capturing_generate(prompt: str) -> str:
+    def capturing_generate(prompt: str, **kwargs) -> str:
         captured["prompt"] = prompt
         return "Generated reply"
 

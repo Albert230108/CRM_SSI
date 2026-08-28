@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import InlineSpinner from './InlineSpinner'
 
 type AiTemplateOption = {
   id: number
@@ -57,7 +58,10 @@ export default function AiDraftControls({
         disabled={aiDraftGenerating || !selectedTemplateId}
         className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+        <span className="inline-flex items-center gap-1.5">
+          {aiDraftGenerating ? <InlineSpinner className="h-3 w-3" /> : null}
+          {aiDraftGenerating ? 'Generating...' : 'Draft with AI'}
+        </span>
       </button>
       {plannerEnabled ? (
         <button
@@ -67,7 +71,10 @@ export default function AiDraftControls({
           title="Let the AI pick the template and draft the reply, then have it reviewed"
           className="rounded-lg border border-indigo-500 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {plannerRunning ? 'Planning...' : 'Run planner'}
+          <span className="inline-flex items-center gap-1.5">
+            {plannerRunning ? <InlineSpinner className="h-3 w-3" /> : null}
+            {plannerRunning ? 'Planning...' : 'Run planner'}
+          </span>
         </button>
       ) : null}
       {plannerRedoButton}

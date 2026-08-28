@@ -653,6 +653,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         sender_email=sender_email,
                         recipient_email=recipient_email,
                         subject=headers.get("subject"),
+                        cc=headers.get("cc"),
                         body=body_text,
                         sent_at=sent_at,
                         raw_payload={"gmail": message, "body_text": body_text, "body_html": body_html, "attachments": attachments},

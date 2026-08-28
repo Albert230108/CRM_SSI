@@ -21,6 +21,9 @@ class AiAgentProfileBase(BaseModel):
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_output_tokens: int | None = Field(default=None, ge=1)
+    redo_model: str | None = None
+    redo_temperature: float | None = Field(default=None, ge=0, le=2)
+    redo_max_output_tokens: int | None = Field(default=None, ge=1)
 
     history_limit: int = Field(default=40, ge=0)
     history_channels: HistoryChannels = "both"
@@ -31,6 +34,7 @@ class AiAgentProfileBase(BaseModel):
     include_availability: bool = False
     include_tenant_brain: bool = False
     include_brain_index: bool = True
+    always_include_brain_sections: list[str] = Field(default_factory=list)
 
     match_inbound_language: bool = True
     escalate_keywords: list[str] = []

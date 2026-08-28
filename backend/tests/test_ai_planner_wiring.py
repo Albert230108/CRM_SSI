@@ -228,7 +228,7 @@ def test_planner_mode_off_keeps_the_existing_default_template_path(db_session, m
     monkeypatch.setattr(
         ai_auto_draft_service.ai_reply_service.gemini_client,
         "generate_text_flat",
-        lambda prompt: "Legacy draft.",
+        lambda prompt, **kwargs: "Legacy draft.",
     )
     trigger = AiAutoDraftTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
 
@@ -273,7 +273,7 @@ def test_whatsapp_default_template_draft_quotes_the_inbound_message(db_session, 
     monkeypatch.setattr(
         ai_auto_draft_service.ai_reply_service.gemini_client,
         "generate_text_flat",
-        lambda prompt: "Yes, still available.",
+        lambda prompt, **kwargs: "Yes, still available.",
     )
     monkeypatch.setattr(
         ai_agent_orchestrator, "latest_inbound_text", lambda db, tenant_id, channel: "Is the room still available?"

@@ -87,7 +87,7 @@ def test_forward_composes_quoted_thread_and_persists(mock_send_forward, mock_bui
 
     response = non_admin_client.post(
         f"/api/communications/tenants/{tenant.id}/forward",
-        json={"email_thread_id": conversation.id, "body": "Please review and reply."},
+        json={"email_thread_id": conversation.id, "body": "Please review and reply.", "cc": "team@example.com"},
     )
     assert response.status_code == 201
     data = response.json()
@@ -99,6 +99,7 @@ def test_forward_composes_quoted_thread_and_persists(mock_send_forward, mock_bui
     assert kwargs["thread_id"] == "thread-fwd-1"
     assert kwargs["to_email"] == "ai-drafts@example.com"
     assert kwargs["subject"] == "Booking question"
+    assert kwargs["cc_email"] == "team@example.com"
     assert kwargs["in_reply_to_message_id"] == "<msg-2@mail>"
     assert kwargs["references"] == "<msg-1@mail>"
     assert kwargs["body_text"].startswith("Please review and reply.")
@@ -114,6 +115,7 @@ def test_forward_composes_quoted_thread_and_persists(mock_send_forward, mock_bui
     )
     assert persisted.direction == "outbound"
     assert persisted.recipient_email == "ai-drafts@example.com"
+    assert persisted.cc == "team@example.com"
     assert persisted.provider_message_id == "sent-forward-1"
 
     communication = (
@@ -124,6 +126,7 @@ def test_forward_composes_quoted_thread_and_persists(mock_send_forward, mock_bui
     )
     assert communication.message == "Please review and reply."
     assert communication.channel == "email"
+    assert communication.cc == "team@example.com"
 
 
 @patch("app.api.communications._build_gmail_credentials")

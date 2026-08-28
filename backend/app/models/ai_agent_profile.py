@@ -4,8 +4,8 @@ from app.database import Base
 
 PLANNER_ROLE = "planner"
 CHECKER_ROLE = "checker"
-# The drafter writes the reply itself. Its profile carries prompt text only - the model,
-# sampling and context budget for a draft still come from the reply template.
+# The drafter writes the reply itself. Its profile now carries the same model/sampling knobs as
+# the other roles, so both the planner loop and the quick draft path can override them per role.
 DRAFTER_ROLE = "drafter"
 # Decides, independently of the planner, whether the latest message is worth remembering
 # long-term for this tenant. Runs on its own debounced trigger - see tenant_brain_service.py.
@@ -55,6 +55,10 @@ class AiAgentProfile(Base):
     model = Column(String(120), nullable=True)
     temperature = Column(Float, nullable=True)
     max_output_tokens = Column(Integer, nullable=True)
+    # Optional redo-time overrides. NULL means "keep the normal value even on a redo".
+    redo_model = Column(String(120), nullable=True)
+    redo_temperature = Column(Float, nullable=True)
+    redo_max_output_tokens = Column(Integer, nullable=True)
 
     # --- Context budget ---------------------------------------------------------------
     history_limit = Column(Integer, nullable=False, default=40, server_default="40")
@@ -68,6 +72,8 @@ class AiAgentProfile(Base):
     include_tenant_brain = Column(Boolean, nullable=False, default=False, server_default="false")
     # Planner only: whether to show the brain's table of contents so it can request sections.
     include_brain_index = Column(Boolean, nullable=False, default=True, server_default="true")
+    # Planner only: paths that should always be rendered in full, even before the planner asks.
+    always_include_brain_sections = Column(JSON, nullable=False, default=list, server_default="[]")
 
     # --- Guardrails & escalation ------------------------------------------------------
     match_inbound_language = Column(Boolean, nullable=False, default=True, server_default="true")

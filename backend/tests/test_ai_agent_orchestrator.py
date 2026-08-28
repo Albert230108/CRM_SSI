@@ -73,6 +73,14 @@ def _settings(db_session, tenant, **overrides):
     return settings
 
 
+def _brain_section(db_session, path, title, content):
+    section = BrainSection(path=path, slug=path.rsplit(".", 1)[-1], title=title, content=content)
+    db_session.add(section)
+    db_session.commit()
+    db_session.refresh(section)
+    return section
+
+
 class _FakeGemini:
     """Serves canned responses in order, recording every prompt the loop sends."""
 
@@ -83,7 +91,14 @@ class _FakeGemini:
     def __call__(
         self, prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None, file_parts=None
     ):
-        self.calls.append({"prompt": prompt, "model": model, "schema": response_schema, "file_parts": file_parts})
+        self.calls.append({
+            "prompt": prompt,
+            "model": model,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "schema": response_schema,
+            "file_parts": file_parts,
+        })
         if not self.responses:
             raise AssertionError("The loop made more model calls than the test provided responses for")
         payload = self.responses.pop(0)
@@ -694,6 +709,84 @@ def test_planner_extra_brain_sections_reach_the_draft_prompt(db_session, fake_ge
     draft_prompt = fake.calls[1]["prompt"]
     assert "1b. Knowledge Base" in draft_prompt
     assert "Garage on level -1." in draft_prompt
+
+
+def test_planner_always_include_brain_sections_are_rendered_in_full(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _brain_section(db_session, "policies.checkin", "Check-in", "Check-in is at 3pm.")
+    _profile(db_session, "planner", always_include_brain_sections=["policies.checkin"])
+    _profile(db_session, "checker")
+    _settings(db_session, tenant)
+
+    fake = fake_gemini([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Where do I park?"
+    )
+
+    planner_prompt = fake.calls[0]["prompt"]
+    assert "## Always Included Brain Sections" in planner_prompt
+    assert "Check-in is at 3pm." in planner_prompt
+    assert "policies.checkin" in planner_prompt
+
+
+def test_redo_uses_redo_temperature_override_and_leaves_unset_values_alone(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(
+        db_session,
+        "planner",
+        temperature=0.2,
+        redo_model="planner-redo",
+        redo_temperature=0.8,
+        redo_max_output_tokens=1111,
+    )
+    _profile(db_session, "checker", temperature=0.4)
+    _profile(db_session, "drafter", temperature=0.6)
+    _settings(db_session, tenant)
+
+    fake = fake_gemini([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session,
+        tenant=tenant,
+        channel="email",
+        mode="manual",
+        inbound_text="Where do I park?",
+        is_redo=True,
+    )
+
+    assert fake.calls[0]["model"] == "planner-redo"
+    assert fake.calls[0]["temperature"] == 0.8
+    assert fake.calls[0]["max_output_tokens"] == 1111
+    assert fake.calls[1]["temperature"] == 0.6
+    assert fake.calls[2]["temperature"] == 0.4
+
+
+def test_redo_without_overrides_uses_the_normal_values(db_session, fake_gemini):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner", temperature=0.25, max_output_tokens=1500)
+    _profile(db_session, "checker", temperature=0.35)
+    _profile(db_session, "drafter", temperature=0.45)
+    _settings(db_session, tenant)
+
+    fake = fake_gemini([_plan(template.id), "Draft.", {"passed": True, "feedback": ""}])
+
+    ai_agent_orchestrator.run_planner_loop(
+        db_session,
+        tenant=tenant,
+        channel="email",
+        mode="manual",
+        inbound_text="Where do I park?",
+        is_redo=True,
+    )
+
+    assert fake.calls[0]["temperature"] == 0.25
+    assert fake.calls[0]["max_output_tokens"] == 1500
+    assert fake.calls[1]["temperature"] == 0.45
+    assert fake.calls[2]["temperature"] == 0.35
 
 
 def test_operator_note_leads_the_drafter_instruction(db_session, fake_gemini):

@@ -56,15 +56,28 @@ def _get_client() -> Any:
     return _client
 
 
-def generate_text_flat(prompt: str) -> str:
+def generate_text_flat(
+    prompt: str,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_output_tokens: int | None = None,
+) -> str:
     """Send a single flat prompt string with no system/user split.
 
     Used so the payload actually sent to Gemini is byte-identical to what the
     "preview payload" feature shows the user before they click "Draft with AI".
     """
     client = _get_client()
+    resolved_model = model or GEMINI_MODEL
+    config_kwargs: dict[str, Any] = {}
+    if temperature is not None:
+        config_kwargs["temperature"] = temperature
+    if max_output_tokens is not None:
+        config_kwargs["max_output_tokens"] = max_output_tokens
+    config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
     try:
-        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        response = client.models.generate_content(model=resolved_model, contents=prompt, config=config)
     except Exception as exc:
         raise GeminiClientError(f"Gemini generation failed: {exc}") from exc
 

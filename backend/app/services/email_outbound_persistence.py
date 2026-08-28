@@ -31,6 +31,7 @@ def persist_gmail_outbound_message(
     conversation: Conversation,
     account: GmailAccount,
     to_email: str,
+    cc: str | None = None,
     subject: str,
     message: str,
     gmail_result: dict[str, Any],
@@ -54,9 +55,10 @@ def persist_gmail_outbound_message(
         sender_email=account.email_address,
         recipient_email=to_email,
         subject=subject,
+        cc=cc,
         body=message,
         sent_at=now,
-        raw_payload={"gmail": gmail_result, "body_text": message, "body_html": body_html},
+        raw_payload={"gmail": gmail_result, "body_text": message, "body_html": body_html, "cc": cc},
     )
     db.add(conversation_message)
     db.commit()
@@ -70,6 +72,7 @@ def persist_gmail_outbound_message(
         subject=subject,
         message=message,
         created_at=now,
+        cc=cc,
         ai_generated=ai_generated,
     )
     db.add(communication)

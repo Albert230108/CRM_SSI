@@ -54,11 +54,13 @@ def _sent_mime(captured):
     return message_from_bytes(raw, policy=default_policy)
 
 
-def _send(attachments=()):
-    return gmail_client.send_gmail_reply(
+def _send(attachments=(), *, cc_email=None, forward=False):
+    sender = gmail_client.send_gmail_forward if forward else gmail_client.send_gmail_reply
+    return sender(
         object(),
         thread_id="thread-1",
         to_email="guest@example.com",
+        cc_email=cc_email,
         subject="Booking",
         body_text="Here you go.",
         from_email="crm@example.com",
@@ -130,3 +132,17 @@ def test_send_still_targets_the_thread(captured_send):
 
     assert captured_send["body"]["threadId"] == "thread-1"
     assert captured_send["userId"] == "me"
+
+
+def test_send_reply_sets_cc_header(captured_send):
+    _send(cc_email="team@example.com")
+
+    mime = _sent_mime(captured_send)
+    assert mime["Cc"] == "team@example.com"
+
+
+def test_send_forward_sets_cc_header(captured_send):
+    _send(cc_email="team@example.com", forward=True)
+
+    mime = _sent_mime(captured_send)
+    assert mime["Cc"] == "team@example.com"

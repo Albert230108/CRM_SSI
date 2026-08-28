@@ -11,6 +11,7 @@ import EmailLinkModal from './EmailLinkModal'
 import TenantBrainQuickChat from './TenantBrainQuickChat'
 import ToastCard from './ToastCard'
 import AiDraftControls from './AiDraftControls'
+import InlineSpinner from './InlineSpinner'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
 import { MAX_EMAIL_TOTAL_BYTES, formatBytes } from '../lib/attachmentLimits'
 import { removeQuotedReplyElements, sanitizeHtml } from '../lib/sanitizeHtml'
@@ -39,6 +40,7 @@ type TimelineMessage = {
   sender_email: string | null
   recipient_email: string | null
   subject: string | null
+  cc: string | null
   body: string
   body_display: string | null
   body_text: string | null
@@ -597,6 +599,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   const [replyTarget, setReplyTarget] = useState<ReplyTarget>(null)
   const [replyDrafts, setReplyDrafts] = useState<Record<string, ReplyDraftEntry>>({})
   const [replySending, setReplySending] = useState(false)
+  const [replyCc, setReplyCc] = useState('')
   // Keyed by the same draft scope key as reply bodies, so attachments picked for one thread
   // never leak into another thread's or tenant's composer.
   const [replyAttachments, setReplyAttachments] = useState<Record<string, PendingAttachment[]>>({})
@@ -624,6 +627,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   const [whatsappBlockNavIndex, setWhatsappBlockNavIndex] = useState(0)
   const [forwardTarget, setForwardTarget] = useState<ForwardTarget>(null)
   const [forwardSubject, setForwardSubject] = useState('')
+  const [forwardCc, setForwardCc] = useState('')
   const [forwardBody, setForwardBody] = useState('')
   const [forwardSending, setForwardSending] = useState(false)
   const [forwardToEmail, setForwardToEmail] = useState<string | null>(null)
@@ -1114,7 +1118,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                 disabled={!redoWhat.trim() || redoSubmitting}
                 className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {redoSubmitting ? 'Redoing...' : 'Submit redo'}
+                <span className="inline-flex items-center gap-1.5">
+                  {redoSubmitting ? <InlineSpinner className="h-3 w-3" /> : null}
+                  {redoSubmitting ? 'Redoing...' : 'Submit redo'}
+                </span>
               </button>
               <button
                 type="button"
@@ -1174,7 +1181,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             disabled={!plannerRedoWhat.trim() || plannerRedoSubmitting}
             className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {plannerRedoSubmitting ? 'Redoing...' : 'Submit redo'}
+            <span className="inline-flex items-center gap-1.5">
+              {plannerRedoSubmitting ? <InlineSpinner className="h-3 w-3" /> : null}
+              {plannerRedoSubmitting ? 'Redoing...' : 'Submit redo'}
+            </span>
           </button>
           <button
             type="button"
@@ -1335,7 +1345,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
       setReplyDrafts({})
       setReplyAttachments({})
       setReplyTarget(null)
+      setReplyCc('')
       setForwardTarget(null)
+      setForwardCc('')
       setForwardBody('')
       setForwardSubject('')
       setSelectedEmailThread(null)
@@ -1678,6 +1690,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
       return thread
     })
     setReplyTarget({ type: 'email', threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, providerAccountId: thread.provider_account_id || 0, subject: thread.subject })
+    setReplyCc('')
   }
 
   const loadGroupedThread = async () => {
@@ -1806,6 +1819,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         const requestBody = {
           channel: 'email',
           subject: replySubject.trim() || replyTarget.subject || '',
+          cc: replyCc.trim() || undefined,
           message: replyMessage,
           message_format: replyBodyFormat,
           body_html: replyBodyHtml,
@@ -1872,6 +1886,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         setSelectedWhatsappBlock(null)
       }
       setReplyTarget(null)
+      setReplyCc('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message')
     } finally {
@@ -1882,6 +1897,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
   const openForwardPanel = (thread: EmailThreadItem) => {
     openEmailThread(thread)
     setForwardTarget({ threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, subject: thread.subject })
+    setForwardCc('')
     setForwardSubject(thread.subject ? (thread.subject.toLowerCase().startsWith('fwd:') ? thread.subject : `Fwd: ${thread.subject}`) : 'Fwd:')
     setForwardBody('')
     setForwardAttachments([])
@@ -1947,6 +1963,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         body: JSON.stringify({
           email_thread_id: forwardTarget.threadId,
           subject: forwardSubject.trim() || forwardTarget.subject || '',
+          cc: forwardCc.trim() || undefined,
           body: forwardBody,
           attachment_ids: forwardAttachments
             .map((item) => item.id)
@@ -1961,6 +1978,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
 
       await loadGroupedThread()
       setForwardTarget(null)
+      setForwardCc('')
       setForwardBody('')
       setForwardSubject('')
       setForwardAttachments([])
@@ -1997,6 +2015,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
 
   const useDraftAsReply = (draft: GmailDraft, thread: EmailThreadItem) => {
     setReplyTarget({ type: 'email', threadId: thread.thread_id, providerThreadId: thread.provider_thread_id, providerAccountId: thread.provider_account_id || 0, subject: thread.subject })
+    setReplyCc('')
     // Keyed on the thread being opened, not on the current replyTarget, which is still the
     // previously open scope until this render commits.
     writeReplyDraft(emailDraftKey(thread.thread_id), { subject: draft.subject || '', ...buildStoredReplyDraftContent({ body: draft.body_text || '', body_html: draft.body_html ?? null, body_format: draft.body_format ?? 'plain' }) })
@@ -2258,6 +2277,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                           <span>{formatTimestamp(messageItem.sent_at)}</span>
                         </div>
                         {messageItem.subject ? <p className="mt-1 text-sm font-semibold text-gray-900">{messageItem.subject}</p> : null}
+                        {(messageItem.sender_email || messageItem.recipient_email || messageItem.cc) ? (
+                          <p className="mt-1 text-xs text-gray-500">
+                            {messageItem.sender_email ? <span>From: {messageItem.sender_email}</span> : null}
+                            {messageItem.sender_email && messageItem.recipient_email ? <span> · </span> : null}
+                            {messageItem.recipient_email ? <span>To: {messageItem.recipient_email}</span> : null}
+                            {(messageItem.sender_email || messageItem.recipient_email) && messageItem.cc ? <span> · </span> : null}
+                            {messageItem.cc ? <span>Cc: {messageItem.cc}</span> : null}
+                          </p>
+                        ) : null}
                         {renderMessageBody(messageItem) ? (
                           <div
                             className="prose prose-sm max-w-none mt-1 overflow-x-auto text-sm leading-5 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
@@ -2407,6 +2435,18 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
                     />
                   </div>
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-forward-cc">
+                      Cc
+                    </label>
+                    <input
+                      id="modal-forward-cc"
+                      value={forwardCc}
+                      onChange={(event) => setForwardCc(event.target.value)}
+                      placeholder="team@example.com"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                    />
+                  </div>
                   <textarea
                     value={forwardBody}
                     onChange={(event) => setForwardBody(event.target.value)}
@@ -2495,6 +2535,18 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       value={replySubject}
                       onChange={(event) => setReplySubject(event.target.value)}
                       placeholder={replyTarget.subject || 'Subject'}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-email-cc">
+                      Cc
+                    </label>
+                    <input
+                      id="modal-email-cc"
+                      value={replyCc}
+                      onChange={(event) => setReplyCc(event.target.value)}
+                      placeholder="team@example.com"
                       className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
                     />
                   </div>

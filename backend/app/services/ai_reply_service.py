@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.models.action_item import ActionItem
+from app.models.ai_agent_profile import AiAgentProfile, DRAFTER_ROLE
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.finance import Finance as FinanceRecord
 from app.models.gmail_integration import ConversationMessage
@@ -26,6 +27,31 @@ def _blocks(blocks: dict[str, str] | None) -> dict[str, str]:
     original hardcoded wording, so nothing breaks if a new call site forgets.
     """
     return blocks if blocks is not None else ai_prompt_blocks.DEFAULTS_BY_ROLE[ai_prompt_blocks.DRAFTER_ROLE]
+
+
+def _resolve_drafter_profile(db: Session, pinned_id: int | None) -> AiAgentProfile | None:
+    """Resolve the active drafter profile, falling back to the role default."""
+    if pinned_id is not None:
+        pinned = (
+            db.query(AiAgentProfile)
+            .filter(
+                AiAgentProfile.id == pinned_id,
+                AiAgentProfile.role == DRAFTER_ROLE,
+                AiAgentProfile.is_active.is_(True),
+            )
+            .first()
+        )
+        if pinned is not None:
+            return pinned
+    return (
+        db.query(AiAgentProfile)
+        .filter(
+            AiAgentProfile.role == DRAFTER_ROLE,
+            AiAgentProfile.is_default.is_(True),
+            AiAgentProfile.is_active.is_(True),
+        )
+        .first()
+    )
 
 
 @dataclass(frozen=True)
@@ -354,6 +380,7 @@ def build_prompt_and_generate(
     reviewer_feedback: str | None = None,
     blocks: dict[str, str] | None = None,
     agent_instructions: str | None = None,
+    drafter_profile_id: int | None = None,
 ) -> str:
     prompt = assemble_prompt(
         db,
@@ -367,4 +394,10 @@ def build_prompt_and_generate(
         blocks=blocks,
         agent_instructions=agent_instructions,
     )
-    return gemini_client.generate_text_flat(prompt)
+    profile = _resolve_drafter_profile(db, drafter_profile_id)
+    return gemini_client.generate_text_flat(
+        prompt,
+        model=profile.model if profile is not None else None,
+        temperature=profile.temperature if profile is not None else None,
+        max_output_tokens=profile.max_output_tokens if profile is not None else None,
+    )

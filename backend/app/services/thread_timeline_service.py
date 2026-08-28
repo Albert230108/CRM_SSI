@@ -53,6 +53,7 @@ class TimelineMessageRead(BaseModel):
     sender_email: str | None = None
     recipient_email: str | None = None
     subject: str | None = None
+    cc: str | None = None
     body: str
     body_text: str | None = None
     body_html: str | None = None

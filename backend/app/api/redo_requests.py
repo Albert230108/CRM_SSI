@@ -26,6 +26,7 @@ class RedoRequestRead(BaseModel):
     requested_by_email: Optional[str] = None
     ai_agent_run_id: int | None = None
     memory_redo_run_id: int | None = None
+    reviewed: bool = False
     processed_at: datetime | None = None
     created_at: datetime
 
@@ -33,6 +34,10 @@ class RedoRequestRead(BaseModel):
 class ReplayRedoRequestsResult(BaseModel):
     processed: int
     remaining: int
+
+
+class RedoRequestUpdate(BaseModel):
+    reviewed: bool
 
 
 class RedoQaMessageRead(BaseModel):
@@ -80,11 +85,45 @@ def list_redo_requests(db: Session = Depends(get_db), current_user: User = Depen
             requested_by_email=requester_email,
             ai_agent_run_id=log.ai_agent_run_id,
             memory_redo_run_id=log.memory_redo_run_id,
+            reviewed=log.reviewed,
             processed_at=log.processed_at,
             created_at=log.created_at,
         )
         for log, tenant_name, requester_email in rows
     ]
+
+
+@router.patch("/{redo_request_id}", response_model=RedoRequestRead)
+def update_redo_request(
+    redo_request_id: int,
+    payload: RedoRequestUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RedoRequestRead:
+    redo_log = db.query(RedoRequestLog).filter(RedoRequestLog.id == redo_request_id).first()
+    if redo_log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Redo request not found")
+    redo_log.reviewed = payload.reviewed
+    db.commit()
+    db.refresh(redo_log)
+    tenant_name = db.query(Tenant.name).filter(Tenant.id == redo_log.tenant_id).scalar()
+    requester_email = db.query(User.email).filter(User.id == redo_log.requested_by_user_id).scalar()
+    return RedoRequestRead(
+        id=redo_log.id,
+        ai_auto_draft_id=redo_log.ai_auto_draft_id,
+        tenant_id=redo_log.tenant_id,
+        tenant_name=tenant_name,
+        channel=redo_log.channel,
+        what=redo_log.what,
+        why=redo_log.why,
+        requested_by_user_id=redo_log.requested_by_user_id,
+        requested_by_email=requester_email,
+        ai_agent_run_id=redo_log.ai_agent_run_id,
+        memory_redo_run_id=redo_log.memory_redo_run_id,
+        reviewed=redo_log.reviewed,
+        processed_at=redo_log.processed_at,
+        created_at=redo_log.created_at,
+    )
 
 
 @router.post("/replay-pending", response_model=ReplayRedoRequestsResult)

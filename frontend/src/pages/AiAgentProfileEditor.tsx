@@ -8,17 +8,21 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-type ProfileForm = Omit<AiAgentProfile, 'id' | 'escalate_keywords' | 'instructions' | 'model'> & {
+type ProfileForm = Omit<AiAgentProfile, 'id' | 'escalate_keywords' | 'instructions' | 'model' | 'redo_model'> & {
   id: number | null
   escalate_keywords: string
   instructions: string
   model: string
+  redo_model: string
 }
 
 type FieldRelevance = {
   model: boolean
   temperature: boolean
   max_output_tokens: boolean
+  redo_model: boolean
+  redo_temperature: boolean
+  redo_max_output_tokens: boolean
   history_limit: boolean
   history_channels: boolean
   history_lookback_days: boolean
@@ -28,6 +32,7 @@ type FieldRelevance = {
   include_availability: boolean
   include_tenant_brain: boolean
   include_brain_index: boolean
+  always_include_brain_sections: boolean
   match_inbound_language: boolean
   escalate_keywords: boolean
   min_confidence: boolean
@@ -36,6 +41,19 @@ type FieldRelevance = {
   block_auto_send_on_fail: boolean
   daily_token_cap: boolean
   prompt_blocks: boolean
+}
+
+type BrainNode = {
+  id: number
+  path: string
+  title: string
+  is_active: boolean
+  children: BrainNode[]
+}
+
+type BrainTreeRow = {
+  node: BrainNode
+  depth: number
 }
 
 const LABEL = 'block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500'
@@ -60,6 +78,9 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     model: true,
     temperature: true,
     max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: true,
     history_channels: true,
     history_lookback_days: true,
@@ -69,6 +90,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: true,
     include_tenant_brain: true,
     include_brain_index: true,
+    always_include_brain_sections: true,
     match_inbound_language: true,
     escalate_keywords: true,
     min_confidence: true,
@@ -82,6 +104,9 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     model: true,
     temperature: true,
     max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: true,
     history_channels: true,
     history_lookback_days: true,
@@ -91,6 +116,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: true,
     include_tenant_brain: true,
     include_brain_index: true,
+    always_include_brain_sections: false,
     match_inbound_language: true,
     escalate_keywords: false,
     min_confidence: false,
@@ -101,9 +127,12 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     prompt_blocks: true,
   },
   drafter: {
-    model: false,
-    temperature: false,
-    max_output_tokens: false,
+    model: true,
+    temperature: true,
+    max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: false,
     history_channels: false,
     history_lookback_days: false,
@@ -113,6 +142,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: false,
     include_tenant_brain: false,
     include_brain_index: false,
+    always_include_brain_sections: false,
     match_inbound_language: false,
     escalate_keywords: false,
     min_confidence: false,
@@ -126,6 +156,9 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     model: true,
     temperature: true,
     max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: true,
     history_channels: true,
     history_lookback_days: true,
@@ -135,6 +168,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: false,
     include_tenant_brain: false,
     include_brain_index: false,
+    always_include_brain_sections: false,
     match_inbound_language: false,
     escalate_keywords: false,
     min_confidence: false,
@@ -148,6 +182,9 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     model: true,
     temperature: true,
     max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: true,
     history_channels: false,
     history_lookback_days: true,
@@ -157,6 +194,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: false,
     include_tenant_brain: false,
     include_brain_index: false,
+    always_include_brain_sections: false,
     match_inbound_language: false,
     escalate_keywords: false,
     min_confidence: false,
@@ -170,6 +208,9 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     model: true,
     temperature: true,
     max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: false,
     history_channels: false,
     history_lookback_days: false,
@@ -179,6 +220,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: false,
     include_tenant_brain: false,
     include_brain_index: false,
+    always_include_brain_sections: false,
     match_inbound_language: false,
     escalate_keywords: false,
     min_confidence: false,
@@ -192,6 +234,9 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     model: true,
     temperature: true,
     max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: false,
     history_channels: false,
     history_lookback_days: false,
@@ -201,6 +246,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: false,
     include_tenant_brain: false,
     include_brain_index: false,
+    always_include_brain_sections: false,
     match_inbound_language: false,
     escalate_keywords: false,
     min_confidence: false,
@@ -214,6 +260,9 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     model: true,
     temperature: true,
     max_output_tokens: true,
+    redo_model: true,
+    redo_temperature: true,
+    redo_max_output_tokens: true,
     history_limit: true,
     history_channels: true,
     history_lookback_days: true,
@@ -223,6 +272,7 @@ const FIELD_RELEVANCE: Record<AgentRole, FieldRelevance> = {
     include_availability: true,
     include_tenant_brain: false,
     include_brain_index: true,
+    always_include_brain_sections: false,
     match_inbound_language: false,
     escalate_keywords: false,
     min_confidence: false,
@@ -243,8 +293,11 @@ function emptyForm(role: AgentRole): ProfileForm {
     is_active: true,
     instructions: '',
     model: '',
+    redo_model: '',
     temperature: role === 'checker' ? 0 : 0.2,
+    redo_temperature: null,
     max_output_tokens: 2048,
+    redo_max_output_tokens: null,
     history_limit: 40,
     history_channels: 'both',
     history_lookback_days: null,
@@ -254,6 +307,7 @@ function emptyForm(role: AgentRole): ProfileForm {
     include_availability: false,
     include_tenant_brain: false,
     include_brain_index: true,
+    always_include_brain_sections: [],
     match_inbound_language: true,
     escalate_keywords: '',
     on_no_template_match: 'escalate',
@@ -271,7 +325,9 @@ function toFormState(profile: AiAgentProfile): ProfileForm {
     id: profile.id,
     instructions: profile.instructions ?? '',
     model: profile.model ?? '',
+    redo_model: profile.redo_model ?? '',
     escalate_keywords: profile.escalate_keywords.join(', '),
+    always_include_brain_sections: profile.always_include_brain_sections ?? [],
     prompt_blocks: profile.prompt_blocks ?? {},
   }
 }
@@ -282,6 +338,10 @@ function literalTokenItems(placeholders: readonly string[]): InsertTokenItem[] {
 
 function dateTimeTokenGroups(): InsertTokenGroup[] {
   return [{ label: 'Date & time', tokens: literalTokenItems(DATETIME_PLACEHOLDERS) }]
+}
+
+function flattenBrainNodes(nodes: BrainNode[], depth = 0): BrainTreeRow[] {
+  return nodes.flatMap((node) => [{ node, depth }, ...flattenBrainNodes(node.children, depth + 1)])
 }
 
 export default function AiAgentProfileEditor() {
@@ -296,6 +356,20 @@ export default function AiAgentProfileEditor() {
   const promptBlockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   useDocumentTitle(isNew ? 'CRM - New AI Agent' : `CRM - ${form.name || 'Edit AI Agent'}`)
   const [promptBlockDefs, setPromptBlockDefs] = useState<PromptBlockDefinition[]>([])
+  const [brainSections, setBrainSections] = useState<BrainNode[]>([])
+  const [brainSectionsLoading, setBrainSectionsLoading] = useState(false)
+  const [brainSectionsError, setBrainSectionsError] = useState('')
+  const brainSectionRows = useMemo(() => flattenBrainNodes(brainSections), [brainSections])
+
+  const toggleBrainSection = (path: string) => {
+    setForm((current) => {
+      if (!current) return current
+      const sections = current.always_include_brain_sections ?? []
+      return sections.includes(path)
+        ? { ...current, always_include_brain_sections: sections.filter((item) => item !== path) }
+        : { ...current, always_include_brain_sections: [...sections, path] }
+    })
+  }
   const [loading, setLoading] = useState(!isNew)
   const [notFound, setNotFound] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -317,7 +391,8 @@ export default function AiAgentProfileEditor() {
     relevance.include_notes ||
     relevance.include_availability ||
     relevance.include_tenant_brain ||
-    relevance.include_brain_index
+    relevance.include_brain_index ||
+    relevance.always_include_brain_sections
   const showGuardrails =
     relevance.escalate_keywords ||
     relevance.min_confidence ||
@@ -388,6 +463,42 @@ export default function AiAgentProfileEditor() {
   }, [authHeaders, initialRole, isNew, profileId])
 
   useEffect(() => {
+    if (form.role !== 'planner') {
+      setBrainSections([])
+      setBrainSectionsError('')
+      setBrainSectionsLoading(false)
+      return
+    }
+    let cancelled = false
+    const loadBrainSections = async () => {
+      setBrainSectionsLoading(true)
+      setBrainSectionsError('')
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/brain-sections`, { headers: authHeaders })
+        if (cancelled) return
+        if (!response.ok) {
+          setBrainSectionsError('Failed to load brain sections')
+          setBrainSections([])
+          return
+        }
+        const data = (await response.json()) as BrainNode[]
+        setBrainSections(Array.isArray(data) ? data : [])
+      } catch {
+        if (!cancelled) {
+          setBrainSectionsError('Failed to load brain sections')
+          setBrainSections([])
+        }
+      } finally {
+        if (!cancelled) setBrainSectionsLoading(false)
+      }
+    }
+    void loadBrainSections()
+    return () => {
+      cancelled = true
+    }
+  }, [authHeaders, form.role])
+
+  useEffect(() => {
     if (!isDirty) return
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
@@ -409,7 +520,7 @@ export default function AiAgentProfileEditor() {
     setMessage('')
     try {
       const isEditing = form.id !== null
-      const { id, escalate_keywords, model, instructions, ...rest } = form
+      const { id, escalate_keywords, model, redo_model, instructions, ...rest } = form
       const response = await fetch(`${API_BASE_URL}/api/ai-agent-profiles${isEditing ? `/${id}` : ''}`, {
         method: isEditing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -418,6 +529,7 @@ export default function AiAgentProfileEditor() {
           name: form.name.trim(),
           instructions: instructions.trim() || null,
           model: model.trim() || null,
+          redo_model: redo_model.trim() || null,
           escalate_keywords: escalate_keywords
             .split(',')
             .map((word) => word.trim())
@@ -550,6 +662,21 @@ export default function AiAgentProfileEditor() {
                     placeholder="leave blank for the default"
                     className={INPUT}
                   />
+                  {relevance.redo_model ? (
+                    <div className="mt-2 border-t border-gray-200 pt-2">
+                      <label className={LABEL} htmlFor="profile-redo-model">
+                        Model during REDO (optional override)
+                      </label>
+                      <input
+                        id="profile-redo-model"
+                        type="text"
+                        value={form.redo_model}
+                        onChange={(event) => set('redo_model', event.target.value)}
+                        placeholder="keep the normal model during redo"
+                        className={INPUT}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {relevance.temperature ? (
@@ -567,6 +694,23 @@ export default function AiAgentProfileEditor() {
                     onChange={(event) => set('temperature', event.target.value === '' ? null : Number(event.target.value))}
                     className={INPUT}
                   />
+                  {relevance.redo_temperature ? (
+                    <div className="mt-2 border-t border-gray-200 pt-2">
+                      <label className={LABEL} htmlFor="profile-redo-temp">
+                        Temperature during REDO (optional override)
+                      </label>
+                      <input
+                        id="profile-redo-temp"
+                        type="number"
+                        step="0.1"
+                        min={0}
+                        max={2}
+                        value={form.redo_temperature ?? ''}
+                        onChange={(event) => set('redo_temperature', event.target.value === '' ? null : Number(event.target.value))}
+                        className={INPUT}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {relevance.max_output_tokens ? (
@@ -582,6 +726,21 @@ export default function AiAgentProfileEditor() {
                     onChange={(event) => set('max_output_tokens', event.target.value === '' ? null : Number(event.target.value))}
                     className={INPUT}
                   />
+                  {relevance.redo_max_output_tokens ? (
+                    <div className="mt-2 border-t border-gray-200 pt-2">
+                      <label className={LABEL} htmlFor="profile-redo-max-tokens">
+                        Max output tokens during REDO (optional override)
+                      </label>
+                      <input
+                        id="profile-redo-max-tokens"
+                        type="number"
+                        min={1}
+                        value={form.redo_max_output_tokens ?? ''}
+                        onChange={(event) => set('redo_max_output_tokens', event.target.value === '' ? null : Number(event.target.value))}
+                        className={INPUT}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -682,6 +841,47 @@ export default function AiAgentProfileEditor() {
                       </label>
                     ) : null}
                   </div>
+                </div>
+              ) : null}
+              {relevance.always_include_brain_sections ? (
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 sm:col-span-2 xl:col-span-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className={LABEL}>Always included brain sections</p>
+                      <p className="mt-1 text-xs text-gray-500">These paths are always rendered in full for the planner, in addition to the index.</p>
+                    </div>
+                    {brainSectionsLoading ? <span className="text-xs uppercase tracking-[0.24em] text-gray-400">Loading...</span> : null}
+                  </div>
+                  {brainSectionsError ? <p className="mt-2 text-sm text-rose-600">{brainSectionsError}</p> : null}
+                  {!brainSectionsLoading && !brainSectionsError ? (
+                    brainSectionRows.length ? (
+                      <div className="mt-3 space-y-1">
+                        {brainSectionRows.map(({ node, depth }) => {
+                          const checked = form.always_include_brain_sections.includes(node.path)
+                          return (
+                            <label
+                              key={node.id}
+                              className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-gray-200 bg-white text-gray-700'}`}
+                              style={{ marginLeft: `${depth * 12}px` }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleBrainSection(node.path)}
+                                className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                              />
+                              <span className="min-w-0">
+                                <span className="block font-medium">{node.title}</span>
+                                <span className="block text-xs text-gray-500">{node.path}{node.is_active ? '' : ' (inactive)'}</span>
+                              </span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-sm text-gray-500">No brain sections yet.</p>
+                    )
+                  ) : null}
                 </div>
               ) : null}
             </div>

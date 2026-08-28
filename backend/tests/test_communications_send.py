@@ -116,6 +116,7 @@ def test_manual_email_send_persists_body_html_for_thread_rendering(user_client, 
             "message": "Check-in is at 3pm",
             "message_format": "email_html",
             "body_html": "<p>Check-in is at <strong>3pm</strong></p>",
+            "cc": "team@example.com",
             "email_thread_id": conversation.id,
         },
     )
@@ -123,11 +124,14 @@ def test_manual_email_send_persists_body_html_for_thread_rendering(user_client, 
     assert response.status_code == 201
     assert captured["body_text"] == "Check-in is at 3pm"
     assert captured["body_html"] == "<p>Check-in is at <strong>3pm</strong></p>"
+    assert captured["cc_email"] == "team@example.com"
 
     saved_thread_message = db_session.query(ConversationMessage).filter(ConversationMessage.provider_message_id == "gmail-rich-outbound").one()
     assert saved_thread_message.raw_payload["body_text"] == "Check-in is at 3pm"
     assert saved_thread_message.raw_payload["body_html"] == "<p>Check-in is at <strong>3pm</strong></p>"
+    assert saved_thread_message.cc == "team@example.com"
 
     saved_communication = db_session.query(Communication).filter(Communication.tenant_id == tenant.id, Communication.channel == "email").order_by(Communication.id.desc()).first()
     assert saved_communication is not None
     assert saved_communication.message == "Check-in is at 3pm"
+    assert saved_communication.cc == "team@example.com"

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+from app.models.ai_agent_profile import AiAgentProfile
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
 from app.models.finance import Finance
@@ -48,8 +49,9 @@ def _template(**overrides):
 def _capture_gemini_call(monkeypatch):
     captured = {}
 
-    def fake_generate_text_flat(prompt: str) -> str:
+    def fake_generate_text_flat(prompt: str, **kwargs) -> str:
         captured["prompt"] = prompt
+        captured["kwargs"] = kwargs
         return "Generated reply text"
 
     monkeypatch.setattr(ai_reply_service.gemini_client, "generate_text_flat", fake_generate_text_flat)
@@ -75,6 +77,37 @@ def test_sections_are_concatenated_in_order(db_session, monkeypatch):
     assert "You are a helpful host." in captured["prompt"]
     assert "Be warm and concise." in captured["prompt"]
     assert "Let them know check-in is at 3pm." in captured["prompt"]
+
+
+def test_build_prompt_and_generate_uses_pinned_drafter_profile_settings(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    template = _template()
+    profile = AiAgentProfile(
+        name="Pinned drafter",
+        role="drafter",
+        is_default=True,
+        is_active=True,
+        instructions="Warm and concise.",
+        model="drafter-model",
+        temperature=0.7,
+        max_output_tokens=777,
+    )
+    db_session.add(profile)
+    db_session.commit()
+    db_session.refresh(profile)
+    captured = _capture_gemini_call(monkeypatch)
+
+    result = ai_reply_service.build_prompt_and_generate(
+        db_session,
+        tenant=tenant,
+        template=template,
+        channel="email",
+        rough_draft="Make it friendly.",
+        drafter_profile_id=profile.id,
+    )
+
+    assert result == "Generated reply text"
+    assert captured["kwargs"] == {"model": "drafter-model", "temperature": 0.7, "max_output_tokens": 777}
 
 
 def test_datetime_placeholders_resolve_in_guidelines_and_sections(db_session, monkeypatch):

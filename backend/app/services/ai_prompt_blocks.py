@@ -153,6 +153,12 @@ PLANNER_BLOCKS: tuple[PromptBlock, ...] = (
         ),
     ),
     PromptBlock(
+        key="brain_sections",
+        label="Always included brain sections",
+        help="Sits above planner-pinned brain sections that should always be rendered in full.",
+        default="## Always Included Brain Sections",
+    ),
+    PromptBlock(
         key="ctx_fields",
         label="Structured fields heading",
         help="Sits above the tenant's named working-memory fields.",

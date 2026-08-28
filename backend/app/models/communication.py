@@ -22,6 +22,7 @@ class Communication(Base):
     whatsapp_normalized_phone = Column(String(64), nullable=True, index=True)
     provider_message_id = Column(String(255), nullable=True, index=True)
     subject = Column(String(255), nullable=True)
+    cc = Column("cc_emails", Text, nullable=True)
     message = Column(Text, nullable=False)
     # Set only when this message was sent unattended by the AI auto-send pipeline (never for
     # manual sends, even ones seeded by "Draft with AI") so the UI can badge it distinctly.

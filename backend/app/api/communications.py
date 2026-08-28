@@ -83,6 +83,7 @@ class WhatsAppFirstMessageRequest(BaseModel):
 class EmailForwardRequest(BaseModel):
     email_thread_id: int
     subject: str | None = None
+    cc: str | None = None
     body: str
     # Newly uploaded attachments, by stored-blob id.
     attachment_ids: list[int] = []
@@ -804,6 +805,7 @@ async def send_tenant_communication(
                 body_text=message,
                 body_html=normalized_body_html if normalized_message_format == "email_html" else None,
                 from_email=account.email_address,
+                cc_email=payload.cc.strip() if payload.cc else None,
                 in_reply_to_message_id=in_reply_to_message_id,
                 references=references,
                 attachments=outbound_attachments,
@@ -818,6 +820,7 @@ async def send_tenant_communication(
             conversation=conversation,
             account=account,
             to_email=to_email,
+            cc=payload.cc.strip() if payload.cc else None,
             subject=payload.subject.strip() if payload.subject else (conversation.subject or ""),
             message=message,
             gmail_result=gmail_result,
@@ -1094,6 +1097,7 @@ async def forward_tenant_email_thread(
             credentials,
             thread_id=conversation.provider_thread_id,
             to_email=forward_to_email,
+            cc_email=payload.cc.strip() if payload.cc else None,
             subject=subject,
             body_text=full_body,
             from_email=account.email_address,
@@ -1114,9 +1118,10 @@ async def forward_tenant_email_thread(
         sender_email=account.email_address,
         recipient_email=forward_to_email,
         subject=subject,
+        cc=payload.cc.strip() if payload.cc else None,
         body=body,
         sent_at=datetime.now(timezone.utc),
-        raw_payload={"gmail": gmail_result},
+        raw_payload={"gmail": gmail_result, "cc": payload.cc.strip() if payload.cc else None},
     )
     db.add(forward_message)
     db.commit()
@@ -1128,6 +1133,7 @@ async def forward_tenant_email_thread(
         provider=PROVIDER_GMAIL,
         external_account_id=account.email_address,
         subject=subject,
+        cc=payload.cc.strip() if payload.cc else None,
         message=body,
         created_at=datetime.now(timezone.utc),
     )
@@ -1226,6 +1232,7 @@ def generate_tenant_ai_draft(
     """Stateless "Draft with AI" generation for the reply box - the caller pastes the result
     into the reply textarea for proofreading before sending; nothing is persisted here."""
     tenant, channel, template = _resolve_ai_draft_tenant_template(db, tenant_id, payload.channel, payload.template_id)
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
     blocks, agent_instructions = _drafter_context(db, tenant_id)
 
     try:
@@ -1238,6 +1245,7 @@ def generate_tenant_ai_draft(
             inbound_text=ai_agent_orchestrator.latest_inbound_text(db, tenant_id, channel),
             blocks=blocks,
             agent_instructions=agent_instructions,
+            drafter_profile_id=ai_settings.drafter_profile_id if ai_settings is not None else None,
         )
     except GeminiClientError as exc:
         logger.exception("AI draft generation failed")

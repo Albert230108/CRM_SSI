@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import InlineSpinner from '../components/InlineSpinner'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
@@ -154,9 +155,9 @@ export default function ScheduledPlannerRuns() {
   const [resultsByRunId, setResultsByRunId] = useState<Record<number, BulkPlannerRunResult[]>>({})
   const [loadingResults, setLoadingResults] = useState<Record<number, boolean>>({})
 
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined
+  const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : undefined), [token])
 
-  const loadSchedules = async () => {
+  const loadSchedules = useCallback(async () => {
     if (!token) return
     setLoading(true)
     try {
@@ -167,7 +168,7 @@ export default function ScheduledPlannerRuns() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [authHeaders, token])
 
   useEffect(() => {
     if (!token) return
@@ -229,7 +230,7 @@ export default function ScheduledPlannerRuns() {
     setMessage('')
   }
 
-  const loadRuns = async (scheduleId: number) => {
+  const loadRuns = useCallback(async (scheduleId: number) => {
     setLoadingRuns((current) => ({ ...current, [scheduleId]: true }))
     try {
       const response = await fetch(`${API_BASE_URL}/api/bulk-planner-schedules/${scheduleId}/runs`, { headers: authHeaders })
@@ -239,9 +240,9 @@ export default function ScheduledPlannerRuns() {
     } finally {
       setLoadingRuns((current) => ({ ...current, [scheduleId]: false }))
     }
-  }
+  }, [authHeaders])
 
-  const loadResults = async (scheduleId: number, runId: number) => {
+  const loadResults = useCallback(async (scheduleId: number, runId: number) => {
     setLoadingResults((current) => ({ ...current, [runId]: true }))
     try {
       const response = await fetch(`${API_BASE_URL}/api/bulk-planner-schedules/${scheduleId}/runs/${runId}/results`, { headers: authHeaders })
@@ -251,7 +252,53 @@ export default function ScheduledPlannerRuns() {
     } finally {
       setLoadingResults((current) => ({ ...current, [runId]: false }))
     }
-  }
+  }, [authHeaders])
+
+  const hasRunningVisible = useMemo(
+    () =>
+      schedules.some((schedule) => schedule.last_run_status === 'running') ||
+      Object.values(runsByScheduleId).some((runList) => runList.items.some((run) => run.status === 'running')),
+    [runsByScheduleId, schedules],
+  )
+
+  // Polling reads the latest runsByScheduleId through a ref rather than as a dependency: the
+  // poll itself refreshes that state every tick, so depending on it directly would tear down
+  // and rebuild the interval (plus fire an extra immediate poll) on every single tick, turning
+  // a 7s poll into a back-to-back fetch loop for as long as something stays "running".
+  const runsByScheduleIdRef = useRef(runsByScheduleId)
+  useEffect(() => {
+    runsByScheduleIdRef.current = runsByScheduleId
+  }, [runsByScheduleId])
+
+  useEffect(() => {
+    if (!token || !hasRunningVisible) return
+    let cancelled = false
+
+    const pollRunningState = async () => {
+      try {
+        await loadSchedules()
+        await Promise.all(Array.from(expandedScheduleIds).map((scheduleId) => loadRuns(scheduleId)))
+        const expandedRunTargets = Object.entries(runsByScheduleIdRef.current).flatMap(([scheduleId, runList]) =>
+          runList.items
+            .filter((run) => expandedRunIds.has(run.id))
+            .map((run) => ({ scheduleId: Number(scheduleId), runId: run.id })),
+        )
+        await Promise.all(expandedRunTargets.map(({ scheduleId, runId }) => loadResults(scheduleId, runId)))
+      } catch {
+        // Ignore transient polling errors; the next tick will retry.
+      }
+      if (cancelled) return
+    }
+
+    void pollRunningState()
+    const intervalId = window.setInterval(() => {
+      void pollRunningState()
+    }, 7000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [expandedRunIds, expandedScheduleIds, hasRunningVisible, loadResults, loadRuns, loadSchedules, token])
 
   const toggleScheduleExpanded = async (scheduleId: number) => {
     const isExpanded = expandedScheduleIds.has(scheduleId)
@@ -372,7 +419,8 @@ export default function ScheduledPlannerRuns() {
                           {schedule.enabled ? 'Enabled' : 'Disabled'}
                         </span>
                         {schedule.last_run_status ? (
-                          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${badgeClasses(schedule.last_run_status)}`}>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${badgeClasses(schedule.last_run_status)}`}>
+                            {schedule.last_run_status === 'running' ? <InlineSpinner className="h-3 w-3" /> : null}
                             {schedule.last_run_status}
                           </span>
                         ) : null}
@@ -424,7 +472,8 @@ export default function ScheduledPlannerRuns() {
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-sm font-semibold text-slate-900">Run #{run.id}</span>
-                                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${badgeClasses(run.status)}`}>
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] ${badgeClasses(run.status)}`}>
+                                    {run.status === 'running' ? <InlineSpinner className="h-3 w-3" /> : null}
                                     {run.status}
                                   </span>
                                   <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">

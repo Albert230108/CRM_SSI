@@ -203,6 +203,7 @@ def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, what: str, why
         mode=planner_mode,
         inbound_text=inbound_text,
         operator_note=operator_note,
+        is_redo=True,
     )
     if not result.generated_text:
         logger.info(
@@ -282,6 +283,7 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
         inbound_text=inbound_text,
         blocks=blocks,
         agent_instructions=agent_instructions,
+        drafter_profile_id=ai_settings.drafter_profile_id,
     )
 
     auto_send_enabled = ai_settings.auto_send_email if trigger.channel == "email" else ai_settings.auto_send_whatsapp

@@ -10,6 +10,9 @@ export type AiAgentProfile = {
   model: string | null
   temperature: number | null
   max_output_tokens: number | null
+  redo_model: string | null
+  redo_temperature: number | null
+  redo_max_output_tokens: number | null
   history_limit: number
   history_channels: 'both' | 'inbound' | 'email' | 'whatsapp'
   history_lookback_days: number | null
@@ -19,6 +22,7 @@ export type AiAgentProfile = {
   include_availability: boolean
   include_tenant_brain: boolean
   include_brain_index: boolean
+  always_include_brain_sections: string[]
   match_inbound_language: boolean
   escalate_keywords: string[]
   on_no_template_match: 'escalate' | 'skip'

@@ -716,6 +716,7 @@ type RedoRequest = {
   why: string | null
   requested_by_email: string | null
   ai_agent_run_id: number | null
+  reviewed: boolean
   created_at: string
 }
 
@@ -725,6 +726,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
   const [loading, setLoading] = useState(true)
   const [replaying, setReplaying] = useState(false)
   const [replayMessage, setReplayMessage] = useState('')
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'reviewed' | 'unreviewed'>('all')
 
   const load = async () => {
     setLoading(true)
@@ -739,10 +741,29 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
     }
   }
 
+  const updateReviewed = async (requestId: number, reviewed: boolean) => {
+    const response = await fetch(`${API_BASE_URL}/api/redo-requests/${requestId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+      body: JSON.stringify({ reviewed }),
+    })
+    if (!response.ok) {
+      showError('Failed to update the redo log')
+      return
+    }
+    await load()
+  }
+
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const filteredRequests = requests.filter((request) => {
+    if (reviewFilter === 'reviewed') return request.reviewed
+    if (reviewFilter === 'unreviewed') return !request.reviewed
+    return true
+  })
 
   return (
     <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
@@ -774,9 +795,23 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
         </button>
         {replayMessage ? <p className="text-xs text-gray-500">{replayMessage}</p> : null}
       </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {(['all', 'reviewed', 'unreviewed'] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setReviewFilter(option)}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition ${reviewFilter === option ? 'border-cyan-500 bg-cyan-50 text-cyan-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
       <div className="mt-3 overflow-x-auto">
         {loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
+        ) : filteredRequests.length === 0 ? (
+          <p className="text-sm text-gray-500">No redo requests match this filter.</p>
         ) : (
           <table className="min-w-full text-sm">
             <thead className="text-left text-gray-500">
@@ -787,11 +822,12 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
                 <th>What</th>
                 <th>Why</th>
                 <th>Requested by</th>
+                <th>Reviewed</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {requests.map((request) => (
+              {filteredRequests.map((request) => (
                 <tr key={request.id} className="border-t border-gray-100 align-top">
                   <td className="whitespace-nowrap py-2">{new Date(request.created_at).toLocaleString()}</td>
                   <td>{request.tenant_name ?? '-'}</td>
@@ -799,6 +835,17 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
                   <td className="max-w-xs">{request.what}</td>
                   <td className="max-w-xs">{request.why ?? '-'}</td>
                   <td>{request.requested_by_email ?? '-'}</td>
+                  <td>
+                    <label className="inline-flex items-center gap-2 text-xs text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={request.reviewed}
+                        onChange={(event) => void updateReviewed(request.id, event.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                      />
+                      Reviewed
+                    </label>
+                  </td>
                   <td>
                     <button
                       type="button"
@@ -812,7 +859,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
               ))}
               {!requests.length ? (
                 <tr>
-                  <td colSpan={7} className="py-3 text-center text-gray-400">No redo requests yet</td>
+                  <td colSpan={8} className="py-3 text-center text-gray-400">No redo requests yet</td>
                 </tr>
               ) : null}
             </tbody>

@@ -64,6 +64,7 @@ class ConversationMessage(Base):
     sender_email = Column(String(255), nullable=True, index=True)
     recipient_email = Column(String(255), nullable=True)
     subject = Column(String(500), nullable=True)
+    cc = Column("cc_emails", Text, nullable=True)
     body = Column(Text, nullable=False)
     sent_at = Column(DateTime(timezone=True), nullable=False, index=True)
     raw_payload = Column(JSON, nullable=True)

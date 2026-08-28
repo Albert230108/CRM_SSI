@@ -1,15 +1,15 @@
 """add bulk planner schedule extra instructions
 
-Revision ID: 0078_add_bulk_planner_schedule_extra_instructions
-Revises: 0077_add_rich_fields_to_communication_reply_drafts
+Revision ID: 0083_add_bulk_planner_schedule_extra_instructions
+Revises: 0082_add_email_cc_emails
 Create Date: 2026-08-28 00:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0078_add_bulk_planner_schedule_extra_instructions"
-down_revision = "0077_add_rich_fields_to_communication_reply_drafts"
+revision = "0083_add_bulk_planner_schedule_extra_instructions"
+down_revision = "0082_add_email_cc_emails"
 branch_labels = None
 depends_on = None
 

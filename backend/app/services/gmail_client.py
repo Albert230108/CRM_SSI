@@ -118,6 +118,7 @@ def _send_gmail_message(
     *,
     thread_id: str,
     to_email: str,
+    cc_email: str | Sequence[str] | None = None,
     subject: str,
     body_text: str,
     body_html: str | None = None,
@@ -131,6 +132,13 @@ def _send_gmail_message(
 
     message = EmailMessage()
     message["To"] = to_email
+    if cc_email:
+        if isinstance(cc_email, str):
+            cc_header = cc_email.strip()
+        else:
+            cc_header = ", ".join(str(address).strip() for address in cc_email if str(address).strip())
+        if cc_header:
+            message["Cc"] = cc_header
     message["From"] = from_email
     if not subject.lower().startswith(subject_prefix.lower()):
         subject = f"{subject_prefix} {subject}"
@@ -167,6 +175,7 @@ def send_gmail_reply(
     *,
     thread_id: str,
     to_email: str,
+    cc_email: str | Sequence[str] | None = None,
     subject: str,
     body_text: str,
     body_html: str | None = None,
@@ -179,6 +188,7 @@ def send_gmail_reply(
         credentials,
         thread_id=thread_id,
         to_email=to_email,
+        cc_email=cc_email,
         subject=subject,
         body_text=body_text,
         body_html=body_html,
@@ -195,6 +205,7 @@ def send_gmail_forward(
     *,
     thread_id: str,
     to_email: str,
+    cc_email: str | Sequence[str] | None = None,
     subject: str,
     body_text: str,
     body_html: str | None = None,
@@ -207,6 +218,7 @@ def send_gmail_forward(
         credentials,
         thread_id=thread_id,
         to_email=to_email,
+        cc_email=cc_email,
         subject=subject,
         body_text=body_text,
         body_html=body_html,
