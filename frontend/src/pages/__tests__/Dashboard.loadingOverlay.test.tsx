@@ -6,10 +6,10 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import Dashboard from '../Dashboard'
 import { useAuthStore } from '../../store/authStore'
 
-type TileKey = 'finance' | 'onedrive' | 'thread'
+type TileKey = 'finance' | 'notes' | 'onedrive' | 'thread'
 type TileRegistration = { tenantId: number; onReady?: (tenantId: number) => void }
 
-const registry: Record<TileKey, TileRegistration | null> = { finance: null, onedrive: null, thread: null }
+const registry: Record<TileKey, TileRegistration | null> = { finance: null, notes: null, onedrive: null, thread: null }
 
 function mockTile(key: TileKey, label: string) {
   return {
@@ -24,6 +24,7 @@ function mockTile(key: TileKey, label: string) {
 
 vi.mock('../../components/TenantList', () => ({ default: () => <div>tenant-list</div> }))
 vi.mock('../../components/FinanceBox', () => mockTile('finance', 'finance-box'))
+vi.mock('../../components/TenantNotesPanel', () => mockTile('notes', 'notes-panel'))
 vi.mock('../../components/OneDriveBox', () => mockTile('onedrive', 'onedrive-box'))
 vi.mock('../../components/ThreadView', () => mockTile('thread', 'thread-view'))
 
@@ -76,6 +77,7 @@ const LOADING_OVERLAY = { name: 'Loading tenant data' }
 
 beforeEach(() => {
   registry.finance = null
+  registry.notes = null
   registry.onedrive = null
   registry.thread = null
   window.localStorage.clear()
@@ -104,32 +106,34 @@ afterEach(() => {
 })
 
 describe('Dashboard tenant-switch loading overlay', () => {
-  it('keeps all three tiles blurred together until every tile is ready, and re-blurs on tenant switch', async () => {
+  it('keeps all four tiles blurred together until every tile is ready, and re-blurs on tenant switch', async () => {
     setUser(1, 'alice@example.com')
     renderDashboardAt('/dashboard/tenant/1')
 
-    expect(await screen.findAllByRole('status', LOADING_OVERLAY)).toHaveLength(3)
+    expect(await screen.findAllByRole('status', LOADING_OVERLAY)).toHaveLength(4)
 
-    // Two of three tiles finishing must not clear the overlay: all three share one gate,
+    // Three of four tiles finishing must not clear the overlay: all four share one gate,
     // so it's all-or-nothing rather than each tile un-blurring independently.
     resolveTile('finance')
     resolveTile('onedrive')
-    expect(screen.getAllByRole('status', LOADING_OVERLAY)).toHaveLength(3)
+    resolveTile('notes')
+    expect(screen.getAllByRole('status', LOADING_OVERLAY)).toHaveLength(4)
 
     resolveTile('thread')
     expect(screen.queryAllByRole('status', LOADING_OVERLAY)).toHaveLength(0)
 
     await userEvent.click(screen.getByText('go-tenant-2'))
-    expect(await screen.findAllByRole('status', LOADING_OVERLAY)).toHaveLength(3)
+    expect(await screen.findAllByRole('status', LOADING_OVERLAY)).toHaveLength(4)
 
     resolveTile('finance')
     resolveTile('onedrive')
-    expect(screen.getAllByRole('status', LOADING_OVERLAY)).toHaveLength(3)
+    resolveTile('notes')
+    expect(screen.getAllByRole('status', LOADING_OVERLAY)).toHaveLength(4)
 
     // A stale onReady callback from tenant 1's aborted fetch (finally still runs on abort)
     // must not be mistaken for tenant 2 readiness.
     act(() => registry.thread?.onReady?.(1))
-    expect(screen.getAllByRole('status', LOADING_OVERLAY)).toHaveLength(3)
+    expect(screen.getAllByRole('status', LOADING_OVERLAY)).toHaveLength(4)
 
     resolveTile('thread')
     expect(screen.queryAllByRole('status', LOADING_OVERLAY)).toHaveLength(0)

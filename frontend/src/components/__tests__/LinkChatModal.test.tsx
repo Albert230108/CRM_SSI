@@ -78,7 +78,7 @@ describe('LinkChatModal', () => {
     await user.click(await screen.findByRole('button', { name: /Front Desk/i }))
     await screen.findByText('5511999990000@c.us')
 
-    const search = screen.getByPlaceholderText('Search by CHAT_ID or name')
+    const search = screen.getByPlaceholderText('Search by phone number, name, or message text')
     await user.type(search, '5511888880000')
 
     await waitFor(() => {
@@ -193,7 +193,7 @@ describe('LinkChatModal', () => {
     const { rerender } = render(<LinkChatModal open threadId={7} onClose={() => {}} />)
 
     await user.click(await screen.findByRole('button', { name: /Front Desk/i }))
-    const search = await screen.findByPlaceholderText('Search by CHAT_ID or name')
+    const search = await screen.findByPlaceholderText('Search by phone number, name, or message text')
     await user.type(search, 'Alice')
     await screen.findByText('5511999990000@c.us')
 
@@ -201,7 +201,7 @@ describe('LinkChatModal', () => {
     rerender(<LinkChatModal open threadId={7} onClose={() => {}} />)
 
     await screen.findByRole('button', { name: /Front Desk/i })
-    expect(screen.queryByPlaceholderText('Search by CHAT_ID or name')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Search by phone number, name, or message text')).not.toBeInTheDocument()
 
     vi.unstubAllGlobals()
   })

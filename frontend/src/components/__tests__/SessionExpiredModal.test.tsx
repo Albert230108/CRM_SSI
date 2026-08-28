@@ -20,7 +20,7 @@ describe('SessionExpiredModal', () => {
 
     expect(screen.getByText(/your session has expired/i)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /log in again/i }))
+    fireEvent.click(screen.getByRole('button', { name: /sign in again/i }))
 
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
     expect(useAuthStore.getState().sessionExpired).toBe(false)

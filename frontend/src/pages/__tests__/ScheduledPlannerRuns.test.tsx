@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import ScheduledPlannerRuns from '../ScheduledPlannerRuns'
 import { useAuthStore } from '../../store/authStore'
 
@@ -35,7 +36,7 @@ describe('ScheduledPlannerRuns preview debounce', () => {
       return jsonResponse({ detail: `unhandled ${url}` }, false)
     })
     vi.stubGlobal('fetch', fetchMock)
-    render(<ScheduledPlannerRuns />)
+    render(<MemoryRouter><ScheduledPlannerRuns /></MemoryRouter>)
 
     await Promise.resolve()
     await Promise.resolve()

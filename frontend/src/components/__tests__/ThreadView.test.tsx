@@ -129,7 +129,7 @@ describe('ThreadView WhatsApp link UX', () => {
 
     const input = await screen.findByPlaceholderText('Ask about this tenant...')
     await user.type(input, 'What time is check-in?')
-    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await user.click(screen.getByRole('button', { name: 'Ask' }))
 
     expect(await screen.findByText('Check-in is at 3pm.')).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalled()
