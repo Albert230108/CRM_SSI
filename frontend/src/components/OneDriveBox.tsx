@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { getDirectoryHandleForUser } from '../lib/fileHandleStore'
 import { useLocalFolderRootPath } from '../lib/displayPreferences'
+import { SkeletonText } from './ui/Skeleton'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -256,7 +257,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
         ) : null}
       </div>
 
-      {loading ? <p className="text-sm text-gray-500">Loading...</p> : null}
+      {loading ? <SkeletonText lines={2} className="py-1" /> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
       {rootHandle ? (
         <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">

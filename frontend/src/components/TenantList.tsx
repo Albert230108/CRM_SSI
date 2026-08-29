@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import * as anime from 'animejs'
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
 import { computeNights } from '../lib/date'
 import { useSearchAllTenantsPreference } from '../lib/displayPreferences'
 import { formatRelativeTime, getChannelIcon } from '../lib/timeFormat'
@@ -18,24 +19,6 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const TENANT_ROW_ENTRY_OFFSET_PX = 8
 const TENANT_ROW_ENTRY_DURATION_MS = 280
 const TENANT_ROW_ENTRY_STAGGER_MS = 45
-const PREFERS_REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
-
-function usePrefersReducedMotion() {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
-    window.matchMedia(PREFERS_REDUCED_MOTION_QUERY).matches,
-  )
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(PREFERS_REDUCED_MOTION_QUERY)
-    const updatePreference = () => setPrefersReducedMotion(mediaQuery.matches)
-
-    updatePreference()
-    mediaQuery.addEventListener('change', updatePreference)
-    return () => mediaQuery.removeEventListener('change', updatePreference)
-  }, [])
-
-  return prefersReducedMotion
-}
 
 type Tenant = {
   id: number

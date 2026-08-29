@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { formatDisplayDate } from '../lib/date'
+import { SkeletonText } from './ui/Skeleton'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -471,7 +472,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
         </div>
       </div>
 
-      {loading ? <p className="text-sm text-gray-500">Loading finance...</p> : null}
+      {loading ? <SkeletonText lines={2} className="py-1" /> : null}
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
       {!tenantId ? null : (

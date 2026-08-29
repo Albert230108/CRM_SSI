@@ -1,3 +1,5 @@
+import InlineSpinner from './InlineSpinner'
+
 type TileLoadingOverlayProps = {
   active: boolean
 }
@@ -9,10 +11,9 @@ export default function TileLoadingOverlay({ active }: TileLoadingOverlayProps) 
     <div
       role="status"
       aria-label="Loading tenant data"
-      className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-white/50 backdrop-blur-sm"
+      className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-white/50 backdrop-blur-sm animate-fade-in"
     >
-      <InlineSpinner size="md" className="text-cyan-600" />
+      <InlineSpinner size="md" className="text-brand-600" />
     </div>
   )
 }
-import InlineSpinner from './InlineSpinner'

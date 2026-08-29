@@ -8,7 +8,7 @@ import { ToastCard, ToastStack } from './Toast'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
 import { useSyncStore } from '../store/syncStore'
-import crmLogo from '../assets/logo.jpg'
+import crmLogo from '../assets/logo.webp'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 

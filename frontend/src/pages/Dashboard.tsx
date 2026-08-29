@@ -8,6 +8,7 @@ import TenantList from '../components/TenantList'
 import ThreadView from '../components/ThreadView'
 import { ToastCard, ToastStack } from '../components/Toast'
 import TileLoadingOverlay from '../components/TileLoadingOverlay'
+import Card from '../components/ui/Card'
 import {
   clampMiddleColumnWidth,
   clampTenantSidebarWidth,
@@ -124,6 +125,10 @@ export default function Dashboard() {
   useDocumentTitle(selectedTenantId !== undefined ? `CRM - ${activeTenantName ?? 'Dashboard'}` : 'CRM - Dashboard')
 
   const isSwitchingTenant = selectedTenantId !== undefined && !(financeReady && oneDriveReady && notesReady && threadReady)
+  // While a tenant's tiles are loading, keep their content hidden under the blur
+  // overlay, then gently fade it in once everything is ready (no remount, so the
+  // tile components keep their own fetch state).
+  const tileContentMotion = isSwitchingTenant ? 'opacity-0' : 'opacity-100 transition-opacity duration-500'
 
   const [tenantsCollapsed, setTenantsCollapsed] = useState(false)
   const [middleColumnCollapsed, setMiddleColumnCollapsed] = useState(false)
@@ -346,27 +351,27 @@ export default function Dashboard() {
               middleColumnCollapsed ? 'pointer-events-none opacity-0' : 'opacity-100',
             ].join(' ')}
           >
-            <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-sm">
-              <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
+            <Card className="relative flex min-h-0 flex-1 overflow-hidden p-1.5">
+              <div className={`flex h-full min-h-0 w-full flex-1 flex-col overflow-auto ${tileContentMotion}`}>
                 <FinanceBox tenantId={selectedTenantId} onReady={handleFinanceReady} />
               </div>
               <TileLoadingOverlay active={isSwitchingTenant} />
-            </section>
+            </Card>
 
             <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-sm">
-                <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
+              <Card className="relative flex min-h-0 flex-1 overflow-hidden p-1.5">
+                <div className={`flex h-full min-h-0 w-full flex-1 flex-col overflow-auto ${tileContentMotion}`}>
                   <TenantNotesPanel tenantId={selectedTenantId} onReady={handleNotesReady} />
                 </div>
                 <TileLoadingOverlay active={isSwitchingTenant} />
-              </section>
+              </Card>
 
-              <section className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-sm">
-                <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-auto">
+              <Card className="relative flex min-h-0 flex-1 overflow-hidden p-1.5">
+                <div className={`flex h-full min-h-0 w-full flex-1 flex-col overflow-auto ${tileContentMotion}`}>
                   <OneDriveBox tenantId={selectedTenantId} onReady={handleOneDriveReady} />
                 </div>
                 <TileLoadingOverlay active={isSwitchingTenant} />
-              </section>
+              </Card>
             </div>
           </div>
         </section>
@@ -385,11 +390,11 @@ export default function Dashboard() {
           onAdjustEnd={handleMiddleDividerEnd}
         />
 
-        <section
-          className="relative flex flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300"
+        <Card
+          className="relative flex flex-1 overflow-hidden transition-all duration-300"
           style={{ minWidth: RIGHT_PANEL_MIN_WIDTH }}
         >
-          <div className="h-full w-full min-h-0 overflow-hidden">
+          <div className={`h-full w-full min-h-0 overflow-hidden ${tileContentMotion}`}>
             <ThreadView
               tenantId={selectedTenantId}
               reloadSignal={tenantReloadSignal}
@@ -400,7 +405,7 @@ export default function Dashboard() {
             />
           </div>
           <TileLoadingOverlay active={isSwitchingTenant} />
-        </section>
+        </Card>
       </div>
     </main>
   )

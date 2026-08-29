@@ -2110,11 +2110,19 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         ) : null}
 
         <div className="space-y-4">
-          {items.map((item) => {
+          {items.map((item, itemIndex) => {
+            // Mount-only stagger: the CSS animation plays once when a card first
+            // mounts (thread load, tenant switch, or a newly-arrived item) and does
+            // not replay on live-poll re-renders that keep the same keys.
+            const entryDelayMs = Math.min(itemIndex, 8) * 40
             if (item.type === 'email_thread') {
               const latestMessage = item.messages[item.messages.length - 1]
               return (
-                <article key={item.thread_id} className="rounded-2xl border border-gray-200 bg-gray-50">
+                <article
+                  key={item.thread_id}
+                  className="animate-slide-up rounded-2xl border border-gray-200 bg-gray-50"
+                  style={{ animationDelay: `${entryDelayMs}ms` }}
+                >
                   <div
                     onClick={() => openEmailThread(item)}
                     className="flex w-full cursor-pointer items-start justify-between gap-4 px-3 py-2.5 text-left transition hover:bg-gray-100/50"
@@ -2166,7 +2174,11 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             const firstMessage = item.messages[0]
             const lastMessage = item.messages[item.messages.length - 1]
             return (
-              <article key={item.group_id} className="rounded-2xl border border-emerald-200 bg-emerald-50">
+              <article
+                key={item.group_id}
+                className="animate-slide-up rounded-2xl border border-emerald-200 bg-emerald-50"
+                style={{ animationDelay: `${entryDelayMs}ms` }}
+              >
                 <div
                   onClick={() => openWhatsappGroup(item)}
                   className="flex w-full cursor-pointer items-start justify-between gap-4 px-3 py-2.5 text-left transition hover:bg-emerald-100/70"

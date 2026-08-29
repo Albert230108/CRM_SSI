@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import * as anime from 'animejs'
 import type { ToastState } from '../lib/useToast'
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
 
 export type ToastTone = 'success' | 'error' | 'info'
 
@@ -9,24 +10,6 @@ const TONE_CLASSES: Record<ToastTone, { card: string; bar: string; fill: string 
   success: { card: 'border-emerald-200 bg-emerald-50 text-emerald-900', bar: 'bg-emerald-200', fill: 'bg-emerald-500' },
   error: { card: 'border-rose-200 bg-rose-50 text-rose-900', bar: 'bg-rose-200', fill: 'bg-rose-500' },
   info: { card: 'border-cyan-200 bg-cyan-50 text-cyan-900', bar: 'bg-cyan-200', fill: 'bg-cyan-500' },
-}
-
-const PREFERS_REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
-
-function usePrefersReducedMotion() {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
-    window.matchMedia(PREFERS_REDUCED_MOTION_QUERY).matches,
-  )
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(PREFERS_REDUCED_MOTION_QUERY)
-    const updatePreference = () => setPrefersReducedMotion(mediaQuery.matches)
-    updatePreference()
-    mediaQuery.addEventListener('change', updatePreference)
-    return () => mediaQuery.removeEventListener('change', updatePreference)
-  }, [])
-
-  return prefersReducedMotion
 }
 
 function getToastHost() {

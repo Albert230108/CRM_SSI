@@ -19,3 +19,19 @@ body {
     will-change: opacity, transform;
   }
 }
+
+/*
+ * Respect the OS-level "reduce motion" accessibility setting for CSS-driven
+ * animations/transitions. JS-driven motion (anime.js) opts out separately via
+ * the usePrefersReducedMotion hook.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

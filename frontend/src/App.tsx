@@ -1,29 +1,32 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
 import SessionExpiredModal from './components/SessionExpiredModal'
 import UnsavedNotesModal from './components/UnsavedNotesModal'
-import Settings from './pages/Settings'
-import AiTemplatesOverview from './pages/AiTemplatesOverview'
-import AiTemplateEditor from './pages/AiTemplateEditor'
-import AiTenantSettings from './pages/AiTenantSettings'
-import AiAgentProfiles from './pages/AiAgentProfiles'
-import AiAgentProfileEditor from './pages/AiAgentProfileEditor'
-import AiAgentRuns from './pages/AiAgentRuns'
-import AiAgentRunDetail from './pages/AiAgentRunDetail'
-import RedoQaChat from './pages/RedoQaChat'
-import BrainSections from './pages/BrainSections'
-import AiPendingDrafts from './pages/AiPendingDrafts'
-import ScheduledPlannerRuns from './pages/ScheduledPlannerRuns'
-import AiPayloadPreview from './pages/AiPayloadPreview'
-import Actions from './pages/Actions'
-import WorkingMemoryHome from './pages/WorkingMemoryHome'
-import AdminSettings from './pages/AdminSettings'
-import InvitationSetup from './pages/InvitationSetup'
-import PasswordReset from './pages/PasswordReset'
+import InlineSpinner from './components/InlineSpinner'
+// Core CRM (Dashboard) loads eagerly; the heavier off-Core routes (AI subsystem,
+// settings, admin, auth flows) are code-split so they don't inflate the initial bundle.
+const Settings = lazy(() => import('./pages/Settings'))
+const AiTemplatesOverview = lazy(() => import('./pages/AiTemplatesOverview'))
+const AiTemplateEditor = lazy(() => import('./pages/AiTemplateEditor'))
+const AiTenantSettings = lazy(() => import('./pages/AiTenantSettings'))
+const AiAgentProfiles = lazy(() => import('./pages/AiAgentProfiles'))
+const AiAgentProfileEditor = lazy(() => import('./pages/AiAgentProfileEditor'))
+const AiAgentRuns = lazy(() => import('./pages/AiAgentRuns'))
+const AiAgentRunDetail = lazy(() => import('./pages/AiAgentRunDetail'))
+const RedoQaChat = lazy(() => import('./pages/RedoQaChat'))
+const BrainSections = lazy(() => import('./pages/BrainSections'))
+const AiPendingDrafts = lazy(() => import('./pages/AiPendingDrafts'))
+const ScheduledPlannerRuns = lazy(() => import('./pages/ScheduledPlannerRuns'))
+const AiPayloadPreview = lazy(() => import('./pages/AiPayloadPreview'))
+const Actions = lazy(() => import('./pages/Actions'))
+const WorkingMemoryHome = lazy(() => import('./pages/WorkingMemoryHome'))
+const AdminSettings = lazy(() => import('./pages/AdminSettings'))
+const InvitationSetup = lazy(() => import('./pages/InvitationSetup'))
+const PasswordReset = lazy(() => import('./pages/PasswordReset'))
 import { installInactivityLogout } from './lib/inactivityLogout'
 import { installRefreshDiagnostics } from './lib/refreshDiagnostics'
 import { useAuthStore } from './store/authStore'
@@ -69,6 +72,13 @@ export default function App() {
     <>
       <SessionExpiredModal />
       <UnsavedNotesModal />
+      <Suspense
+        fallback={
+          <div className="flex h-screen items-center justify-center bg-gray-50">
+            <InlineSpinner size="lg" className="text-brand-600" />
+          </div>
+        }
+      >
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/invite/:token" element={<InvitationSetup />} />
@@ -129,6 +139,7 @@ export default function App() {
           }
         />
       </Routes>
+      </Suspense>
     </>
   )
 }
