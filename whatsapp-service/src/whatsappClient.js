@@ -1036,6 +1036,12 @@ async function forwardOutboundCapturedMessage(message, chatId, recipient, contex
   }, { direction: "outbound" });
 
   const sent = await forwardOutboundMessage(message, chatId, recipient, tenantId);
+  // The per-message entry set at send time (one per sent message) must be released here too --
+  // unlike the chat/identity maps it was never deleted, so it grew unbounded for the life of the
+  // process (one entry per outbound message forever).
+  if (message?.id?._serialized) {
+    pendingOutboundTenantByMessageId.delete(message.id._serialized);
+  }
   if (chatId) {
     pendingOutboundTenantByChatId.delete(normalizeWhatsAppChatId(chatId));
   }
@@ -1500,7 +1506,12 @@ function attachClientEvents(nextClient) {
         console.error("Failed to forward outbound WhatsApp message to CRM:", error);
       });
     };
-    void attemptForward();
+    // Guard the outer call: a rejection from resolveOutboundTenantOwnership/lookupDurable that
+    // escapes the inner forward catch would otherwise be an unhandledRejection, which this
+    // process turns into process.exit(1). Mirror the sibling `message` handler's .catch().
+    void attemptForward().catch((error) => {
+      console.error("Failed to resolve/forward outbound WhatsApp message to CRM:", error);
+    });
   });
 
   nextClient.on("auth_failure", (message) => {
@@ -2093,7 +2104,10 @@ module.exports = {
   forwardCrmMessage,
   forwardInboundMessage,
   forwardOutboundMessage,
+  forwardOutboundCapturedMessage,
   __setLastReadyAtForTests: (value) => { lastReadyAt = Number(value) || 0; },
+  __seedPendingOutboundTenantByMessageId: (id, tenantId) => { pendingOutboundTenantByMessageId.set(id, tenantId ?? null); },
+  __hasPendingOutboundTenantByMessageId: (id) => pendingOutboundTenantByMessageId.has(id),
 };
 
 
