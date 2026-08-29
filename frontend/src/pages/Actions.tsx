@@ -184,22 +184,26 @@ export default function Actions() {
   const [editTagIds, setEditTagIds] = useState<number[]>([])
   const [savingId, setSavingId] = useState<number | null>(null)
 
-  const load = async () => {
+  const load = async (signal?: AbortSignal) => {
     setLoading(true)
     try {
       const params = statusFilter ? `?status=${statusFilter}` : ''
-      const response = await fetch(`${API_BASE_URL}/api/action-items${params}`, { headers: authHeaders })
+      const response = await fetch(`${API_BASE_URL}/api/action-items${params}`, { headers: authHeaders, signal })
       if (!response.ok) throw new Error()
       setItems(await response.json())
-    } catch {
-      showError('Failed to load action items')
+    } catch (error) {
+      // A superseded status switch aborts the in-flight request; ignore it so an older response
+      // can't land last (stale-response race) and don't surface a spurious error toast.
+      if ((error as { name?: string })?.name !== 'AbortError') showError('Failed to load action items')
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }
 
   useEffect(() => {
-    load()
+    const controller = new AbortController()
+    load(controller.signal)
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter])
 

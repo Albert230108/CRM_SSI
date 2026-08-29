@@ -1487,8 +1487,13 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         if (err instanceof DOMException && err.name === 'AbortError') return
         setError(err instanceof Error ? err.message : 'Failed to load thread')
       } finally {
-        setLoading(false)
-        onReady?.(activeTenantId)
+        // `finally` runs even after the catch's early return on abort. When this load was
+        // superseded (tenant switched), skip these side effects so we don't flip loading state or
+        // fire onReady for a stale tenant and race the newly started load.
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          onReady?.(activeTenantId)
+        }
       }
     }
 

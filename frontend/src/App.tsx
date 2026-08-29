@@ -41,11 +41,21 @@ export default function App() {
     const controller = new AbortController()
     fetch(`${API_BASE_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error('Unauthorized')
-        return response.json()
+        // Only an actual auth rejection should end the session. A transient 5xx or a network
+        // error must NOT log a valid user out (the previous `catch(() => logout())` did).
+        if (response.status === 401 || response.status === 403) {
+          logout()
+          return
+        }
+        if (!response.ok) return
+        setUser(await response.json())
       })
-      .then((data) => setUser(data))
-      .catch(() => logout())
+      .catch((error) => {
+        // Aborted request (token change / unmount) or network failure: keep the session.
+        if (error?.name !== 'AbortError') {
+          console.warn('auth/me check failed; keeping existing session', error)
+        }
+      })
     return () => controller.abort()
   }, [token, setUser, logout])
 
