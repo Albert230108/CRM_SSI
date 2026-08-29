@@ -63,7 +63,11 @@ async def gmail_webhook(request: Request, db: Session = Depends(get_db)) -> dict
     if not _is_authorized(request):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        # A malformed/non-JSON body raised json.JSONDecodeError straight out as a 500; return 400.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook payload")
 

@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -35,6 +36,22 @@ from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp-webhooks"])
 logger = logging.getLogger(__name__)
+
+
+async def _parse_webhook_payload(request: Request) -> "dict[str, Any] | JSONResponse":
+    """Read a JSON object body, returning a 400 JSONResponse instead of an unhandled 500.
+
+    A malformed/non-JSON body previously raised json.JSONDecodeError (a ValueError subclass)
+    straight out of the route as a 500. Such a body carries no body-secret either, so a 400 here
+    leaks nothing that header/query-secret auth would otherwise protect.
+    """
+    try:
+        payload = await request.json()
+    except ValueError:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+    return payload
 
 
 class WhatsAppWebhookResponse(BaseModel):
@@ -683,32 +700,49 @@ def _process_whatsapp_message(
         message=msg_text,
         created_at=ts,
     )
-    db.add(inbound_communication)
-    # Flush to get the communication's id -- the frontend uses it to locate which (dynamically
-    # windowed) WhatsApp group to auto-open when a notification is clicked.
-    db.flush()
-    create_notification(
-        db,
-        tenant_id=tenant.id,
-        tenant_name=tenant.name,
-        channel="whatsapp",
-        direction="inbound",
-        preview=msg_text,
-        event_at=ts,
-        thread_ref=str(inbound_communication.id),
-    )
-    if not is_history_payload:
-        register_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
-        register_brain_trigger(
-            db, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=resolved.matched_endpoint_id
+    trigger_resync = False
+    try:
+        db.add(inbound_communication)
+        # Flush to get the communication's id -- the frontend uses it to locate which (dynamically
+        # windowed) WhatsApp group to auto-open when a notification is clicked.
+        db.flush()
+        create_notification(
+            db,
+            tenant_id=tenant.id,
+            tenant_name=tenant.name,
+            channel="whatsapp",
+            direction="inbound",
+            preview=msg_text,
+            event_at=ts,
+            thread_ref=str(inbound_communication.id),
         )
-        register_action_writer_trigger(
-            db, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=resolved.matched_endpoint_id
+        if not is_history_payload:
+            register_inbound_message(db, tenant=tenant, channel="whatsapp", whatsapp_endpoint_id=resolved.matched_endpoint_id)
+            register_brain_trigger(
+                db, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=resolved.matched_endpoint_id
+            )
+            register_action_writer_trigger(
+                db, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=resolved.matched_endpoint_id
+            )
+            register_notification_for_whatsapp(db)
+            trigger_resync = background_tasks is not None
+        db.commit()
+    except IntegrityError:
+        # Concurrent redelivery of the same message (the bridge retries on any non-2xx response)
+        # can race past the dedup SELECT above; the uq_communications_tenant_provider_message_id
+        # constraint then rejects the second insert. Treat it as the duplicate it is instead of
+        # surfacing a 500, which would make the bridge redeliver in an ever-tighter loop.
+        db.rollback()
+        logger.info(
+            "whatsapp_inbound_duplicate_race tenant_id=%s provider_message_id=%s",
+            tenant.id,
+            provider_message_id,
         )
-        register_notification_for_whatsapp(db)
-        if background_tasks is not None:
-            background_tasks.add_task(_trigger_auto_resync, tenant.id)
-    db.commit()
+        return WhatsAppWebhookResponse(
+            ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id, message="duplicate skipped"
+        )
+    if trigger_resync:
+        background_tasks.add_task(_trigger_auto_resync, tenant.id)
     _persist_inbound_attachments(db, payload=payload, tenant_id=tenant.id, communication_id=inbound_communication.id)
     return WhatsAppWebhookResponse(ok=True, routing_strategy=resolved.strategy, tenant_id=tenant.id)
 
@@ -717,9 +751,9 @@ def _process_whatsapp_message(
 async def whatsapp_webhook(
     request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 ) -> WhatsAppWebhookResponse | JSONResponse:
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+    payload = await _parse_webhook_payload(request)
+    if isinstance(payload, JSONResponse):
+        return payload
 
     secret_error = _validate_webhook_secret(request, payload)
     if secret_error is not None:
@@ -752,9 +786,9 @@ async def whatsapp_backfill_batch(request: Request, db: Session = Depends(get_db
     (network + request-dispatch overhead per message) while leaving every existing invariant
     (routing, dedup, commit-per-message semantics) untouched.
     """
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+    payload = await _parse_webhook_payload(request)
+    if isinstance(payload, JSONResponse):
+        return payload
 
     secret_error = _validate_webhook_secret(request, payload)
     if secret_error is not None:
@@ -795,9 +829,9 @@ async def whatsapp_resolve(
     request: Request,
     db: Session = Depends(get_db),
 ) -> WhatsAppResolveResponse | JSONResponse:
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"ok": False, "error": "Invalid webhook payload"})
+    payload = await _parse_webhook_payload(request)
+    if isinstance(payload, JSONResponse):
+        return payload
 
     secret_error = _validate_webhook_secret(request, payload)
     if secret_error is not None:

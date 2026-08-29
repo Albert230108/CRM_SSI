@@ -4,7 +4,8 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.api.admin_invites import router as admin_invites_router
 from app.api.admin_settings import router as admin_settings_router
@@ -354,8 +355,18 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="CRM API", redirect_slashes=False, lifespan=lifespan)
 
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Last-resort catch-all so an unmapped exception is logged (with traceback) and returns a
+    clean 500 JSON body instead of leaking Starlette's default error page. HTTPException and
+    request-validation errors keep their own dedicated handlers and never reach this."""
+    logger.exception("unhandled_exception method=%s path=%s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
 resolved_whatsapp_service_url = os.getenv("WHATSAPP_SERVICE_URL", "").strip() or "<unset>"
-print(f"[backend] WHATSAPP_SERVICE_URL={resolved_whatsapp_service_url}")
+logger.info("WHATSAPP_SERVICE_URL=%s", resolved_whatsapp_service_url)
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(admin_invites_router, prefix="/api")

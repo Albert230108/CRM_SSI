@@ -29,10 +29,13 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
         user_id = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-    except JWTError as exc:
+        # A validly-signed token can still carry a non-numeric/oversized `sub`; casting it must
+        # surface as a 401, not an unhandled ValueError -> 500 on every authenticated route.
+        user_id_int = int(user_id)
+    except (JWTError, ValueError, TypeError) as exc:
         raise credentials_exception from exc
 
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
     if user is None or not user.is_active:
         raise credentials_exception
     return user

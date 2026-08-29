@@ -573,16 +573,26 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db), current_
     # column - excluded here since Tenant(**...) would otherwise raise on the setter-less property.
     tenant = Tenant(**payload.model_dump(exclude={"property_name"}))
     db.add(tenant)
-    db.flush()
-    apply_default_ai_templates_if_enabled(db, tenant.id)
-    apply_default_planner_mode(db, tenant.id)
-    apply_default_brain_action_writer_settings(db, tenant.id)
-    apply_default_formatter_settings(db, tenant.id)
-    # One immediate initial-brain fill (entries, structured fields, action items) from whatever
-    # booking/profile data exists at creation - no inbound message exists yet, so this reuses
-    # the manual "scan history" path rather than the debounced per-message trigger.
-    tenant_brain_service.scan_tenant_history(db, tenant)
+    # Persist the core tenant record first so best-effort provisioning below cannot 500 the
+    # request or leave a half-provisioned tenant behind if it fails.
     db.commit()
+    db.refresh(tenant)
+
+    # Default AI/planner/brain provisioning and the one immediate initial-brain fill (entries,
+    # structured fields, action items from whatever booking/profile data exists at creation - no
+    # inbound message exists yet, so this reuses the manual "scan history" path) are best-effort:
+    # a Gemini timeout/quota error or downstream DB error must not fail tenant creation.
+    try:
+        apply_default_ai_templates_if_enabled(db, tenant.id)
+        apply_default_planner_mode(db, tenant.id)
+        apply_default_brain_action_writer_settings(db, tenant.id)
+        apply_default_formatter_settings(db, tenant.id)
+        tenant_brain_service.scan_tenant_history(db, tenant)
+        db.commit()
+    except Exception:
+        logger.exception("create_tenant_provisioning_failed tenant_id=%s", tenant.id)
+        db.rollback()
+
     db.refresh(tenant)
     return tenant
 
