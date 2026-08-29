@@ -288,7 +288,7 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
                   <button
                     type="button"
                     onClick={() => handleOpenFile(item.handle as FileSystemFileHandle)}
-                    className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[11px] text-cyan-700"
+                    className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
                   >
                     Open
                   </button>

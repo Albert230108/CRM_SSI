@@ -104,7 +104,7 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-gray-200 bg-white p-3.5 shadow-xl"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto animate-scale-in rounded-2xl border border-gray-200 bg-white p-3.5 shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
@@ -137,7 +137,7 @@ export default function TenantAiTemplatesModal({ tenantId, tenantName, onClose }
                 type="button"
                 onClick={saveSettings}
                 disabled={saving}
-                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
               >
                 {saving ? 'Saving...' : 'Save'}
               </button>

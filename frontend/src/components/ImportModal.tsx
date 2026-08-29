@@ -349,10 +349,10 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-3xl border border-gray-200 bg-white shadow-sm">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col animate-scale-in rounded-3xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-cyan-600">Beds24</p>
+            <p className="text-xs uppercase tracking-[0.35em] text-brand-600">Beds24</p>
             <h2 className="mt-1 text-2xl font-semibold text-gray-900">Import bookings</h2>
           </div>
           <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-900">
@@ -373,7 +373,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                   placeholder="Search by name or booking number..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 pr-9 text-sm placeholder-gray-400 text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 pr-9 text-sm placeholder-gray-400 text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
                 {searchQuery && (
                   <button
@@ -400,7 +400,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                       onClick={() => setFilterResponsible(null)}
                       className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
                         filterResponsible === null
-                          ? 'bg-cyan-600 text-white'
+                          ? 'bg-brand-600 text-white'
                           : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                       }`}
                     >
@@ -411,7 +411,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                       onClick={() => setFilterResponsible('unassigned')}
                       className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
                         filterResponsible === 'unassigned'
-                          ? 'bg-cyan-600 text-white'
+                          ? 'bg-brand-600 text-white'
                           : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                       }`}
                     >
@@ -424,7 +424,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         onClick={() => setFilterResponsible(person)}
                         className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
                           filterResponsible === person
-                            ? 'bg-cyan-600 text-white'
+                            ? 'bg-brand-600 text-white'
                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                         }`}
                       >
@@ -442,7 +442,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                       onClick={() => setFilterStatus(null)}
                       className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
                         filterStatus === null
-                          ? 'bg-cyan-600 text-white'
+                          ? 'bg-brand-600 text-white'
                           : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                       }`}
                     >
@@ -455,7 +455,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         onClick={() => setFilterStatus(status)}
                         className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
                           filterStatus === status
-                            ? 'bg-cyan-600 text-white'
+                            ? 'bg-brand-600 text-white'
                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                         }`}
                       >
@@ -473,7 +473,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                       onClick={() => setFilterRecentDays(null)}
                       className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
                         filterRecentDays === null
-                          ? 'bg-cyan-600 text-white'
+                          ? 'bg-brand-600 text-white'
                           : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                       }`}
                     >
@@ -486,7 +486,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         onClick={() => setFilterRecentDays(days)}
                         className={`rounded-lg px-2 py-1 text-xs font-medium transition ${
                           filterRecentDays === days
-                            ? 'bg-cyan-600 text-white'
+                            ? 'bg-brand-600 text-white'
                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                         }`}
                       >
@@ -497,7 +497,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                       <select
                         value={filterRecentField}
                         onChange={(e) => setFilterRecentField(e.target.value as 'booking_time' | 'modified_time')}
-                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
                       >
                         <option value="booking_time">by booking date</option>
                         <option value="modified_time">by modified date</option>
@@ -514,7 +514,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         type="date"
                         value={filterCheckInStart}
                         onChange={(e) => setFilterCheckInStart(e.target.value)}
-                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
                       />
                     </div>
                     <div className="flex flex-col">
@@ -523,7 +523,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         type="date"
                         value={filterCheckInEnd}
                         onChange={(e) => setFilterCheckInEnd(e.target.value)}
-                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
                       />
                     </div>
                     {(filterCheckInStart || filterCheckInEnd) && (
@@ -560,7 +560,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                     type="button"
                     disabled={bulkImporting}
                     onClick={handleBulkImport}
-                    className="rounded-lg bg-cyan-600 px-3 py-1 text-xs font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="rounded-lg bg-brand-600 px-3 py-1 text-xs font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
                     {bulkImporting ? 'Importing...' : `Import selected (${selectedIds.size})`}
                   </button>
@@ -611,7 +611,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                     <p className="mt-1 text-xs text-gray-400">ID: {booking.booking_id}</p>
                     <p className="mt-1 text-sm text-gray-500">{booking.booking_status || 'Unknown status'}</p>
                     {booking.responsible_comm && (
-                      <p className="mt-1 text-sm text-cyan-600">Responsible: {booking.responsible_comm}</p>
+                      <p className="mt-1 text-sm text-brand-600">Responsible: {booking.responsible_comm}</p>
                     )}
                     {(booking.referer || booking.original_referer) && (
                       <p className="mt-1 text-xs text-gray-400">
@@ -649,7 +649,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                         return newSet
                       })
                     }}
-                    className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+                    className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
                   >
                     Import
                   </button>
@@ -662,7 +662,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
 
         {confirmBooking && (
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-900/50 px-4 backdrop-blur-sm">
-            <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="w-full max-w-lg animate-scale-in rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="mb-4 text-xl font-semibold text-gray-900">Confirm import</h3>
               <p className="mb-6 text-xs text-gray-400">
                 Review and edit fields before importing.
@@ -691,7 +691,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                     type="text"
                     value={(editFields[field] as string) ?? ''}
                     onChange={(e) => setEditFields((prev) => ({ ...prev, [field]: e.target.value }))}
-                    className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 </div>
               ))}
@@ -708,7 +708,7 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
                   type="button"
                   disabled={importingId === confirmBooking.booking_id}
                   onClick={() => handleImport(confirmBooking.booking_id, editFields)}
-                  className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {importingId === confirmBooking.booking_id ? 'Importing...' : 'Confirm import'}
                 </button>

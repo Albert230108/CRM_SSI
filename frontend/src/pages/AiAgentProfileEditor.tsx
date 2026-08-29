@@ -58,7 +58,7 @@ type BrainTreeRow = {
 
 const LABEL = 'block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500'
 const INPUT =
-  'mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500'
+  'mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500'
 
 const INSTRUCTIONS_PLACEHOLDER: Record<AgentRole, string> = {
   planner:
@@ -572,7 +572,7 @@ export default function AiAgentProfileEditor() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-4">
+      <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
         <p className="text-sm text-gray-500">Loading...</p>
       </main>
     )
@@ -580,9 +580,9 @@ export default function AiAgentProfileEditor() {
 
   if (notFound) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-4">
+      <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
         <p className="text-sm text-rose-600">This profile could not be found. It may have been deleted in another tab.</p>
-        <Link to="/settings/ai-agents" className="mt-2 inline-block text-sm text-cyan-700 hover:underline">
+        <Link to="/settings/ai-agents" className="mt-2 inline-block text-sm text-brand-700 hover:underline">
           &larr; Back to AI agent profiles
         </Link>
       </main>
@@ -590,9 +590,9 @@ export default function AiAgentProfileEditor() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-4">
+    <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
       <p className="text-xs">
-        <button type="button" onClick={requestLeave} className="text-cyan-700 hover:underline">
+        <button type="button" onClick={requestLeave} className="text-brand-700 hover:underline">
           &larr; Back to AI agent profiles
         </button>
       </p>
@@ -861,7 +861,7 @@ export default function AiAgentProfileEditor() {
                           return (
                             <label
                               key={node.id}
-                              className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-gray-200 bg-white text-gray-700'}`}
+                              className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${checked ? 'border-brand-300 bg-brand-50 text-brand-800' : 'border-gray-200 bg-white text-gray-700'}`}
                               style={{ marginLeft: `${depth * 12}px` }}
                             >
                               <input
@@ -1057,7 +1057,7 @@ export default function AiAgentProfileEditor() {
                                       return { ...current, prompt_blocks: rest }
                                     })
                                   }
-                                  className="shrink-0 text-xs font-semibold text-cyan-700 hover:underline"
+                                  className="shrink-0 text-xs font-semibold text-brand-700 hover:underline"
                                 >
                                   Reset to default
                                 </button>
@@ -1095,7 +1095,7 @@ export default function AiAgentProfileEditor() {
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
@@ -1103,7 +1103,7 @@ export default function AiAgentProfileEditor() {
             type="button"
             disabled={saving}
             onClick={saveAndClose}
-            className="rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-100 disabled:bg-gray-100 disabled:text-gray-400"
+            className="rounded-lg border border-brand-200 bg-brand-50 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-100 disabled:bg-gray-100 disabled:text-gray-400"
           >
             {saving ? 'Saving...' : 'Save & Close'}
           </button>
@@ -1134,7 +1134,7 @@ export default function AiAgentProfileEditor() {
                   if (await saveProfile()) leave()
                   else setLeavePrompt(false)
                 }}
-                className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? 'Saving...' : 'Save & Leave'}
               </button>

@@ -28,7 +28,7 @@ export default function UnsavedNotesModal() {
       aria-label="Unsaved notes"
       className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-white/60 backdrop-blur-md"
     >
-      <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-xl">
+      <div className="flex w-full max-w-sm flex-col items-center gap-3 animate-scale-in rounded-xl bg-white p-5 text-center shadow-xl">
         <p className="text-lg font-semibold text-gray-800">Unsaved notes</p>
         <p className="text-sm text-gray-500">
           You have unsaved changes in this tenant&apos;s notes. What would you like to do?
@@ -39,7 +39,7 @@ export default function UnsavedNotesModal() {
             type="button"
             disabled={saving}
             onClick={() => handleChoice('save')}
-            className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {saving ? 'Saving...' : 'Save & Continue'}
           </button>

@@ -87,7 +87,7 @@ export default function ColumnResizeHandle({
       className="group relative flex shrink-0 items-stretch justify-center outline-none"
       style={{ width: 10, cursor: 'col-resize', touchAction: 'none' }}
     >
-      <div className="h-full w-px bg-gray-200 transition-colors group-hover:bg-cyan-400 group-focus-visible:bg-cyan-500 group-active:bg-cyan-500" />
+      <div className="h-full w-px bg-gray-200 transition-colors group-hover:bg-brand-400 group-focus-visible:bg-brand-500 group-active:bg-brand-500" />
     </div>
   )
 }

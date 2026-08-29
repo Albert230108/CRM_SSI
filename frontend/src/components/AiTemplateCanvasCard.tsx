@@ -42,13 +42,13 @@ function AiTemplateCanvasCard({
       data-canvas-item
       data-testid={`canvas-section-${id}`}
       className={`group absolute flex cursor-grab select-none flex-col rounded-lg border bg-white p-2.5 shadow-sm transition-shadow active:cursor-grabbing hover:shadow-md ${
-        selected ? 'border-cyan-500 ring-2 ring-cyan-200' : 'border-gray-300'
+        selected ? 'border-brand-500 ring-2 ring-brand-200' : 'border-gray-300'
       }`}
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, touchAction: 'none' }}
       onPointerDown={(event) => onPointerDown(event, 'section', id, 'move')}
     >
       <div className="flex items-center gap-1.5">
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-[11px] font-bold text-cyan-800">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[11px] font-bold text-brand-800">
           {orderIndex + 1}
         </span>
         <div className="flex shrink-0 flex-col">

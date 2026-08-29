@@ -478,7 +478,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
               placeholder="Search by name, ID, email..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-1.5 pr-8 text-sm placeholder-gray-400 outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+              className="w-full rounded-lg border border-gray-200 px-3 py-1.5 pr-8 text-sm placeholder-gray-400 outline-none focus:border-brand-300 focus:ring-1 focus:ring-brand-200"
             />
             {searchQuery && (
               <button
@@ -501,7 +501,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
             className={[
               'shrink-0 rounded-lg border px-2 py-1.5 text-xs font-medium transition',
               searchAllTenants
-                ? 'border-cyan-500 bg-cyan-50 text-cyan-700'
+                ? 'border-brand-500 bg-brand-50 text-brand-700'
                 : 'border-gray-200 text-gray-500 hover:bg-gray-50',
             ].join(' ')}
           >
@@ -569,7 +569,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
                 className={[
                   'w-full rounded-xl border p-2.5 text-left transition',
                   isAnimatingRows ? 'tenant-row-entering' : '',
-                  active ? `border-cyan-500 ${colors.bg} shadow-sm` : `${colors.border} ${colors.bg} hover:opacity-75`,
+                  active ? `border-brand-500 ${colors.bg} shadow-sm` : `${colors.border} ${colors.bg} hover:opacity-75`,
                 ].join(' ')}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -599,7 +599,7 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
                         {channelIcon && <span>{channelIcon}</span>}
                         {directionIcon && <span>{directionIcon}</span>}
                         {tenant.unread_count > 0 && (
-                          <span className="ml-auto shrink-0 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                          <span className="ml-auto shrink-0 rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                             {tenant.unread_count}
                           </span>
                         )}

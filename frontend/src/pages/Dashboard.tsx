@@ -280,7 +280,7 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="flex h-full w-full flex-col overflow-hidden px-3 py-2">
+    <main className="flex h-full w-full animate-fade-in flex-col overflow-hidden px-3 py-2">
       <ToastStack>
         {messageToasts.map((toast) => (
           <ToastCard key={toast.id} toastKey={toast.id} tone="info" durationMs={MESSAGE_TOAST_DURATION_MS}>

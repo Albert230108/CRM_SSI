@@ -123,7 +123,7 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
             aria-pressed={activeCommands.has(action.command)}
             className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
               activeCommands.has(action.command)
-                ? 'border-cyan-500 bg-cyan-50 text-cyan-700'
+                ? 'border-brand-500 bg-brand-50 text-brand-700'
                 : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
             }`}
           >
@@ -146,7 +146,7 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
             normalizeEditorMarkup()
             emitChange()
           }}
-          className="min-h-[5.5rem] w-full overflow-y-auto rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5"
+          className="min-h-[5.5rem] w-full overflow-y-auto rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-50 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5"
         />
       </div>
     </div>

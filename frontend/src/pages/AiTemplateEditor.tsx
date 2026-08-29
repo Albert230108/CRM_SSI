@@ -269,7 +269,7 @@ export default function AiTemplateEditor() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-4">
+      <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
         <p className="text-sm text-gray-500">Loading...</p>
       </main>
     )
@@ -277,17 +277,17 @@ export default function AiTemplateEditor() {
 
   if (notFound) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-4">
+      <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
         <p className="text-sm text-rose-600">This template could not be found. It may have been deleted in another tab.</p>
-        <Link to={getAiSettingsReturnHref(location.search, '/settings/ai-templates')} className="mt-2 inline-block text-sm text-cyan-700 hover:underline">&larr; Back to AI Settings</Link>
+        <Link to={getAiSettingsReturnHref(location.search, '/settings/ai-templates')} className="mt-2 inline-block text-sm text-brand-700 hover:underline">&larr; Back to AI Settings</Link>
       </main>
     )
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-4">
+    <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
       <p className="text-xs">
-        <button type="button" onClick={requestLeave} className="text-cyan-700 hover:underline">&larr; All templates</button>
+        <button type="button" onClick={requestLeave} className="text-brand-700 hover:underline">&larr; All templates</button>
       </p>
       <h1 className="mt-1 text-lg font-semibold text-gray-900">{form.id !== null ? `Edit: ${form.name || 'Untitled template'}` : 'New template'}</h1>
       <p className="mt-1 text-sm text-gray-500">
@@ -309,7 +309,7 @@ export default function AiTemplateEditor() {
           onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
           placeholder="Template name"
           required
-          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
         />
 
         <div className="space-y-1.5">
@@ -319,7 +319,7 @@ export default function AiTemplateEditor() {
             onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
             placeholder="e.g. Use when a guest asks to arrive outside normal check-in hours."
             rows={2}
-            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
           />
           <p className="text-xs text-gray-500">
             Read by the planner when it picks a template. It is never sent to the drafting model, so describe the
@@ -345,7 +345,7 @@ export default function AiTemplateEditor() {
             onChange={(event) => setForm((current) => ({ ...current, guidelines: event.target.value }))}
             placeholder="Describe this template's goal, e.g. Used for late check-in requests; keep replies under 3 sentences."
             rows={2}
-            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
           />
           <p className="text-xs text-gray-500">
             Supports placeholders: { [...EMAIL_TEMPLATE_PLACEHOLDERS, ...DATETIME_PLACEHOLDERS].map((token) => `{{${token}}}`).join(', ') }
@@ -369,7 +369,7 @@ export default function AiTemplateEditor() {
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1b. AI Brain sections</p>
           {brainSections.length === 0 ? (
             <p className="text-xs text-gray-500">
-              No brain sections yet. <Link to="/settings/brain" className="text-cyan-700 hover:underline">Create some</Link> to
+              No brain sections yet. <Link to="/settings/brain" className="text-brand-700 hover:underline">Create some</Link> to
               share knowledge across templates.
             </p>
           ) : (
@@ -461,7 +461,7 @@ export default function AiTemplateEditor() {
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">4. Your typed reply (sent automatically when you use "Draft with AI")</p>
 
         <div className="flex items-center gap-2">
-          <button type="submit" disabled={saving} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
+          <button type="submit" disabled={saving} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300">
             {saving ? 'Saving...' : form.id !== null ? 'Save changes' : 'Create template'}
           </button>
           {isDirty ? (
@@ -490,7 +490,7 @@ export default function AiTemplateEditor() {
                   if (await saveTemplate()) leave()
                   else setLeavePrompt(false)
                 }}
-                className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? 'Saving...' : 'Save & Leave'}
               </button>

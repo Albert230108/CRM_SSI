@@ -743,12 +743,12 @@ export default function AiTemplateSectionCanvas({
 
           <div
             ref={vGuideRef}
-            className="pointer-events-none absolute bg-cyan-500"
+            className="pointer-events-none absolute bg-brand-500"
             style={{ display: 'none', top: -10000, height: 20000, width: 1, zIndex: 70 }}
           />
           <div
             ref={hGuideRef}
-            className="pointer-events-none absolute bg-cyan-500"
+            className="pointer-events-none absolute bg-brand-500"
             style={{ display: 'none', left: -10000, width: 20000, height: 1, zIndex: 70 }}
           />
         </div>

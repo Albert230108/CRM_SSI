@@ -449,7 +449,7 @@ export default function Settings() {
                   <h3 className="text-sm font-semibold text-gray-900">Default accounts</h3>
                   <p className="text-xs text-gray-500">Pre-select the reply account for new WhatsApp messages and future email compose flows.</p>
                 </div>
-                <button type="submit" disabled={savingDefaultAccounts} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-300">
+                <button type="submit" disabled={savingDefaultAccounts} className="rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-gray-300">
                   {savingDefaultAccounts ? 'Saving...' : 'Save'}
                 </button>
               </div>
@@ -534,7 +534,7 @@ export default function Settings() {
             </p>
 
             <div className="mt-3 flex flex-wrap gap-3">
-              <button type="button" className="rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white" onClick={() => startGmailOAuth()}>
+              <button type="button" className="rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white" onClick={() => startGmailOAuth()}>
                 Connect Gmail account
               </button>
               <button type="button" className="rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-900" onClick={loadGmailAccounts}>
@@ -683,14 +683,14 @@ export default function Settings() {
                 onChange={(event) => setTemplateForm((current) => ({ ...current, name: event.target.value }))}
                 placeholder="Template name"
                 required
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
               />
               <input
                 type="text"
                 value={templateForm.subject}
                 onChange={(event) => setTemplateForm((current) => ({ ...current, subject: event.target.value }))}
                 placeholder="Subject (optional)"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
               />
               <textarea
                 value={templateForm.body}
@@ -698,10 +698,10 @@ export default function Settings() {
                 placeholder="Body, e.g. Hi {{first_name}}, your stay at {{property_name}} runs from {{check_in}} to {{check_out}}..."
                 rows={4}
                 required
-                className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
               />
               <div className="flex items-center gap-2">
-                <button type="submit" disabled={savingTemplate} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
+                <button type="submit" disabled={savingTemplate} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300">
                   {savingTemplate ? 'Saving...' : templateForm.id !== null ? 'Save changes' : 'Add template'}
                 </button>
                 {templateForm.id !== null ? (

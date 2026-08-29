@@ -382,8 +382,8 @@ export default function ScheduledPlannerRuns() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-6 py-4">
-      <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
+    <main className="mx-auto animate-slide-up max-w-7xl px-6 py-4">
+      <Link to="/settings" className="text-sm text-brand-700 hover:underline">&larr; Back to Settings</Link>
       <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
@@ -405,7 +405,7 @@ export default function ScheduledPlannerRuns() {
             </button>
           </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 space-y-3 stagger-list">
             {loading && !schedules.length ? <p className="text-sm text-gray-500">Loading schedules...</p> : null}
             {!loading && !schedules.length ? <p className="text-sm text-gray-500">No schedules yet.</p> : null}
             {schedules.map((schedule) => {
@@ -543,7 +543,7 @@ export default function ScheduledPlannerRuns() {
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                   placeholder="Confirmed recent inbound replies"
-                  className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                 />
               </div>
 
@@ -557,7 +557,7 @@ export default function ScheduledPlannerRuns() {
                   onChange={(event) => setForm((current) => ({ ...current, extra_instructions: event.target.value }))}
                   placeholder="Add extra guidance that should be threaded into the planner prompt."
                   rows={4}
-                  className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                 />
                 <p className="mt-1 text-xs text-gray-500">This is passed to the planner like an operator note.</p>
               </div>
@@ -572,7 +572,7 @@ export default function ScheduledPlannerRuns() {
                     type="time"
                     value={form.run_time_local}
                     onChange={(event) => setForm((current) => ({ ...current, run_time_local: event.target.value }))}
-                    className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                   <p className="mt-1 text-xs text-gray-500">Europe/Amsterdam wall-clock time.</p>
                 </div>
@@ -594,7 +594,7 @@ export default function ScheduledPlannerRuns() {
                   {statuses.map((status) => {
                     const checked = form.status_filter.includes(status)
                     return (
-                      <label key={status} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-gray-300 bg-white text-gray-700'}`}>
+                      <label key={status} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${checked ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-gray-300 bg-white text-gray-700'}`}>
                         <input
                           type="checkbox"
                           checked={checked}
@@ -629,7 +629,7 @@ export default function ScheduledPlannerRuns() {
                     value={form.last_message_within_days}
                     onChange={(event) => setForm((current) => ({ ...current, last_message_within_days: event.target.value }))}
                     placeholder="7"
-                    className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
 
@@ -641,7 +641,7 @@ export default function ScheduledPlannerRuns() {
                     id="planner-schedule-direction"
                     value={form.last_message_direction}
                     onChange={(event) => setForm((current) => ({ ...current, last_message_direction: event.target.value as LastMessageDirection }))}
-                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                   >
                     <option value="">No filter</option>
                     <option value="either">Either inbound or outbound</option>
@@ -657,7 +657,7 @@ export default function ScheduledPlannerRuns() {
                 type="button"
                 onClick={handleSave}
                 disabled={saving || !form.name.trim() || !form.run_time_local}
-                className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? 'Saving...' : form.id === null ? 'Create schedule' : 'Save changes'}
               </button>
@@ -680,7 +680,7 @@ export default function ScheduledPlannerRuns() {
                 <h2 className="text-lg font-semibold text-gray-900">Live preview</h2>
                 <p className="mt-1 text-sm text-gray-500">Updates as you change the filter fields.</p>
               </div>
-              {previewLoading ? <span className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-700">Refreshing...</span> : null}
+              {previewLoading ? <span className="text-xs font-semibold uppercase tracking-[0.24em] text-brand-700">Refreshing...</span> : null}
             </div>
             <p className="mt-3 text-3xl font-semibold text-gray-900">{preview.matched_tenant_count}</p>
             <p className="text-sm text-gray-500">matching tenant(s)</p>

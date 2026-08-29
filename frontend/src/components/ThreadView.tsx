@@ -114,7 +114,7 @@ const MessageJumpNav = ({
         onClick={onPrev}
         disabled={currentIndex <= 0}
         aria-label="Jump to previous message"
-        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-30"
       >
         ↑
       </button>
@@ -126,7 +126,7 @@ const MessageJumpNav = ({
         onClick={onNext}
         disabled={currentIndex >= total - 1}
         aria-label="Jump to next message"
-        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-6 w-6 items-center justify-center rounded-lg text-gray-500 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-30"
       >
         ↓
       </button>
@@ -1102,14 +1102,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
               value={redoWhat}
               onChange={(event) => setRedoWhat(event.target.value)}
               placeholder="What to change (required)"
-              className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+              className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
             />
             <input
               type="text"
               value={redoWhy}
               onChange={(event) => setRedoWhy(event.target.value)}
               placeholder="Why (optional)"
-              className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+              className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
             />
             <div className="flex gap-1.5">
               <button
@@ -1165,14 +1165,14 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
           value={plannerRedoWhat}
           onChange={(event) => setPlannerRedoWhat(event.target.value)}
           placeholder="What to change (required)"
-          className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
         />
         <input
           type="text"
           value={plannerRedoWhy}
           onChange={(event) => setPlannerRedoWhy(event.target.value)}
           placeholder="Why (optional)"
-          className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+          className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
         />
         <div className="flex gap-1.5">
           <button
@@ -2129,7 +2129,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gray-500">
-                        <span className="rounded-full bg-cyan-100 px-2 py-1 font-semibold text-cyan-700">Email Thread</span>
+                        <span className="rounded-full bg-brand-100 px-2 py-1 font-semibold text-brand-700">Email Thread</span>
                         <span>{formatTimestamp(item.anchor_timestamp || latestMessage?.sent_at || new Date().toISOString())}</span>
                       </div>
                       <p className="mt-2 truncate text-sm font-semibold text-gray-900">{item.subject || latestMessage?.subject || 'Untitled conversation'}</p>
@@ -2160,7 +2160,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                             e.stopPropagation()
                             openForwardPanel(item)
                           }}
-                          className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                          className="rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100"
                         >
                           Draft with AI
                         </button>
@@ -2245,7 +2245,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
-                  <span className="shrink-0 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-700">
+                  <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-brand-700">
                     Email
                   </span>
                   <h3 id="email-thread-modal-title" className="truncate text-sm font-semibold text-gray-900">
@@ -2284,10 +2284,10 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       <article
                         key={`email-${messageItem.id}`}
                         data-message-index={entryIndex}
-                        className={`max-w-[92%] rounded-2xl border px-2.5 py-1.5 ${isOutbound ? 'ml-auto border-cyan-200 bg-cyan-50' : 'border-amber-200 bg-amber-50'}`}
+                        className={`max-w-[92%] rounded-2xl border px-2.5 py-1.5 ${isOutbound ? 'ml-auto border-brand-200 bg-brand-50' : 'border-amber-200 bg-amber-50'}`}
                       >
                         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-gray-500">
-                          <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-cyan-100 text-cyan-700' : 'bg-amber-100 text-amber-700'}`}>
+                          <span className={`rounded-full px-2 py-1 font-semibold ${isOutbound ? 'bg-brand-100 text-brand-700' : 'bg-amber-100 text-amber-700'}`}>
                             {isOutbound ? 'Outbound' : 'Inbound'}
                           </span>
                           {messageItem.ai_generated ? <AiGeneratedBadge /> : null}
@@ -2305,7 +2305,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                         ) : null}
                         {renderMessageBody(messageItem) ? (
                           <div
-                            className="prose prose-sm max-w-none mt-1 overflow-x-auto text-sm leading-5 text-gray-700 prose-p:my-2 prose-a:text-cyan-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
+                            className="prose prose-sm max-w-none mt-1 overflow-x-auto text-sm leading-5 text-gray-700 prose-p:my-2 prose-a:text-brand-700 prose-a:underline prose-blockquote:border-gray-300 prose-blockquote:pl-4 prose-blockquote:text-gray-600"
                             dangerouslySetInnerHTML={renderMessageBody(messageItem)}
                           />
                         ) : (
@@ -2369,7 +2369,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                   <button
                     type="button"
                     onClick={() => openForwardPanel(selectedEmailThread)}
-                    className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                    className="rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100"
                   >
                     Draft with AI
                   </button>
@@ -2417,7 +2417,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
               ) : null}
 
               {forwardTarget && forwardTarget.threadId === selectedEmailThread.thread_id ? (
-                <form onSubmit={handleSendForward} className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+                <form onSubmit={handleSendForward} className="space-y-3 rounded-xl border border-brand-200 bg-brand-50 p-4">
                   <p className="text-xs text-gray-500">
                     Sends this thread to {forwardToEmail || 'the configured AI address (set it in Admin Settings)'}.
                   </p>
@@ -2431,7 +2431,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                         value={selectedTemplateId}
                         onChange={(event) => handleSelectTemplate(event.target.value)}
                         disabled={templateLoading}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                       >
                         <option value="">No template</option>
                         {emailTemplates.map((template) => (
@@ -2449,7 +2449,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       value={forwardSubject}
                       onChange={(event) => setForwardSubject(event.target.value)}
                       placeholder="Subject"
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
                     />
                   </div>
                   <div className="space-y-2">
@@ -2461,7 +2461,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       value={forwardCc}
                       onChange={(event) => setForwardCc(event.target.value)}
                       placeholder="team@example.com"
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
                     />
                   </div>
                   <textarea
@@ -2470,7 +2470,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     rows={5}
                     placeholder="Write a note or pick a template above..."
                     disabled={forwardSending || templateLoading}
-                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                   />
                   <p className="text-xs text-gray-500">The full thread history is included automatically below this text when sent.</p>
                   {forwardableOriginalAttachments.length > 0 ? (
@@ -2524,7 +2524,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     <button
                       type="submit"
                       disabled={forwardSending || !forwardBody.trim()}
-                      className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {forwardSending ? 'Sending...' : 'Send to AI'}
                     </button>
@@ -2542,7 +2542,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
 
             <div className="shrink-0 border-t border-gray-200 px-3 py-2">
               {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
-                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-2.5">
+                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-2.5">
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-email-subject">
                       Subject
@@ -2552,7 +2552,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       value={replySubject}
                       onChange={(event) => setReplySubject(event.target.value)}
                       placeholder={replyTarget.subject || 'Subject'}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
                     />
                   </div>
                   <div className="space-y-1">
@@ -2564,7 +2564,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       value={replyCc}
                       onChange={(event) => setReplyCc(event.target.value)}
                       placeholder="team@example.com"
-                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
                     />
                   </div>
                   {renderPendingAutoDraftBanner('email')}
@@ -2614,7 +2614,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     <button
                       type="submit"
                       disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0)}
-                      className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
                     </button>
@@ -2741,7 +2741,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
 
               <div className="shrink-0 border-t border-gray-200 px-3 py-2">
                 {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappBlock.block_id ? (
-                  <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-2.5">
+                  <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-2.5">
                     <div className="space-y-1">
                       <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="block-whatsapp-endpoint">
                         WhatsApp account
@@ -2751,7 +2751,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                         value={selectedWhatsappEndpointId}
                         onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
                         disabled={replySending || !hasWhatsappEndpoints}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                       >
                         <option value="">{hasWhatsappEndpoints ? 'Choose an account' : 'No active WhatsApp accounts'}</option>
                         {whatsappEndpoints.map((endpoint) => (
@@ -2808,7 +2808,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       <button
                         type="submit"
                         disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
-                        className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {replySending ? 'Sending...' : 'Send'}
                       </button>
@@ -2943,7 +2943,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
 
             <div className="shrink-0 border-t border-gray-200 px-3 py-2">
               {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
-                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50 p-2.5">
+                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-2.5">
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-whatsapp-endpoint">
                       WhatsApp account
@@ -2953,7 +2953,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       value={selectedWhatsappEndpointId}
                       onChange={(event) => setSelectedWhatsappEndpointId(event.target.value)}
                       disabled={replySending || !hasWhatsappEndpoints}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-50"
                     >
                       <option value="">{hasWhatsappEndpoints ? 'Choose an account' : 'No active WhatsApp accounts'}</option>
                       {whatsappEndpoints.map((endpoint) => (
@@ -3010,7 +3010,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     <button
                       type="submit"
                       disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
-                      className="rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
                     </button>

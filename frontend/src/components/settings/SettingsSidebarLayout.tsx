@@ -25,7 +25,7 @@ export default function SettingsSidebarLayout({
   maxWidthClassName?: string
 }) {
   return (
-    <main className={`mx-auto ${maxWidthClassName} px-6 py-4`}>
+    <main className={`mx-auto ${maxWidthClassName} animate-slide-up px-6 py-4`}>
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
@@ -43,7 +43,7 @@ export default function SettingsSidebarLayout({
               onClick={() => onTabChange(tab.id)}
               className={`whitespace-nowrap rounded-xl px-3.5 py-2.5 text-left text-sm font-medium transition ${
                 activeTab === tab.id
-                  ? 'bg-cyan-600 text-white'
+                  ? 'bg-brand-600 text-white'
                   : 'text-gray-700 hover:bg-gray-100'
               }`}
             >
@@ -52,7 +52,8 @@ export default function SettingsSidebarLayout({
           ))}
         </nav>
 
-        <div className="min-w-0 flex-1 space-y-4">{children}</div>
+        {/* Keyed by activeTab so switching tabs replays a gentle fade on the panel. */}
+        <div key={activeTab} className="min-w-0 flex-1 space-y-4 animate-fade-in">{children}</div>
       </div>
     </main>
   )

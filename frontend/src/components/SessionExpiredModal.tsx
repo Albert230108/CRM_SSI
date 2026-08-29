@@ -19,7 +19,7 @@ export default function SessionExpiredModal() {
         <button
           type="button"
           onClick={logout}
-          className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700"
+          className="w-full rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white transition hover:bg-brand-700"
         >
           Sign in again
         </button>

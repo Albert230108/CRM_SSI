@@ -86,7 +86,7 @@ export default function SyncProgressOverlay({ active, progress, onDismiss }: Syn
       aria-label="Syncing data"
       className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-white/60 backdrop-blur-md"
     >
-      <InlineSpinner size="lg" className="text-cyan-600" />
+      <InlineSpinner size="lg" className="text-brand-600" />
       <p className="text-lg font-semibold text-gray-800">
         {phaseLabel}
         {counter}... {Math.round(displayPercent)}%

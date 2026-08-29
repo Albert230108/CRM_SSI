@@ -94,7 +94,7 @@ export default function TenantContextMenu({
               className="flex w-full items-center justify-between py-1.5 pl-6 pr-3 text-left text-sm text-gray-700 hover:bg-gray-50"
             >
               {option.label}
-              {currentPlannerMode === option.value ? <span className="text-cyan-600">&#10003;</span> : null}
+              {currentPlannerMode === option.value ? <span className="text-brand-600">&#10003;</span> : null}
             </button>
           ))
         )

@@ -138,7 +138,7 @@ export default function NotificationBell() {
         <div className="absolute right-0 top-full z-50 mt-2 w-96 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-lg">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
             <span className="text-sm font-semibold text-gray-900">Notifications</span>
-            <button type="button" onClick={handleMarkAllRead} className="text-xs font-medium text-cyan-700 transition hover:text-cyan-900">
+            <button type="button" onClick={handleMarkAllRead} className="text-xs font-medium text-brand-700 transition hover:text-brand-900">
               Mark all read
             </button>
           </div>
@@ -150,7 +150,7 @@ export default function NotificationBell() {
                 onClick={() => handleFilterChange(option)}
                 className={[
                   'rounded-lg px-2.5 py-1 text-xs font-medium transition',
-                  filter === option ? 'bg-cyan-50 text-cyan-700' : 'text-gray-500 hover:bg-gray-50',
+                  filter === option ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-50',
                 ].join(' ')}
               >
                 {option === 'all' ? 'All' : 'Unread'}
@@ -170,7 +170,7 @@ export default function NotificationBell() {
                 onClick={() => handleNotificationClick(notification)}
                 className={[
                   'block w-full border-b border-gray-50 px-3 py-2 text-left transition last:border-0 hover:bg-gray-50',
-                  notification.is_read ? 'bg-white' : 'bg-cyan-50/40',
+                  notification.is_read ? 'bg-white' : 'bg-brand-50/40',
                 ].join(' ')}
               >
                 <div className="flex items-start gap-2">
@@ -183,7 +183,7 @@ export default function NotificationBell() {
                     {notification.preview ? <p className="truncate text-xs text-gray-500">{notification.preview}</p> : null}
                     <p className="mt-0.5 text-[10px] text-gray-400">{formatRelativeTime(notification.event_at)}</p>
                   </div>
-                  {!notification.is_read ? <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-cyan-500" /> : null}
+                  {!notification.is_read ? <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-500" /> : null}
                 </div>
               </button>
             ))}

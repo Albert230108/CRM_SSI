@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -68,38 +70,20 @@ export default function InvitationSetup() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
-      <form className="w-full max-w-lg space-y-3 rounded-3xl border bg-white p-5" onSubmit={submit}>
+      <form className="w-full max-w-lg animate-scale-in space-y-3 rounded-3xl border border-gray-200 bg-white p-5 shadow-sm" onSubmit={submit}>
         <h1 className="text-2xl font-semibold">Set up account</h1>
         {invite ? <p className="text-sm text-gray-500">Role: {invite.role}</p> : null}
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="block text-sm text-gray-700">
-            First name
-            <input className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-cyan-500" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-          </label>
-          <label className="block text-sm text-gray-700">
-            Last name
-            <input className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-cyan-500" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-          </label>
+          <Input label="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+          <Input label="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
         </div>
-        <label className="block text-sm text-gray-700">
-          Email
-          <input className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-cyan-500" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label className="block text-sm text-gray-700">
-          Phone
-          <input className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-cyan-500" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </label>
-        <label className="block text-sm text-gray-700">
-          Password
-          <input className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-cyan-500" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </label>
-        <label className="block text-sm text-gray-700">
-          Confirm password
-          <input className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-cyan-500" type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} required />
-        </label>
+        <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <Input label="Phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <Input label="Confirm password" type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} required />
         {error ? <p className="text-sm text-rose-500">{error}</p> : null}
         {success ? <p className="text-sm text-emerald-600">{success}</p> : null}
-        <button className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white">Set up account</button>
+        <Button type="submit" className="w-full">Set up account</Button>
       </form>
     </main>
   )

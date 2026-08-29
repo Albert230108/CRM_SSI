@@ -58,7 +58,7 @@ export default function WorkingMemoryCardModal({
         if (event.key === 'Enter' && (event.target as HTMLElement).tagName === 'INPUT') event.preventDefault()
       }}
     >
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-3 overflow-y-auto rounded-2xl bg-white p-4 shadow-xl">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-3 overflow-y-auto animate-scale-in rounded-2xl bg-white p-4 shadow-xl">
         <div>
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">{primaryLabel}</label>
           <input
@@ -66,7 +66,7 @@ export default function WorkingMemoryCardModal({
             value={card.primary}
             onChange={(event) => onChange(card.id, 'primary', event.target.value)}
             placeholder={primaryPlaceholder}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-500"
           />
         </div>
 
@@ -88,7 +88,7 @@ export default function WorkingMemoryCardModal({
             onChange={(event) => onChange(card.id, 'secondary', event.target.value)}
             placeholder={secondaryPlaceholder}
             rows={8}
-            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm leading-relaxed text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500"
+            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm leading-relaxed text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-500"
           />
         </div>
 
@@ -99,7 +99,7 @@ export default function WorkingMemoryCardModal({
           <button type="button" onClick={() => onRemove(card.id)} className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50">
             Delete
           </button>
-          <button type="button" onClick={onClose} className="ml-auto rounded-lg bg-cyan-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700">
+          <button type="button" onClick={onClose} className="ml-auto rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-700">
             Close
           </button>
         </div>

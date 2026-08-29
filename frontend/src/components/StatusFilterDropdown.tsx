@@ -41,17 +41,17 @@ export default function StatusFilterDropdown({ options, selected, onChange }: St
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="w-full truncate rounded-lg border border-gray-200 px-2 py-1 text-left text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+        className="w-full truncate rounded-lg border border-gray-200 px-2 py-1 text-left text-xs outline-none focus:border-brand-300 focus:ring-1 focus:ring-brand-200"
       >
         {label}
       </button>
       {open && (
-        <div className="absolute z-10 mt-1 w-48 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+        <div className="absolute z-10 mt-1 w-48 origin-top animate-scale-in rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
           <div className="mb-1 flex gap-1 border-b border-gray-100 pb-1">
             <button
               type="button"
               onClick={() => onChange(options)}
-              className="flex-1 rounded px-1.5 py-0.5 text-[11px] text-cyan-700 hover:bg-cyan-50"
+              className="flex-1 rounded px-1.5 py-0.5 text-[11px] text-brand-700 hover:bg-brand-50"
             >
               Select all
             </button>
@@ -73,7 +73,7 @@ export default function StatusFilterDropdown({ options, selected, onChange }: St
                   type="checkbox"
                   checked={selected.includes(status)}
                   onChange={() => toggleStatus(status)}
-                  className="h-3.5 w-3.5 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                  className="h-3.5 w-3.5 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
                 />
                 <span className="truncate">{status}</span>
               </label>

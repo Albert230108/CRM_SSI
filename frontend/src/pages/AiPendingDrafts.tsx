@@ -131,8 +131,8 @@ export default function AiPendingDrafts() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-4">
-      <Link to="/settings" className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
+    <main className="mx-auto animate-slide-up max-w-4xl px-6 py-4">
+      <Link to="/settings" className="text-sm text-brand-700 hover:underline">&larr; Back to Settings</Link>
       <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">Pending AI Drafts</h1>
       <p className="mt-1.5 text-sm text-gray-500">
         AI-generated replies waiting for review across every tenant with auto-drafting enabled.
@@ -141,7 +141,7 @@ export default function AiPendingDrafts() {
       {loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">Loading...</p> : null}
       {!loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">No pending AI drafts.</p> : null}
 
-      <div className="mt-4 space-y-3">
+      <div className="mt-4 space-y-3 stagger-list">
         {drafts.map((draft) => (
           <div key={draft.id} className="rounded-2xl border border-indigo-200 bg-white p-3.5">
             <div className="flex items-start justify-between gap-3">
@@ -158,7 +158,7 @@ export default function AiPendingDrafts() {
               value={reasons[draft.id] ?? ''}
               onChange={(event) => setReasons((prev) => ({ ...prev, [draft.id]: event.target.value }))}
               placeholder="Reason for sending/dismissing (optional, logged for the redo agent)"
-              className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 outline-none focus:border-cyan-300"
+              className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 outline-none focus:border-brand-300"
             />
             <div className="mt-2 flex flex-wrap gap-2">
               <button
@@ -180,7 +180,7 @@ export default function AiPendingDrafts() {
               <button
                 type="button"
                 onClick={() => sendNow(draft)}
-                className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700"
+                className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
               >
                 Send
               </button>
@@ -210,14 +210,14 @@ export default function AiPendingDrafts() {
                   value={redoWhat}
                   onChange={(event) => setRedoWhat(event.target.value)}
                   placeholder="What to change (required)"
-                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
                 />
                 <input
                   type="text"
                   value={redoWhy}
                   onChange={(event) => setRedoWhy(event.target.value)}
                   placeholder="Why (optional)"
-                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
                 />
                 <div className="flex gap-1.5">
                   <button

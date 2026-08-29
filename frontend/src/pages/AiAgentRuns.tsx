@@ -175,15 +175,15 @@ export default function AiAgentRuns() {
   const canGoForward = offset + PAGE_SIZE < total
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-4">
-      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
+    <main className="mx-auto animate-slide-up max-w-6xl px-6 py-4">
+      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-brand-700 hover:underline">&larr; Back to Settings</Link>
       <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">AI Planner Runs</h1>
       <p className="mt-1.5 text-sm text-gray-500">
         Every planner &rarr; drafter &rarr; checker execution, with the exact prompts and responses, the template that
         was chosen and why, and what it cost.
       </p>
 
-      <section className="mt-4 rounded-3xl border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-sky-50 p-4 shadow-sm">
+      <section className="mt-4 rounded-3xl border border-brand-100 bg-gradient-to-br from-brand-50 via-white to-sky-50 p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Token and cost overview</h2>
@@ -193,18 +193,18 @@ export default function AiAgentRuns() {
           ) : null}
         </div>
 
-        <div className="mt-4 inline-flex rounded-2xl border border-cyan-100 bg-white/80 p-1 shadow-sm">
+        <div className="mt-4 inline-flex rounded-2xl border border-brand-100 bg-white/80 p-1 shadow-sm">
           {STATS_PERIOD_TABS.map((tab) => (
             <button
               key={tab.value}
               type="button"
               onClick={() => setStatsPeriod(tab.value)}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                statsPeriod === tab.value ? 'bg-cyan-600 text-white shadow-sm' : 'text-gray-600 hover:bg-cyan-50'
+                statsPeriod === tab.value ? 'bg-brand-600 text-white shadow-sm' : 'text-gray-600 hover:bg-brand-50'
               }`}
             >
               <span className="block">{tab.label}</span>
-              <span className={`block text-[11px] font-normal ${statsPeriod === tab.value ? 'text-cyan-100' : 'text-gray-400'}`}>
+              <span className={`block text-[11px] font-normal ${statsPeriod === tab.value ? 'text-brand-100' : 'text-gray-400'}`}>
                 {tab.description}
               </span>
             </button>
@@ -213,7 +213,7 @@ export default function AiAgentRuns() {
 
         {statsError ? <p className="mt-3 text-sm text-rose-600">{statsError}</p> : null}
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-3 stagger-list">
           <div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Runs</p>
             <p className="mt-2 text-3xl font-semibold text-gray-900">{statsLoading ? '…' : stats?.total_runs ?? 0}</p>
@@ -233,7 +233,7 @@ export default function AiAgentRuns() {
           </div>
         </div>
 
-        <div className="mt-4 overflow-x-auto rounded-2xl border border-cyan-100 bg-white/80">
+        <div className="mt-4 overflow-x-auto rounded-2xl border border-brand-100 bg-white/80">
           {statsLoading ? (
             <p className="p-4 text-sm text-gray-500">Loading AI usage stats...</p>
           ) : (stats?.by_model.length ?? 0) === 0 ? (

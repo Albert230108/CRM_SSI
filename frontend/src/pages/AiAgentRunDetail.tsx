@@ -122,8 +122,8 @@ export default function AiAgentRunDetail() {
     | null
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-4">
-      <Link to="/ai-runs" className="text-sm text-cyan-700 hover:underline">&larr; Back to Planner Runs</Link>
+    <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
+      <Link to="/ai-runs" className="text-sm text-brand-700 hover:underline">&larr; Back to Planner Runs</Link>
       <h1 className="mt-1.5 text-lg font-semibold text-gray-900">
         {run ? `AI Planner Run #${run.id} - ${run.tenant_name ?? `tenant ${run.tenant_id}`}` : 'AI Planner Run Detail'}
       </h1>

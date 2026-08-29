@@ -50,11 +50,11 @@ export default function AiTemplatesOverview() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-4">
+    <main className="mx-auto animate-slide-up max-w-5xl px-4 py-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs">
-            <Link to="/settings" className="text-cyan-700 hover:underline">&larr; Settings</Link>
+            <Link to="/settings" className="text-brand-700 hover:underline">&larr; Settings</Link>
           </p>
           <h1 className="mt-1 text-lg font-semibold text-gray-900">AI Templates</h1>
         </div>
@@ -68,7 +68,7 @@ export default function AiTemplatesOverview() {
           <button
             type="button"
             onClick={() => openEditor('new')}
-            className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700"
+            className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
           >
             + New template
           </button>

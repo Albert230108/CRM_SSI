@@ -10,7 +10,7 @@ export type ToastTone = 'success' | 'error' | 'info'
 const TONE_CLASSES: Record<ToastTone, { card: string; bar: string; fill: string }> = {
   success: { card: 'border-emerald-200 bg-emerald-50 text-emerald-900', bar: 'bg-emerald-200', fill: 'bg-emerald-500' },
   error: { card: 'border-rose-200 bg-rose-50 text-rose-900', bar: 'bg-rose-200', fill: 'bg-rose-500' },
-  info: { card: 'border-cyan-200 bg-cyan-50 text-cyan-900', bar: 'bg-cyan-200', fill: 'bg-cyan-500' },
+  info: { card: 'border-brand-200 bg-brand-50 text-brand-900', bar: 'bg-brand-200', fill: 'bg-brand-500' },
 }
 
 function getToastHost() {

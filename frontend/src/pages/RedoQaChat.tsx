@@ -132,10 +132,10 @@ export default function RedoQaChat() {
     <div
       key={message.id}
       className={`max-w-[92%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
-        message.role === 'user' ? 'ml-auto bg-cyan-600 text-white' : 'mr-auto border border-gray-200 bg-white text-gray-800'
+        message.role === 'user' ? 'ml-auto bg-brand-600 text-white' : 'mr-auto border border-gray-200 bg-white text-gray-800'
       }`}
     >
-      <p className={`mb-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${message.role === 'user' ? 'text-cyan-50/80' : 'text-gray-500'}`}>
+      <p className={`mb-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${message.role === 'user' ? 'text-brand-50/80' : 'text-gray-500'}`}>
         {message.role === 'user' ? 'You' : 'Assistant'}
       </p>
       <p className="whitespace-pre-wrap leading-6">{message.content}</p>
@@ -143,15 +143,15 @@ export default function RedoQaChat() {
   )
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(8,145,178,0.12),_transparent_30%),linear-gradient(180deg,_#f8fafc_0%,_#eef8fb_100%)] text-gray-900">
-      <header className="shrink-0 border-b border-cyan-100/70 bg-white/75 px-4 py-3 backdrop-blur">
+    <main className="flex h-screen animate-fade-in flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(8,145,178,0.12),_transparent_30%),linear-gradient(180deg,_#f8fafc_0%,_#eef8fb_100%)] text-gray-900">
+      <header className="shrink-0 border-b border-brand-100/70 bg-white/75 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-start justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-700">Redo QA</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-brand-700">Redo QA</p>
             <h1 className="mt-1 text-lg font-semibold text-gray-900">Ask about a specific redo</h1>
             <p className="mt-1 text-sm text-gray-500">Full redo context on top, live Q&A below. This opens from the redo log and stays in its own tab.</p>
           </div>
-          <div className="rounded-full border border-cyan-100 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700">
+          <div className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700">
             {redoLogId ? `Redo #${redoLogId}` : 'Redo'}
           </div>
         </div>
@@ -159,9 +159,9 @@ export default function RedoQaChat() {
 
       <div className="min-h-0 flex-1 overflow-hidden p-3 sm:p-4">
         <div className="mx-auto grid h-full max-w-6xl min-h-0 gap-3 lg:grid-cols-[1.08fr_0.92fr]">
-          <section className="min-h-0 flex flex-col overflow-hidden rounded-[28px] border border-cyan-100 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          <section className="min-h-0 flex flex-col overflow-hidden rounded-[28px] border border-brand-100 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
             <div className="border-b border-gray-100 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Seed context</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-brand-700">Seed context</p>
               <p className="mt-1 text-sm text-gray-500">What changed, why it changed, the agent instructions, and the full untruncated run log.</p>
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
@@ -180,19 +180,19 @@ export default function RedoQaChat() {
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Your instructions</p>
-                    <pre className="mt-1 whitespace-pre-wrap rounded-xl border border-cyan-100 bg-white p-3 text-sm leading-6 text-gray-800">{context.instructions || 'No memory_redo instructions are configured for this profile.'}</pre>
+                  <div className="rounded-2xl border border-brand-100 bg-brand-50/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-brand-700">Your instructions</p>
+                    <pre className="mt-1 whitespace-pre-wrap rounded-xl border border-brand-100 bg-white p-3 text-sm leading-6 text-gray-800">{context.instructions || 'No memory_redo instructions are configured for this profile.'}</pre>
                   </div>
 
-                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Role preamble</p>
-                    <pre className="mt-1 whitespace-pre-wrap rounded-xl border border-cyan-100 bg-white p-3 text-sm leading-6 text-gray-800">{context.qa_preamble || 'No redo QA preamble is configured for this profile.'}</pre>
+                  <div className="rounded-2xl border border-brand-100 bg-brand-50/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-brand-700">Role preamble</p>
+                    <pre className="mt-1 whitespace-pre-wrap rounded-xl border border-brand-100 bg-white p-3 text-sm leading-6 text-gray-800">{context.qa_preamble || 'No redo QA preamble is configured for this profile.'}</pre>
                   </div>
 
-                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Model &amp; sampling</p>
-                    <p className="mt-1 whitespace-pre-wrap rounded-xl border border-cyan-100 bg-white p-3 text-sm leading-6 text-gray-800">{`Model: ${context.model} · Temperature: ${context.temperature === null ? 'Default' : context.temperature} · Max output tokens: ${context.max_output_tokens === null ? 'Default' : context.max_output_tokens}`}</p>
+                  <div className="rounded-2xl border border-brand-100 bg-brand-50/50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-brand-700">Model &amp; sampling</p>
+                    <p className="mt-1 whitespace-pre-wrap rounded-xl border border-brand-100 bg-white p-3 text-sm leading-6 text-gray-800">{`Model: ${context.model} · Temperature: ${context.temperature === null ? 'Default' : context.temperature} · Max output tokens: ${context.max_output_tokens === null ? 'Default' : context.max_output_tokens}`}</p>
                   </div>
 
                   <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
@@ -206,7 +206,7 @@ export default function RedoQaChat() {
 
           <section className="min-h-0 flex flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
             <div className="border-b border-gray-100 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-700">Conversation</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-brand-700">Conversation</p>
               <p className="mt-1 text-sm text-gray-500">Ask follow-up questions about the redo event and keep the conversation grounded in the original run.</p>
             </div>
 
@@ -216,7 +216,7 @@ export default function RedoQaChat() {
                   {messages.map(renderMessage)}
                 </div>
               ) : (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-cyan-200 bg-cyan-50/30 px-6 py-10 text-sm text-gray-500">
+                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-brand-200 bg-brand-50/30 px-6 py-10 text-sm text-gray-500">
                   No questions yet. Ask about the redo, the run log, or the agent instructions to start the thread.
                 </div>
               )}

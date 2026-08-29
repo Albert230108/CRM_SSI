@@ -41,7 +41,7 @@ export default function TenantMoreFiltersPopover({
         className={[
           'relative rounded-lg border px-2 py-1 text-xs font-medium transition',
           hasActiveFilters
-            ? 'border-cyan-500 bg-cyan-50 text-cyan-700'
+            ? 'border-brand-500 bg-brand-50 text-brand-700'
             : 'border-gray-200 text-gray-500 hover:bg-gray-50',
         ].join(' ')}
       >
@@ -49,16 +49,16 @@ export default function TenantMoreFiltersPopover({
         {hasActiveFilters ? (
           <span
             aria-hidden="true"
-            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-cyan-500"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-500"
           />
         ) : null}
       </button>
       {open && (
-        <div className="absolute right-0 z-10 mt-1 w-56 space-y-1.5 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+        <div className="absolute right-0 z-10 mt-1 w-56 space-y-1.5 origin-top animate-scale-in rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
           <select
             value={selectedResponsible || ''}
             onChange={(e) => onResponsibleChange(e.target.value || null)}
-            className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+            className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-brand-300 focus:ring-1 focus:ring-brand-200"
           >
             <option value="">All Responsible</option>
             <option value="unassigned">Unassigned</option>
@@ -72,7 +72,7 @@ export default function TenantMoreFiltersPopover({
           <select
             value={selectedDirection || ''}
             onChange={(e) => onDirectionChange(e.target.value || null)}
-            className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-cyan-300 focus:ring-1 focus:ring-cyan-200"
+            className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs outline-none focus:border-brand-300 focus:ring-1 focus:ring-brand-200"
           >
             <option value="">Any</option>
             <option value="inbound">Inbound</option>

@@ -162,7 +162,7 @@ function RulesTab({ showSuccess, showError }: { showSuccess: (m: string) => void
               Plain condition/action text for the AI to use as drafting rules.
             </p>
           </div>
-          <button type="button" onClick={save} disabled={saving} className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
+          <button type="button" onClick={save} disabled={saving} className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300">
             {saving ? 'Saving...' : 'Save'}
           </button>
         </div>
@@ -282,7 +282,7 @@ function FieldsTab({ showSuccess, showError }: { showSuccess: (m: string) => voi
             to look for - it only fills a field when the tenant's messages/history actually support it.
           </p>
         </div>
-        <button type="button" onClick={save} disabled={saving} className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300">
+        <button type="button" onClick={save} disabled={saving} className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300">
           {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
@@ -413,7 +413,7 @@ function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void;
             if (event.key === 'Enter') void create()
           }}
           placeholder="Tag name, e.g. Follow-up"
-          className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+          className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
         />
         <input
           type="color"
@@ -425,7 +425,7 @@ function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void;
           type="button"
           onClick={create}
           disabled={!newName.trim() || creating}
-          className="shrink-0 rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+          className="shrink-0 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
         >
           Add tag
         </button>
@@ -457,7 +457,7 @@ function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void;
                   const value = event.target.value.trim()
                   if (value && value !== tag.name) void update(tag, { name: value })
                 }}
-                className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-cyan-400"
+                className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand-400"
               />
               <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
                 <input type="checkbox" checked={tag.is_active} onChange={(event) => update(tag, { is_active: event.target.checked })} />
@@ -549,7 +549,7 @@ function AvailabilityTab({ showSuccess, showError }: { showSuccess: (m: string) 
             onChange={(event) => setContextNote(event.target.value)}
             rows={4}
             placeholder='e.g. "Studio 3 is under renovation until Sept 10, treat as unavailable even though Beds24 shows it free."'
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
           />
           <div className="mt-2 flex items-center justify-between gap-2">
             <p className="text-xs text-gray-500">This note is appended to the availability block that the planner/checker can see.</p>
@@ -557,7 +557,7 @@ function AvailabilityTab({ showSuccess, showError }: { showSuccess: (m: string) 
               type="button"
               onClick={save}
               disabled={!isDirty || saving || loading}
-              className="shrink-0 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+              className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
             >
               {saving ? 'Saving...' : 'Save note'}
             </button>
@@ -787,7 +787,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
               setReplaying(false)
             }
           }}
-          className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100 disabled:opacity-50"
+          className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 disabled:opacity-50"
           disabled={replaying}
         >
           {replaying ? 'Replaying...' : 'Replay pending logs'}
@@ -800,7 +800,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
             key={option}
             type="button"
             onClick={() => setReviewFilter(option)}
-            className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition ${reviewFilter === option ? 'border-cyan-500 bg-cyan-50 text-cyan-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition ${reviewFilter === option ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
           >
             {option}
           </button>
@@ -840,7 +840,7 @@ function RedoLogTab({ showError }: { showError: (m: string) => void }) {
                         type="checkbox"
                         checked={request.reviewed}
                         onChange={(event) => void updateReviewed(request.id, event.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                        className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
                       />
                       Reviewed
                     </label>

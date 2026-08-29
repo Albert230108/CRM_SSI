@@ -22,7 +22,7 @@ export default function TenantNotesPanel({ tenantId, onReady }: TenantNotesPanel
             type="button"
             onClick={() => setTab('notes')}
             className={`px-2.5 py-1 text-xs font-semibold ${
-              tab === 'notes' ? 'border-b-2 border-cyan-500 text-cyan-700' : 'text-gray-400 hover:text-gray-600'
+              tab === 'notes' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-gray-400 hover:text-gray-600'
             }`}
           >
             Notes
@@ -31,7 +31,7 @@ export default function TenantNotesPanel({ tenantId, onReady }: TenantNotesPanel
             type="button"
             onClick={() => setTab('brain')}
             className={`px-2.5 py-1 text-xs font-semibold ${
-              tab === 'brain' ? 'border-b-2 border-cyan-500 text-cyan-700' : 'text-gray-400 hover:text-gray-600'
+              tab === 'brain' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-gray-400 hover:text-gray-600'
             }`}
           >
             Tenant Brain
@@ -40,7 +40,7 @@ export default function TenantNotesPanel({ tenantId, onReady }: TenantNotesPanel
             type="button"
             onClick={() => setTab('actions')}
             className={`px-2.5 py-1 text-xs font-semibold ${
-              tab === 'actions' ? 'border-b-2 border-cyan-500 text-cyan-700' : 'text-gray-400 hover:text-gray-600'
+              tab === 'actions' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-gray-400 hover:text-gray-600'
             }`}
           >
             Actions

@@ -69,7 +69,7 @@ export default function AiAgentProfiles() {
         </button>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 stagger-list">
         {profiles
           .filter((profile) => profile.role === role)
           .map((profile) => (
@@ -137,8 +137,8 @@ export default function AiAgentProfiles() {
   )
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-4">
-      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-cyan-700 hover:underline">
+    <main className="mx-auto animate-slide-up max-w-6xl px-6 py-4">
+      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-brand-700 hover:underline">
         &larr; Back to Settings
       </Link>
       <div className="mt-1.5 flex items-start justify-between gap-3">
@@ -148,7 +148,7 @@ export default function AiAgentProfiles() {
             The planner reads a conversation and decides which template to use and what the reply must cover. The
             checker proof-reads the result and either approves it or sends it back with feedback. One profile per
             role is the default; a tenant can be pinned to a different one on the{' '}
-            <Link to="/settings/ai-tenants" className="text-cyan-700 hover:underline">
+            <Link to="/settings/ai-tenants" className="text-brand-700 hover:underline">
               per-tenant page
             </Link>
             .

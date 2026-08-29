@@ -139,7 +139,7 @@ function joinTagNames(tags: Array<{ name: string }>) {
 function TenantOrGeneralLabel({
   tenantId,
   tenantName,
-  className = 'text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline',
+  className = 'text-xs font-semibold uppercase tracking-wide text-brand-700 hover:underline',
 }: {
   tenantId: number | null
   tenantName: string | null
@@ -368,7 +368,7 @@ export default function Actions() {
 
   return (
     <>
-      <main className="mx-auto max-w-5xl px-6 py-4">
+      <main className="mx-auto animate-slide-up max-w-5xl px-6 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-gray-900">Actions</h1>
@@ -377,14 +377,14 @@ export default function Actions() {
           <button
             type="button"
             onClick={() => setShowAddGeneralForm((current) => !current)}
-            className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100"
+            className="rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 transition hover:border-brand-300 hover:bg-brand-100"
           >
             {showAddGeneralForm ? 'Close add form' : '+ Add general action'}
           </button>
         </div>
 
         {showAddGeneralForm ? (
-          <div className="mt-3 rounded-2xl border border-cyan-200 bg-white p-4 shadow-sm">
+          <div className="mt-3 rounded-2xl border border-brand-200 bg-white p-4 shadow-sm">
             <div className="flex flex-col gap-3">
               <div>
                 <p className="text-sm font-semibold text-gray-900">Add general action</p>
@@ -396,7 +396,7 @@ export default function Actions() {
                   value={quickAddText}
                   onChange={(event) => setQuickAddText(event.target.value)}
                   placeholder="Call the plumber tomorrow"
-                  className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-300"
+                  className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-300"
                 />
                 <div className="flex gap-2">
                   <button
@@ -425,18 +425,18 @@ export default function Actions() {
                   value={newTitle}
                   onChange={(event) => setNewTitle(event.target.value)}
                   placeholder="Action title"
-                  className="min-w-0 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-300 md:w-full"
+                  className="min-w-0 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-300 md:w-full"
                 />
                 <input
                   type="date"
                   value={newDueDate}
                   onChange={(event) => setNewDueDate(event.target.value)}
-                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-cyan-300"
+                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-300"
                 />
                 <select
                   value={newPriority}
                   onChange={(event) => setNewPriority(event.target.value)}
-                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-cyan-300"
+                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-300"
                 >
                   <option value="">Priority</option>
                   <option value="p1">P1</option>
@@ -451,7 +451,7 @@ export default function Actions() {
                   type="button"
                   onClick={() => void handleAddGeneralAction()}
                   disabled={addingGeneral || !newTitle.trim()}
-                  className="rounded-full bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                  className="rounded-full bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   {addingGeneral ? 'Saving...' : 'Add action'}
                 </button>
@@ -470,7 +470,7 @@ export default function Actions() {
               {suggestions.map((suggestion) => {
                 const isDelete = suggestion.kind === 'action_item_delete'
                 const isComplete = suggestion.kind === 'action_item_complete'
-                const badgeClass = isDelete ? 'bg-rose-50 text-rose-700' : isComplete ? 'bg-emerald-50 text-emerald-700' : 'bg-cyan-50 text-cyan-700'
+                const badgeClass = isDelete ? 'bg-rose-50 text-rose-700' : isComplete ? 'bg-emerald-50 text-emerald-700' : 'bg-brand-50 text-brand-700'
                 const badgeLabel = isDelete ? 'Delete' : isComplete ? 'Complete' : 'Modify'
 
                 return (
@@ -481,7 +481,7 @@ export default function Actions() {
                           <TenantOrGeneralLabel
                             tenantId={suggestion.tenant_id}
                             tenantName={suggestion.tenant_name}
-                            className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline"
+                            className="text-xs font-semibold uppercase tracking-wide text-brand-700 hover:underline"
                           />
                           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${badgeClass}`}>{badgeLabel}</span>
                         </div>
@@ -548,7 +548,7 @@ export default function Actions() {
               type="button"
               onClick={() => setStatusFilter(filter.id)}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                statusFilter === filter.id ? 'bg-cyan-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                statusFilter === filter.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
               }`}
             >
               {filter.label}
@@ -563,7 +563,7 @@ export default function Actions() {
               type="button"
               onClick={() => setPriorityFilter(filter.id)}
               className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                priorityFilter === filter.id ? 'bg-cyan-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                priorityFilter === filter.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
               }`}
             >
               {filter.label}
@@ -571,7 +571,7 @@ export default function Actions() {
           ))}
         </div>
 
-        <div className="mt-3 space-y-2">
+        <div className="mt-3 space-y-2 stagger-list">
           {loading ? (
             <p className="text-sm text-gray-500">Loading...</p>
           ) : visibleItems.length === 0 ? (
@@ -588,19 +588,19 @@ export default function Actions() {
                       type="text"
                       value={editTitle}
                       onChange={(event) => setEditTitle(event.target.value)}
-                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-cyan-300"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand-300"
                     />
                     <div className="flex flex-wrap items-center gap-2">
                       <input
                         type="date"
                         value={editDueDate}
                         onChange={(event) => setEditDueDate(event.target.value)}
-                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300"
+                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
                       />
                       <select
                         value={editPriority}
                         onChange={(event) => setEditPriority(event.target.value)}
-                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-cyan-300"
+                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
                       >
                         <option value="">Priority</option>
                         <option value="p1">P1</option>
@@ -619,7 +619,7 @@ export default function Actions() {
                         type="button"
                         onClick={() => void saveEdit(item.id)}
                         disabled={savingId === item.id || !editTitle.trim()}
-                        className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {savingId === item.id ? 'Saving...' : 'Save'}
                       </button>
@@ -638,12 +638,12 @@ export default function Actions() {
                       <TenantOrGeneralLabel
                         tenantId={item.tenant_id}
                         tenantName={item.tenant_name}
-                        className="text-xs font-semibold uppercase tracking-wide text-cyan-700 hover:underline"
+                        className="text-xs font-semibold uppercase tracking-wide text-brand-700 hover:underline"
                       />
                       <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
                       {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                        <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-cyan-50 text-cyan-700' : 'bg-gray-100 text-gray-600'}`}>
+                        <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-brand-50 text-brand-700' : 'bg-gray-100 text-gray-600'}`}>
                           {item.source === 'ai' ? 'AI' : 'Manual'}
                         </span>
                         {item.status === 'dismissed' ? <DismissedBadge /> : null}

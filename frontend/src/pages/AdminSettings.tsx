@@ -88,7 +88,7 @@ function statusClass(status: string) {
     case 'duplicate':
       return 'bg-slate-200 text-slate-800'
     default:
-      return 'bg-cyan-100 text-cyan-800'
+      return 'bg-brand-100 text-brand-800'
   }
 }
 
@@ -771,7 +771,7 @@ export default function AdminSettings() {
                 <h2 className="text-lg font-semibold text-gray-900">Users</h2>
                 <button
                   type="button"
-                  className="rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-cyan-700"
+                  className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700"
                   onClick={() => {
                     setCreateUserError('')
                     setNewUser(emptyNewUser)
@@ -840,7 +840,7 @@ export default function AdminSettings() {
                   <option value="non-admin">Non-admin</option>
                   <option value="admin">Admin</option>
                 </select>
-                <button className="rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white">Generate</button>
+                <button className="rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white">Generate</button>
               </form>
             </section>
 
@@ -910,12 +910,12 @@ export default function AdminSettings() {
                   value={forwardToEmail}
                   onChange={(event) => setForwardToEmail(event.target.value)}
                   placeholder="ai-drafts@example.com"
-                  className="flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+                  className="flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
                 />
                 <button
                   type="submit"
                   disabled={savingForwardToEmail}
-                  className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {savingForwardToEmail ? 'Saving...' : 'Save'}
                 </button>
@@ -940,7 +940,7 @@ export default function AdminSettings() {
                     min={1}
                     value={draftDebounceSeconds}
                     onChange={(event) => setDraftDebounceSeconds(Number(event.target.value))}
-                    className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
                 <div>
@@ -953,13 +953,13 @@ export default function AdminSettings() {
                     min={1}
                     value={autoSendDelaySeconds}
                     onChange={(event) => setAutoSendDelaySeconds(Number(event.target.value))}
-                    className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={savingAiDraftTiming}
-                  className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {savingAiDraftTiming ? 'Saving...' : 'Save'}
                 </button>
@@ -1028,7 +1028,7 @@ export default function AdminSettings() {
                 <button
                   type="button"
                   onClick={resetModelPricingForm}
-                  className="rounded-xl border border-cyan-200 px-4 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-50"
+                  className="rounded-xl border border-brand-200 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
                 >
                   Clear form
                 </button>
@@ -1046,7 +1046,7 @@ export default function AdminSettings() {
                     onChange={(event) => setModelPricingModel(event.target.value)}
                     disabled={editingPricingId !== null}
                     placeholder="gemini-2.5-flash"
-                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500 disabled:bg-gray-100"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-500 disabled:bg-gray-100"
                   />
                   {editingPricingId !== null ? <p className="mt-1 text-xs text-gray-500">Model name is locked while editing an existing row.</p> : null}
                 </div>
@@ -1061,7 +1061,7 @@ export default function AdminSettings() {
                     step="0.0001"
                     value={modelPricingInputCost}
                     onChange={(event) => setModelPricingInputCost(Number(event.target.value))}
-                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
                 <div>
@@ -1075,18 +1075,18 @@ export default function AdminSettings() {
                     step="0.0001"
                     value={modelPricingOutputCost}
                     onChange={(event) => setModelPricingOutputCost(Number(event.target.value))}
-                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={savingModelPricing || !modelPricingModel.trim()}
-                  className="rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {savingModelPricing ? 'Saving...' : editingPricingId !== null ? 'Update pricing' : 'Add pricing'}
                 </button>
               </form>
-              <div className="mt-4 overflow-x-auto rounded-2xl border border-cyan-100 bg-white">
+              <div className="mt-4 overflow-x-auto rounded-2xl border border-brand-100 bg-white">
                 {modelPricingLoading ? (
                   <p className="p-4 text-sm text-gray-500">Loading model pricing...</p>
                 ) : modelPricingRows.length === 0 ? (
@@ -1142,7 +1142,7 @@ export default function AdminSettings() {
                     id="notification-whatsapp-account"
                     value={notificationWhatsappExternalAccountId}
                     onChange={(event) => setNotificationWhatsappExternalAccountId(event.target.value)}
-                    className="mt-1.5 w-56 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-56 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   >
                     <option value="">Not configured</option>
                     {whatsappAccounts.map((account) => (
@@ -1162,13 +1162,13 @@ export default function AdminSettings() {
                     min={1}
                     value={notificationWhatsappDebounceSeconds}
                     onChange={(event) => setNotificationWhatsappDebounceSeconds(Number(event.target.value))}
-                    className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={savingNotificationWhatsappDebounce}
-                  className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {savingNotificationWhatsappDebounce ? 'Saving...' : 'Save'}
                 </button>
@@ -1180,7 +1180,7 @@ export default function AdminSettings() {
               <p className="mt-1 text-sm text-gray-500">
                 The planner reads a conversation, picks a template and drafts a reply, which a checker then proof-reads.
                 Configure the agents themselves under Settings &rarr; Planner &amp; Checker, and inspect what they did on the{' '}
-                <Link to="/ai-runs" className="text-cyan-700 hover:underline">runs page</Link>.
+                <Link to="/ai-runs" className="text-brand-700 hover:underline">runs page</Link>.
               </p>
               <form onSubmit={savePlannerDefaults} className="mt-3 flex max-w-2xl flex-wrap items-end gap-4">
                 <div>
@@ -1191,7 +1191,7 @@ export default function AdminSettings() {
                     id="planner-default-mode"
                     value={plannerDefaultMode}
                     onChange={(event) => setPlannerDefaultMode(event.target.value as 'off' | 'manual' | 'auto-draft' | 'auto-send')}
-                    className="mt-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   >
                     <option value="off">Off</option>
                     <option value="manual">Manual</option>
@@ -1209,13 +1209,13 @@ export default function AdminSettings() {
                     min={0}
                     value={dailyTokenCap}
                     onChange={(event) => setDailyTokenCap(Number(event.target.value))}
-                    className="mt-1.5 w-40 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1.5 w-40 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={savingPlannerDefaults}
-                  className="shrink-0 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {savingPlannerDefaults ? 'Saving...' : 'Save'}
                 </button>
@@ -1267,7 +1267,7 @@ export default function AdminSettings() {
                         <td><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${statusClass(log.status)}`}>{log.status}</span></td>
                         <td>{log.http_status ?? '-'}</td>
                         <td className="max-w-xs">
-                          <button className="text-left text-cyan-700 underline" type="button" onClick={() => setExpandedLogId((current) => (current === log.id ? null : log.id))}>
+                          <button className="text-left text-brand-700 underline" type="button" onClick={() => setExpandedLogId((current) => (current === log.id ? null : log.id))}>
                             View details
                           </button>
                           {expandedLogId === log.id ? (
@@ -1331,7 +1331,7 @@ export default function AdminSettings() {
               type="button"
               disabled={backfillingBodies}
               onClick={backfillEmailBodies}
-              className="mt-3 rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+              className="mt-3 rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
             >
               {backfillingBodies ? 'Backfilling...' : 'Backfill email bodies'}
             </button>
@@ -1414,7 +1414,7 @@ export default function AdminSettings() {
                 <button
                   type="submit"
                   disabled={creatingUser}
-                  className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {creatingUser ? 'Creating...' : 'Create user'}
                 </button>

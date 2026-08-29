@@ -300,7 +300,7 @@ export default function Navbar() {
               type="button"
               onClick={handleSyncAll}
               disabled={syncRunning}
-              className="rounded-lg border border-cyan-500/40 bg-white px-3 py-1.5 text-sm font-semibold text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg border border-brand-500/40 bg-white px-3 py-1.5 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {syncRunning ? 'Syncing...' : 'Sync'}
             </button>
@@ -308,7 +308,7 @@ export default function Navbar() {
               type="button"
               onClick={() => setImportModalOpen(true)}
               title="Import Beds24 bookings"
-              className="rounded-lg border border-cyan-500/40 bg-cyan-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-cyan-700"
+              className="rounded-lg border border-brand-500/40 bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700"
             >
               Import
             </button>

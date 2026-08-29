@@ -2,6 +2,8 @@ import { FormEvent, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -42,26 +44,33 @@ export default function Login() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
-      <div className="w-full max-w-md rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="w-full max-w-md animate-scale-in rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
         <h2 className="text-3xl font-semibold text-gray-900">Sign in</h2>
         <p className="mt-1.5 text-sm text-gray-500">Use your CRM credentials to continue.</p>
 
         <form className="mt-4 space-y-3" onSubmit={handleSubmit}>
-          <div>
-            <label className="mb-1.5 block text-sm text-gray-700">Email</label>
-            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" className="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500" placeholder="you@company.com" required />
-          </div>
+          <Input
+            label="Email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="you@company.com"
+            required
+          />
 
-          <div>
-            <label className="mb-1.5 block text-sm text-gray-700">Password</label>
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-cyan-500" required />
-          </div>
+          <Input
+            label="Password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
 
           {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
-          <button type="submit" disabled={loading} className="w-full rounded-xl bg-cyan-600 px-4 py-2.5 font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-70">
+          <Button type="submit" loading={loading} className="w-full">
             {loading ? 'Signing in...' : 'Sign in'}
-          </button>
+          </Button>
         </form>
       </div>
     </main>

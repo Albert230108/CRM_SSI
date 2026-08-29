@@ -49,7 +49,7 @@ export default function AiSettingsDropdown({ children, onNavigate }: AiSettingsD
       {children}
       {open ? (
         <div
-          className="absolute left-0 top-full z-10 mt-1 w-80 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg"
+          className="absolute left-0 top-full z-10 mt-1 w-80 origin-top animate-scale-in rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg"
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
         >

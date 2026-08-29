@@ -28,7 +28,7 @@ function WorkingMemoryCanvasCard({ card, selected, primaryLabel, secondaryLabel,
       data-canvas-item
       data-testid={`working-memory-card-${card.id}`}
       className={`group absolute flex cursor-grab select-none flex-col rounded-lg border bg-white p-2.5 shadow-sm transition-shadow active:cursor-grabbing hover:shadow-md ${
-        selected ? 'border-cyan-500 ring-2 ring-cyan-200' : 'border-gray-300'
+        selected ? 'border-brand-500 ring-2 ring-brand-200' : 'border-gray-300'
       }`}
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, touchAction: 'none' }}
       onPointerDown={(event) => onPointerDown(event, card.id, 'move')}

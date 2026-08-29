@@ -526,7 +526,7 @@ export default function EmailLinkModal({ open, tenantId, tenantName, bookingId, 
                         type="button"
                         disabled={pushingLinkId === link.id}
                         onClick={() => handlePushToBeds24(link)}
-                        className="rounded-lg border border-cyan-200 bg-white px-2 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                        className="rounded-lg border border-brand-200 bg-white px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50"
                       >
                         {pushingLinkId === link.id ? 'Pushing...' : 'Push to Beds24'}
                       </button>

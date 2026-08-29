@@ -40,7 +40,7 @@ const SOURCE_LABEL: Record<BrainEntry['source'], string> = {
 
 const SOURCE_STYLE: Record<BrainEntry['source'], string> = {
   manual: 'bg-gray-100 text-gray-600',
-  planner: 'bg-cyan-50 text-cyan-700',
+  planner: 'bg-brand-50 text-brand-700',
   scanner: 'bg-indigo-50 text-indigo-700',
 }
 
@@ -330,13 +330,13 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
           }}
           disabled={!tenantId}
           placeholder={tenantId ? 'Add something worth remembering...' : ''}
-          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none transition focus:border-brand-300 disabled:cursor-not-allowed disabled:bg-gray-50"
         />
         <button
           type="button"
           onClick={handleAdd}
           disabled={!tenantId || !newContent.trim() || adding}
-          className="shrink-0 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="shrink-0 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Add
         </button>
@@ -365,7 +365,7 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
                     }}
                     placeholder="Not set"
                     rows={2}
-                    className="min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-hidden rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-cyan-300"
+                    className="min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-hidden rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
                   />
                   {savingFieldId === field.field_definition_id ? <span className="shrink-0 text-[10px] text-gray-400">Saving...</span> : null}
                 </div>
@@ -385,14 +385,14 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
                   <textarea
                     value={editingContent}
                     onChange={(event) => setEditingContent(event.target.value)}
-                    className="w-full resize-none rounded-lg border border-gray-200 p-1.5 text-sm text-gray-900 outline-none focus:border-cyan-300"
+                    className="w-full resize-none rounded-lg border border-gray-200 p-1.5 text-sm text-gray-900 outline-none focus:border-brand-300"
                     rows={2}
                   />
                   <div className="flex gap-2">
                     <button
                       type="button"
                       onClick={() => saveEdit(entry.id)}
-                      className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-medium text-cyan-700"
+                      className="rounded-full border border-brand-200 bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700"
                     >
                       Save
                     </button>

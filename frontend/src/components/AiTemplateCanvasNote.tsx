@@ -19,7 +19,7 @@ function AiTemplateCanvasNote({ note, selected, onPointerDown, onRemove }: Props
       data-canvas-item
       data-testid={`canvas-note-${note.id}`}
       className={`group absolute flex cursor-grab select-none flex-col rounded-md p-2 shadow-md active:cursor-grabbing ${
-        selected ? 'ring-2 ring-cyan-500' : ''
+        selected ? 'ring-2 ring-brand-500' : ''
       }`}
       style={{
         left: rect.x,

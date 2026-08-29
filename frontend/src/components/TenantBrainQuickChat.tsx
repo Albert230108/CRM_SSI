@@ -106,7 +106,7 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
 
   return (
     <>
-      <div className="w-full min-w-0 rounded-2xl border border-cyan-200 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
+      <div className="w-full min-w-0 rounded-2xl border border-brand-200 bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
         {error ? <p className="mb-1.5 text-xs font-medium text-rose-500">{error}</p> : null}
 
         <AiChatComposer
@@ -121,7 +121,7 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
             <button
               type="button"
               onClick={() => setFullscreen(true)}
-              className="shrink-0 rounded-full border border-cyan-100 bg-cyan-50 px-3.5 py-2 text-xs font-semibold text-cyan-700 transition hover:border-cyan-200 hover:bg-cyan-100"
+              className="shrink-0 rounded-full border border-brand-100 bg-brand-50 px-3.5 py-2 text-xs font-semibold text-brand-700 transition hover:border-brand-200 hover:bg-brand-100"
             >
               Fullscreen
             </button>
@@ -139,10 +139,10 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
 
       {fullscreen ? (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-gray-950/45 p-3 sm:p-6">
-          <div className="flex h-[min(92vh,56rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-cyan-200 bg-white shadow-2xl">
+          <div className="flex h-[min(92vh,56rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-brand-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-700">Tenant Brain</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-brand-700">Tenant Brain</p>
                 <p className="text-xs text-gray-500">Fullscreen chat with this tenant's context loaded.</p>
               </div>
               <button
@@ -154,7 +154,7 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-auto bg-gradient-to-b from-cyan-50/40 to-white px-4 py-4">
+            <div className="min-h-0 flex-1 overflow-auto bg-gradient-to-b from-brand-50/40 to-white px-4 py-4">
               <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-3">
                 {previewMessages.length ? (
                   <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-2xl border border-gray-200 bg-white p-3">
@@ -162,7 +162,7 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
                       <div
                         key={message.id}
                         className={`max-w-[90%] rounded-2xl px-3 py-2 text-sm ${
-                          message.role === 'user' ? 'ml-auto bg-cyan-600 text-white' : 'mr-auto bg-gray-50 text-gray-700'
+                          message.role === 'user' ? 'ml-auto bg-brand-600 text-white' : 'mr-auto bg-gray-50 text-gray-700'
                         }`}
                       >
                         <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">
@@ -173,7 +173,7 @@ export default function TenantBrainQuickChat({ tenantId }: TenantBrainQuickChatP
                     ))}
                   </div>
                 ) : (
-                  <div className="min-h-0 flex-1 rounded-2xl border border-dashed border-cyan-200 bg-white/70 p-6 text-sm text-gray-500">
+                  <div className="min-h-0 flex-1 rounded-2xl border border-dashed border-brand-200 bg-white/70 p-6 text-sm text-gray-500">
                     No chat yet. Ask the tenant brain a question to start the conversation.
                   </div>
                 )}

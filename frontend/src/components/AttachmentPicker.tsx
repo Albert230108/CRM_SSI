@@ -200,7 +200,7 @@ export default function AttachmentPicker({
         onDragLeave={() => setDragActive(false)}
         onDrop={handleDrop}
         className={`rounded-lg border border-dashed px-3 py-2 text-xs transition ${
-          dragActive ? 'border-cyan-500 bg-cyan-100' : 'border-slate-300 bg-white/60'
+          dragActive ? 'border-brand-500 bg-brand-100' : 'border-slate-300 bg-white/60'
         }`}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -272,7 +272,7 @@ export default function AttachmentPicker({
               </span>
               <span className="text-slate-400">{formatBytes(item.size)}</span>
               {!item.error && item.progress < 100 && (
-                <span className="text-cyan-600">{item.progress}%</span>
+                <span className="text-brand-600">{item.progress}%</span>
               )}
               {item.error && <span className="font-medium">{item.error}</span>}
               <button

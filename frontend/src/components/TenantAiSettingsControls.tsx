@@ -128,7 +128,7 @@ export default function TenantAiSettingsControls<T extends TenantTemplateSetting
                 [channel === 'email' ? 'default_email_template_id' : 'default_whatsapp_template_id']:
                   event.target.value ? Number(event.target.value) : null,
               })}
-              className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+              className="mt-1.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
             >
               <option value="">No default</option>
               {availableTemplates.map((template) => (

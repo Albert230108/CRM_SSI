@@ -204,7 +204,7 @@ export default function NotesBox({ tenantId, onReady, isActive = true, onActions
           type="button"
           onClick={handleSave}
           disabled={!tenantId || !isDirty || saving}
-          className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 transition hover:border-cyan-300 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? 'Saving...' : savedFlash ? 'Saved!' : 'Save'}
         </button>
@@ -224,7 +224,7 @@ export default function NotesBox({ tenantId, onReady, isActive = true, onActions
         onChange={(event) => setDraftNotes(event.target.value)}
         disabled={!tenantId}
         placeholder={tenantId ? 'Add notes for this tenant...' : ''}
-        className="min-h-0 flex-1 w-full resize-none rounded-xl border border-gray-200 bg-white p-2 text-sm text-gray-900 outline-none transition focus:border-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-50"
+        className="min-h-0 flex-1 w-full resize-none rounded-xl border border-gray-200 bg-white p-2 text-sm text-gray-900 outline-none transition focus:border-brand-300 disabled:cursor-not-allowed disabled:bg-gray-50"
       />
     </div>
   )

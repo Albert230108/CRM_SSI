@@ -216,8 +216,8 @@ export default function BrainSections() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-4">
-      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
+    <main className="mx-auto animate-slide-up max-w-6xl px-6 py-4">
+      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-brand-700 hover:underline">&larr; Back to Settings</Link>
       <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">AI Brain</h1>
       <p className="mt-1.5 text-sm text-gray-500">
         One shared knowledge tree. Reference a section from any AI reply template with its{' '}
@@ -243,7 +243,7 @@ export default function BrainSections() {
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Filter by path or title..."
-            className="mt-2.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+            className="mt-2.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
           />
 
           {loading ? (
@@ -350,7 +350,7 @@ export default function BrainSections() {
                   value={editor.title}
                   onChange={(event) => setEditor({ ...editor, title: event.target.value })}
                   placeholder="Cancellation policy"
-                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                 />
               </div>
 
@@ -364,7 +364,7 @@ export default function BrainSections() {
                   value={editor.slug}
                   onChange={(event) => setEditor({ ...editor, slug: event.target.value })}
                   placeholder="cancellation-policy"
-                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 outline-none focus:border-brand-500"
                 />
                 {creatingUnder === 'none' && selected ? (
                   <p className="mt-1 text-xs text-amber-600">
@@ -383,7 +383,7 @@ export default function BrainSections() {
                   rows={14}
                   value={editor.content}
                   onChange={(event) => setEditor({ ...editor, content: event.target.value })}
-                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                 />
                 <p className="mt-1 text-xs text-gray-500">
                   Tenant placeholders such as <code>{'{{first_name}}'}</code> work here, and so do nested{' '}
@@ -441,7 +441,7 @@ export default function BrainSections() {
                   type="button"
                   onClick={save}
                   disabled={saving}
-                  className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {saving ? 'Saving...' : 'Save'}
                 </button>

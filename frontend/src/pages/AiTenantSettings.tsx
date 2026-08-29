@@ -356,8 +356,8 @@ export default function AiTenantSettings() {
   const allMatchingSelected = tenants.length > 0 && tenants.every((tenant) => bulkTenantIds.has(tenant.id))
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-4">
-      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-cyan-700 hover:underline">&larr; Back to Settings</Link>
+    <main className="mx-auto animate-slide-up max-w-4xl px-6 py-4">
+      <Link to={getAiSettingsReturnHref(location.search, '/settings')} className="text-sm text-brand-700 hover:underline">&larr; Back to Settings</Link>
       <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">Tenant AI Settings</h1>
       <p className="mt-1.5 text-sm text-gray-500">
         Choose which shared AI templates are available for a tenant, set the default template per channel, and control
@@ -375,7 +375,7 @@ export default function AiTenantSettings() {
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="Search by tenant name..."
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-cyan-500"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
           />
           {searchQuery && (
             <button
@@ -437,7 +437,7 @@ export default function AiTenantSettings() {
                     <button
                       type="button"
                       onClick={() => selectTenant(tenant)}
-                      className={`rounded-lg border px-3 py-1 text-xs font-semibold ${selectedTenant?.id === tenant.id ? 'border-cyan-400 bg-cyan-50 text-cyan-700' : 'border-gray-300 text-gray-700'}`}
+                      className={`rounded-lg border px-3 py-1 text-xs font-semibold ${selectedTenant?.id === tenant.id ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-300 text-gray-700'}`}
                     >
                       {selectedTenant?.id === tenant.id ? 'Selected' : 'Configure'}
                     </button>
@@ -486,7 +486,7 @@ export default function AiTenantSettings() {
             <button
               type="button"
               onClick={() => setBulkTenantIds(new Set(tenants.map((tenant) => tenant.id)))}
-              className="font-semibold text-cyan-700 hover:underline"
+              className="font-semibold text-brand-700 hover:underline"
             >
               Select all {tenants.length} tenants matching this search
             </button>
@@ -498,7 +498,7 @@ export default function AiTenantSettings() {
             <button
               type="button"
               onClick={() => setBulkTenantIds(new Set())}
-              className="font-semibold text-cyan-700 hover:underline"
+              className="font-semibold text-brand-700 hover:underline"
             >
               Clear all
             </button>
@@ -532,7 +532,7 @@ export default function AiTenantSettings() {
             <select
               value={bulkAction}
               onChange={(event) => setBulkAction(event.target.value as 'add' | 'remove')}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
             >
               <option value="add">Add to selected tenants</option>
               <option value="remove">Remove from selected tenants</option>
@@ -541,7 +541,7 @@ export default function AiTenantSettings() {
               type="button"
               onClick={runBulkAction}
               disabled={bulkSaving || !bulkTenantIds.size || !bulkTemplateIds.size}
-              className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
             >
               {bulkSaving ? 'Working...' : 'Apply'}
             </button>
@@ -556,7 +556,7 @@ export default function AiTenantSettings() {
               <select
                 value={bulkPlannerMode}
                 onChange={(event) => setBulkPlannerMode(event.target.value as TenantAiSettings['planner_mode'])}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
               >
                 <option value="off">Off</option>
                 <option value="manual">Manual</option>
@@ -567,7 +567,7 @@ export default function AiTenantSettings() {
                 type="button"
                 onClick={runBulkPlannerModeAction}
                 disabled={bulkPlannerModeSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
               >
                 {bulkPlannerModeSaving ? 'Working...' : 'Apply'}
               </button>
@@ -582,7 +582,7 @@ export default function AiTenantSettings() {
                 type="button"
                 onClick={() => runBulkBrainWriterAction(true)}
                 disabled={bulkBrainWriterSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
               >
                 Activate
               </button>
@@ -605,7 +605,7 @@ export default function AiTenantSettings() {
                 type="button"
                 onClick={() => runBulkActionWriterAction(true)}
                 disabled={bulkActionWriterSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
               >
                 Activate
               </button>
@@ -627,7 +627,7 @@ export default function AiTenantSettings() {
                 type="button"
                 onClick={() => runBulkFormatterAction(true)}
                 disabled={bulkFormatterSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
               >
                 Activate
               </button>
@@ -665,7 +665,7 @@ export default function AiTenantSettings() {
                 <p className="mt-1 text-xs text-gray-600">
                   When on, an AI planner reads the conversation and picks the template itself, then a checker
                   proof-reads the draft. Configure the profiles on the{' '}
-                  <Link to="/settings/ai-agents" className="text-cyan-700 hover:underline">profiles page</Link>.
+                  <Link to="/settings/ai-agents" className="text-brand-700 hover:underline">profiles page</Link>.
                 </p>
                 <div className="mt-2 grid gap-3 sm:grid-cols-3">
                   <div>
@@ -676,7 +676,7 @@ export default function AiTenantSettings() {
                       id="planner-mode"
                       value={settings.planner_mode}
                       onChange={(event) => setPlannerMode(event.target.value as TenantAiSettings['planner_mode'])}
-                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                     >
                       <option value="off">Off — pick templates by hand</option>
                       <option value="manual">Manual — a "Run planner" button in the reply box</option>
@@ -697,7 +697,7 @@ export default function AiTenantSettings() {
                           current ? { ...current, planner_profile_id: event.target.value ? Number(event.target.value) : null } : current,
                         )
                       }
-                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:bg-gray-100"
                     >
                       <option value="">Use the default</option>
                       {agentProfiles.filter((profile) => profile.role === 'planner').map((profile) => (
@@ -718,7 +718,7 @@ export default function AiTenantSettings() {
                           current ? { ...current, checker_profile_id: event.target.value ? Number(event.target.value) : null } : current,
                         )
                       }
-                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:bg-gray-100"
                     >
                       <option value="">Use the default</option>
                       {agentProfiles.filter((profile) => profile.role === 'checker').map((profile) => (
@@ -735,7 +735,7 @@ export default function AiTenantSettings() {
                   Writes the reply itself. Used whenever a draft is generated for this tenant - the "Draft with
                   AI" button, an auto-draft, or the planner loop above - regardless of the Planner &amp; Checker
                   mode. Configure it on the{' '}
-                  <Link to="/settings/ai-agents" className="text-cyan-700 hover:underline">profiles page</Link>.
+                  <Link to="/settings/ai-agents" className="text-brand-700 hover:underline">profiles page</Link>.
                 </p>
                 <div className="mt-2 max-w-xs">
                   <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="drafter-profile">
@@ -749,7 +749,7 @@ export default function AiTenantSettings() {
                         current ? { ...current, drafter_profile_id: event.target.value ? Number(event.target.value) : null } : current,
                       )
                     }
-                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500"
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'drafter').map((profile) => (
@@ -789,7 +789,7 @@ export default function AiTenantSettings() {
                         current ? { ...current, brain_writer_profile_id: event.target.value ? Number(event.target.value) : null } : current,
                       )
                     }
-                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:bg-gray-100"
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'brain_writer').map((profile) => (
@@ -831,7 +831,7 @@ export default function AiTenantSettings() {
                         current ? { ...current, action_writer_profile_id: event.target.value ? Number(event.target.value) : null } : current,
                       )
                     }
-                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:bg-gray-100"
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'action_writer').map((profile) => (
@@ -871,7 +871,7 @@ export default function AiTenantSettings() {
                         current ? { ...current, formatter_profile_id: event.target.value ? Number(event.target.value) : null } : current,
                       )
                     }
-                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-cyan-500 disabled:bg-gray-100"
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500 disabled:bg-gray-100"
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'formatter').map((profile) => (
@@ -886,7 +886,7 @@ export default function AiTenantSettings() {
                   type="button"
                   onClick={saveSettings}
                   disabled={saving}
-                  className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:bg-gray-300"
+                  className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
                 >
                   {saving ? 'Saving...' : 'Save'}
                 </button>

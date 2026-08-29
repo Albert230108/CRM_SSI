@@ -485,7 +485,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                   href={`https://beds24.com/control2.php?ajax=bookedit&id=${encodeURIComponent(tenant.booking_id)}&tab=1`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-xs font-medium text-cyan-700 hover:bg-cyan-50"
+                  className="rounded-lg border border-brand-200 bg-white px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50"
                 >
                   Open in Beds24
                 </a>
@@ -540,7 +540,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
               <span className="text-emerald-600">Payments {totals.payments.toFixed(2)}</span>
               <span className="text-rose-500">Charges {Math.abs(totals.charges).toFixed(2)}</span>
             </div>
-            <p className="text-sm font-semibold text-cyan-700">Balance {totals.total.toFixed(2)}</p>
+            <p className="text-sm font-semibold text-brand-700">Balance {totals.total.toFixed(2)}</p>
           </div>
 
           <div className="mt-2 overflow-hidden rounded-xl border border-gray-200">

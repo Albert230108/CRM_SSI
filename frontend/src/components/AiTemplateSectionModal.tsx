@@ -79,9 +79,9 @@ export function AiTemplateSectionModal({
         if (event.key === 'Enter' && (event.target as HTMLElement).tagName === 'INPUT') event.preventDefault()
       }}
     >
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col gap-3 overflow-y-auto rounded-2xl bg-white p-4 shadow-xl">
+      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col gap-3 overflow-y-auto animate-scale-in rounded-2xl bg-white p-4 shadow-xl">
         <div className="flex items-center gap-2">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-800">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-800">
             {orderIndex + 1}
           </span>
           <input
@@ -89,7 +89,7 @@ export function AiTemplateSectionModal({
             value={section.label}
             onChange={(event) => onChange(id, 'label', event.target.value)}
             placeholder="Label, e.g. Persona"
-            className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500"
+            className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-500"
           />
           <InsertTokenMenu
             groups={sectionTokenGroups(brainSections)}
@@ -103,7 +103,7 @@ export function AiTemplateSectionModal({
           onChange={(event) => onChange(id, 'content', event.target.value)}
           placeholder={contentPlaceholderHint}
           rows={18}
-          className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm leading-relaxed text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500"
+          className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm leading-relaxed text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-500"
         />
 
         <div className="flex flex-wrap items-center gap-2">
@@ -160,7 +160,7 @@ export function AiTemplateSectionModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg bg-cyan-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700"
+              className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
             >
               Done
             </button>
@@ -196,7 +196,7 @@ export function AiTemplateNoteModal({ note, onChange, onRemove, onClose }: NoteM
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div className="flex w-full max-w-lg flex-col gap-3 rounded-2xl bg-white p-4 shadow-xl">
+      <div className="flex w-full max-w-lg flex-col gap-3 animate-scale-in rounded-2xl bg-white p-4 shadow-xl">
         <div className="flex items-center justify-between">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Post-it note</p>
           <div className="flex items-center gap-1.5">
@@ -222,7 +222,7 @@ export function AiTemplateNoteModal({ note, onChange, onRemove, onClose }: NoteM
           onChange={(event) => onChange(note.id, 'text', event.target.value)}
           placeholder="Organizational note (never sent to the AI)"
           rows={8}
-          className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-cyan-500"
+          className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-500"
           style={{ backgroundColor: note.color ?? NOTE_COLORS[0] }}
         />
 
@@ -237,7 +237,7 @@ export function AiTemplateNoteModal({ note, onChange, onRemove, onClose }: NoteM
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto rounded-lg bg-cyan-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700"
+            className="ml-auto rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
           >
             Done
           </button>
