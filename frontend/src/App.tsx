@@ -30,6 +30,8 @@ const PasswordReset = lazy(() => import('./pages/PasswordReset'))
 import { installInactivityLogout } from './lib/inactivityLogout'
 import { installRefreshDiagnostics } from './lib/refreshDiagnostics'
 import { useAuthStore } from './store/authStore'
+import { useSoundEnabledPreference } from './lib/displayPreferences'
+import { setSoundsEnabled } from './lib/soundEffects'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -38,6 +40,13 @@ export default function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
   const setUser = useAuthStore((state) => state.setUser)
   const logout = useAuthStore((state) => state.logout)
+  const [soundEnabled] = useSoundEnabledPreference()
+
+  // Mirror the per-user sound preference into the sound module so playSound can be
+  // called from anywhere (including non-React call sites) without threading the flag.
+  useEffect(() => {
+    setSoundsEnabled(soundEnabled)
+  }, [soundEnabled])
 
   useEffect(() => {
     if (!token) return

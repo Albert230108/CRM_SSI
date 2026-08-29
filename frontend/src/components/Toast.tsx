@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import * as anime from 'animejs'
 import type { ToastState } from '../lib/useToast'
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
+import { playSound } from '../lib/soundEffects'
 
 export type ToastTone = 'success' | 'error' | 'info'
 
@@ -42,6 +43,14 @@ export function ToastCard({
   const classes = TONE_CLASSES[tone]
   const prefersReducedMotion = usePrefersReducedMotion()
   const cardRef = useRef<HTMLDivElement | null>(null)
+
+  // Audio feedback fires once per toast, keyed on toastKey. Gated only by the sound
+  // preference (handled inside playSound), independent of the reduce-motion guard —
+  // sound is not motion. The tone values already map onto SoundKind.
+  useLayoutEffect(() => {
+    playSound(tone)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toastKey])
 
   useLayoutEffect(() => {
     if (prefersReducedMotion || !cardRef.current) return

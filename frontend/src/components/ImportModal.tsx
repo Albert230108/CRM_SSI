@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { playSound } from '../lib/soundEffects'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -170,9 +171,11 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
       setBookings((current) => current.map((item) => (item.booking_id === bookingId ? { ...item, imported: true } : item)))
       setConfirmBooking(null)
       setEditFields({})
+      playSound('complete')
       onImported?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Import failed')
+      playSound('error')
     } finally {
       setImportingId(null)
     }
@@ -257,6 +260,9 @@ export default function ImportModal({ open, onClose, onImported }: ImportModalPr
 
     if (errors.length > 0) {
       setError(`Imported ${successCount}/${toImport.length}. Errors: ${errors.join(' | ')}`)
+      playSound('error')
+    } else {
+      playSound('complete')
     }
     onImported?.()
   }

@@ -145,3 +145,46 @@ export function useSearchAllTenantsPreference(): [boolean, (value: boolean) => v
 
   return [searchAllTenants, update]
 }
+
+const SOUND_EFFECTS_PREFIX = 'crm_ssi.sound-effects.'
+
+function soundEnabledKeyFor(userKey: string): string {
+  return `${SOUND_EFFECTS_PREFIX}${userKey}`
+}
+
+export function loadSoundEnabledPreference(userKey: string): boolean {
+  try {
+    return window.localStorage.getItem(soundEnabledKeyFor(userKey)) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function saveSoundEnabledPreference(userKey: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(soundEnabledKeyFor(userKey), value ? 'true' : 'false')
+  } catch {
+    // Storage may be unavailable (private browsing, quota exceeded, etc). Keep using the in-memory value.
+  }
+}
+
+/** Per-user "play sound effects" toggle, backed by localStorage. Falls back to off when no user is signed in. */
+export function useSoundEnabledPreference(): [boolean, (value: boolean) => void] {
+  const user = useAuthStore((state) => state.user)
+  const userKey = getUserPreferenceKey(user)
+  const [soundEnabled, setSoundEnabled] = useState(false)
+
+  useEffect(() => {
+    setSoundEnabled(userKey ? loadSoundEnabledPreference(userKey) : false)
+  }, [userKey])
+
+  const update = useCallback(
+    (value: boolean) => {
+      setSoundEnabled(value)
+      if (userKey) saveSoundEnabledPreference(userKey, value)
+    },
+    [userKey],
+  )
+
+  return [soundEnabled, update]
+}

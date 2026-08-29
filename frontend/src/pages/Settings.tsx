@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { clearDirectoryHandleForUser, getDirectoryHandleForUser, setDirectoryHandleForUser } from '../lib/fileHandleStore'
-import { useLocalFolderRootPath, useRelativeTimestampsFirstPreference } from '../lib/displayPreferences'
+import { useLocalFolderRootPath, useRelativeTimestampsFirstPreference, useSoundEnabledPreference } from '../lib/displayPreferences'
+import { playSound, setSoundsEnabled } from '../lib/soundEffects'
 import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -54,6 +55,7 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState('display')
 
   const [relativeTimestampsFirst, setRelativeTimestampsFirst] = useRelativeTimestampsFirstPreference()
+  const [soundEnabled, setSoundEnabled] = useSoundEnabledPreference()
   const [localFolderRootPath, setLocalFolderRootPath] = useLocalFolderRootPath()
   const [savedHandle, setSavedHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [stagedHandle, setStagedHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -502,6 +504,24 @@ export default function Settings() {
                 className="h-4 w-4 rounded border-gray-300"
               />
               Show relative time first (e.g. "4h ago (Mon 06 June 2026, 14:32)") instead of date and time first
+            </label>
+
+            <label className="mt-3 flex items-center gap-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={soundEnabled}
+                onChange={(event) => {
+                  const next = event.target.checked
+                  setSoundEnabled(next)
+                  // Sync the module flag synchronously (App's effect only runs on the next
+                  // render) so the confirmation ding plays immediately on this gesture,
+                  // which also unlocks the browser's audio for later sounds.
+                  setSoundsEnabled(next)
+                  if (next) playSound('success')
+                }}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              Play sound effects for actions, imports, and new messages
             </label>
           </section>
         ) : null}
