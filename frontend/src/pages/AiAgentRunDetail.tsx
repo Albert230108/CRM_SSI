@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -131,7 +132,11 @@ export default function AiAgentRunDetail() {
         Planning rationale, checker feedback, the final draft, and every step in sequence.
       </p>
 
-      {status === 'loading' ? <p className="mt-4 text-sm text-gray-500">Loading...</p> : null}
+      {status === 'loading' ? (
+        <div className="mt-4 flex items-center gap-2 text-sm text-gray-500">
+          <InlineSpinner size="sm" /> Loading…
+        </div>
+      ) : null}
       {status === 'error' ? <p className="mt-4 text-sm text-rose-600">{error}</p> : null}
 
       {status === 'ready' && run ? (

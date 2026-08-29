@@ -2,6 +2,10 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import AiTemplateSectionCanvas from '../components/AiTemplateSectionCanvas'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import Textarea from '../components/ui/Textarea'
+import InlineSpinner from '../components/InlineSpinner'
 import { InsertTokenMenu, insertAtCaret, type InsertTokenGroup, type InsertTokenItem } from '../lib/insertToken'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import {
@@ -270,7 +274,7 @@ export default function AiTemplateEditor() {
   if (loading) {
     return (
       <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
-        <p className="text-sm text-gray-500">Loading...</p>
+        <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p>
       </main>
     )
   }
@@ -303,23 +307,22 @@ export default function AiTemplateEditor() {
       </p>
 
       <form onSubmit={save} className="mt-3 space-y-3 rounded-2xl border border-gray-200 bg-white p-3.5">
-        <input
+        <Input
           type="text"
           value={form.name}
           onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
           placeholder="Template name"
           required
-          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
         />
 
         <div className="space-y-1.5">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">When to use this template</p>
-          <textarea
+          <Textarea
             value={form.description}
             onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
             placeholder="e.g. Use when a guest asks to arrive outside normal check-in hours."
             rows={2}
-            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
+            className="resize-y"
           />
           <p className="text-xs text-gray-500">
             Read by the planner when it picks a template. It is never sent to the drafting model, so describe the
@@ -339,13 +342,13 @@ export default function AiTemplateEditor() {
               }
             />
           </div>
-          <textarea
+          <Textarea
             ref={guidelinesRef}
             value={form.guidelines}
             onChange={(event) => setForm((current) => ({ ...current, guidelines: event.target.value }))}
             placeholder="Describe this template's goal, e.g. Used for late check-in requests; keep replies under 3 sentences."
             rows={2}
-            className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
+            className="resize-y"
           />
           <p className="text-xs text-gray-500">
             Supports placeholders: { [...EMAIL_TEMPLATE_PLACEHOLDERS, ...DATETIME_PLACEHOLDERS].map((token) => `{{${token}}}`).join(', ') }
@@ -461,9 +464,9 @@ export default function AiTemplateEditor() {
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">4. Your typed reply (sent automatically when you use "Draft with AI")</p>
 
         <div className="flex items-center gap-2">
-          <button type="submit" disabled={saving} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300">
-            {saving ? 'Saving...' : form.id !== null ? 'Save changes' : 'Create template'}
-          </button>
+          <Button type="submit" loading={saving}>
+            {saving ? 'Saving…' : form.id !== null ? 'Save changes' : 'Create template'}
+          </Button>
           {isDirty ? (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Unsaved changes</span>
           ) : null}
@@ -475,41 +478,30 @@ export default function AiTemplateEditor() {
         <div
           role="alertdialog"
           aria-label="Unsaved template changes"
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-white/60 p-4 backdrop-blur-md"
+          className="fixed inset-0 z-[100] flex animate-backdrop-in items-center justify-center bg-white/60 p-4 backdrop-blur-md"
         >
-          <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-xl">
+          <div className="flex w-full max-w-sm animate-scale-in flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-xl">
             <p className="text-lg font-semibold text-gray-800">Unsaved changes</p>
             <p className="text-sm text-gray-500">
               This template has changes that have not been saved, including the canvas layout.
             </p>
             <div className="flex w-full flex-col gap-2">
-              <button
-                type="button"
-                disabled={saving}
+              <Button
+                loading={saving}
+                className="w-full"
                 onClick={async () => {
                   if (await saveTemplate()) leave()
                   else setLeavePrompt(false)
                 }}
-                className="w-full rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? 'Saving...' : 'Save & Leave'}
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={leave}
-                className="w-full rounded-xl border border-rose-200 bg-white px-4 py-2.5 font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
+                {saving ? 'Saving…' : 'Save & Leave'}
+              </Button>
+              <Button variant="dangerSoft" disabled={saving} className="w-full" onClick={leave}>
                 Discard &amp; Leave
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => setLeavePrompt(false)}
-                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
+              </Button>
+              <Button variant="secondary" disabled={saving} className="w-full" onClick={() => setLeavePrompt(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         </div>

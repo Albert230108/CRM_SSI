@@ -4,6 +4,8 @@ import { withAiSettingsReturn } from '../lib/aiSettingsNavigation'
 import { useAuthStore } from '../store/authStore'
 import type { AiReplyTemplate } from '../types/aiReplyTemplate'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import Button from '../components/ui/Button'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -65,13 +67,9 @@ export default function AiTemplatesOverview() {
           <div>
             <p className="text-sm text-gray-600">Shared reply templates for Draft with AI and the planner.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => openEditor('new')}
-            className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
-          >
+          <Button onClick={() => openEditor('new')} className="shrink-0">
             + New template
-          </button>
+          </Button>
         </div>
 
         {message ? <p className="mt-3 text-sm text-rose-600">{message}</p> : null}
@@ -110,12 +108,12 @@ export default function AiTemplatesOverview() {
                   </td>
                   <td className="px-3.5 py-2.5 text-right">
                     <div className="flex justify-end gap-2">
-                      <button type="button" onClick={() => openEditor(template.id)} className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+                      <Button variant="secondary" size="sm" onClick={() => openEditor(template.id)}>
                         Edit
-                      </button>
-                      <button type="button" onClick={() => deleteTemplate(template.id)} className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50">
+                      </Button>
+                      <Button variant="dangerSoft" size="sm" onClick={() => deleteTemplate(template.id)}>
                         Delete
-                      </button>
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -123,7 +121,7 @@ export default function AiTemplatesOverview() {
             </tbody>
           </table>
         {!loading && !templates.length ? <p className="p-4 text-sm text-gray-500">No AI templates yet.</p> : null}
-        {loading ? <p className="p-4 text-sm text-gray-500">Loading...</p> : null}
+        {loading ? <p className="flex items-center gap-2 p-4 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p> : null}
         </div>
       </section>
     </main>

@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import AiChatComposer from '../components/AiChatComposer'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -165,7 +166,7 @@ export default function RedoQaChat() {
               <p className="mt-1 text-sm text-gray-500">What changed, why it changed, the agent instructions, and the full untruncated run log.</p>
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
-              {status === 'loading' ? <p className="text-sm text-gray-500">Loading redo context...</p> : null}
+              {status === 'loading' ? <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading redo context…</p> : null}
               {status === 'error' ? <p className="text-sm text-rose-600">{error}</p> : null}
               {status === 'ready' && context ? (
                 <div className="space-y-3">

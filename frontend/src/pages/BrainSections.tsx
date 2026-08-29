@@ -3,6 +3,10 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import Textarea from '../components/ui/Textarea'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -229,25 +233,21 @@ export default function BrainSections() {
         <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Sections</h2>
-            <button
-              type="button"
-              onClick={() => startCreate(null)}
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
-            >
+            <Button variant="ai" size="sm" onClick={() => startCreate(null)}>
               + Top level
-            </button>
+            </Button>
           </div>
 
-          <input
+          <Input
             type="text"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Filter by path or title..."
-            className="mt-2.5 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
+            wrapperClassName="mt-2.5"
           />
 
           {loading ? (
-            <p className="mt-3 text-sm text-gray-500">Loading...</p>
+            <p className="mt-3 flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p>
           ) : visibleRows.length === 0 ? (
             <p className="mt-3 text-sm text-gray-500">
               {rows.length === 0 ? 'No sections yet. Create a top-level section to start.' : 'Nothing matches.'}
@@ -342,29 +342,24 @@ export default function BrainSections() {
                   : `Editing ${selected?.path ?? ''}`}
               </h2>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700" htmlFor="brain-title">Title</label>
-                <input
-                  id="brain-title"
-                  type="text"
-                  value={editor.title}
-                  onChange={(event) => setEditor({ ...editor, title: event.target.value })}
-                  placeholder="Cancellation policy"
-                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
-                />
-              </div>
+              <Input
+                id="brain-title"
+                label="Title"
+                type="text"
+                value={editor.title}
+                onChange={(event) => setEditor({ ...editor, title: event.target.value })}
+                placeholder="Cancellation policy"
+              />
 
               <div>
-                <label className="block text-sm font-medium text-gray-700" htmlFor="brain-slug">
-                  Slug <span className="font-normal text-gray-500">— part of the token path; leave blank to derive it from the title</span>
-                </label>
-                <input
+                <Input
                   id="brain-slug"
+                  label={<>Slug <span className="font-normal text-gray-500">— part of the token path; leave blank to derive it from the title</span></>}
                   type="text"
                   value={editor.slug}
                   onChange={(event) => setEditor({ ...editor, slug: event.target.value })}
                   placeholder="cancellation-policy"
-                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 outline-none focus:border-brand-500"
+                  className="font-mono"
                 />
                 {creatingUnder === 'none' && selected ? (
                   <p className="mt-1 text-xs text-amber-600">
@@ -375,15 +370,12 @@ export default function BrainSections() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700" htmlFor="brain-content">
-                  Content <span className="font-normal text-gray-500">— leave blank for a pure container</span>
-                </label>
-                <textarea
+                <Textarea
                   id="brain-content"
+                  label={<>Content <span className="font-normal text-gray-500">— leave blank for a pure container</span></>}
                   rows={14}
                   value={editor.content}
                   onChange={(event) => setEditor({ ...editor, content: event.target.value })}
-                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
                 />
                 <p className="mt-1 text-xs text-gray-500">
                   Tenant placeholders such as <code>{'{{first_name}}'}</code> work here, and so do nested{' '}
@@ -416,13 +408,9 @@ export default function BrainSections() {
                     aria-label="Custom color"
                   />
                   {editor.color ? (
-                    <button
-                      type="button"
-                      onClick={() => setEditor({ ...editor, color: '' })}
-                      className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                    >
+                    <Button variant="secondary" size="sm" onClick={() => setEditor({ ...editor, color: '' })}>
                       Clear
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               </div>
@@ -437,22 +425,13 @@ export default function BrainSections() {
               </label>
 
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={save}
-                  disabled={saving}
-                  className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {saving ? 'Saving...' : 'Save'}
-                </button>
+                <Button onClick={save} loading={saving}>
+                  {saving ? 'Saving…' : 'Save'}
+                </Button>
                 {creatingUnder !== 'none' ? (
-                  <button
-                    type="button"
-                    onClick={() => setCreatingUnder('none')}
-                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                  >
+                  <Button variant="secondary" onClick={() => setCreatingUnder('none')}>
                     Cancel
-                  </button>
+                  </Button>
                 ) : null}
                 {message ? <p className="text-sm text-gray-600">{message}</p> : null}
               </div>

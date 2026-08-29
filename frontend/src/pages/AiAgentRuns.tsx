@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import Button from '../components/ui/Button'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const PAGE_SIZE = 25
@@ -235,7 +237,7 @@ export default function AiAgentRuns() {
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-brand-100 bg-white/80">
           {statsLoading ? (
-            <p className="p-4 text-sm text-gray-500">Loading AI usage stats...</p>
+            <p className="flex items-center gap-2 p-4 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading AI usage stats…</p>
           ) : (stats?.by_model.length ?? 0) === 0 ? (
             <p className="p-4 text-sm text-gray-500">No AI steps with token usage have been recorded yet.</p>
           ) : (
@@ -281,40 +283,39 @@ export default function AiAgentRuns() {
             {total ? `Showing ${showingStart}-${showingEnd} of ${total}` : '0 runs'}
           </p>
           <div className="flex gap-2">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))}
               disabled={!canGoBack || loading}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Previous
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setOffset((current) => current + PAGE_SIZE)}
               disabled={!canGoForward || loading}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Next
-            </button>
+            </Button>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {STATUS_FILTERS.map((value) => (
-            <button
+            <Button
               key={value || 'all'}
-              type="button"
+              variant={statusFilter === value ? 'ai' : 'secondary'}
+              size="sm"
               onClick={() => setStatusFilter(value)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold capitalize ${
-                statusFilter === value ? 'bg-indigo-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-              }`}
+              className="capitalize"
             >
               {value ? value.replace('_', ' ') : 'all'}
-            </button>
+            </Button>
           ))}
         </div>
         {loading ? (
-          <p className="py-3 text-sm text-gray-500">Loading...</p>
+          <p className="flex items-center gap-2 py-3 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p>
         ) : runs.length === 0 ? (
           <p className="py-3 text-sm text-gray-500">No runs recorded yet.</p>
         ) : (
@@ -358,13 +359,9 @@ export default function AiAgentRuns() {
                       {run.pricing_missing ? '—' : formatCost(run.total_cost)}
                     </td>
                     <td className="py-1.5">
-                      <button
-                        type="button"
-                        onClick={() => window.open(`/ai-runs/${run.id}`, '_blank')}
-                        className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700"
-                      >
+                      <Button variant="secondary" size="sm" onClick={() => window.open(`/ai-runs/${run.id}`, '_blank')}>
                         Inspect
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}

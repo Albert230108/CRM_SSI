@@ -1,7 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import InlineSpinner from '../InlineSpinner'
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dangerSoft' | 'brandSoft' | 'ai' | 'aiOutline'
 export type ButtonSize = 'sm' | 'md'
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -21,6 +21,11 @@ const VARIANTS: Record<ButtonVariant, string> = {
   secondary: 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
   ghost: 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
   danger: 'bg-rose-600 text-white hover:bg-rose-700',
+  dangerSoft: 'border border-rose-200 bg-white text-rose-600 hover:bg-rose-50',
+  brandSoft: 'border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100',
+  // The indigo "AI" accent used across the AI subsystem (drafts, agents, brain).
+  ai: 'bg-indigo-600 text-white hover:bg-indigo-700',
+  aiOutline: 'border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100',
 }
 
 const SIZES: Record<ButtonSize, string> = {

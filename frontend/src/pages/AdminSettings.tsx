@@ -5,6 +5,8 @@ import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SettingsSidebarLayout, { SettingsTab } from '../components/settings/SettingsSidebarLayout'
+import Button from '../components/ui/Button'
+import InlineSpinner from '../components/InlineSpinner'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -769,9 +771,8 @@ export default function AdminSettings() {
             <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-900">Users</h2>
-                <button
-                  type="button"
-                  className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700"
+                <Button
+                  size="sm"
                   onClick={() => {
                     setCreateUserError('')
                     setNewUser(emptyNewUser)
@@ -779,11 +780,11 @@ export default function AdminSettings() {
                   }}
                 >
                   Create user
-                </button>
+                </Button>
               </div>
               <div className="mt-3 overflow-x-auto">
                 {loading ? (
-                  <p className="py-3 text-sm text-gray-500">Loading users...</p>
+                  <p className="flex items-center gap-2 py-3 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading users…</p>
                 ) : (
                   <table className="min-w-full text-sm">
                     <thead className="text-left text-gray-500">
@@ -807,19 +808,19 @@ export default function AdminSettings() {
                             <td>{user.whatsapp_notifications_enabled ? 'On' : 'Off'}</td>
                             <td>{new Date(user.created_at).toLocaleString()}</td>
                             <td className="space-x-2 py-2">
-                              <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => toggleActive(user.id)} type="button">Toggle active</button>
-                              <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => toggleWhatsappNotifications(user.id)} type="button">Toggle WA alerts</button>
-                              <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => sendReset(user.id)} type="button">Send password reset</button>
-                              <button
-                                className="rounded-lg border border-rose-300 px-3 py-1 text-rose-700 hover:bg-rose-50"
+                              <Button variant="secondary" size="sm" onClick={() => toggleActive(user.id)}>Toggle active</Button>
+                              <Button variant="secondary" size="sm" onClick={() => toggleWhatsappNotifications(user.id)}>Toggle WA alerts</Button>
+                              <Button variant="secondary" size="sm" onClick={() => sendReset(user.id)}>Send password reset</Button>
+                              <Button
+                                variant="dangerSoft"
+                                size="sm"
                                 onClick={() => {
                                   setDeleteUserError('')
                                   setDeleteTarget(user)
                                 }}
-                                type="button"
                               >
                                 Delete
-                              </button>
+                              </Button>
                             </td>
                           </tr>
                         ))
@@ -840,27 +841,27 @@ export default function AdminSettings() {
                   <option value="non-admin">Non-admin</option>
                   <option value="admin">Admin</option>
                 </select>
-                <button className="rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white">Generate</button>
+                <Button type="submit">Generate</Button>
               </form>
             </section>
 
             <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-900">Invite management</h2>
-                <button
-                  type="button"
-                  className="rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50"
+                <Button
+                  variant="dangerSoft"
+                  size="sm"
                   onClick={() => {
                     setClearInvitesError('')
                     setShowClearInvitesModal(true)
                   }}
                 >
                   Clear pending invites
-                </button>
+                </Button>
               </div>
               <div className="mt-3 overflow-x-auto">
                 {loading ? (
-                  <p className="py-3 text-sm text-gray-500">Loading invites...</p>
+                  <p className="flex items-center gap-2 py-3 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading invites…</p>
                 ) : (
                   <table className="min-w-full text-sm">
                     <thead className="text-left text-gray-500">
@@ -878,9 +879,9 @@ export default function AdminSettings() {
                           <td>{invite.status}</td>
                           <td>{new Date(invite.expires_at).toLocaleString()}</td>
                           <td className="space-x-2 py-2">
-                            <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => copyInvite(invite)} type="button" disabled={!invite.invite_url}>Copy link</button>
-                            <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => revokeInvite(invite.id)} type="button" disabled={invite.status === 'revoked' || invite.status === 'completed'}>Revoke</button>
-                            <button className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => regenerateInvite(invite.id)} type="button" disabled={invite.status === 'completed'}>Regenerate</button>
+                            <Button variant="secondary" size="sm" onClick={() => copyInvite(invite)} disabled={!invite.invite_url}>Copy link</Button>
+                            <Button variant="secondary" size="sm" onClick={() => revokeInvite(invite.id)} disabled={invite.status === 'revoked' || invite.status === 'completed'}>Revoke</Button>
+                            <Button variant="secondary" size="sm" onClick={() => regenerateInvite(invite.id)} disabled={invite.status === 'completed'}>Regenerate</Button>
                           </td>
                         </tr>
                       ))}
@@ -912,13 +913,9 @@ export default function AdminSettings() {
                   placeholder="ai-drafts@example.com"
                   className="flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
                 />
-                <button
-                  type="submit"
-                  disabled={savingForwardToEmail}
-                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {savingForwardToEmail ? 'Saving...' : 'Save'}
-                </button>
+                <Button type="submit" className="shrink-0" loading={savingForwardToEmail}>
+                  {savingForwardToEmail ? 'Saving…' : 'Save'}
+                </Button>
               </form>
             </section>
 
@@ -956,13 +953,9 @@ export default function AdminSettings() {
                     className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={savingAiDraftTiming}
-                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {savingAiDraftTiming ? 'Saving...' : 'Save'}
-                </button>
+                <Button type="submit" className="shrink-0" loading={savingAiDraftTiming}>
+                  {savingAiDraftTiming ? 'Saving…' : 'Save'}
+                </Button>
               </form>
 
               <div className="mt-3 border-t border-gray-200 pt-3 space-y-3">
@@ -1078,17 +1071,13 @@ export default function AdminSettings() {
                     className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={savingModelPricing || !modelPricingModel.trim()}
-                  className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {savingModelPricing ? 'Saving...' : editingPricingId !== null ? 'Update pricing' : 'Add pricing'}
-                </button>
+                <Button type="submit" loading={savingModelPricing} disabled={!modelPricingModel.trim()}>
+                  {savingModelPricing ? 'Saving…' : editingPricingId !== null ? 'Update pricing' : 'Add pricing'}
+                </Button>
               </form>
               <div className="mt-4 overflow-x-auto rounded-2xl border border-brand-100 bg-white">
                 {modelPricingLoading ? (
-                  <p className="p-4 text-sm text-gray-500">Loading model pricing...</p>
+                  <p className="flex items-center gap-2 p-4 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading model pricing…</p>
                 ) : modelPricingRows.length === 0 ? (
                   <p className="p-4 text-sm text-gray-500">No model pricing rows yet.</p>
                 ) : (
@@ -1106,17 +1095,17 @@ export default function AdminSettings() {
                           <td className="px-4 py-3 text-gray-600">${row.output_cost_per_million_tokens.toFixed(4)}</td>
                           <td className="px-4 py-3 text-gray-600">{new Date(row.updated_at).toLocaleString()}</td>
                           <td className="space-x-2 px-4 py-3">
-                            <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => editModelPricing(row)}>
+                            <Button variant="secondary" size="sm" onClick={() => editModelPricing(row)}>
                               Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-lg border border-rose-300 px-3 py-1 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                              disabled={deletingPricingId === row.id}
+                            </Button>
+                            <Button
+                              variant="dangerSoft"
+                              size="sm"
+                              loading={deletingPricingId === row.id}
                               onClick={() => void deleteModelPricing(row)}
                             >
-                              {deletingPricingId === row.id ? 'Deleting...' : 'Delete'}
-                            </button>
+                              {deletingPricingId === row.id ? 'Deleting…' : 'Delete'}
+                            </Button>
                           </td>
                         </tr>
                       ))}
@@ -1165,13 +1154,9 @@ export default function AdminSettings() {
                     className="mt-1.5 w-32 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={savingNotificationWhatsappDebounce}
-                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {savingNotificationWhatsappDebounce ? 'Saving...' : 'Save'}
-                </button>
+                <Button type="submit" className="shrink-0" loading={savingNotificationWhatsappDebounce}>
+                  {savingNotificationWhatsappDebounce ? 'Saving…' : 'Save'}
+                </Button>
               </form>
             </section>
 
@@ -1212,13 +1197,9 @@ export default function AdminSettings() {
                     className="mt-1.5 w-40 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-brand-500"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={savingPlannerDefaults}
-                  className="shrink-0 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {savingPlannerDefaults ? 'Saving...' : 'Save'}
-                </button>
+                <Button type="submit" className="shrink-0" loading={savingPlannerDefaults}>
+                  {savingPlannerDefaults ? 'Saving…' : 'Save'}
+                </Button>
               </form>
               <p className="mt-2 text-xs text-gray-500">
                 Existing tenants are never changed by this setting, so turning it on cannot start drafting for bookings
@@ -1244,7 +1225,7 @@ export default function AdminSettings() {
             </form>
             <div className="mt-3 overflow-x-auto">
               {loading ? (
-                <p className="py-3 text-sm text-gray-500">Loading webhook logs...</p>
+                <p className="flex items-center gap-2 py-3 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading webhook logs…</p>
               ) : (
                 <table className="min-w-full text-sm">
                   <thead className="text-left text-gray-500">
@@ -1327,21 +1308,16 @@ export default function AdminSettings() {
               (no Gmail API calls). Use this after a fix to email body extraction to repair messages that were synced
               with a blank or unformatted body.
             </p>
-            <button
-              type="button"
-              disabled={backfillingBodies}
-              onClick={backfillEmailBodies}
-              className="mt-3 rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-            >
-              {backfillingBodies ? 'Backfilling...' : 'Backfill email bodies'}
-            </button>
+            <Button className="mt-3" loading={backfillingBodies} onClick={backfillEmailBodies}>
+              {backfillingBodies ? 'Backfilling…' : 'Backfill email bodies'}
+            </Button>
           </section>
         ) : null}
       </SettingsSidebarLayout>
 
       {showCreateUserModal ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="fixed inset-0 z-50 flex animate-backdrop-in items-center justify-center bg-gray-900/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg animate-scale-in rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-4">
               <h2 className="text-xl font-semibold text-gray-900">Create user</h2>
               <button type="button" onClick={() => setShowCreateUserModal(false)} className="text-sm text-gray-500 hover:text-gray-900">Close</button>
@@ -1408,16 +1384,12 @@ export default function AdminSettings() {
               </div>
               {createUserError ? <p className="text-sm text-rose-600">{createUserError}</p> : null}
               <div className="mt-3 flex justify-end gap-3">
-                <button type="button" onClick={() => setShowCreateUserModal(false)} className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:text-gray-900">
+                <Button type="button" variant="ghost" onClick={() => setShowCreateUserModal(false)}>
                   Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingUser}
-                  className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {creatingUser ? 'Creating...' : 'Create user'}
-                </button>
+                </Button>
+                <Button type="submit" loading={creatingUser}>
+                  {creatingUser ? 'Creating…' : 'Create user'}
+                </Button>
               </div>
             </form>
           </div>

@@ -4,6 +4,9 @@ import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import TenantAiSettingsControls from '../components/TenantAiSettingsControls'
+import Button from '../components/ui/Button'
+import Select from '../components/ui/Select'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -459,23 +462,13 @@ export default function AiTenantSettings() {
               Showing {clampedPage * PAGE_SIZE + 1}-{Math.min((clampedPage + 1) * PAGE_SIZE, tenants.length)} of {tenants.length}
             </span>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.max(0, current - 1))}
-                disabled={clampedPage === 0}
-                className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 disabled:opacity-40"
-              >
+              <Button variant="secondary" size="sm" onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={clampedPage === 0}>
                 Previous
-              </button>
+              </Button>
               <span>Page {clampedPage + 1} of {pageCount}</span>
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
-                disabled={clampedPage >= pageCount - 1}
-                className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 disabled:opacity-40"
-              >
+              <Button variant="secondary" size="sm" onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))} disabled={clampedPage >= pageCount - 1}>
                 Next
-              </button>
+              </Button>
             </div>
           </div>
         ) : null}
@@ -529,22 +522,17 @@ export default function AiTenantSettings() {
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-3">
-            <select
+            <Select
               value={bulkAction}
               onChange={(event) => setBulkAction(event.target.value as 'add' | 'remove')}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
+              className="w-auto"
             >
               <option value="add">Add to selected tenants</option>
               <option value="remove">Remove from selected tenants</option>
-            </select>
-            <button
-              type="button"
-              onClick={runBulkAction}
-              disabled={bulkSaving || !bulkTenantIds.size || !bulkTemplateIds.size}
-              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-            >
-              {bulkSaving ? 'Working...' : 'Apply'}
-            </button>
+            </Select>
+            <Button onClick={runBulkAction} loading={bulkSaving} disabled={!bulkTenantIds.size || !bulkTemplateIds.size}>
+              {bulkSaving ? 'Working…' : 'Apply'}
+            </Button>
             {bulkMessage ? <p className="text-sm text-gray-600">{bulkMessage}</p> : null}
           </div>
         </div>
@@ -553,24 +541,19 @@ export default function AiTenantSettings() {
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk planner mode</p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <select
+              <Select
                 value={bulkPlannerMode}
                 onChange={(event) => setBulkPlannerMode(event.target.value as TenantAiSettings['planner_mode'])}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
+                className="w-auto"
               >
                 <option value="off">Off</option>
                 <option value="manual">Manual</option>
                 <option value="auto-draft">Auto-draft</option>
                 <option value="auto-send">Auto-send</option>
-              </select>
-              <button
-                type="button"
-                onClick={runBulkPlannerModeAction}
-                disabled={bulkPlannerModeSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-              >
-                {bulkPlannerModeSaving ? 'Working...' : 'Apply'}
-              </button>
+              </Select>
+              <Button onClick={runBulkPlannerModeAction} loading={bulkPlannerModeSaving} disabled={!bulkTenantIds.size}>
+                {bulkPlannerModeSaving ? 'Working…' : 'Apply'}
+              </Button>
               {bulkPlannerModeMessage ? <p className="text-sm text-gray-600">{bulkPlannerModeMessage}</p> : null}
             </div>
           </div>
@@ -578,22 +561,12 @@ export default function AiTenantSettings() {
           <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk brain writer</p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => runBulkBrainWriterAction(true)}
-                disabled={bulkBrainWriterSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-              >
+              <Button onClick={() => runBulkBrainWriterAction(true)} disabled={bulkBrainWriterSaving || !bulkTenantIds.size}>
                 Activate
-              </button>
-              <button
-                type="button"
-                onClick={() => runBulkBrainWriterAction(false)}
-                disabled={bulkBrainWriterSaving || !bulkTenantIds.size}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
-              >
+              </Button>
+              <Button variant="secondary" onClick={() => runBulkBrainWriterAction(false)} disabled={bulkBrainWriterSaving || !bulkTenantIds.size}>
                 Deactivate
-              </button>
+              </Button>
               {bulkBrainWriterMessage ? <p className="text-sm text-gray-600">{bulkBrainWriterMessage}</p> : null}
             </div>
           </div>
@@ -601,44 +574,24 @@ export default function AiTenantSettings() {
           <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk action writer</p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => runBulkActionWriterAction(true)}
-                disabled={bulkActionWriterSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-              >
+              <Button onClick={() => runBulkActionWriterAction(true)} disabled={bulkActionWriterSaving || !bulkTenantIds.size}>
                 Activate
-              </button>
-              <button
-                type="button"
-                onClick={() => runBulkActionWriterAction(false)}
-                disabled={bulkActionWriterSaving || !bulkTenantIds.size}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
-              >
+              </Button>
+              <Button variant="secondary" onClick={() => runBulkActionWriterAction(false)} disabled={bulkActionWriterSaving || !bulkTenantIds.size}>
                 Deactivate
-              </button>
+              </Button>
               {bulkActionWriterMessage ? <p className="text-sm text-gray-600">{bulkActionWriterMessage}</p> : null}
             </div>
           </div>
           <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk formatter</p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => runBulkFormatterAction(true)}
-                disabled={bulkFormatterSaving || !bulkTenantIds.size}
-                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-              >
+              <Button onClick={() => runBulkFormatterAction(true)} disabled={bulkFormatterSaving || !bulkTenantIds.size}>
                 Activate
-              </button>
-              <button
-                type="button"
-                onClick={() => runBulkFormatterAction(false)}
-                disabled={bulkFormatterSaving || !bulkTenantIds.size}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
-              >
+              </Button>
+              <Button variant="secondary" onClick={() => runBulkFormatterAction(false)} disabled={bulkFormatterSaving || !bulkTenantIds.size}>
                 Deactivate
-              </button>
+              </Button>
               {bulkFormatterMessage ? <p className="text-sm text-gray-600">{bulkFormatterMessage}</p> : null}
             </div>
           </div>
@@ -650,7 +603,7 @@ export default function AiTenantSettings() {
           <h2 className="text-lg font-semibold text-gray-900">{selectedTenant.name}</h2>
 
           {loadingSettings || !settings ? (
-            <p className="mt-2 text-sm text-gray-500">Loading...</p>
+            <p className="mt-2 flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p>
           ) : (
             <div className="mt-3 space-y-3">
               <TenantAiSettingsControls
@@ -882,14 +835,9 @@ export default function AiTenantSettings() {
               </div>
 
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={saveSettings}
-                  disabled={saving}
-                  className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-                >
-                  {saving ? 'Saving...' : 'Save'}
-                </button>
+                <Button onClick={saveSettings} loading={saving}>
+                  {saving ? 'Saving…' : 'Save'}
+                </Button>
                 {message ? <p className="text-sm text-gray-600">{message}</p> : null}
               </div>
             </div>

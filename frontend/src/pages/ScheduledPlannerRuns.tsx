@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import InlineSpinner from '../components/InlineSpinner'
+import Button from '../components/ui/Button'
 import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 
@@ -393,20 +394,20 @@ export default function ScheduledPlannerRuns() {
                 Run the existing tenant planner in bulk every day at a fixed Europe/Amsterdam time.
               </p>
             </div>
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => {
                 setForm(emptyForm())
                 setMessage('')
               }}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
             >
               New schedule
-            </button>
+            </Button>
           </div>
 
           <div className="mt-4 space-y-3 stagger-list">
-            {loading && !schedules.length ? <p className="text-sm text-gray-500">Loading schedules...</p> : null}
+            {loading && !schedules.length ? <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading schedules…</p> : null}
             {!loading && !schedules.length ? <p className="text-sm text-gray-500">No schedules yet.</p> : null}
             {schedules.map((schedule) => {
               const expanded = expandedScheduleIds.has(schedule.id)
@@ -444,17 +445,13 @@ export default function ScheduledPlannerRuns() {
                         />
                         Enabled
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => loadScheduleDetail(schedule.id)}
-                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                      >
+                      <Button variant="secondary" size="sm" onClick={() => loadScheduleDetail(schedule.id)}>
                         Edit
-                      </button>
+                      </Button>
                       <button
                         type="button"
                         onClick={() => toggleScheduleExpanded(schedule.id)}
-                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-800"
+                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-gray-800"
                       >
                         {expanded ? 'Hide history' : 'Show history'}
                       </button>
@@ -463,7 +460,7 @@ export default function ScheduledPlannerRuns() {
 
                   {expanded ? (
                     <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
-                      {loadingRuns[schedule.id] && !runList ? <p className="text-sm text-gray-500">Loading run history...</p> : null}
+                      {loadingRuns[schedule.id] && !runList ? <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading run history…</p> : null}
                       {!loadingRuns[schedule.id] && (!runList || !runList.items.length) ? <p className="text-sm text-gray-500">No runs yet.</p> : null}
                       <div className="space-y-2">
                         {runList?.items.map((run) => {
@@ -482,20 +479,16 @@ export default function ScheduledPlannerRuns() {
                                     {run.trigger_reason === 'catch_up' ? 'Catch-up' : 'Scheduled'}
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleRunExpanded(schedule.id, run.id)}
-                                  className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                                >
+                                <Button variant="secondary" size="sm" onClick={() => toggleRunExpanded(schedule.id, run.id)}>
                                   {runExpanded ? 'Hide results' : 'Show results'}
-                                </button>
+                                </Button>
                               </div>
                               <p className="mt-1 text-xs text-gray-500">
                                 Started {formatDateTime(run.started_at)}. Completed {formatDateTime(run.completed_at)}. Matched {run.matched_tenant_count} tenant(s).
                               </p>
                               {runExpanded ? (
                                 <div className="mt-2 space-y-2">
-                                  {loadingResults[run.id] && !results ? <p className="text-sm text-gray-500">Loading results...</p> : null}
+                                  {loadingResults[run.id] && !results ? <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading results…</p> : null}
                                   {!loadingResults[run.id] && results && !results.length ? <p className="text-sm text-gray-500">No per-tenant results.</p> : null}
                                   {results?.map((result) => (
                                     <div key={result.id} className="rounded-xl border border-gray-200 bg-white p-2.5">
@@ -653,22 +646,17 @@ export default function ScheduledPlannerRuns() {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
+              <Button
                 onClick={handleSave}
-                disabled={saving || !form.name.trim() || !form.run_time_local}
-                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                loading={saving}
+                disabled={!form.name.trim() || !form.run_time_local}
               >
-                {saving ? 'Saving...' : form.id === null ? 'Create schedule' : 'Save changes'}
-              </button>
+                {saving ? 'Saving…' : form.id === null ? 'Create schedule' : 'Save changes'}
+              </Button>
               {form.id !== null ? (
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100"
-                >
+                <Button variant="dangerSoft" onClick={handleDelete}>
                   Delete
-                </button>
+                </Button>
               ) : null}
             </div>
             {message ? <p className="mt-3 text-sm text-gray-600">{message}</p> : null}

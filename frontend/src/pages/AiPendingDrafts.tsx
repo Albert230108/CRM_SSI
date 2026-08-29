@@ -4,6 +4,8 @@ import { useAuthStore } from '../store/authStore'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { whatsappMarkupToHtml } from '../lib/messageFormatting'
+import Button from '../components/ui/Button'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -138,7 +140,7 @@ export default function AiPendingDrafts() {
         AI-generated replies waiting for review across every tenant with auto-drafting enabled.
       </p>
 
-      {loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">Loading...</p> : null}
+      {loading && !drafts.length ? <p className="mt-4 flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p> : null}
       {!loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">No pending AI drafts.</p> : null}
 
       <div className="mt-4 space-y-3 stagger-list">
@@ -161,47 +163,31 @@ export default function AiPendingDrafts() {
               className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 outline-none focus:border-brand-300"
             />
             <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => openTenant(draft)}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-              >
+              <Button variant="secondary" size="sm" onClick={() => openTenant(draft)}>
                 Open thread
-              </button>
+              </Button>
               {draft.status === 'pending_auto_send' ? (
-                <button
-                  type="button"
-                  onClick={() => cancelAutoSend(draft)}
-                  className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                >
+                <Button variant="secondary" size="sm" onClick={() => cancelAutoSend(draft)}>
                   Cancel auto-send
-                </button>
+                </Button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => sendNow(draft)}
-                className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
-              >
+              <Button size="sm" onClick={() => sendNow(draft)}>
                 Send
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => {
                   setRedoOpenDraftId((current) => (current === draft.id ? null : draft.id))
                   setRedoWhat('')
                   setRedoWhy('')
                 }}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
               >
                 Redo
-              </button>
-              <button
-                type="button"
-                onClick={() => dismiss(draft)}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-50 hover:text-rose-600"
-              >
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => dismiss(draft)}>
                 Dismiss
-              </button>
+              </Button>
             </div>
             {redoOpenDraftId === draft.id ? (
               <div className="mt-2 space-y-1.5 rounded-lg border border-gray-200 bg-gray-50 p-2">
@@ -220,21 +206,18 @@ export default function AiPendingDrafts() {
                   className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
                 />
                 <div className="flex gap-1.5">
-                  <button
-                    type="button"
+                  <Button
+                    variant="ai"
+                    size="sm"
+                    loading={redoSubmitting}
+                    disabled={!redoWhat.trim()}
                     onClick={() => submitRedo(draft)}
-                    disabled={!redoWhat.trim() || redoSubmitting}
-                    className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {redoSubmitting ? 'Redoing...' : 'Submit redo'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRedoOpenDraftId(null)}
-                    className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-white"
-                  >
+                    {redoSubmitting ? 'Redoing…' : 'Submit redo'}
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setRedoOpenDraftId(null)}>
                     Cancel
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : null}

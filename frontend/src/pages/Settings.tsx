@@ -7,6 +7,11 @@ import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SettingsSidebarLayout, { SettingsTab } from '../components/settings/SettingsSidebarLayout'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import Textarea from '../components/ui/Textarea'
+import Select from '../components/ui/Select'
+import InlineSpinner from '../components/InlineSpinner'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { DATETIME_PLACEHOLDERS, EMAIL_TEMPLATE_PLACEHOLDERS } from '../types/aiReplyTemplate'
 
@@ -449,21 +454,20 @@ export default function Settings() {
                   <h3 className="text-sm font-semibold text-gray-900">Default accounts</h3>
                   <p className="text-xs text-gray-500">Pre-select the reply account for new WhatsApp messages and future email compose flows.</p>
                 </div>
-                <button type="submit" disabled={savingDefaultAccounts} className="rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-gray-300">
-                  {savingDefaultAccounts ? 'Saving...' : 'Save'}
-                </button>
+                <Button type="submit" size="sm" loading={savingDefaultAccounts}>
+                  {savingDefaultAccounts ? 'Saving…' : 'Save'}
+                </Button>
               </div>
 
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Gmail account</span>
                   {gmailLoading ? (
-                    <p className="text-sm text-gray-500">Loading Gmail accounts...</p>
+                    <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading Gmail accounts…</p>
                   ) : (
-                    <select
+                    <Select
                       value={defaultGmailAccountId}
                       onChange={(event) => setDefaultGmailAccountId(event.target.value)}
-                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900"
                     >
                       <option value="">No default Gmail account</option>
                       {gmailAccounts.map((account) => (
@@ -471,18 +475,17 @@ export default function Settings() {
                           {account.display_name ? `${account.display_name} <${account.email_address}>` : account.email_address}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   )}
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">WhatsApp account</span>
                   {whatsappAccountsLoading ? (
-                    <p className="text-sm text-gray-500">Loading WhatsApp accounts...</p>
+                    <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading WhatsApp accounts…</p>
                   ) : (
-                    <select
+                    <Select
                       value={defaultWhatsappAccountId}
                       onChange={(event) => setDefaultWhatsappAccountId(event.target.value)}
-                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900"
                     >
                       <option value="">No default WhatsApp account</option>
                       {whatsappAccounts.map((account) => (
@@ -490,7 +493,7 @@ export default function Settings() {
                           {account.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   )}
                 </label>
               </div>
@@ -534,20 +537,20 @@ export default function Settings() {
             </p>
 
             <div className="mt-3 flex flex-wrap gap-3">
-              <button type="button" className="rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white" onClick={() => startGmailOAuth()}>
+              <Button onClick={() => startGmailOAuth()}>
                 Connect Gmail account
-              </button>
-              <button type="button" className="rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-900" onClick={loadGmailAccounts}>
+              </Button>
+              <Button variant="secondary" onClick={loadGmailAccounts}>
                 Refresh list
-              </button>
-              <button type="button" className="rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-900" onClick={syncAllGmailAccounts}>
+              </Button>
+              <Button variant="secondary" onClick={syncAllGmailAccounts}>
                 Sync all active
-              </button>
+              </Button>
             </div>
 
             <div className="mt-3 overflow-x-auto">
               {gmailLoading ? (
-                <p className="py-3 text-sm text-gray-500">Loading Gmail accounts...</p>
+                <p className="flex items-center gap-2 py-3 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading Gmail accounts…</p>
               ) : (
                 <table className="min-w-full text-sm">
                   <thead className="text-left text-gray-500">
@@ -565,9 +568,9 @@ export default function Settings() {
                         </td>
                         <td>{account.last_synced_at ? new Date(account.last_synced_at).toLocaleString() : '-'}</td>
                         <td className="space-x-2 py-2">
-                          <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => syncGmailAccount(account.id)} disabled={!account.is_active}>Sync</button>
-                          <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => reconnectGmailAccount(account.id)}>Reconnect</button>
-                          <button type="button" className="rounded-lg border border-gray-300 px-3 py-1" onClick={() => disconnectGmailAccount(account.id)} disabled={!account.is_active}>Disconnect</button>
+                          <Button variant="secondary" size="sm" onClick={() => syncGmailAccount(account.id)} disabled={!account.is_active}>Sync</Button>
+                          <Button variant="secondary" size="sm" onClick={() => reconnectGmailAccount(account.id)}>Reconnect</Button>
+                          <Button variant="secondary" size="sm" onClick={() => disconnectGmailAccount(account.id)} disabled={!account.is_active}>Disconnect</Button>
                         </td>
                       </tr>
                     ))}
@@ -628,13 +631,13 @@ export default function Settings() {
                   <p className="mt-1 text-sm text-gray-500">
                     Enter the full path manually so the tenant tile can copy it for pasting into File Explorer.
                   </p>
-                  <input
+                  <Input
                     id="local-folder-root-path"
                     type="text"
                     value={localFolderRootPath}
                     onChange={(event) => setLocalFolderRootPath(event.target.value)}
                     placeholder="C:\Users\you\Tenants"
-                    className="mt-1.5 w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                    wrapperClassName="mt-1.5 max-w-md"
                   />
                 </div>
               </div>
@@ -652,7 +655,7 @@ export default function Settings() {
 
             <div className="mt-3 space-y-2">
               {templatesLoading ? (
-                <p className="text-sm text-gray-500">Loading templates...</p>
+                <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading templates…</p>
               ) : (
                 <>
                   {emailTemplates.map((template) => (
@@ -664,8 +667,8 @@ export default function Settings() {
                           <p className="mt-1 truncate text-sm text-gray-600">{template.body}</p>
                         </div>
                         <div className="flex shrink-0 gap-2">
-                          <button type="button" className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700" onClick={() => startEditTemplate(template)}>Edit</button>
-                          <button type="button" className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600" onClick={() => setDeleteTarget(template)}>Delete</button>
+                          <Button variant="secondary" size="sm" onClick={() => startEditTemplate(template)}>Edit</Button>
+                          <Button variant="dangerSoft" size="sm" onClick={() => setDeleteTarget(template)}>Delete</Button>
                         </div>
                       </div>
                     </div>
@@ -677,35 +680,33 @@ export default function Settings() {
 
             <form onSubmit={saveEmailTemplate} className="mt-3 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
               <p className="text-sm font-semibold text-gray-900">{templateForm.id !== null ? 'Edit template' : 'Add template'}</p>
-              <input
+              <Input
                 type="text"
                 value={templateForm.name}
                 onChange={(event) => setTemplateForm((current) => ({ ...current, name: event.target.value }))}
                 placeholder="Template name"
                 required
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
               />
-              <input
+              <Input
                 type="text"
                 value={templateForm.subject}
                 onChange={(event) => setTemplateForm((current) => ({ ...current, subject: event.target.value }))}
                 placeholder="Subject (optional)"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
               />
-              <textarea
+              <Textarea
                 value={templateForm.body}
                 onChange={(event) => setTemplateForm((current) => ({ ...current, body: event.target.value }))}
                 placeholder="Body, e.g. Hi {{first_name}}, your stay at {{property_name}} runs from {{check_in}} to {{check_out}}..."
                 rows={4}
                 required
-                className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
+                className="resize-none"
               />
               <div className="flex items-center gap-2">
-                <button type="submit" disabled={savingTemplate} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300">
-                  {savingTemplate ? 'Saving...' : templateForm.id !== null ? 'Save changes' : 'Add template'}
-                </button>
+                <Button type="submit" loading={savingTemplate}>
+                  {savingTemplate ? 'Saving…' : templateForm.id !== null ? 'Save changes' : 'Add template'}
+                </Button>
                 {templateForm.id !== null ? (
-                  <button type="button" onClick={cancelEditTemplate} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700">Cancel</button>
+                  <Button type="button" variant="secondary" onClick={cancelEditTemplate}>Cancel</Button>
                 ) : null}
               </div>
             </form>

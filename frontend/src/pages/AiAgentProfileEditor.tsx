@@ -5,6 +5,8 @@ import { InsertTokenMenu, insertAtCaret, type InsertTokenGroup, type InsertToken
 import { DATETIME_PLACEHOLDERS } from '../types/aiReplyTemplate'
 import { type AgentRole, type AiAgentProfile, type PromptBlockDefinition } from '../types/aiAgentProfile'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import Button from '../components/ui/Button'
+import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -573,7 +575,7 @@ export default function AiAgentProfileEditor() {
   if (loading) {
     return (
       <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
-        <p className="text-sm text-gray-500">Loading...</p>
+        <p className="flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p>
       </main>
     )
   }
@@ -1092,28 +1094,15 @@ export default function AiAgentProfileEditor() {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:bg-gray-300"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={saveAndClose}
-            className="rounded-lg border border-brand-200 bg-brand-50 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-100 disabled:bg-gray-100 disabled:text-gray-400"
-          >
-            {saving ? 'Saving...' : 'Save & Close'}
-          </button>
-          <button
-            type="button"
-            onClick={requestLeave}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-          >
+          <Button type="submit" loading={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button type="button" variant="brandSoft" disabled={saving} onClick={saveAndClose}>
+            {saving ? 'Saving…' : 'Save & Close'}
+          </Button>
+          <Button type="button" variant="secondary" onClick={requestLeave}>
             Cancel
-          </button>
+          </Button>
           {message ? <p className="text-sm text-gray-600">{message}</p> : null}
         </div>
       </form>
@@ -1121,39 +1110,28 @@ export default function AiAgentProfileEditor() {
         <div
           role="alertdialog"
           aria-label="Unsaved profile changes"
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-white/60 p-4 backdrop-blur-md"
+          className="fixed inset-0 z-[100] flex animate-backdrop-in items-center justify-center bg-white/60 p-4 backdrop-blur-md"
         >
-          <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-xl">
+          <div className="flex w-full max-w-sm animate-scale-in flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-xl">
             <p className="text-lg font-semibold text-gray-800">Unsaved changes</p>
             <p className="text-sm text-gray-500">This profile has changes that have not been saved.</p>
             <div className="flex w-full flex-col gap-2">
-              <button
-                type="button"
-                disabled={saving}
+              <Button
+                loading={saving}
+                className="w-full"
                 onClick={async () => {
                   if (await saveProfile()) leave()
                   else setLeavePrompt(false)
                 }}
-                className="w-full rounded-xl bg-brand-600 px-4 py-2.5 font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? 'Saving...' : 'Save & Leave'}
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={leave}
-                className="w-full rounded-xl border border-rose-200 bg-white px-4 py-2.5 font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
+                {saving ? 'Saving…' : 'Save & Leave'}
+              </Button>
+              <Button variant="dangerSoft" disabled={saving} className="w-full" onClick={leave}>
                 Discard &amp; Leave
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => setLeavePrompt(false)}
-                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
+              </Button>
+              <Button variant="secondary" disabled={saving} className="w-full" onClick={() => setLeavePrompt(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         </div>

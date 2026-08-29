@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore'
 import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import { type AgentRole, type AiAgentProfile } from '../types/aiAgentProfile'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import Button from '../components/ui/Button'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const CARD = 'rounded-2xl border border-gray-200 bg-white p-3.5'
@@ -57,16 +58,17 @@ export default function AiAgentProfiles() {
           <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
           <p className="mt-1.5 text-sm text-gray-500">{blurb}</p>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="ai"
+          size="sm"
+          className="shrink-0"
           onClick={() => {
             setMessage('')
             window.open(`/settings/ai-agents/new?role=${role}`, '_blank')
           }}
-          className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
         >
           + New {ROLE_LABELS[role]}
-        </button>
+        </Button>
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 stagger-list">
@@ -110,20 +112,12 @@ export default function AiAgentProfiles() {
                 </p>
               </div>
               <div className="mt-auto flex items-center gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => window.open(`/settings/ai-agents/${profile.id}`, '_blank')}
-                  className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                >
+                <Button variant="secondary" size="sm" onClick={() => window.open(`/settings/ai-agents/${profile.id}`, '_blank')}>
                   Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => remove(profile)}
-                  className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600"
-                >
+                </Button>
+                <Button variant="dangerSoft" size="sm" onClick={() => remove(profile)}>
                   Delete
-                </button>
+                </Button>
               </div>
             </div>
           ))}
