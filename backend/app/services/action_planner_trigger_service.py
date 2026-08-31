@@ -7,9 +7,12 @@ The action's own fields (title, description, ai_instruction, tags, created_at, d
 handed to the planner as the operator note - run_planner_loop already threads operator_note into
 its prompt.
 
-Fire-once-per-due-change: `planner_triggered_at` is stamped before the run so the 15s scheduler
-sweep (main.py) cannot re-fire it every tick; action_item_service.update clears it when the due
-date/time change. Editing the due date/time is therefore the way to re-arm a trigger.
+Fire-once-per-due-change: `planner_triggered_at` is stamped just before the planner run (once the
+history + channel-eligibility gates pass) so the 15s scheduler sweep (main.py) cannot re-fire it
+every tick; action_item_service.update clears it when the due date/time change. A due item that is
+skipped because its tenant has no recent conversation or an ineligible channel is left unclaimed on
+purpose, so a later sweep retries it once the tenant becomes eligible. Editing the due date/time
+re-arms a trigger that has already fired.
 """
 from __future__ import annotations
 
@@ -62,23 +65,28 @@ def _build_operator_note(db: Session, item: ActionItem) -> str:
     return "\n".join(lines)
 
 
-def _process_due_item(db: Session, item: ActionItem, now: datetime) -> None:
-    # Claim the item before doing any work so a crash mid-run cannot re-fire it every tick.
-    item.planner_triggered_at = now
-    db.commit()
+def _process_due_item(db: Session, item: ActionItem, now: datetime) -> bool:
+    """Fire the planner for one due item. Returns True if it fired, False if it was skipped.
 
+    A skip leaves `planner_triggered_at` NULL on purpose so a later sweep retries once the tenant
+    becomes eligible - the item is only claimed once the gates below pass and we are about to run.
+    """
     tenant_id = item.tenant_id
     last_message = compute_last_message_by_tenant_id(db, [tenant_id]).get(tenant_id)
     if last_message is None:
         logger.info("Action planner trigger skipped item_id=%s: no conversation history", item.id)
-        return
+        return False
     _occurred_at, channel, _direction = last_message
 
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
     eligible, skip_reason = _channel_is_eligible(ai_settings, channel)
     if not eligible:
         logger.info("Action planner trigger skipped item_id=%s channel=%s: %s", item.id, channel, skip_reason)
-        return
+        return False
+
+    # Claim the item now that it is about to run so a crash mid-run cannot re-fire it every tick.
+    item.planner_triggered_at = now
+    db.commit()
 
     operator_note = _build_operator_note(db, item)
 
@@ -97,6 +105,7 @@ def _process_due_item(db: Session, item: ActionItem, now: datetime) -> None:
         user_id=None,
     )
     logger.info("Action planner trigger fired item_id=%s tenant_id=%s channel=%s draft_id=%s", item.id, tenant_id, channel, draft.id)
+    return True
 
 
 def run_due_action_planner_triggers(db: Session) -> None:
@@ -109,6 +118,7 @@ def run_due_action_planner_triggers(db: Session) -> None:
         .all()
     }
     if not trigger_tag_ids:
+        logger.info("Action planner triggers: 0 trigger-tags, nothing to sweep this tick")
         return
 
     candidates = (
@@ -122,14 +132,30 @@ def run_due_action_planner_triggers(db: Session) -> None:
         .all()
     )
 
+    due_tagged = 0
+    fired = 0
+    skipped = 0
     for item in candidates:
         if trigger_tag_ids.isdisjoint(item.tag_ids):
             continue
         if _due_instant_utc(item) > now:
             continue
+        due_tagged += 1
         item_id = item.id
         try:
-            _process_due_item(db, item, now)
+            if _process_due_item(db, item, now):
+                fired += 1
+            else:
+                skipped += 1
         except Exception:
             db.rollback()
+            skipped += 1
             logger.exception("Action planner trigger failed item_id=%s", item_id)
+
+    logger.info(
+        "Action planner triggers: %s trigger-tags, %s due-tagged items, %s fired, %s skipped this tick",
+        len(trigger_tag_ids),
+        due_tagged,
+        fired,
+        skipped,
+    )

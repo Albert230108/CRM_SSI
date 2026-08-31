@@ -121,7 +121,7 @@ def test_already_triggered_action_does_not_refire(db_session, capture_planner):
     assert capture_planner == []
 
 
-def test_no_conversation_history_marks_triggered_without_firing(db_session, monkeypatch):
+def test_no_conversation_history_leaves_item_unclaimed_for_retry(db_session, monkeypatch):
     tenant = _tenant(db_session)
     _enable_planner(db_session, tenant)
     tag = _trigger_tag(db_session)
@@ -136,7 +136,36 @@ def test_no_conversation_history_marks_triggered_without_firing(db_session, monk
 
     assert calls == []
     db_session.refresh(item)
-    # Claimed so the 15s sweep does not spin on it every tick; editing the due date re-arms it.
+    # Left unclaimed on purpose so a later sweep retries once the tenant gains a conversation.
+    assert item.planner_triggered_at is None
+
+
+def test_skipped_item_fires_on_later_sweep_once_history_exists(db_session, monkeypatch):
+    tenant = _tenant(db_session)
+    _enable_planner(db_session, tenant)
+    tag = _trigger_tag(db_session)
+    item = action_item_service.create(db_session, tenant.id, "Later", due_date=date(2020, 1, 1), due_time=time(9, 0), tag_ids=[tag.id])
+    db_session.commit()
+
+    calls = []
+    monkeypatch.setattr(action_planner_trigger_service, "run_ai_plan_for_draft", lambda *a, **k: calls.append(k))
+
+    # Tick 1: no conversation history yet - skipped, item stays unclaimed.
+    monkeypatch.setattr(action_planner_trigger_service, "compute_last_message_by_tenant_id", lambda db, tenant_ids: {})
+    action_planner_trigger_service.run_due_action_planner_triggers(db_session)
+    assert calls == []
+    db_session.refresh(item)
+    assert item.planner_triggered_at is None
+
+    # Tick 2: a conversation now exists - the same item fires and is claimed.
+    monkeypatch.setattr(
+        action_planner_trigger_service,
+        "compute_last_message_by_tenant_id",
+        lambda db, tenant_ids: {tid: (datetime.now(timezone.utc), "email", "inbound") for tid in tenant_ids},
+    )
+    action_planner_trigger_service.run_due_action_planner_triggers(db_session)
+    assert len(calls) == 1
+    db_session.refresh(item)
     assert item.planner_triggered_at is not None
 
 
