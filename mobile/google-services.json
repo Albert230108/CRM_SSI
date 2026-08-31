@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "757093823477",
+    "project_id": "ssi-crm-976fb",
+    "storage_bucket": "ssi-crm-976fb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:757093823477:android:3f12243d1647c28b27e6bc",
+        "android_client_info": {
+          "package_name": "com.ssi.crm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAjXD5a0LECtZmCWGVONZWe2gpKAfMvf70"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
