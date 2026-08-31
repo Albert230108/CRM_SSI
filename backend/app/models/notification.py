@@ -27,6 +27,9 @@ class Notification(Base):
     # Set once this notification has been included in a sent batched WhatsApp alert, so the
     # flush job knows what's still pending. NULL means not yet dispatched.
     whatsapp_dispatched_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    # Same idea for the batched push alert (independent from the WhatsApp batch): set once this
+    # notification has been included in a dispatched push. NULL means not yet pushed.
+    push_dispatched_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class NotificationReadState(Base):

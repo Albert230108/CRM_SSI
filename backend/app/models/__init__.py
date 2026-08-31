@@ -18,10 +18,12 @@ from app.models.brain_section import BrainSection
 from app.models.communication import Communication
 from app.models.communication_attachment import CommunicationAttachment, CommunicationAttachmentLink
 from app.models.communication_reply_draft import CommunicationReplyDraft
+from app.models.device_token import DeviceToken
 from app.models.email_template import EmailTemplate
 from app.models.finance import Finance
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
 from app.models.notification import Notification, NotificationReadState
+from app.models.notification_push_trigger import NotificationPushTrigger
 from app.models.notification_whatsapp_delivery import NotificationWhatsappDelivery
 from app.models.notification_whatsapp_trigger import NotificationWhatsappTrigger
 from app.models.memory_qa_message import MemoryQaMessage

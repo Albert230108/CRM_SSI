@@ -43,6 +43,7 @@ from app.services.gmail_attachments import GmailAttachmentNotFoundError, fetch_g
 from app.services.html_text import html_to_text
 from app.services.notification_service import create_notification
 from app.services.notification_whatsapp_service import register_notification_for_whatsapp
+from app.services.push_notification_service import register_notification_for_push
 
 router = APIRouter(prefix="/api/integrations/gmail", tags=["gmail"])
 GMAIL_SCOPES = [
@@ -683,6 +684,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         db, tenant_id=notify_tenant.id, channel="email", direction="inbound", email_thread_id=conversation.id
                     )
                     register_notification_for_whatsapp(db)
+                    register_notification_for_push(db)
                 for tenant_id, notify_tenant in linked_visible_tenants.items():
                     if tenant_id in notified_tenant_ids:
                         continue
@@ -699,6 +701,7 @@ def _upsert_thread(db: Session, account: GmailAccount, thread: dict[str, Any]) -
                         thread_ref=str(conversation.id),
                     )
                     register_notification_for_whatsapp(db)
+                    register_notification_for_push(db)
         except IntegrityError:
             continue
         except Exception:
