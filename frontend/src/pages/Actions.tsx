@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
+import MultiSelect, { type MultiSelectOption } from '../components/ui/MultiSelect'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { formatDisplayDateShortMonth } from '../lib/date'
 
@@ -72,6 +73,15 @@ const DUE_BUCKET_LABEL: Record<DueBucket, string> = {
   tomorrow: 'Tomorrow',
   upcoming: 'Upcoming',
   none: 'No date',
+}
+
+// Per-bucket accents for board columns / date-grouped headers, so urgency reads at a glance.
+const DATE_GROUP_ACCENT: Record<string, { header: string; count: string; border: string }> = {
+  overdue: { header: 'text-rose-600', count: 'bg-rose-100 text-rose-700', border: 'border-t-rose-300' },
+  today: { header: 'text-amber-600', count: 'bg-amber-100 text-amber-700', border: 'border-t-amber-300' },
+  tomorrow: { header: 'text-blue-600', count: 'bg-blue-100 text-blue-700', border: 'border-t-blue-300' },
+  upcoming: { header: 'text-blue-600', count: 'bg-blue-100 text-blue-700', border: 'border-t-blue-300' },
+  none: { header: 'text-gray-500', count: 'bg-gray-100 text-gray-500', border: 'border-t-gray-200' },
 }
 
 const SORT_FIELDS: Array<{ id: SortField; label: string }> = [
@@ -214,6 +224,85 @@ function DismissedBadge() {
   )
 }
 
+// Overflow menu for a card's Edit/Done/Dismiss/Reopen actions. Collapsing the three inline
+// buttons into a single ⋯ frees the full card width for text, which keeps board cards short.
+function CardActionsMenu({
+  isOpen,
+  onEdit,
+  onComplete,
+  onDismiss,
+  onReopen,
+}: {
+  isOpen: boolean
+  onEdit: () => void
+  onComplete: () => void
+  onDismiss: () => void
+  onReopen: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const runAndClose = (action: () => void) => () => {
+    action()
+    setOpen(false)
+  }
+
+  return (
+    <div ref={containerRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-label="Action options"
+        aria-haspopup="menu"
+        className="rounded-full border border-gray-200 px-2 py-0.5 text-sm font-semibold leading-none text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
+      >
+        ⋯
+      </button>
+      {open ? (
+        <div className="absolute right-0 z-20 mt-1 w-32 origin-top-right animate-scale-in rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+          <button type="button" onClick={runAndClose(onEdit)} className="block w-full rounded px-2 py-1 text-left text-xs text-gray-700 hover:bg-gray-50">
+            Edit
+          </button>
+          {isOpen ? (
+            <>
+              <button type="button" onClick={runAndClose(onComplete)} className="block w-full rounded px-2 py-1 text-left text-xs text-emerald-700 hover:bg-emerald-50">
+                Done
+              </button>
+              <button type="button" onClick={runAndClose(onDismiss)} className="block w-full rounded px-2 py-1 text-left text-xs text-gray-500 hover:bg-gray-50">
+                Dismiss
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={runAndClose(onReopen)} className="block w-full rounded px-2 py-1 text-left text-xs text-gray-700 hover:bg-gray-50">
+              Reopen
+            </button>
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 py-0.5 pl-2.5 pr-1 text-xs font-semibold text-brand-700">
+      {label}
+      <button type="button" onClick={onClear} aria-label={`Remove ${label} filter`} className="rounded-full px-1 text-brand-400 hover:text-brand-700">
+        ×
+      </button>
+    </span>
+  )
+}
+
 const PRIORITY_FILTERS: Array<{ id: Priority | ''; label: string }> = [
   { id: '', label: 'Any priority' },
   { id: 'p1', label: 'P1' },
@@ -294,6 +383,7 @@ export default function Actions() {
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [layout, setLayout] = useState<Layout>('list')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [expandedCardIds, setExpandedCardIds] = useState<Set<number>>(new Set())
   const [sortField, setSortField] = useState<SortField>('due_date')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [items, setItems] = useState<ActionItem[]>([])
@@ -498,6 +588,25 @@ export default function Actions() {
     })
   }
 
+  const toggleCardExpanded = (id: number) => {
+    setExpandedCardIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Resets only the item filters (not grouping/layout/sort) back to their defaults.
+  const clearAllFilters = () => {
+    setStatusFilter('open')
+    setPriorityFilter('')
+    setScopeFilter('all')
+    setDueBuckets([])
+    setTagFilterIds([])
+    setTagMatch('any')
+  }
+
   // The action-items API returns tags without the triggers_planner flag, so resolve it from the
   // full tag palette (allTags) to decide whether to show the "Planner" badge.
   const plannerTagIds = new Set(allTags.filter((tag) => tag.triggers_planner).map((tag) => tag.id))
@@ -529,6 +638,15 @@ export default function Actions() {
     })
 
   const groups = groupItems(visibleItems, groupBy)
+
+  // In board + date view, render every relevant bucket as a column (including empty ones) so the
+  // board keeps a stable shape and can show a placeholder; an active due-bucket filter limits it.
+  const boardColumns =
+    layout === 'board' && groupBy === 'date'
+      ? (dueBuckets.length > 0 ? DUE_BUCKET_ORDER.filter((bucket) => dueBuckets.includes(bucket)) : DUE_BUCKET_ORDER).map(
+          (bucket) => groups.find((group) => group.key === bucket) ?? { key: bucket, label: DUE_BUCKET_LABEL[bucket], items: [] },
+        )
+      : groups
 
   const renderActionCard = (item: ActionItem) => (
     <div
@@ -601,20 +719,34 @@ export default function Actions() {
           </div>
         </div>
       ) : (
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
             <TenantOrGeneralLabel
               tenantId={item.tenant_id}
               tenantName={item.tenant_name}
               className="text-xs font-semibold uppercase tracking-wide text-brand-700 hover:underline"
             />
-            <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
-            {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
-            {item.ai_instruction ? (
-              <p className="mt-0.5 text-xs text-brand-700">
-                <span className="font-semibold">AI:</span> {item.ai_instruction}
-              </p>
-            ) : null}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleCardExpanded(item.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  toggleCardExpanded(item.id)
+                }
+              }}
+              className="cursor-pointer"
+              title={expandedCardIds.has(item.id) ? 'Click to collapse' : 'Click to expand'}
+            >
+              <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'} ${expandedCardIds.has(item.id) ? '' : 'line-clamp-2'}`}>{item.title}</p>
+              {item.description ? <p className={`mt-0.5 text-xs text-gray-500 ${expandedCardIds.has(item.id) ? '' : 'line-clamp-2'}`}>{item.description}</p> : null}
+              {item.ai_instruction ? (
+                <p className={`mt-0.5 text-xs text-brand-700 ${expandedCardIds.has(item.id) ? '' : 'line-clamp-2'}`}>
+                  <span className="font-semibold">AI:</span> {item.ai_instruction}
+                </p>
+              ) : null}
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
               <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-brand-50 text-brand-700' : 'bg-gray-100 text-gray-600'}`}>
                 {item.source === 'ai' ? 'AI' : 'Manual'}
@@ -639,41 +771,32 @@ export default function Actions() {
               ) : null}
             </div>
           </div>
-          <div className="flex shrink-0 gap-2">
-            <button type="button" onClick={() => startEdit(item)} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500 hover:text-gray-700">
-              Edit
-            </button>
-            {item.status === 'open' ? (
-              <>
-                <button type="button" onClick={() => transition(item.id, 'complete')} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-                  Done
-                </button>
-                <button type="button" onClick={() => transition(item.id, 'dismiss')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                  Dismiss
-                </button>
-              </>
-            ) : (
-              <button type="button" onClick={() => transition(item.id, 'reopen')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                Reopen
-              </button>
-            )}
-          </div>
+          <CardActionsMenu
+            isOpen={item.status === 'open'}
+            onEdit={() => startEdit(item)}
+            onComplete={() => transition(item.id, 'complete')}
+            onDismiss={() => transition(item.id, 'dismiss')}
+            onReopen={() => transition(item.id, 'reopen')}
+          />
         </div>
       )}
     </div>
   )
 
-  const renderGroupHeader = (group: ActionGroup) => (
-    <button
-      type="button"
-      onClick={() => toggleGroupCollapsed(group.key)}
-      className="flex w-full items-center gap-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700"
-    >
-      <span>{collapsedGroups.has(group.key) ? '▸' : '▾'}</span>
-      <span>{group.label}</span>
-      <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{group.items.length}</span>
-    </button>
-  )
+  const renderGroupHeader = (group: ActionGroup) => {
+    const accent = groupBy === 'date' ? DATE_GROUP_ACCENT[group.key] : undefined
+    return (
+      <button
+        type="button"
+        onClick={() => toggleGroupCollapsed(group.key)}
+        className={`flex w-full items-center gap-2 text-left text-xs font-semibold uppercase tracking-wide hover:opacity-80 ${accent?.header ?? 'text-gray-500'}`}
+      >
+        <span>{collapsedGroups.has(group.key) ? '▸' : '▾'}</span>
+        <span>{group.label}</span>
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${accent?.count ?? 'bg-gray-100 text-gray-500'}`}>{group.items.length}</span>
+      </button>
+    )
+  }
 
   const resetGeneralAddForm = () => {
     setQuickAddText('')
@@ -1088,72 +1211,62 @@ export default function Actions() {
           )}
         </div>
 
-        <div className="mt-3 flex gap-1.5">
-          {STATUS_FILTERS.map((filter) => (
-            <button
-              key={filter.id}
-              type="button"
-              onClick={() => setStatusFilter(filter.id)}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                statusFilter === filter.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-2 flex gap-1.5">
-          {PRIORITY_FILTERS.map((filter) => (
-            <button
-              key={filter.id || 'any'}
-              type="button"
-              onClick={() => setPriorityFilter(filter.id)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                priorityFilter === filter.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <div className="flex gap-1.5">
-            {SCOPES.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setScopeFilter(option.id)}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                  scopeFilter === option.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {DUE_BUCKET_ORDER.map((bucket) => (
-              <button
-                key={bucket}
-                type="button"
-                onClick={() => toggleDueBucket(bucket)}
-                aria-pressed={dueBuckets.includes(bucket)}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                  dueBuckets.includes(bucket) ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                {DUE_BUCKET_LABEL[bucket]}
-              </button>
-            ))}
-          </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <MultiSelect<string>
+            label="Status"
+            singleSelect
+            options={STATUS_FILTERS.map((filter) => ({ value: filter.id, label: filter.label }))}
+            selected={[statusFilter]}
+            onChange={(next) => setStatusFilter(next[0] ?? 'open')}
+            summary={() => `Status: ${STATUS_FILTERS.find((filter) => filter.id === statusFilter)?.label ?? 'All'}`}
+          />
+          <MultiSelect<Priority | ''>
+            label="Priority"
+            singleSelect
+            options={PRIORITY_FILTERS.map((filter) => ({ value: filter.id, label: filter.label }))}
+            selected={[priorityFilter]}
+            onChange={(next) => setPriorityFilter(next[0] ?? '')}
+            summary={() => (priorityFilter ? `Priority: ${PRIORITY_LABEL[priorityFilter]}` : 'Priority: Any')}
+          />
+          <MultiSelect<ViewScope>
+            label="Scope"
+            singleSelect
+            options={SCOPES.map((option) => ({ value: option.id, label: option.label }))}
+            selected={[scopeFilter]}
+            onChange={(next) => setScopeFilter(next[0] ?? 'all')}
+            summary={() => `Scope: ${SCOPES.find((option) => option.id === scopeFilter)?.label ?? 'All'}`}
+          />
+          <MultiSelect<DueBucket>
+            label="Due"
+            options={DUE_BUCKET_ORDER.map((bucket) => ({ value: bucket, label: DUE_BUCKET_LABEL[bucket] }))}
+            selected={dueBuckets}
+            onChange={setDueBuckets}
+          />
+          {allTags.length > 0 ? (
+            <MultiSelect<string>
+              label="Tags"
+              options={allTags.map((tag): MultiSelectOption<string> => ({ value: String(tag.id), label: tag.name, color: tag.color }))}
+              selected={tagFilterIds.map(String)}
+              onChange={(ids) => setTagFilterIds(ids.map(Number))}
+              footer={
+                tagFilterIds.length > 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => setTagMatch((current) => (current === 'any' ? 'all' : 'any'))}
+                    className="w-full rounded px-1.5 py-1 text-left text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    Match: {tagMatch === 'any' ? 'Any' : 'All'}
+                  </button>
+                ) : undefined
+              }
+            />
+          ) : null}
           <div className="ml-auto flex items-center gap-1.5">
             <label className="text-xs font-semibold text-gray-500">Sort</label>
             <select
               value={sortField}
               onChange={(event) => setSortField(event.target.value as SortField)}
-              className="rounded-full border border-gray-300 px-2.5 py-1 text-xs text-gray-700 outline-none focus:border-brand-300"
+              className="rounded-full border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
             >
               {SORT_FIELDS.map((option) => (
                 <option key={option.id} value={option.id}>
@@ -1165,39 +1278,49 @@ export default function Actions() {
               type="button"
               onClick={() => setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'))}
               aria-label="Toggle sort direction"
-              className="rounded-full border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-700 transition hover:bg-gray-100"
+              className="rounded-full border border-gray-300 px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-100"
             >
               {sortDir === 'asc' ? '↑ Asc' : '↓ Desc'}
             </button>
           </div>
         </div>
 
-        {allTags.length > 0 ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-gray-500">Tags</span>
-            <TagChipSelector tags={allTags} selectedIds={tagFilterIds} onToggle={(tagId) => toggleSelectedTag(tagId, tagFilterIds, setTagFilterIds)} />
-            {tagFilterIds.length > 1 ? (
-              <button
-                type="button"
-                onClick={() => setTagMatch((current) => (current === 'any' ? 'all' : 'any'))}
-                className="rounded-full border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-600 transition hover:bg-gray-100"
-              >
-                Match: {tagMatch === 'any' ? 'Any' : 'All'}
-              </button>
+        {statusFilter !== 'open' || priorityFilter || scopeFilter !== 'all' || dueBuckets.length > 0 || tagFilterIds.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold text-gray-400">Active:</span>
+            {statusFilter !== 'open' ? (
+              <FilterChip label={`Status: ${STATUS_FILTERS.find((filter) => filter.id === statusFilter)?.label ?? 'All'}`} onClear={() => setStatusFilter('open')} />
             ) : null}
+            {priorityFilter ? <FilterChip label={PRIORITY_LABEL[priorityFilter]} onClear={() => setPriorityFilter('')} /> : null}
+            {scopeFilter !== 'all' ? (
+              <FilterChip label={`Scope: ${SCOPES.find((option) => option.id === scopeFilter)?.label ?? 'All'}`} onClear={() => setScopeFilter('all')} />
+            ) : null}
+            {dueBuckets.map((bucket) => (
+              <FilterChip key={bucket} label={DUE_BUCKET_LABEL[bucket]} onClear={() => toggleDueBucket(bucket)} />
+            ))}
+            {tagFilterIds.map((id) => (
+              <FilterChip key={id} label={`Tag: ${allTags.find((tag) => tag.id === id)?.name ?? id}`} onClear={() => toggleSelectedTag(id, tagFilterIds, setTagFilterIds)} />
+            ))}
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-gray-500 underline-offset-2 transition hover:text-gray-700 hover:underline"
+            >
+              Clear all
+            </button>
           </div>
         ) : null}
 
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold text-gray-500">Group by</span>
-          <div className="flex gap-1.5">
+          <div className="inline-flex overflow-hidden rounded-full border border-gray-300">
             {GROUP_BY_OPTIONS.map((option) => (
               <button
                 key={option.id}
                 type="button"
                 onClick={() => setGroupBy(option.id)}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                  groupBy === option.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                className={`px-3 py-1 text-xs font-semibold transition ${
+                  groupBy === option.id ? 'bg-brand-600 text-white' : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
                 {option.label}
@@ -1228,12 +1351,22 @@ export default function Actions() {
           <p className="mt-3 text-sm text-gray-400">No actions yet.</p>
         ) : layout === 'board' ? (
           <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
-            {groups.map((group) => (
-              <div key={group.key} className="flex w-72 shrink-0 flex-col rounded-2xl border border-gray-200 bg-gray-50 p-2">
-                <div className="sticky top-0 mb-2 px-1">{renderGroupHeader(group)}</div>
-                <div className="space-y-2">{group.items.map((item) => renderActionCard(item))}</div>
-              </div>
-            ))}
+            {boardColumns.map((group) => {
+              const accent = groupBy === 'date' ? DATE_GROUP_ACCENT[group.key] : undefined
+              return (
+                <div
+                  key={group.key}
+                  className={`flex w-72 shrink-0 animate-fade-in flex-col rounded-2xl border border-t-2 border-gray-200 bg-gray-50 p-2 ${accent?.border ?? 'border-t-gray-200'}`}
+                >
+                  <div className="sticky top-0 mb-2 px-1">{renderGroupHeader(group)}</div>
+                  {group.items.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-gray-200 px-2 py-6 text-center text-xs text-gray-400">Nothing here</p>
+                  ) : (
+                    <div className="space-y-2 stagger-list">{group.items.map((item) => renderActionCard(item))}</div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         ) : groupBy === 'none' ? (
           <div className="mt-3 space-y-2 stagger-list">{visibleItems.map((item) => renderActionCard(item))}</div>
