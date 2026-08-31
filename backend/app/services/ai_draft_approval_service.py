@@ -230,12 +230,15 @@ def _handle_redo_reply(
         except WhatsAppBridgeError:
             logger.exception("Failed to send redo acknowledgement user_id=%s draft_id=%s", user.id, draft_id)
 
+    # Snapshot the draft being redone before regeneration overwrites it (no frontend here, so
+    # we ground on the draft's own text).
+    previous_draft_text = draft.formatted_text or draft.generated_text
     regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, what, why)
     if regenerated is None:
         # Logged even on failure - the redo log is an accessible record of every attempt, not
         # just the ones that succeeded.
         redo_request_log_service.log_redo_request(
-            db, ai_auto_draft_id=draft_id, tenant_id=draft.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id
+            db, ai_auto_draft_id=draft_id, tenant_id=draft.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id, previous_draft_text=previous_draft_text
         )
         db.commit()
         return outcome(
@@ -243,7 +246,7 @@ def _handle_redo_reply(
         )
 
     log_entry = redo_request_log_service.log_redo_request(
-        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id, ai_agent_run_id=regenerated.agent_run_id
+        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="whatsapp", what=what, why=why, requested_by_user_id=user.id, ai_agent_run_id=regenerated.agent_run_id, previous_draft_text=previous_draft_text
     )
     db.commit()
     try:

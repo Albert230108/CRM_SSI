@@ -22,6 +22,11 @@ class RedoRequestLog(Base):
     channel = Column(String(20), nullable=False)  # whatsapp | crm
     what = Column(Text, nullable=False)
     why = Column(Text, nullable=True)
+    # Snapshot of the draft the operator was looking at when they asked for this redo
+    # (formatted_text, falling back to generated_text). Captured before regeneration
+    # overwrites the draft, so each redo carries the exact text it was asked to change.
+    # Nullable: rows predating this column, and any redo with no prior draft, have none.
+    previous_draft_text = Column(Text, nullable=True)
     requested_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     memory_redo_run_id = Column(Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     reviewed = Column(Boolean, nullable=False, default=False, server_default="false")

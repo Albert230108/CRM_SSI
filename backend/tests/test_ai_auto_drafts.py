@@ -407,9 +407,11 @@ def test_redo_regenerates_draft_and_logs_the_request(non_admin_client, db_sessio
     db_session.add(draft)
     db_session.commit()
 
-    def fake_regenerate(db, draft_arg, what, why):
+    def fake_regenerate(db, draft_arg, what, why, current_draft=None):
         assert what == "make it shorter"
         assert why == "they already asked yesterday"
+        # The frontend-supplied current draft is threaded through to the service.
+        assert current_draft == "*Hi there!*"
         draft_arg.generated_text = "Shorter reply."
         draft_arg.status = "pending"
         draft_arg.agent_run_id = 22
@@ -419,7 +421,7 @@ def test_redo_regenerates_draft_and_logs_the_request(non_admin_client, db_sessio
 
     response = non_admin_client.put(
         f"/api/ai-auto-drafts/{draft.id}/redo",
-        json={"what": "make it shorter", "why": "they already asked yesterday"},
+        json={"what": "make it shorter", "why": "they already asked yesterday", "current_draft": "*Hi there!*"},
     )
 
     assert response.status_code == 200
@@ -430,6 +432,8 @@ def test_redo_regenerates_draft_and_logs_the_request(non_admin_client, db_sessio
     assert log_entry.what == "make it shorter"
     assert log_entry.why == "they already asked yesterday"
     assert log_entry.ai_agent_run_id == 22
+    # The draft being redone is snapshotted onto the log (frontend value preferred).
+    assert log_entry.previous_draft_text == "*Hi there!*"
 
 
 def test_redo_requires_what(non_admin_client, db_session):
@@ -449,10 +453,12 @@ def test_redo_logs_failed_attempt_when_planner_produces_nothing(non_admin_client
     db_session.add(draft)
     db_session.commit()
 
-    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", lambda db, draft_arg, what, why: None)
+    monkeypatch.setattr(ai_auto_draft_service, "regenerate_draft_via_planner", lambda db, draft_arg, what, why, current_draft=None: None)
 
     response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/redo", json={"what": "make it warmer"})
 
     assert response.status_code == 502
     log_entry = db_session.query(RedoRequestLog).filter(RedoRequestLog.ai_auto_draft_id == draft.id).one()
     assert log_entry.what == "make it warmer"
+    # Even on failure the snapshot is recorded; here it falls back to the draft's own text.
+    assert log_entry.previous_draft_text == "Hi there!"

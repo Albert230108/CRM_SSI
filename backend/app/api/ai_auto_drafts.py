@@ -120,6 +120,9 @@ def mark_ai_auto_draft_used(
 class AiAutoDraftRedoRequest(BaseModel):
     what: str
     why: Optional[str] = None
+    # The draft the operator is looking at (formatted_text). Optional: the backend falls back
+    # to the loaded draft's own text when a client doesn't send it.
+    current_draft: Optional[str] = None
 
 
 @router.put("/{draft_id}/redo", response_model=AiAutoDraftRead)
@@ -136,16 +139,20 @@ def redo_ai_auto_draft(
     if not what:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="what is required")
     why = (payload.why or "").strip() or None
-    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, what, why)
+    current_draft = (payload.current_draft or "").strip() or None
+    # Snapshot the draft being redone before regeneration overwrites it, so the redo log
+    # records the exact text this request was asked to change.
+    previous_draft_text = current_draft or draft.formatted_text or draft.generated_text
+    regenerated = ai_auto_draft_service.regenerate_draft_via_planner(db, draft, what, why, current_draft)
     if regenerated is None:
         redo_request_log_service.log_redo_request(
-            db, ai_auto_draft_id=draft_id, tenant_id=draft.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id
+            db, ai_auto_draft_id=draft_id, tenant_id=draft.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id, previous_draft_text=previous_draft_text
         )
         db.commit()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Redo failed - planner produced no draft")
 
     log_entry = redo_request_log_service.log_redo_request(
-        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id, ai_agent_run_id=regenerated.agent_run_id
+        db, ai_auto_draft_id=draft_id, tenant_id=regenerated.tenant_id, channel="crm", what=what, why=why, requested_by_user_id=current_user.id, ai_agent_run_id=regenerated.agent_run_id, previous_draft_text=previous_draft_text
     )
     db.commit()
     db.refresh(regenerated)

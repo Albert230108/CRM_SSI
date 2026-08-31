@@ -119,7 +119,7 @@ export default function AiPendingDrafts() {
       const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/redo`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ what, why: redoWhy.trim() || null }),
+        body: JSON.stringify({ what, why: redoWhy.trim() || null, current_draft: (draft.formatted_text || draft.generated_text || '').trim() || null }),
       })
       if (response.ok) {
         setRedoOpenDraftId(null)

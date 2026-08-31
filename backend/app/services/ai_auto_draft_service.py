@@ -155,14 +155,24 @@ def _generate_draft_via_planner(
     return draft
 
 
-def _redo_instruction_block(what: str, why: str | None, *, redo_number: int) -> str:
-    block = f"Redo #{redo_number}\nWhat: {what}"
+def _redo_instruction_block(
+    what: str, why: str | None, *, redo_number: int, draft_snapshot: str | None = None
+) -> str:
+    block = f"Redo #{redo_number}"
+    snapshot = (draft_snapshot or "").strip()
+    if snapshot:
+        # Show the planner the exact draft this redo was asked to change, so it edits
+        # that text rather than regenerating from scratch and drifting away from it.
+        block += f"\nPrevious draft:\n{snapshot}"
+    block += f"\nWhat: {what}"
     if why:
         block += f"\nWhy: {why}"
     return block
 
 
-def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, what: str, why: str | None) -> AiAutoDraft | None:
+def regenerate_draft_via_planner(
+    db: Session, draft: AiAutoDraft, what: str, why: str | None, current_draft: str | None = None
+) -> AiAutoDraft | None:
     """Re-runs the planner/drafter/checker loop for an existing draft, folding in admin
     instructions from a "REDO-{id} <instructions>" reply, and updates the draft in place.
 
@@ -181,6 +191,10 @@ def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, what: str, why
 
     planner_mode = ai_settings.planner_mode or "off"
     inbound_text = ai_agent_orchestrator.latest_inbound_text(db, tenant.id, draft.channel)
+    # Resolve the current draft snapshot before apply_planner_result_to_draft overwrites it.
+    # Prefer what the caller supplied (the frontend sends formatted_text); otherwise fall back
+    # to the draft's own text so entry points without a frontend (WhatsApp) still ground the redo.
+    current_snapshot = current_draft or draft.formatted_text or draft.generated_text
     prior_redo_logs = (
         db.query(RedoRequestLog)
         .filter(RedoRequestLog.ai_auto_draft_id == draft.id)
@@ -190,10 +204,17 @@ def regenerate_draft_via_planner(db: Session, draft: AiAutoDraft, what: str, why
     operator_note = "\n\n".join(
         [
             *[
-                _redo_instruction_block(prior_log.what, prior_log.why, redo_number=index)
+                _redo_instruction_block(
+                    prior_log.what,
+                    prior_log.why,
+                    redo_number=index,
+                    draft_snapshot=prior_log.previous_draft_text,
+                )
                 for index, prior_log in enumerate(prior_redo_logs, start=1)
             ],
-            _redo_instruction_block(what, why, redo_number=len(prior_redo_logs) + 1),
+            _redo_instruction_block(
+                what, why, redo_number=len(prior_redo_logs) + 1, draft_snapshot=current_snapshot
+            ),
         ]
     )
     result = ai_agent_orchestrator.run_planner_loop(

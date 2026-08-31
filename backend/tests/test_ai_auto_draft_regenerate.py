@@ -67,7 +67,11 @@ def test_regenerate_updates_draft_in_place_with_operator_note(db_session, monkey
 
     assert result is draft
     assert draft.id == original_id
-    assert captured_kwargs["operator_note"] == "Redo #1\nWhat: make it shorter and mention the deposit"
+    # The current draft being redone is threaded into the redo so the planner edits it rather
+    # than regenerating blind. Falls back to generated_text when no snapshot is supplied.
+    assert captured_kwargs["operator_note"] == (
+        "Redo #1\nPrevious draft:\nOriginal draft text.\nWhat: make it shorter and mention the deposit"
+    )
     assert captured_kwargs["channel"] == "whatsapp"
     assert "Shorter reply, deposit mentioned." in draft.generated_text
     assert draft.template_id == 42
@@ -228,7 +232,47 @@ def test_regenerate_accumulates_prior_redo_history(db_session, monkeypatch):
 
     regenerate_draft_via_planner(db_session, draft, "mention the parking code", "the guest asked twice")
 
+    # Redo #1's log predates the snapshot column (previous_draft_text is null) so it renders
+    # without a "Previous draft" line; the current redo grounds on the live draft text.
     assert captured_kwargs["operator_note"] == (
         "Redo #1\nWhat: make it friendlier\nWhy: guest is sensitive\n\n"
-        "Redo #2\nWhat: mention the parking code\nWhy: the guest asked twice"
+        "Redo #2\nPrevious draft:\nOriginal draft text.\nWhat: mention the parking code\nWhy: the guest asked twice"
+    )
+
+
+def test_regenerate_uses_supplied_current_draft_and_prior_snapshot(db_session, monkeypatch):
+    # Full history: a prior redo log carrying its own draft snapshot is threaded verbatim, and
+    # the caller-supplied current_draft (the frontend's formatted_text) overrides the draft's
+    # own text for the current step.
+    tenant = _create_tenant(db_session)
+    _create_ai_settings(db_session, tenant)
+    draft = _create_draft(db_session, tenant, generated_text="Raw draft text.", formatted_text="*Formatted* draft text.")
+    db_session.add(
+        RedoRequestLog(
+            ai_auto_draft_id=draft.id,
+            tenant_id=tenant.id,
+            channel="crm",
+            what="make it friendlier",
+            why=None,
+            requested_by_user_id=1,
+            previous_draft_text="The very first draft.",
+        )
+    )
+    db_session.commit()
+
+    captured_kwargs = {}
+
+    def fake_run_planner_loop(db, **kwargs):
+        captured_kwargs.update(kwargs)
+        return PlannerRunResult(
+            status="completed", run_id=1004, generated_text="Reworked reply.", template_id=42, checker_passed=True, auto_send_allowed=False
+        )
+
+    monkeypatch.setattr(ai_agent_orchestrator, "run_planner_loop", fake_run_planner_loop)
+
+    regenerate_draft_via_planner(db_session, draft, "mention parking", None, "*Formatted* draft text.")
+
+    assert captured_kwargs["operator_note"] == (
+        "Redo #1\nPrevious draft:\nThe very first draft.\nWhat: make it friendlier\n\n"
+        "Redo #2\nPrevious draft:\n*Formatted* draft text.\nWhat: mention parking"
     )
