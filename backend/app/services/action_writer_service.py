@@ -44,6 +44,7 @@ ACTION_WRITER_SCHEMA = {
                 "properties": {
                     "title": {"type": "string"},
                     "description": {"type": "string"},
+                    "ai_instruction": {"type": "string"},
                     "due_date": {"type": "string"},
                     "priority": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
@@ -58,6 +59,7 @@ ACTION_WRITER_SCHEMA = {
                 "properties": {
                     "action_item_id": {"type": "integer"},
                     "title": {"type": "string"},
+                    "ai_instruction": {"type": "string"},
                     "due_date": {"type": "string"},
                     "priority": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
@@ -111,6 +113,8 @@ _OUTPUT_INSTRUCTION = (
     "include a `reasoning` explaining why the change is warranted - a human reviews these before "
     "they take effect. Use `complete_items` when the tenant's message indicates the task was actually accomplished; use `delete_items` when the task is no longer needed or relevant. `priority` is one of p1 (most urgent) to p4 (least urgent), omit if not "
     "implied. `tags` must be zero or more of the available tag names above, omit if none fits. "
+    "`ai_instruction` is an optional short directive for a future AI planner run on this task "
+    "(what the reply/action should accomplish), distinct from the human-facing `description`; omit if none is warranted. "
     "`reasoning` at the top level briefly explains the overall decision."
 )
 
@@ -226,12 +230,14 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int,
         if not title:
             continue
         description = str((raw_item or {}).get("description") or "").strip() or None
+        ai_instruction = str((raw_item or {}).get("ai_instruction") or "").strip() or None
         action_item_service.create_ai_item(
             db,
             tenant.id,
             title,
             description,
             _resolve_due_date((raw_item or {}).get("due_date")),
+            ai_instruction=ai_instruction,
             tag_ids=action_tag_service.resolve_tag_ids(db, (raw_item or {}).get("tags")),
             priority=_resolve_priority((raw_item or {}).get("priority")),
         )
@@ -249,6 +255,9 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int,
         title = str((raw_item or {}).get("title") or "").strip()
         if title:
             proposed_value["title"] = title
+        ai_instruction = str((raw_item or {}).get("ai_instruction") or "").strip()
+        if ai_instruction:
+            proposed_value["ai_instruction"] = ai_instruction
         due_date = _resolve_due_date((raw_item or {}).get("due_date"))
         if due_date is not None:
             proposed_value["due_date"] = due_date.isoformat()

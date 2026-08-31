@@ -20,5 +20,8 @@ class ActionTagDefinition(Base):
     color = Column(String(20), nullable=False)
     position = Column(Integer, nullable=False, default=0, server_default="0")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # When true, an open tenant action carrying this tag fires the planner at its due date/time -
+    # see action_planner_trigger_service.py.
+    triggers_planner = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

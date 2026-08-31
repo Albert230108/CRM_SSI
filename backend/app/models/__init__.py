@@ -9,6 +9,7 @@ from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_reply_template import AiReplyTemplate, AiReplyTemplateBrainSection
 from app.models.action_item import ActionItem
 from app.models.action_item_tag import ActionItemTag
+from app.models.action_saved_view import ActionSavedView
 from app.models.action_tag_definition import ActionTagDefinition
 from app.models.beds24_availability_summary import Beds24AvailabilitySummary
 from app.models.beds24_webhook_log import Beds24WebhookLog

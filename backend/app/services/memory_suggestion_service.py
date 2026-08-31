@@ -157,6 +157,7 @@ def _apply_action_item_modify(db: Session, suggestion: MemorySuggestion) -> Appl
         db,
         item,
         title=proposed.get("title"),
+        ai_instruction=proposed.get("ai_instruction"),
         due_date=due_date,
         tag_ids=proposed.get("tag_ids"),
         priority=proposed.get("priority"),

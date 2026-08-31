@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String, Text, Time, func
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -26,8 +26,15 @@ class ActionItem(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
+    # Separate from description: a directive for the planner when this action triggers an AI run.
+    # Manually editable, or filled by the action-writer agent - see action_writer_service.py.
+    ai_instruction = Column(Text, nullable=True)
     responsible_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     due_date = Column(Date, nullable=True)
+    # Time-of-day for the due date. Together with due_date it defines when a "triggers planner"
+    # action fires the planner (see action_planner_trigger_service.py). Missing time defaults to
+    # 09:00 Europe/Amsterdam there.
+    due_time = Column(Time, nullable=True)
     status = Column(String(20), nullable=False, default=STATUS_OPEN, server_default=STATUS_OPEN)
     source = Column(String(20), nullable=False)  # manual | ai
     priority = Column(String(4), nullable=True)  # p1 (highest) .. p4, or NULL for none
@@ -39,6 +46,10 @@ class ActionItem(Base):
     # recurrence_interval_days is set.
     recurrence_anchor = Column(String(20), nullable=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Set when a per-action planner run has fired for the current due date/time, so the scheduler
+    # sweep does not re-fire every tick. Cleared when due_date/due_time change (fire once per due
+    # change) - see action_item_service.update.
+    planner_triggered_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)

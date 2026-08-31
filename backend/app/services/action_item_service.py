@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -113,8 +113,10 @@ def create(
     title: str,
     *,
     description: str | None = None,
+    ai_instruction: str | None = None,
     responsible_user_id: int | None = None,
     due_date: date | None = None,
+    due_time: time | None = None,
     source: str = "manual",
     created_by_user_id: int | None = None,
     tag_ids: list[int] | None = None,
@@ -129,8 +131,10 @@ def create(
         tenant_id=tenant_id,
         title=title,
         description=(description or "").strip() or None,
+        ai_instruction=(ai_instruction or "").strip() or None,
         responsible_user_id=responsible_user_id,
         due_date=due_date,
+        due_time=due_time,
         status=STATUS_OPEN,
         source=source,
         created_by_user_id=created_by_user_id,
@@ -149,7 +153,9 @@ def create_general(
     title: str,
     *,
     description: str | None = None,
+    ai_instruction: str | None = None,
     due_date: date | None = None,
+    due_time: time | None = None,
     tag_ids: list[int] | None = None,
     priority: str | None = None,
     source: str = "manual",
@@ -160,7 +166,9 @@ def create_general(
         None,
         title,
         description=description,
+        ai_instruction=ai_instruction,
         due_date=due_date,
+        due_time=due_time,
         tag_ids=tag_ids,
         priority=priority,
         source=source,
@@ -175,10 +183,23 @@ def create_ai_item(
     description: str | None,
     due_date: date | None,
     *,
+    ai_instruction: str | None = None,
+    due_time: time | None = None,
     tag_ids: list[int] | None = None,
     priority: str | None = None,
 ) -> ActionItem | None:
-    return create(db, tenant_id, title, description=description, due_date=due_date, source=SOURCE_AI, tag_ids=tag_ids, priority=priority)
+    return create(
+        db,
+        tenant_id,
+        title,
+        description=description,
+        ai_instruction=ai_instruction,
+        due_date=due_date,
+        due_time=due_time,
+        source=SOURCE_AI,
+        tag_ids=tag_ids,
+        priority=priority,
+    )
 
 
 def update(
@@ -187,8 +208,12 @@ def update(
     *,
     title: str | None = None,
     description: str | None = None,
+    ai_instruction: str | None = None,
+    clear_ai_instruction: bool = False,
     responsible_user_id: int | None = None,
     due_date: date | None = None,
+    due_time: time | None = None,
+    clear_due_time: bool = False,
     tag_ids: list[int] | None = None,
     priority: str | None = None,
     clear_priority: bool = False,
@@ -200,10 +225,24 @@ def update(
         item.title = title.strip()
     if description is not None:
         item.description = description.strip() or None
+    if clear_ai_instruction:
+        item.ai_instruction = None
+    elif ai_instruction is not None:
+        item.ai_instruction = ai_instruction.strip() or None
     if responsible_user_id is not None:
         item.responsible_user_id = responsible_user_id
-    if due_date is not None:
+    # Any change to when this action is due re-arms the per-action planner trigger (fire once per
+    # due change) - see action_planner_trigger_service.py.
+    if due_date is not None and due_date != item.due_date:
         item.due_date = due_date
+        item.planner_triggered_at = None
+    if clear_due_time:
+        if item.due_time is not None:
+            item.planner_triggered_at = None
+        item.due_time = None
+    elif due_time is not None and due_time != item.due_time:
+        item.due_time = due_time
+        item.planner_triggered_at = None
     _sync_tags(db, item, tag_ids)
     if clear_priority:
         item.priority = None
@@ -230,8 +269,10 @@ def complete(db: Session, item: ActionItem) -> ActionItem:
             item.tenant_id,
             item.title,
             description=item.description,
+            ai_instruction=item.ai_instruction,
             responsible_user_id=item.responsible_user_id,
             due_date=next_due,
+            due_time=item.due_time,
             source=item.source,
             tag_ids=item.tag_ids,
             priority=item.priority,

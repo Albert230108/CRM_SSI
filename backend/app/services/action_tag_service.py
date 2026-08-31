@@ -48,6 +48,7 @@ def update_definition(
     color: str | None = None,
     is_active: bool | None = None,
     position: int | None = None,
+    triggers_planner: bool | None = None,
 ) -> ActionTagDefinition:
     if name is not None:
         definition.name = name.strip()
@@ -57,6 +58,8 @@ def update_definition(
         definition.is_active = is_active
     if position is not None:
         definition.position = position
+    if triggers_planner is not None:
+        definition.triggers_planner = triggers_planner
     return definition
 
 

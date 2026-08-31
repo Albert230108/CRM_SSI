@@ -310,7 +310,7 @@ function FieldsTab({ showSuccess, showError }: { showSuccess: (m: string) => voi
 
 // -------------------------------------------------------------------------------- Tags tab
 
-type ActionTagDefinition = { id: number; name: string; color: string; position: number; is_active: boolean }
+type ActionTagDefinition = { id: number; name: string; color: string; position: number; is_active: boolean; triggers_planner: boolean }
 
 const DEFAULT_TAG_COLOR = '#0891b2'
 
@@ -364,7 +364,7 @@ function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void;
     }
   }
 
-  const update = async (tag: ActionTagDefinition, patch: Partial<Pick<ActionTagDefinition, 'name' | 'color' | 'is_active' | 'position'>>) => {
+  const update = async (tag: ActionTagDefinition, patch: Partial<Pick<ActionTagDefinition, 'name' | 'color' | 'is_active' | 'position' | 'triggers_planner'>>) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/action-tags/${tag.id}`, {
         method: 'PATCH',
@@ -401,7 +401,8 @@ function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void;
       <h2 className="text-lg font-semibold text-gray-900">Action Tags</h2>
       <p className="mt-1 text-sm text-gray-500">
         The tag palette action items can use. Distinct from the Manual/AI source badge - this is a category you choose,
-        and the action-writer agent auto-fills from the active tags below.
+        and the action-writer agent auto-fills from the active tags below. Mark a tag "Triggers planner" so a tenant
+        action carrying it runs the planner automatically at its due date/time.
       </p>
 
       <div className="mt-3 flex items-center gap-2">
@@ -459,6 +460,10 @@ function TagsTab({ showSuccess, showError }: { showSuccess: (m: string) => void;
                 }}
                 className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-brand-400"
               />
+              <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500" title="An open tenant action with this tag runs the planner at its due date/time">
+                <input type="checkbox" checked={tag.triggers_planner} onChange={(event) => update(tag, { triggers_planner: event.target.checked })} />
+                Triggers planner
+              </label>
               <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
                 <input type="checkbox" checked={tag.is_active} onChange={(event) => update(tag, { is_active: event.target.checked })} />
                 Active

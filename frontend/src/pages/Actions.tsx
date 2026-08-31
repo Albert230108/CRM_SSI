@@ -14,6 +14,7 @@ type ActionTag = {
   id: number
   name: string
   color: string
+  triggers_planner?: boolean
 }
 
 type ActionItem = {
@@ -22,11 +23,72 @@ type ActionItem = {
   tenant_name: string | null
   title: string
   description: string | null
+  ai_instruction: string | null
   due_date: string | null
+  due_time: string | null
   status: 'open' | 'done' | 'dismissed'
   source: 'manual' | 'ai'
   tags: ActionTag[]
   priority: Priority | null
+  created_at: string
+}
+
+type SortField = 'due_date' | 'priority' | 'created_at'
+type SortDir = 'asc' | 'desc'
+type DueBucket = 'overdue' | 'today' | 'upcoming'
+type ViewScope = 'all' | 'tenant' | 'general'
+type TagMatch = 'any' | 'all'
+
+type SavedView = {
+  id: number
+  name: string
+  position: number
+  status: string | null
+  priority: Priority | null
+  tag_ids: number[]
+  tag_match: TagMatch
+  due_bucket: DueBucket | null
+  scope: ViewScope
+  sort_field: SortField
+  sort_dir: SortDir
+}
+
+const SORT_FIELDS: Array<{ id: SortField; label: string }> = [
+  { id: 'due_date', label: 'Due date' },
+  { id: 'priority', label: 'Priority' },
+  { id: 'created_at', label: 'Created' },
+]
+
+const DUE_BUCKETS: Array<{ id: DueBucket | ''; label: string }> = [
+  { id: '', label: 'Any due' },
+  { id: 'overdue', label: 'Overdue' },
+  { id: 'today', label: 'Today' },
+  { id: 'upcoming', label: 'Upcoming' },
+]
+
+const SCOPES: Array<{ id: ViewScope; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'tenant', label: 'Tenant' },
+  { id: 'general', label: 'General' },
+]
+
+function priorityRank(priority: Priority | null): number {
+  return priority ? Number(priority.slice(1)) : 99
+}
+
+function dueBucketOf(dueDate: string | null): DueBucket | null {
+  if (!dueDate) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const due = new Date(`${dueDate}T00:00:00`)
+  if (due < today) return 'overdue'
+  if (due.getTime() === today.getTime()) return 'today'
+  return 'upcoming'
+}
+
+function formatDueTime(dueTime: string | null): string {
+  // API returns HH:MM:SS; show HH:MM.
+  return dueTime ? dueTime.slice(0, 5) : ''
 }
 
 const STATUS_FILTERS: Array<{ id: string; label: string }> = [
@@ -103,6 +165,7 @@ const PRIORITY_FILTERS: Array<{ id: Priority | ''; label: string }> = [
 type ActionItemSuggestionSnapshot = {
   title: string
   description: string | null
+  ai_instruction: string | null
   due_date: string | null
   priority: Priority | null
   tags: ActionTag[]
@@ -164,6 +227,12 @@ export default function Actions() {
 
   const [statusFilter, setStatusFilter] = useState('open')
   const [priorityFilter, setPriorityFilter] = useState<Priority | ''>('')
+  const [tagFilterIds, setTagFilterIds] = useState<number[]>([])
+  const [tagMatch, setTagMatch] = useState<TagMatch>('any')
+  const [dueBucket, setDueBucket] = useState<DueBucket | ''>('')
+  const [scopeFilter, setScopeFilter] = useState<ViewScope>('all')
+  const [sortField, setSortField] = useState<SortField>('due_date')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [items, setItems] = useState<ActionItem[]>([])
   const [loading, setLoading] = useState(true)
   const [suggestions, setSuggestions] = useState<ActionItemSuggestion[]>([])
@@ -175,14 +244,24 @@ export default function Actions() {
   const [newTitle, setNewTitle] = useState('')
   const [newTagIds, setNewTagIds] = useState<number[]>([])
   const [newDueDate, setNewDueDate] = useState('')
+  const [newDueTime, setNewDueTime] = useState('')
   const [newPriority, setNewPriority] = useState('')
+  const [newAiInstruction, setNewAiInstruction] = useState('')
   const [addingGeneral, setAddingGeneral] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
+  const [editDueTime, setEditDueTime] = useState('')
   const [editPriority, setEditPriority] = useState('')
+  const [editAiInstruction, setEditAiInstruction] = useState('')
   const [editTagIds, setEditTagIds] = useState<number[]>([])
   const [savingId, setSavingId] = useState<number | null>(null)
+
+  const [savedViews, setSavedViews] = useState<SavedView[]>([])
+  const [activeViewId, setActiveViewId] = useState<number | null>(null)
+  const [showSaveView, setShowSaveView] = useState(false)
+  const [newViewName, setNewViewName] = useState('')
+  const [savingView, setSavingView] = useState(false)
 
   const load = async (signal?: AbortSignal) => {
     setLoading(true)
@@ -233,14 +312,142 @@ export default function Actions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const visibleItems = priorityFilter ? items.filter((item) => item.priority === priorityFilter) : items
+  const loadSavedViews = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/action-saved-views`, { headers: authHeaders })
+      setSavedViews(response.ok ? await response.json() : [])
+    } catch {
+      setSavedViews([])
+    }
+  }
+
+  useEffect(() => {
+    loadSavedViews()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const applyView = (view: SavedView) => {
+    setActiveViewId(view.id)
+    setStatusFilter(view.status ?? '')
+    setPriorityFilter(view.priority ?? '')
+    setTagFilterIds(view.tag_ids)
+    setTagMatch(view.tag_match)
+    setDueBucket(view.due_bucket ?? '')
+    setScopeFilter(view.scope)
+    setSortField(view.sort_field)
+    setSortDir(view.sort_dir)
+  }
+
+  const currentFilterPayload = () => ({
+    status: statusFilter || null,
+    priority: priorityFilter || null,
+    tag_ids: tagFilterIds,
+    tag_match: tagMatch,
+    due_bucket: dueBucket || null,
+    scope: scopeFilter,
+    sort_field: sortField,
+    sort_dir: sortDir,
+  })
+
+  const handleSaveView = async () => {
+    const name = newViewName.trim()
+    if (!name || savingView) return
+    try {
+      setSavingView(true)
+      const response = await fetch(`${API_BASE_URL}/api/action-saved-views`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({ name, ...currentFilterPayload() }),
+      })
+      if (!response.ok) throw new Error()
+      const created: SavedView = await response.json()
+      setSavedViews((current) => [...current, created])
+      setActiveViewId(created.id)
+      setShowSaveView(false)
+      setNewViewName('')
+    } catch {
+      showError('Failed to save view')
+    } finally {
+      setSavingView(false)
+    }
+  }
+
+  const handleUpdateActiveView = async () => {
+    if (activeViewId == null) return
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/action-saved-views/${activeViewId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+        body: JSON.stringify({ ...currentFilterPayload(), clear_status: !statusFilter, clear_priority: !priorityFilter, clear_due_bucket: !dueBucket }),
+      })
+      if (!response.ok) throw new Error()
+      const updated: SavedView = await response.json()
+      setSavedViews((current) => current.map((view) => (view.id === updated.id ? updated : view)))
+    } catch {
+      showError('Failed to update view')
+    }
+  }
+
+  const handleDeleteView = async (viewId: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/action-saved-views/${viewId}`, { method: 'DELETE', headers: authHeaders })
+      if (!response.ok && response.status !== 204) throw new Error()
+      setSavedViews((current) => current.filter((view) => view.id !== viewId))
+      if (activeViewId === viewId) setActiveViewId(null)
+    } catch {
+      showError('Failed to delete view')
+    }
+  }
+
+  const clearActiveView = () => {
+    setActiveViewId(null)
+    setPriorityFilter('')
+    setTagFilterIds([])
+    setTagMatch('any')
+    setDueBucket('')
+    setScopeFilter('all')
+    setSortField('due_date')
+    setSortDir('asc')
+  }
+
+  // The action-items API returns tags without the triggers_planner flag, so resolve it from the
+  // full tag palette (allTags) to decide whether to show the "Planner" badge.
+  const plannerTagIds = new Set(allTags.filter((tag) => tag.triggers_planner).map((tag) => tag.id))
+
+  const visibleItems = items
+    .filter((item) => (priorityFilter ? item.priority === priorityFilter : true))
+    .filter((item) => (scopeFilter === 'tenant' ? item.tenant_id != null : scopeFilter === 'general' ? item.tenant_id == null : true))
+    .filter((item) => (dueBucket ? dueBucketOf(item.due_date) === dueBucket : true))
+    .filter((item) => {
+      if (tagFilterIds.length === 0) return true
+      const itemTagIds = new Set(item.tags.map((tag) => tag.id))
+      return tagMatch === 'all' ? tagFilterIds.every((id) => itemTagIds.has(id)) : tagFilterIds.some((id) => itemTagIds.has(id))
+    })
+    .slice()
+    .sort((a, b) => {
+      let cmp = 0
+      if (sortField === 'due_date') {
+        // Nulls always last, regardless of direction.
+        if (!a.due_date && !b.due_date) cmp = 0
+        else if (!a.due_date) return 1
+        else if (!b.due_date) return -1
+        else cmp = a.due_date.localeCompare(b.due_date) || formatDueTime(a.due_time).localeCompare(formatDueTime(b.due_time))
+      } else if (sortField === 'priority') {
+        cmp = priorityRank(a.priority) - priorityRank(b.priority)
+      } else {
+        cmp = a.created_at.localeCompare(b.created_at)
+      }
+      return sortDir === 'desc' ? -cmp : cmp
+    })
 
   const resetGeneralAddForm = () => {
     setQuickAddText('')
     setNewTitle('')
     setNewDueDate('')
+    setNewDueTime('')
     setNewTagIds([])
     setNewPriority('')
+    setNewAiInstruction('')
   }
 
   const toggleSelectedTag = (tagId: number, selectedIds: number[], setSelectedIds: (ids: number[]) => void) => {
@@ -284,7 +491,9 @@ export default function Actions() {
         headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
         body: JSON.stringify({
           title,
+          ai_instruction: newAiInstruction.trim() || null,
           due_date: newDueDate || null,
+          due_time: newDueTime || null,
           tag_ids: newTagIds,
           priority: newPriority || null,
         }),
@@ -305,7 +514,9 @@ export default function Actions() {
     setEditingId(item.id)
     setEditTitle(item.title)
     setEditDueDate(item.due_date ?? '')
+    setEditDueTime(formatDueTime(item.due_time))
     setEditPriority(item.priority ?? '')
+    setEditAiInstruction(item.ai_instruction ?? '')
     setEditTagIds(item.tags.map((tag) => tag.id))
   }
 
@@ -313,7 +524,9 @@ export default function Actions() {
     setEditingId(null)
     setEditTitle('')
     setEditDueDate('')
+    setEditDueTime('')
     setEditPriority('')
+    setEditAiInstruction('')
     setEditTagIds([])
   }
 
@@ -327,7 +540,11 @@ export default function Actions() {
         body: JSON.stringify({
           title: editTitle.trim(),
           due_date: editDueDate || null,
+          due_time: editDueTime || null,
+          clear_due_time: !editDueTime,
           priority: editPriority || null,
+          ai_instruction: editAiInstruction.trim() || null,
+          clear_ai_instruction: !editAiInstruction.trim(),
           tag_ids: editTagIds,
         }),
       })
@@ -419,7 +636,7 @@ export default function Actions() {
                   </button>
                 </div>
               </div>
-              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto_auto] md:items-center">
                 <input
                   type="text"
                   value={newTitle}
@@ -431,6 +648,14 @@ export default function Actions() {
                   type="date"
                   value={newDueDate}
                   onChange={(event) => setNewDueDate(event.target.value)}
+                  className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-300"
+                />
+                <input
+                  type="time"
+                  value={newDueTime}
+                  onChange={(event) => setNewDueTime(event.target.value)}
+                  aria-label="Due time"
+                  title="Due time (used to trigger the planner)"
                   className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-300"
                 />
                 <select
@@ -445,6 +670,13 @@ export default function Actions() {
                   <option value="p4">P4</option>
                 </select>
               </div>
+              <textarea
+                value={newAiInstruction}
+                onChange={(event) => setNewAiInstruction(event.target.value)}
+                placeholder="AI instruction (optional) — what the planner should do when this action comes due"
+                rows={2}
+                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-300"
+              />
               <TagChipSelector tags={allTags} selectedIds={newTagIds} onToggle={(tagId) => toggleSelectedTag(tagId, newTagIds, setNewTagIds)} />
               <div className="flex justify-end">
                 <button
@@ -503,6 +735,9 @@ export default function Actions() {
                             ) : (
                               <p className="text-gray-900">{suggestion.current.title}</p>
                             )}
+                            {'ai_instruction' in suggestion.proposed ? (
+                              <DiffRow label="AI" oldValue={suggestion.current.ai_instruction ?? ''} newValue={String(suggestion.proposed.ai_instruction ?? '')} />
+                            ) : null}
                             {'due_date' in suggestion.proposed ? (
                               <DiffRow label="Due" oldValue={suggestion.current.due_date ?? ''} newValue={String(suggestion.proposed.due_date ?? '')} />
                             ) : null}
@@ -541,6 +776,83 @@ export default function Actions() {
           </div>
         ) : null}
 
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2">
+          <button
+            type="button"
+            onClick={clearActiveView}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+              activeViewId === null ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            All actions
+          </button>
+          {savedViews.map((view) => (
+            <span
+              key={view.id}
+              className={`inline-flex items-center gap-1 rounded-full text-xs font-semibold transition ${
+                activeViewId === view.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <button type="button" onClick={() => applyView(view)} className="py-1.5 pl-3 pr-1">
+                {view.name}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteView(view.id)}
+                aria-label={`Delete ${view.name} tab`}
+                className={`pr-2.5 ${activeViewId === view.id ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {activeViewId !== null ? (
+            <button
+              type="button"
+              onClick={() => void handleUpdateActiveView()}
+              className="rounded-full border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100"
+            >
+              Update tab
+            </button>
+          ) : showSaveView ? (
+            <span className="inline-flex items-center gap-1.5">
+              <input
+                type="text"
+                value={newViewName}
+                onChange={(event) => setNewViewName(event.target.value)}
+                placeholder="Tab name"
+                className="w-32 rounded-full border border-gray-200 px-3 py-1.5 text-xs text-gray-900 outline-none focus:border-brand-300"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSaveView()}
+                disabled={savingView || !newViewName.trim()}
+                className="rounded-full bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                {savingView ? 'Saving...' : 'Save'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSaveView(false)
+                  setNewViewName('')
+                }}
+                className="rounded-full border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-500 transition hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowSaveView(true)}
+              className="rounded-full border border-dashed border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-500 transition hover:bg-gray-100"
+            >
+              + Save current as tab
+            </button>
+          )}
+        </div>
+
         <div className="mt-3 flex gap-1.5">
           {STATUS_FILTERS.map((filter) => (
             <button
@@ -571,6 +883,75 @@ export default function Actions() {
           ))}
         </div>
 
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="flex gap-1.5">
+            {SCOPES.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setScopeFilter(option.id)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  scopeFilter === option.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1.5">
+            {DUE_BUCKETS.map((option) => (
+              <button
+                key={option.id || 'any-due'}
+                type="button"
+                onClick={() => setDueBucket(option.id)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  dueBucket === option.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            <label className="text-xs font-semibold text-gray-500">Sort</label>
+            <select
+              value={sortField}
+              onChange={(event) => setSortField(event.target.value as SortField)}
+              className="rounded-full border border-gray-300 px-2.5 py-1 text-xs text-gray-700 outline-none focus:border-brand-300"
+            >
+              {SORT_FIELDS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'))}
+              aria-label="Toggle sort direction"
+              className="rounded-full border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-700 transition hover:bg-gray-100"
+            >
+              {sortDir === 'asc' ? '↑ Asc' : '↓ Desc'}
+            </button>
+          </div>
+        </div>
+
+        {allTags.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-gray-500">Tags</span>
+            <TagChipSelector tags={allTags} selectedIds={tagFilterIds} onToggle={(tagId) => toggleSelectedTag(tagId, tagFilterIds, setTagFilterIds)} />
+            {tagFilterIds.length > 1 ? (
+              <button
+                type="button"
+                onClick={() => setTagMatch((current) => (current === 'any' ? 'all' : 'any'))}
+                className="rounded-full border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-600 transition hover:bg-gray-100"
+              >
+                Match: {tagMatch === 'any' ? 'Any' : 'All'}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="mt-3 space-y-2 stagger-list">
           {loading ? (
             <p className="text-sm text-gray-500">Loading...</p>
@@ -597,6 +978,14 @@ export default function Actions() {
                         onChange={(event) => setEditDueDate(event.target.value)}
                         className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
                       />
+                      <input
+                        type="time"
+                        value={editDueTime}
+                        onChange={(event) => setEditDueTime(event.target.value)}
+                        aria-label="Due time"
+                        title="Due time (used to trigger the planner)"
+                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
+                      />
                       <select
                         value={editPriority}
                         onChange={(event) => setEditPriority(event.target.value)}
@@ -609,6 +998,13 @@ export default function Actions() {
                         <option value="p4">P4</option>
                       </select>
                     </div>
+                    <textarea
+                      value={editAiInstruction}
+                      onChange={(event) => setEditAiInstruction(event.target.value)}
+                      placeholder="AI instruction (optional) — what the planner should do when this action comes due"
+                      rows={2}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-900 outline-none focus:border-brand-300"
+                    />
                     <TagChipSelector
                       tags={allTags}
                       selectedIds={editTagIds}
@@ -642,6 +1038,11 @@ export default function Actions() {
                       />
                       <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
                       {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
+                      {item.ai_instruction ? (
+                        <p className="mt-0.5 text-xs text-brand-700">
+                          <span className="font-semibold">AI:</span> {item.ai_instruction}
+                        </p>
+                      ) : null}
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
                         <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-brand-50 text-brand-700' : 'bg-gray-100 text-gray-600'}`}>
                           {item.source === 'ai' ? 'AI' : 'Manual'}
@@ -653,7 +1054,17 @@ export default function Actions() {
                             {tag.name}
                           </span>
                         ))}
-                        {item.due_date ? <span>Due {formatDisplayDateShortMonth(item.due_date)}</span> : null}
+                        {item.tenant_id != null && item.tags.some((tag) => plannerTagIds.has(tag.id)) ? (
+                          <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 font-semibold text-brand-700" title="This action triggers the planner at its due date/time">
+                            Planner
+                          </span>
+                        ) : null}
+                        {item.due_date ? (
+                          <span>
+                            Due {formatDisplayDateShortMonth(item.due_date)}
+                            {item.due_time ? ` at ${formatDueTime(item.due_time)}` : ''}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 gap-2">

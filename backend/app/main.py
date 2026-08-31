@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api.admin_invites import router as admin_invites_router
 from app.api.admin_settings import router as admin_settings_router
 from app.api.action_items import router as action_items_router
+from app.api.action_saved_views import router as action_saved_views_router
 from app.api.action_tags import router as action_tags_router
 from app.api.admin_sync import router as admin_sync_router
 from app.api.ai_agent_profiles import router as ai_agent_profiles_router
@@ -48,7 +49,7 @@ from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.bulk_planner_schedule import BulkPlannerSchedule
 from app.models.gmail_integration import GmailAccount
 from app.models.tenant_brain_trigger import TenantBrainTrigger
-from app.services import action_writer_service, ai_auto_draft_service, beds24_availability_service, bulk_planner_schedule_service, tenant_brain_service
+from app.services import action_planner_trigger_service, action_writer_service, ai_auto_draft_service, beds24_availability_service, bulk_planner_schedule_service, tenant_brain_service
 from app.services.ai_draft_notification_service import notify_admins_of_new_draft
 from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
 from app.webhooks.gmail import router as gmail_webhook_router
@@ -285,6 +286,17 @@ def _run_due_action_writer_triggers_once() -> None:
         db.close()
 
 
+def _run_due_action_planner_triggers_once() -> None:
+    db = SessionLocal()
+    try:
+        action_planner_trigger_service.run_due_action_planner_triggers(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Action planner trigger sweep failed")
+    finally:
+        db.close()
+
+
 def _run_due_notification_whatsapp_batch_once() -> None:
     db = SessionLocal()
     try:
@@ -331,6 +343,7 @@ async def _ai_draft_scheduler_forever() -> None:
         await asyncio.to_thread(_run_due_bulk_planner_schedules_once)
         await asyncio.to_thread(_run_due_tenant_brain_triggers_once)
         await asyncio.to_thread(_run_due_action_writer_triggers_once)
+        await asyncio.to_thread(_run_due_action_planner_triggers_once)
         await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
         await _maybe_refresh_beds24_availability_once()
 
@@ -396,6 +409,7 @@ app.include_router(beds24_webhook_router, prefix="/api")
 app.include_router(beds24_availability_router, prefix="/api")
 app.include_router(brain_fields_router, prefix="/api")
 app.include_router(action_items_router, prefix="/api")
+app.include_router(action_saved_views_router, prefix="/api")
 app.include_router(action_tags_router, prefix="/api")
 app.include_router(working_memory_rules_router, prefix="/api")
 app.include_router(memory_suggestions_router, prefix="/api")

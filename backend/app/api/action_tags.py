@@ -19,6 +19,7 @@ class ActionTagDefinitionRead(BaseModel):
     color: str
     position: int
     is_active: bool
+    triggers_planner: bool
     created_at: datetime
     updated_at: datetime
 
@@ -33,6 +34,7 @@ class ActionTagDefinitionUpdate(BaseModel):
     color: Optional[str] = None
     is_active: Optional[bool] = None
     position: Optional[int] = None
+    triggers_planner: Optional[bool] = None
 
 
 @router.get("/action-tags", response_model=list[ActionTagDefinitionRead])
@@ -83,6 +85,7 @@ def update_action_tag(
         color=payload.color,
         is_active=payload.is_active,
         position=payload.position,
+        triggers_planner=payload.triggers_planner,
     )
     db.commit()
     db.refresh(definition)

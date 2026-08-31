@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -33,8 +33,10 @@ class ActionItemRead(BaseModel):
     tenant_name: Optional[str] = None
     title: str
     description: Optional[str] = None
+    ai_instruction: Optional[str] = None
     responsible_user_id: Optional[int] = None
     due_date: Optional[date] = None
+    due_time: Optional[time] = None
     status: str
     source: str
     tags: list[ActionTagOut]
@@ -54,8 +56,10 @@ def _to_read(item: ActionItem, tenant_name: Optional[str] = None, tags: list[Act
         tenant_name=tenant_name,
         title=item.title,
         description=item.description,
+        ai_instruction=item.ai_instruction,
         responsible_user_id=item.responsible_user_id,
         due_date=item.due_date,
+        due_time=item.due_time,
         status=item.status,
         source=item.source,
         tags=[ActionTagOut(id=tag.id, name=tag.name, color=tag.color) for tag in tags or []],
@@ -129,6 +133,7 @@ def list_tenant_action_items(
 class ActionItemSuggestionSnapshot(BaseModel):
     title: str
     description: Optional[str] = None
+    ai_instruction: Optional[str] = None
     due_date: Optional[date] = None
     priority: Optional[Priority] = None
     tags: list[ActionTagOut]
@@ -205,6 +210,7 @@ def list_action_item_pending_suggestions(
                 current=ActionItemSuggestionSnapshot(
                     title=item.title,
                     description=item.description,
+                    ai_instruction=item.ai_instruction,
                     due_date=item.due_date,
                     priority=item.priority,
                     tags=current_tags,
@@ -221,8 +227,10 @@ def list_action_item_pending_suggestions(
 class ActionItemCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    ai_instruction: Optional[str] = None
     responsible_user_id: Optional[int] = None
     due_date: Optional[date] = None
+    due_time: Optional[time] = None
     tag_ids: list[int] = []
     priority: Optional[Priority] = None
     recurrence_interval_days: Optional[int] = None
@@ -243,8 +251,10 @@ def _create_action_item(
             tenant_id,
             payload.title,
             description=payload.description,
+            ai_instruction=payload.ai_instruction,
             responsible_user_id=payload.responsible_user_id,
             due_date=payload.due_date,
+            due_time=payload.due_time,
             source="manual",
             created_by_user_id=created_by_user_id,
             tag_ids=payload.tag_ids,
@@ -345,8 +355,12 @@ def _read_with_lookups(db: Session, item: ActionItem) -> ActionItemRead:
 class ActionItemUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    ai_instruction: Optional[str] = None
+    clear_ai_instruction: bool = False
     responsible_user_id: Optional[int] = None
     due_date: Optional[date] = None
+    due_time: Optional[time] = None
+    clear_due_time: bool = False
     tag_ids: Optional[list[int]] = None
     priority: Optional[Priority] = None
     clear_priority: bool = False
@@ -369,8 +383,12 @@ def update_action_item(
             item,
             title=payload.title,
             description=payload.description,
+            ai_instruction=payload.ai_instruction,
+            clear_ai_instruction=payload.clear_ai_instruction,
             responsible_user_id=payload.responsible_user_id,
             due_date=payload.due_date,
+            due_time=payload.due_time,
+            clear_due_time=payload.clear_due_time,
             tag_ids=payload.tag_ids,
             priority=payload.priority,
             clear_priority=payload.clear_priority,

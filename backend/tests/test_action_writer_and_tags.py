@@ -661,6 +661,7 @@ def test_pending_suggestions_endpoint_returns_modify_diff_with_old_and_new(user_
     assert row["current"] == {
         "title": "Original title",
         "description": None,
+        "ai_instruction": None,
         "due_date": "2026-08-01",
         "priority": "p3",
         "tags": [
@@ -757,3 +758,99 @@ def test_parse_action_item_text_returns_502_on_gemini_failure(user_client, db_se
     response = user_client.post(f"/api/tenants/{tenant.id}/action-items/parse", json={"text": "Call guest tomorrow"})
 
     assert response.status_code == 502
+
+
+# --- ai_instruction (action writer + API) ----------------------------------------------------
+
+
+def test_action_writer_new_item_sets_ai_instruction_directly(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    _setup_action_writer(db_session, tenant)
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Please sort out the deposit.")
+    monkeypatch.setattr(
+        action_writer_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "new_items": [
+                    {
+                        "title": "Handle deposit refund",
+                        "ai_instruction": "Draft a reply confirming the deposit refund timeline.",
+                    }
+                ],
+                "reasoning": "Guest asked about the deposit.",
+            }
+        ),
+    )
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    item = db_session.query(ActionItem).filter(ActionItem.tenant_id == tenant.id).one()
+    assert item.ai_instruction == "Draft a reply confirming the deposit refund timeline."
+
+
+def test_action_writer_modify_ai_instruction_goes_through_pending_suggestion(db_session, monkeypatch):
+    from app.services import memory_suggestion_service
+
+    tenant = _create_tenant(db_session)
+    _setup_action_writer(db_session, tenant)
+    existing = action_item_service.create(db_session, tenant.id, "Existing task")
+    db_session.commit()
+    monkeypatch.setattr(action_writer_service.ai_agent_orchestrator, "latest_message_text", lambda db, tenant_id, channel: "Add context to that task.")
+    monkeypatch.setattr(
+        action_writer_service.gemini_client,
+        "generate",
+        _fake_generate(
+            {
+                "modify_items": [
+                    {
+                        "action_item_id": existing.id,
+                        "ai_instruction": "Reply with the check-in instructions.",
+                        "reasoning": "Guest needs check-in help.",
+                    }
+                ],
+                "reasoning": "Add an AI instruction.",
+            }
+        ),
+    )
+    trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
+
+    action_writer_service.generate_action_writer_update_for_trigger(db_session, trigger)
+    db_session.commit()
+
+    # The edit is NOT applied directly - it becomes a pending suggestion.
+    db_session.refresh(existing)
+    assert existing.ai_instruction is None
+    suggestion = db_session.query(MemorySuggestion).filter(MemorySuggestion.kind == "action_item_modify", MemorySuggestion.target_id == existing.id).one()
+    assert suggestion.proposed_value["ai_instruction"] == "Reply with the check-in instructions."
+
+    # Approving applies it.
+    memory_suggestion_service.approve(db_session, suggestion, reviewer_id=REGULAR_USER.id)
+    db_session.commit()
+    db_session.refresh(existing)
+    assert existing.ai_instruction == "Reply with the check-in instructions."
+
+
+def test_action_item_api_round_trips_due_time_and_ai_instruction(user_client, db_session):
+    tenant = _create_tenant(db_session)
+    create_response = user_client.post(
+        f"/api/tenants/{tenant.id}/action-items",
+        json={"title": "Timed task", "ai_instruction": "Reply about parking.", "due_date": "2026-09-01", "due_time": "14:30:00"},
+    )
+    assert create_response.status_code == 201
+    body = create_response.json()
+    item_id = body["id"]
+    assert body["ai_instruction"] == "Reply about parking."
+    assert body["due_time"] == "14:30:00"
+
+    # Clearing the due time re-arms the planner trigger.
+    db_item = db_session.query(ActionItem).filter(ActionItem.id == item_id).one()
+    db_item.planner_triggered_at = datetime.now(timezone.utc)
+    db_session.commit()
+    patch_response = user_client.patch(f"/api/action-items/{item_id}", json={"clear_due_time": True})
+    assert patch_response.status_code == 200
+    assert patch_response.json()["due_time"] is None
+    db_session.refresh(db_item)
+    assert db_item.planner_triggered_at is None
