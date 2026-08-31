@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-
 
 import { RootNavigator } from './src/navigation/RootNavigator'
 import { useAuthStore } from './src/store/authStore'
+import { usePushNotifications } from './src/hooks/usePushNotifications'
 
 /**
  * App entry: install providers (React Query for server state, SafeArea for insets), restore any
@@ -23,6 +24,7 @@ const queryClient = new QueryClient({
 
 export default function App() {
   const hydrate = useAuthStore((s) => s.hydrate)
+  usePushNotifications()
 
   useEffect(() => {
     void hydrate()

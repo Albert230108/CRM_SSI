@@ -32,6 +32,7 @@ from app.api.gmail_integration import router as gmail_integration_router
 from app.api.invites import router as invites_router
 from app.api.memory_qa import router as memory_qa_router
 from app.api.memory_suggestions import router as memory_suggestions_router
+from app.api.devices import router as devices_router
 from app.api.notifications import router as notifications_router
 from app.api.quotation import router as quotation_router
 from app.api.redo_requests import router as redo_requests_router
@@ -52,6 +53,7 @@ from app.models.tenant_brain_trigger import TenantBrainTrigger
 from app.services import action_planner_trigger_service, action_writer_service, ai_auto_draft_service, beds24_availability_service, bulk_planner_schedule_service, tenant_brain_service
 from app.services.ai_draft_notification_service import notify_admins_of_new_draft
 from app.services.notification_whatsapp_service import flush_due_notification_whatsapp_batch
+from app.services.push_notification_service import flush_due_notification_push_batch
 from app.webhooks.gmail import router as gmail_webhook_router
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
@@ -324,6 +326,17 @@ def _run_due_notification_whatsapp_batch_once() -> None:
         db.close()
 
 
+def _run_due_notification_push_batch_once() -> None:
+    db = SessionLocal()
+    try:
+        flush_due_notification_push_batch(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Notification push batch flush failed")
+    finally:
+        db.close()
+
+
 BEDS24_AVAILABILITY_REFRESH_INTERVAL_SECONDS = int(os.getenv("BEDS24_AVAILABILITY_REFRESH_INTERVAL_SECONDS", str(30 * 60)))
 _last_beds24_availability_refresh: datetime | None = None
 
@@ -362,6 +375,7 @@ async def _ai_draft_scheduler_forever() -> None:
         await asyncio.to_thread(_run_due_action_writer_triggers_once)
         await asyncio.to_thread(_run_due_action_planner_triggers_once)
         await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
+        await asyncio.to_thread(_run_due_notification_push_batch_once)
         await _maybe_refresh_beds24_availability_once()
 
 
@@ -415,6 +429,7 @@ app.include_router(ai_agent_profiles_router, prefix="/api")
 app.include_router(ai_agent_runs_router, prefix="/api")
 app.include_router(ai_model_pricing_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
+app.include_router(devices_router, prefix="/api")
 app.include_router(gmail_integration_router)
 app.include_router(tenants_router, prefix="/api")
 app.include_router(quotation_router, prefix="/api")

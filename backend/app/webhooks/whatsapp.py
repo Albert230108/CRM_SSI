@@ -27,6 +27,7 @@ from app.services.tenant_brain_trigger_service import register_message_trigger a
 from app.services.attachment_service import link_attachments, store_upload
 from app.services.attachment_storage import max_file_bytes
 from app.services.notification_service import create_notification
+from app.services.push_notification_service import register_notification_for_push
 from app.services.notification_whatsapp_service import register_notification_for_whatsapp
 from app.services.tenant_channel_resolver import resolve_tenant_for_inbound_channel
 from app.services.tenant_phone_aliases import get_tenant_phone_candidates, get_tenant_phone_identity_maps
@@ -725,6 +726,7 @@ def _process_whatsapp_message(
                 db, tenant_id=tenant.id, channel="whatsapp", direction="inbound", whatsapp_endpoint_id=resolved.matched_endpoint_id
             )
             register_notification_for_whatsapp(db)
+            register_notification_for_push(db)
             trigger_resync = background_tasks is not None
         db.commit()
     except IntegrityError:

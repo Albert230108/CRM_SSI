@@ -9,9 +9,16 @@ Native Android client for CRM_SSI. See the full plan in
 - **Phase 1** — tenant list (search), unified WhatsApp + email thread view (text-only) with a
   plain-text WhatsApp composer, and a notifications list with an unread tab badge. All server
   state runs through TanStack Query with foreground polling (paused when backgrounded).
+- **Phase 2** — push notifications via the Expo Push service: on login the app registers its
+  ExpoPushToken with the backend (`POST /api/devices/register`), taps deep-link into the tenant
+  thread, and logout unregisters the token. The backend batches new-notification pushes (mirroring
+  the WhatsApp debounce) and prunes stale tokens.
 
-Push notifications (FCM) are **Phase 2** (not yet built). Rich HTML email rendering and
-email/rich composing remain deferred per the plan.
+Rich HTML email rendering and email/rich composing remain deferred per the plan.
+
+> **Push requires setup you own (see "Enable push" below):** a Firebase project wired into EAS for
+> Android delivery. Until that's configured the client degrades gracefully — it simply doesn't
+> obtain a token — and the rest of the app is unaffected.
 
 ### Phase 1 screens & data
 
@@ -27,6 +34,32 @@ WhatsApp blocks + WhatsApp groups) into one chronological, de-duplicated bubble 
 (`flattenThread` in `src/api/communications.ts`). WhatsApp sends always target an explicit
 manual endpoint (CLAUDE.md invariant); when a tenant has more than one linked chat, the composer
 shows a chip selector.
+
+### Phase 2 push (client pieces)
+
+| Piece | Source |
+| --- | --- |
+| Permission + ExpoPushToken | `src/lib/push.ts` |
+| Register/unregister API | `src/api/devices.ts` |
+| Lifecycle + tap deep-link | `src/hooks/usePushNotifications.ts`, `src/navigation/navigationRef.ts` |
+
+Backend counterpart: `backend/app/api/devices.py`, `backend/app/services/push_notification_service.py`,
+model `device_tokens`, and migration `0087_add_device_tokens_and_push`.
+
+## Enable push (you own this)
+
+Push delivery needs a Firebase project for Android, wired into EAS:
+
+1. Create a Firebase project and add an Android app with package `com.ssi.crm`; download
+   `google-services.json`.
+2. Upload the FCM **V1** service-account key to Expo:
+   `npx eas-cli credentials` (Android → push key).
+3. Ensure the EAS `projectId` is set (`npx eas-cli init` writes it into `app.json → extra.eas`);
+   the client only requests a token when a `projectId` is present.
+4. Build a dev/preview APK (not Expo Go) and log in — the device registers automatically.
+
+Optional backend env vars (all have safe defaults; see `push_notification_service.py`):
+`EXPO_PUSH_API_URL`, `EXPO_ACCESS_TOKEN`, `PUSH_NOTIFICATION_DEBOUNCE_SECONDS`.
 
 ## Stack
 

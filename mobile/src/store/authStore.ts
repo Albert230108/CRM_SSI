@@ -2,7 +2,9 @@ import { create } from 'zustand'
 
 import { login as loginRequest, me as fetchMe, refresh as refreshRequest, type CurrentUser } from '../api/auth'
 import { sessionBridge } from '../api/sessionBridge'
+import { unregisterDevice } from '../api/devices'
 import { createSessionController } from '../lib/session'
+import { clearRegisteredPushToken, getRegisteredPushToken } from '../lib/push'
 import { clearStoredToken, getStoredToken, setStoredToken } from '../lib/secureStorage'
 
 /**
@@ -64,7 +66,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: async () => {
     sessionController.stop()
-    // TODO(Phase 2): unregister this device's FCM token before clearing the session.
+    // Unregister this device's push token while the JWT is still valid (the endpoint is
+    // bearer-authed), then clear it. Best-effort: never block logout on a network failure.
+    const pushToken = getRegisteredPushToken()
+    if (pushToken) {
+      try {
+        await unregisterDevice(pushToken)
+      } catch {
+        // ignore — the token will also be pruned server-side once Expo reports it stale
+      }
+      clearRegisteredPushToken()
+    }
     await clearStoredToken()
     set({ status: 'unauthed', token: null, user: null })
   },
