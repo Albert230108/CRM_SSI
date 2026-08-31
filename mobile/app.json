@@ -26,6 +26,12 @@
     },
     "plugins": [
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "72f5e357-6854-41a2-b0c4-44280f94a3fc"
+      }
+    },
+    "owner": "short-stay-inn"
   }
 }
