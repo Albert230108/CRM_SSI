@@ -20,6 +20,10 @@ export type TenantRead = {
   property_name: string | null
   booking_status: string | null
   responsible_comm: string | null
+  // Notes live on the tenant record; `notes` is the committed value, `draft_notes` an
+  // in-progress autosaved edit (see api/notes.ts). Present on the detail endpoint.
+  notes: string | null
+  draft_notes: string | null
   created_at: string
   updated_at: string
   // Derived by the list endpoint (latest message + unread rollup per tenant).

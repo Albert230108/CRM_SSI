@@ -32,7 +32,9 @@ export function TenantListScreen({ navigation }: Props) {
     return (
       <TouchableOpacity
         style={styles.row}
-        onPress={() => navigation.navigate('Thread', { tenantId: item.id, tenantName: item.name })}
+        onPress={() =>
+          navigation.navigate('TenantDetail', { tenantId: item.id, tenantName: item.name })
+        }
       >
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials(item.name)}</Text>

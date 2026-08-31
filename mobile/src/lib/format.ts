@@ -43,3 +43,22 @@ export function oneLine(text: string | null | undefined, max = 120): string {
   const collapsed = text.replace(/\s+/g, ' ').trim()
   return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed
 }
+
+/** Short calendar date (no time) for booking dates / due dates. */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+/**
+ * Format a money amount for display. Amounts arrive as strings from the finance endpoint (to avoid
+ * float drift); we parse leniently and fall back to the raw string if it isn't numeric.
+ */
+export function formatMoney(amount: string | number, currency?: string | null): string {
+  const n = typeof amount === 'number' ? amount : Number(amount)
+  if (Number.isNaN(n)) return String(amount)
+  const formatted = n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return currency ? `${currency} ${formatted}` : formatted
+}

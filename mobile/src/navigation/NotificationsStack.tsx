@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import type { NotificationsStackParamList } from './types'
 import { NotificationsScreen } from '../screens/NotificationsScreen'
 import { ThreadScreen } from '../screens/ThreadScreen'
+import { EmailViewerScreen } from '../screens/EmailViewerScreen'
 
 const Stack = createNativeStackNavigator<NotificationsStackParamList>()
 
@@ -18,6 +19,7 @@ export function NotificationsStack() {
       {/* ThreadScreen is typed against the Tenants stack params, which are structurally identical
           to this stack's Thread params, so it is reused here without change. */}
       <Stack.Screen name="Thread" component={ThreadScreen} options={{ title: 'Thread' }} />
+      <Stack.Screen name="EmailViewer" component={EmailViewerScreen} options={{ title: 'Email' }} />
     </Stack.Navigator>
   )
 }

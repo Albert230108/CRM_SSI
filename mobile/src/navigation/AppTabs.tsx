@@ -3,12 +3,16 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
 
 import { TenantsStack } from './TenantsStack'
 import { NotificationsStack } from './NotificationsStack'
+import { ActionsScreen } from '../screens/ActionsScreen'
+import { AiDraftsScreen } from '../screens/AiDraftsScreen'
 import { SettingsScreen } from '../screens/SettingsScreen'
 import { useUnreadCount } from '../hooks/useNotifications'
 
 /** The authenticated app shell: bottom tabs, each (except Settings) wrapping its own stack. */
 export type AppTabsParamList = {
   Tenants: undefined
+  Actions: undefined
+  AiDrafts: undefined
   Notifications: undefined
   Settings: undefined
 }
@@ -28,6 +32,16 @@ export function AppTabs() {
         name="Tenants"
         component={TenantsStack}
         options={{ tabBarIcon: icon('👥') }}
+      />
+      <Tab.Screen
+        name="Actions"
+        component={ActionsScreen}
+        options={{ tabBarIcon: icon('✅') }}
+      />
+      <Tab.Screen
+        name="AiDrafts"
+        component={AiDraftsScreen}
+        options={{ tabBarLabel: 'Drafts', tabBarIcon: icon('✨') }}
       />
       <Tab.Screen
         name="Notifications"
