@@ -25,8 +25,10 @@ def test_create_list_update_delete_saved_view(client_as_user_a, db_session):
             "priority": "p1",
             "tag_ids": [1, 2],
             "tag_match": "all",
-            "due_bucket": "overdue",
+            "due_buckets": ["overdue", "today"],
             "scope": "tenant",
+            "group_by": "date",
+            "layout": "board",
             "sort_field": "priority",
             "sort_dir": "desc",
         },
@@ -37,8 +39,10 @@ def test_create_list_update_delete_saved_view(client_as_user_a, db_session):
     assert body["name"] == "Overdue P1"
     assert body["tag_ids"] == [1, 2]
     assert body["tag_match"] == "all"
-    assert body["due_bucket"] == "overdue"
+    assert body["due_buckets"] == ["overdue", "today"]
     assert body["scope"] == "tenant"
+    assert body["group_by"] == "date"
+    assert body["layout"] == "board"
     assert body["sort_field"] == "priority"
     assert body["position"] == 0
 
@@ -48,13 +52,15 @@ def test_create_list_update_delete_saved_view(client_as_user_a, db_session):
 
     patch_response = client_as_user_a.patch(
         f"/api/action-saved-views/{view_id}",
-        json={"name": "Renamed", "clear_priority": True, "clear_due_bucket": True},
+        json={"name": "Renamed", "clear_priority": True, "due_buckets": [], "group_by": "priority", "layout": "list"},
     )
     assert patch_response.status_code == 200
     patched = patch_response.json()
     assert patched["name"] == "Renamed"
     assert patched["priority"] is None
-    assert patched["due_bucket"] is None
+    assert patched["due_buckets"] == []
+    assert patched["group_by"] == "priority"
+    assert patched["layout"] == "list"
 
     delete_response = client_as_user_a.delete(f"/api/action-saved-views/{view_id}")
     assert delete_response.status_code == 204

@@ -35,9 +35,11 @@ type ActionItem = {
 
 type SortField = 'due_date' | 'priority' | 'created_at'
 type SortDir = 'asc' | 'desc'
-type DueBucket = 'overdue' | 'today' | 'upcoming'
+type DueBucket = 'overdue' | 'today' | 'tomorrow' | 'upcoming' | 'none'
 type ViewScope = 'all' | 'tenant' | 'general'
 type TagMatch = 'any' | 'all'
+type GroupBy = 'none' | 'date' | 'priority' | 'status' | 'tenant'
+type Layout = 'list' | 'board'
 
 type SavedView = {
   id: number
@@ -47,23 +49,35 @@ type SavedView = {
   priority: Priority | null
   tag_ids: number[]
   tag_match: TagMatch
-  due_bucket: DueBucket | null
+  due_buckets: DueBucket[]
   scope: ViewScope
+  group_by: GroupBy
+  layout: Layout
   sort_field: SortField
   sort_dir: SortDir
+}
+
+const GROUP_BY_OPTIONS: Array<{ id: GroupBy; label: string }> = [
+  { id: 'none', label: 'None' },
+  { id: 'date', label: 'Date' },
+  { id: 'priority', label: 'Priority' },
+  { id: 'status', label: 'Status' },
+  { id: 'tenant', label: 'Tenant' },
+]
+
+const DUE_BUCKET_ORDER: DueBucket[] = ['overdue', 'today', 'tomorrow', 'upcoming', 'none']
+const DUE_BUCKET_LABEL: Record<DueBucket, string> = {
+  overdue: 'Overdue',
+  today: 'Today',
+  tomorrow: 'Tomorrow',
+  upcoming: 'Upcoming',
+  none: 'No date',
 }
 
 const SORT_FIELDS: Array<{ id: SortField; label: string }> = [
   { id: 'due_date', label: 'Due date' },
   { id: 'priority', label: 'Priority' },
   { id: 'created_at', label: 'Created' },
-]
-
-const DUE_BUCKETS: Array<{ id: DueBucket | ''; label: string }> = [
-  { id: '', label: 'Any due' },
-  { id: 'overdue', label: 'Overdue' },
-  { id: 'today', label: 'Today' },
-  { id: 'upcoming', label: 'Upcoming' },
 ]
 
 const SCOPES: Array<{ id: ViewScope; label: string }> = [
@@ -76,14 +90,60 @@ function priorityRank(priority: Priority | null): number {
   return priority ? Number(priority.slice(1)) : 99
 }
 
-function dueBucketOf(dueDate: string | null): DueBucket | null {
-  if (!dueDate) return null
+function dueBucketOf(dueDate: string | null): DueBucket {
+  if (!dueDate) return 'none'
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
   const due = new Date(`${dueDate}T00:00:00`)
   if (due < today) return 'overdue'
   if (due.getTime() === today.getTime()) return 'today'
+  if (due.getTime() === tomorrow.getTime()) return 'tomorrow'
   return 'upcoming'
+}
+
+type ActionGroup = { key: string; label: string; items: ActionItem[] }
+
+// Splits the already-filtered-and-sorted items into ordered sections/columns. Item order within
+// each group is preserved from the incoming sort. Empty groups are dropped by the caller.
+function groupItems(items: ActionItem[], groupBy: GroupBy): ActionGroup[] {
+  if (groupBy === 'none') {
+    return [{ key: 'all', label: 'All actions', items }]
+  }
+  const buckets = new Map<string, ActionItem[]>()
+  const push = (key: string, item: ActionItem) => {
+    const existing = buckets.get(key)
+    if (existing) existing.push(item)
+    else buckets.set(key, [item])
+  }
+
+  if (groupBy === 'date') {
+    for (const item of items) push(dueBucketOf(item.due_date), item)
+    return DUE_BUCKET_ORDER.filter((key) => buckets.has(key)).map((key) => ({ key, label: DUE_BUCKET_LABEL[key], items: buckets.get(key)! }))
+  }
+  if (groupBy === 'priority') {
+    for (const item of items) push(item.priority ?? 'none', item)
+    const order = ['p1', 'p2', 'p3', 'p4', 'none']
+    const label = (key: string) => (key === 'none' ? 'No priority' : PRIORITY_LABEL[key as Priority])
+    return order.filter((key) => buckets.has(key)).map((key) => ({ key, label: label(key), items: buckets.get(key)! }))
+  }
+  if (groupBy === 'status') {
+    for (const item of items) push(item.status, item)
+    const order = ['open', 'done', 'dismissed']
+    const label: Record<string, string> = { open: 'Open', done: 'Done', dismissed: 'Dismissed' }
+    return order.filter((key) => buckets.has(key)).map((key) => ({ key, label: label[key] ?? key, items: buckets.get(key)! }))
+  }
+  // tenant: group by tenant, ordered by name A→Z with General (tenant-less) last.
+  for (const item of items) push(item.tenant_id == null ? 'general' : `t:${item.tenant_id}`, item)
+  const entries = Array.from(buckets.entries())
+  const named = entries.filter(([key]) => key !== 'general').sort((a, b) => (a[1][0].tenant_name ?? '').localeCompare(b[1][0].tenant_name ?? ''))
+  const general = entries.filter(([key]) => key === 'general')
+  return [...named, ...general].map(([key, groupItemsList]) => ({
+    key,
+    label: key === 'general' ? 'General' : groupItemsList[0].tenant_name ?? `Tenant #${groupItemsList[0].tenant_id}`,
+    items: groupItemsList,
+  }))
 }
 
 function formatDueTime(dueTime: string | null): string {
@@ -229,8 +289,11 @@ export default function Actions() {
   const [priorityFilter, setPriorityFilter] = useState<Priority | ''>('')
   const [tagFilterIds, setTagFilterIds] = useState<number[]>([])
   const [tagMatch, setTagMatch] = useState<TagMatch>('any')
-  const [dueBucket, setDueBucket] = useState<DueBucket | ''>('')
+  const [dueBuckets, setDueBuckets] = useState<DueBucket[]>([])
   const [scopeFilter, setScopeFilter] = useState<ViewScope>('all')
+  const [groupBy, setGroupBy] = useState<GroupBy>('none')
+  const [layout, setLayout] = useState<Layout>('list')
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [sortField, setSortField] = useState<SortField>('due_date')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [items, setItems] = useState<ActionItem[]>([])
@@ -332,8 +395,10 @@ export default function Actions() {
     setPriorityFilter(view.priority ?? '')
     setTagFilterIds(view.tag_ids)
     setTagMatch(view.tag_match)
-    setDueBucket(view.due_bucket ?? '')
+    setDueBuckets(view.due_buckets ?? [])
     setScopeFilter(view.scope)
+    setGroupBy(view.group_by)
+    setLayout(view.layout)
     setSortField(view.sort_field)
     setSortDir(view.sort_dir)
   }
@@ -343,8 +408,10 @@ export default function Actions() {
     priority: priorityFilter || null,
     tag_ids: tagFilterIds,
     tag_match: tagMatch,
-    due_bucket: dueBucket || null,
+    due_buckets: dueBuckets,
     scope: scopeFilter,
+    group_by: groupBy,
+    layout,
     sort_field: sortField,
     sort_dir: sortDir,
   })
@@ -378,7 +445,7 @@ export default function Actions() {
       const response = await fetch(`${API_BASE_URL}/api/action-saved-views/${activeViewId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
-        body: JSON.stringify({ ...currentFilterPayload(), clear_status: !statusFilter, clear_priority: !priorityFilter, clear_due_bucket: !dueBucket }),
+        body: JSON.stringify({ ...currentFilterPayload(), clear_status: !statusFilter, clear_priority: !priorityFilter }),
       })
       if (!response.ok) throw new Error()
       const updated: SavedView = await response.json()
@@ -404,10 +471,31 @@ export default function Actions() {
     setPriorityFilter('')
     setTagFilterIds([])
     setTagMatch('any')
-    setDueBucket('')
+    setDueBuckets([])
     setScopeFilter('all')
+    setGroupBy('none')
+    setLayout('list')
     setSortField('due_date')
     setSortDir('asc')
+  }
+
+  const toggleDueBucket = (bucket: DueBucket) => {
+    setDueBuckets((current) => (current.includes(bucket) ? current.filter((value) => value !== bucket) : [...current, bucket]))
+  }
+
+  const selectLayout = (next: Layout) => {
+    setLayout(next)
+    // A board needs a grouping to form columns; default to date when none is set.
+    if (next === 'board' && groupBy === 'none') setGroupBy('date')
+  }
+
+  const toggleGroupCollapsed = (key: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   // The action-items API returns tags without the triggers_planner flag, so resolve it from the
@@ -417,7 +505,7 @@ export default function Actions() {
   const visibleItems = items
     .filter((item) => (priorityFilter ? item.priority === priorityFilter : true))
     .filter((item) => (scopeFilter === 'tenant' ? item.tenant_id != null : scopeFilter === 'general' ? item.tenant_id == null : true))
-    .filter((item) => (dueBucket ? dueBucketOf(item.due_date) === dueBucket : true))
+    .filter((item) => (dueBuckets.length === 0 ? true : dueBuckets.includes(dueBucketOf(item.due_date))))
     .filter((item) => {
       if (tagFilterIds.length === 0) return true
       const itemTagIds = new Set(item.tags.map((tag) => tag.id))
@@ -439,6 +527,153 @@ export default function Actions() {
       }
       return sortDir === 'desc' ? -cmp : cmp
     })
+
+  const groups = groupItems(visibleItems, groupBy)
+
+  const renderActionCard = (item: ActionItem) => (
+    <div
+      key={item.id}
+      className={`rounded-xl border p-3 ${item.status === 'dismissed' ? 'border-gray-200 bg-gray-50 opacity-75' : 'border-gray-200 bg-white'}`}
+    >
+      {editingId === item.id ? (
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={editTitle}
+            onChange={(event) => setEditTitle(event.target.value)}
+            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand-300"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="date"
+              value={editDueDate}
+              onChange={(event) => setEditDueDate(event.target.value)}
+              className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
+            />
+            <input
+              type="time"
+              value={editDueTime}
+              onChange={(event) => setEditDueTime(event.target.value)}
+              aria-label="Due time"
+              title="Due time (used to trigger the planner)"
+              className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
+            />
+            <select
+              value={editPriority}
+              onChange={(event) => setEditPriority(event.target.value)}
+              className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
+            >
+              <option value="">Priority</option>
+              <option value="p1">P1</option>
+              <option value="p2">P2</option>
+              <option value="p3">P3</option>
+              <option value="p4">P4</option>
+            </select>
+          </div>
+          <textarea
+            value={editAiInstruction}
+            onChange={(event) => setEditAiInstruction(event.target.value)}
+            placeholder="AI instruction (optional) — what the planner should do when this action comes due"
+            rows={2}
+            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-900 outline-none focus:border-brand-300"
+          />
+          <TagChipSelector
+            tags={allTags}
+            selectedIds={editTagIds}
+            onToggle={(tagId) => toggleSelectedTag(tagId, editTagIds, setEditTagIds)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void saveEdit(item.id)}
+              disabled={savingId === item.id || !editTitle.trim()}
+              className="rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {savingId === item.id ? 'Saving...' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <TenantOrGeneralLabel
+              tenantId={item.tenant_id}
+              tenantName={item.tenant_name}
+              className="text-xs font-semibold uppercase tracking-wide text-brand-700 hover:underline"
+            />
+            <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
+            {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
+            {item.ai_instruction ? (
+              <p className="mt-0.5 text-xs text-brand-700">
+                <span className="font-semibold">AI:</span> {item.ai_instruction}
+              </p>
+            ) : null}
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+              <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-brand-50 text-brand-700' : 'bg-gray-100 text-gray-600'}`}>
+                {item.source === 'ai' ? 'AI' : 'Manual'}
+              </span>
+              {item.status === 'dismissed' ? <DismissedBadge /> : null}
+              {item.priority ? <span className={`rounded-full px-2 py-0.5 font-semibold ${PRIORITY_STYLE[item.priority]}`}>{PRIORITY_LABEL[item.priority]}</span> : null}
+              {item.tags.map((tag) => (
+                <span key={tag.id} className="rounded-full px-2 py-0.5 font-medium text-white" style={{ backgroundColor: tag.color }}>
+                  {tag.name}
+                </span>
+              ))}
+              {item.tenant_id != null && item.tags.some((tag) => plannerTagIds.has(tag.id)) ? (
+                <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 font-semibold text-brand-700" title="This action triggers the planner at its due date/time">
+                  Planner
+                </span>
+              ) : null}
+              {item.due_date ? (
+                <span>
+                  Due {formatDisplayDateShortMonth(item.due_date)}
+                  {item.due_time ? ` at ${formatDueTime(item.due_time)}` : ''}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button type="button" onClick={() => startEdit(item)} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500 hover:text-gray-700">
+              Edit
+            </button>
+            {item.status === 'open' ? (
+              <>
+                <button type="button" onClick={() => transition(item.id, 'complete')} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+                  Done
+                </button>
+                <button type="button" onClick={() => transition(item.id, 'dismiss')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                  Dismiss
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={() => transition(item.id, 'reopen')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                Reopen
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderGroupHeader = (group: ActionGroup) => (
+    <button
+      type="button"
+      onClick={() => toggleGroupCollapsed(group.key)}
+      className="flex w-full items-center gap-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700"
+    >
+      <span>{collapsedGroups.has(group.key) ? '▸' : '▾'}</span>
+      <span>{group.label}</span>
+      <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{group.items.length}</span>
+    </button>
+  )
 
   const resetGeneralAddForm = () => {
     setQuickAddText('')
@@ -898,17 +1133,18 @@ export default function Actions() {
               </button>
             ))}
           </div>
-          <div className="flex gap-1.5">
-            {DUE_BUCKETS.map((option) => (
+          <div className="flex flex-wrap gap-1.5">
+            {DUE_BUCKET_ORDER.map((bucket) => (
               <button
-                key={option.id || 'any-due'}
+                key={bucket}
                 type="button"
-                onClick={() => setDueBucket(option.id)}
+                onClick={() => toggleDueBucket(bucket)}
+                aria-pressed={dueBuckets.includes(bucket)}
                 className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                  dueBucket === option.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                  dueBuckets.includes(bucket) ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
                 }`}
               >
-                {option.label}
+                {DUE_BUCKET_LABEL[bucket]}
               </button>
             ))}
           </div>
@@ -952,146 +1188,65 @@ export default function Actions() {
           </div>
         ) : null}
 
-        <div className="mt-3 space-y-2 stagger-list">
-          {loading ? (
-            <p className="text-sm text-gray-500">Loading...</p>
-          ) : visibleItems.length === 0 ? (
-            <p className="text-sm text-gray-400">No actions yet.</p>
-          ) : (
-            visibleItems.map((item) => (
-              <div
-                key={item.id}
-                className={`rounded-xl border p-3 ${item.status === 'dismissed' ? 'border-gray-200 bg-gray-50 opacity-75' : 'border-gray-200 bg-white'}`}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-500">Group by</span>
+          <div className="flex gap-1.5">
+            {GROUP_BY_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setGroupBy(option.id)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  groupBy === option.id ? 'bg-brand-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                }`}
               >
-                {editingId === item.id ? (
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      value={editTitle}
-                      onChange={(event) => setEditTitle(event.target.value)}
-                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-brand-300"
-                    />
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="date"
-                        value={editDueDate}
-                        onChange={(event) => setEditDueDate(event.target.value)}
-                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
-                      />
-                      <input
-                        type="time"
-                        value={editDueTime}
-                        onChange={(event) => setEditDueTime(event.target.value)}
-                        aria-label="Due time"
-                        title="Due time (used to trigger the planner)"
-                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
-                      />
-                      <select
-                        value={editPriority}
-                        onChange={(event) => setEditPriority(event.target.value)}
-                        className="shrink-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-300"
-                      >
-                        <option value="">Priority</option>
-                        <option value="p1">P1</option>
-                        <option value="p2">P2</option>
-                        <option value="p3">P3</option>
-                        <option value="p4">P4</option>
-                      </select>
-                    </div>
-                    <textarea
-                      value={editAiInstruction}
-                      onChange={(event) => setEditAiInstruction(event.target.value)}
-                      placeholder="AI instruction (optional) — what the planner should do when this action comes due"
-                      rows={2}
-                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-900 outline-none focus:border-brand-300"
-                    />
-                    <TagChipSelector
-                      tags={allTags}
-                      selectedIds={editTagIds}
-                      onToggle={(tagId) => toggleSelectedTag(tagId, editTagIds, setEditTagIds)}
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void saveEdit(item.id)}
-                        disabled={savingId === item.id || !editTitle.trim()}
-                        className="rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {savingId === item.id ? 'Saving...' : 'Save'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={cancelEdit}
-                        className="rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <TenantOrGeneralLabel
-                        tenantId={item.tenant_id}
-                        tenantName={item.tenant_name}
-                        className="text-xs font-semibold uppercase tracking-wide text-brand-700 hover:underline"
-                      />
-                      <p className={`mt-0.5 text-sm ${item.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{item.title}</p>
-                      {item.description ? <p className="mt-0.5 text-xs text-gray-500">{item.description}</p> : null}
-                      {item.ai_instruction ? (
-                        <p className="mt-0.5 text-xs text-brand-700">
-                          <span className="font-semibold">AI:</span> {item.ai_instruction}
-                        </p>
-                      ) : null}
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                        <span className={`rounded-full px-2 py-0.5 ${item.source === 'ai' ? 'bg-brand-50 text-brand-700' : 'bg-gray-100 text-gray-600'}`}>
-                          {item.source === 'ai' ? 'AI' : 'Manual'}
-                        </span>
-                        {item.status === 'dismissed' ? <DismissedBadge /> : null}
-                        {item.priority ? <span className={`rounded-full px-2 py-0.5 font-semibold ${PRIORITY_STYLE[item.priority]}`}>{PRIORITY_LABEL[item.priority]}</span> : null}
-                        {item.tags.map((tag) => (
-                          <span key={tag.id} className="rounded-full px-2 py-0.5 font-medium text-white" style={{ backgroundColor: tag.color }}>
-                            {tag.name}
-                          </span>
-                        ))}
-                        {item.tenant_id != null && item.tags.some((tag) => plannerTagIds.has(tag.id)) ? (
-                          <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 font-semibold text-brand-700" title="This action triggers the planner at its due date/time">
-                            Planner
-                          </span>
-                        ) : null}
-                        {item.due_date ? (
-                          <span>
-                            Due {formatDisplayDateShortMonth(item.due_date)}
-                            {item.due_time ? ` at ${formatDueTime(item.due_time)}` : ''}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      <button type="button" onClick={() => startEdit(item)} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500 hover:text-gray-700">
-                        Edit
-                      </button>
-                      {item.status === 'open' ? (
-                        <>
-                          <button type="button" onClick={() => transition(item.id, 'complete')} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-                            Done
-                          </button>
-                          <button type="button" onClick={() => transition(item.id, 'dismiss')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                            Dismiss
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" onClick={() => transition(item.id, 'reopen')} className="rounded-full border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                          Reopen
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))
-          )}
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto inline-flex overflow-hidden rounded-full border border-gray-300">
+            <button
+              type="button"
+              onClick={() => selectLayout('list')}
+              className={`px-3 py-1 text-xs font-semibold transition ${layout === 'list' ? 'bg-brand-600 text-white' : 'text-gray-700 hover:bg-gray-100'}`}
+            >
+              List
+            </button>
+            <button
+              type="button"
+              onClick={() => selectLayout('board')}
+              className={`px-3 py-1 text-xs font-semibold transition ${layout === 'board' ? 'bg-brand-600 text-white' : 'text-gray-700 hover:bg-gray-100'}`}
+            >
+              Board
+            </button>
+          </div>
         </div>
+
+        {loading ? (
+          <p className="mt-3 text-sm text-gray-500">Loading...</p>
+        ) : visibleItems.length === 0 ? (
+          <p className="mt-3 text-sm text-gray-400">No actions yet.</p>
+        ) : layout === 'board' ? (
+          <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
+            {groups.map((group) => (
+              <div key={group.key} className="flex w-72 shrink-0 flex-col rounded-2xl border border-gray-200 bg-gray-50 p-2">
+                <div className="sticky top-0 mb-2 px-1">{renderGroupHeader(group)}</div>
+                <div className="space-y-2">{group.items.map((item) => renderActionCard(item))}</div>
+              </div>
+            ))}
+          </div>
+        ) : groupBy === 'none' ? (
+          <div className="mt-3 space-y-2 stagger-list">{visibleItems.map((item) => renderActionCard(item))}</div>
+        ) : (
+          <div className="mt-3 space-y-4">
+            {groups.map((group) => (
+              <div key={group.key}>
+                <div className="mb-1.5">{renderGroupHeader(group)}</div>
+                {collapsedGroups.has(group.key) ? null : <div className="space-y-2 stagger-list">{group.items.map((item) => renderActionCard(item))}</div>}
+              </div>
+            ))}
+          </div>
+        )}
       </main>
       <ToastHost toast={toast} onDismiss={dismiss} />
     </>

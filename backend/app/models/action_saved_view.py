@@ -23,8 +23,16 @@ class ActionSavedView(Base):
     priority = Column(String(4), nullable=True)  # p1..p4 or NULL (any)
     tag_ids = Column(JSON, nullable=False, default=list, server_default="[]")
     tag_match = Column(String(4), nullable=False, default="any", server_default="any")  # any | all
-    due_bucket = Column(String(20), nullable=True)  # overdue | today | upcoming | NULL (any)
+    # Superseded by due_buckets (multi-select). Kept as a column because it may already be applied
+    # on deployed databases; unused by the API.
+    due_bucket = Column(String(20), nullable=True)
+    # Multi-select due-date buckets: subset of overdue | today | tomorrow | upcoming | none.
+    due_buckets = Column(JSON, nullable=False, default=list, server_default="[]")
     scope = Column(String(20), nullable=False, default="all", server_default="all")  # all | tenant | general
+    # How the visible actions are split into sections/columns: none | date | priority | status | tenant.
+    group_by = Column(String(12), nullable=False, default="none", server_default="none")
+    # UI layout for this tab: list (stacked) | board (columns).
+    layout = Column(String(8), nullable=False, default="list", server_default="list")
     sort_field = Column(String(20), nullable=False, default="due_date", server_default="due_date")  # due_date | priority | created_at
     sort_dir = Column(String(4), nullable=False, default="asc", server_default="asc")  # asc | desc
 

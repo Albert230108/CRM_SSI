@@ -14,8 +14,10 @@ router = APIRouter(tags=["action-saved-views"])
 StatusValue = Literal["open", "done", "dismissed"]
 Priority = Literal["p1", "p2", "p3", "p4"]
 TagMatch = Literal["any", "all"]
-DueBucket = Literal["overdue", "today", "upcoming"]
+DueBucket = Literal["overdue", "today", "tomorrow", "upcoming", "none"]
 Scope = Literal["all", "tenant", "general"]
+GroupBy = Literal["none", "date", "priority", "status", "tenant"]
+Layout = Literal["list", "board"]
 SortField = Literal["due_date", "priority", "created_at"]
 SortDir = Literal["asc", "desc"]
 
@@ -28,8 +30,10 @@ class ActionSavedViewRead(BaseModel):
     priority: Optional[Priority] = None
     tag_ids: list[int]
     tag_match: TagMatch
-    due_bucket: Optional[DueBucket] = None
+    due_buckets: list[DueBucket]
     scope: Scope
+    group_by: GroupBy
+    layout: Layout
     sort_field: SortField
     sort_dir: SortDir
     created_at: datetime
@@ -42,8 +46,10 @@ class ActionSavedViewCreate(BaseModel):
     priority: Optional[Priority] = None
     tag_ids: list[int] = []
     tag_match: TagMatch = "any"
-    due_bucket: Optional[DueBucket] = None
+    due_buckets: list[DueBucket] = []
     scope: Scope = "all"
+    group_by: GroupBy = "none"
+    layout: Layout = "list"
     sort_field: SortField = "due_date"
     sort_dir: SortDir = "asc"
     position: Optional[int] = None
@@ -57,9 +63,10 @@ class ActionSavedViewUpdate(BaseModel):
     clear_priority: bool = False
     tag_ids: Optional[list[int]] = None
     tag_match: Optional[TagMatch] = None
-    due_bucket: Optional[DueBucket] = None
-    clear_due_bucket: bool = False
+    due_buckets: Optional[list[DueBucket]] = None
     scope: Optional[Scope] = None
+    group_by: Optional[GroupBy] = None
+    layout: Optional[Layout] = None
     sort_field: Optional[SortField] = None
     sort_dir: Optional[SortDir] = None
     position: Optional[int] = None
@@ -74,8 +81,10 @@ def _to_read(view: ActionSavedView) -> ActionSavedViewRead:
         priority=view.priority,
         tag_ids=list(view.tag_ids or []),
         tag_match=view.tag_match,
-        due_bucket=view.due_bucket,
+        due_buckets=list(view.due_buckets or []),
         scope=view.scope,
+        group_by=view.group_by,
+        layout=view.layout,
         sort_field=view.sort_field,
         sort_dir=view.sort_dir,
         created_at=view.created_at,
@@ -128,8 +137,10 @@ def create_action_saved_view(
         priority=payload.priority,
         tag_ids=payload.tag_ids,
         tag_match=payload.tag_match,
-        due_bucket=payload.due_bucket,
+        due_buckets=payload.due_buckets,
         scope=payload.scope,
+        group_by=payload.group_by,
+        layout=payload.layout,
         sort_field=payload.sort_field,
         sort_dir=payload.sort_dir,
     )
@@ -164,12 +175,14 @@ def update_action_saved_view(
         view.tag_ids = payload.tag_ids
     if payload.tag_match is not None:
         view.tag_match = payload.tag_match
-    if payload.clear_due_bucket:
-        view.due_bucket = None
-    elif payload.due_bucket is not None:
-        view.due_bucket = payload.due_bucket
+    if payload.due_buckets is not None:
+        view.due_buckets = payload.due_buckets
     if payload.scope is not None:
         view.scope = payload.scope
+    if payload.group_by is not None:
+        view.group_by = payload.group_by
+    if payload.layout is not None:
+        view.layout = payload.layout
     if payload.sort_field is not None:
         view.sort_field = payload.sort_field
     if payload.sort_dir is not None:
