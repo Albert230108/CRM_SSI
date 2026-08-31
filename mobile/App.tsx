@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
+import { AppState, type AppStateStatus } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query'
 
 import { RootNavigator } from './src/navigation/RootNavigator'
 import { useAuthStore } from './src/store/authStore'
@@ -26,6 +27,14 @@ export default function App() {
   useEffect(() => {
     void hydrate()
   }, [hydrate])
+
+  // Tie React Query's focus state to app foreground/background so interval polling (and the
+  // per-query refetchIntervals) pause while the app is backgrounded, saving battery/data.
+  useEffect(() => {
+    const onChange = (state: AppStateStatus) => focusManager.setFocused(state === 'active')
+    const sub = AppState.addEventListener('change', onChange)
+    return () => sub.remove()
+  }, [])
 
   return (
     <QueryClientProvider client={queryClient}>
