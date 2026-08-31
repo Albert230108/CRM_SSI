@@ -3,8 +3,30 @@
 Native Android client for CRM_SSI. See the full plan in
 [`../docs/android-mobile-app-plan.md`](../docs/android-mobile-app-plan.md).
 
-This is the **Phase 0 foundation**: API client, auth/session store, and the navigation shell.
-Real feature screens (tenant list, thread view, notifications) arrive in Phase 1; push in Phase 2.
+**Phase 0** (foundation) and **Phase 1** (MVP screens) are implemented:
+
+- **Phase 0** — API client, auth/session store, navigation shell.
+- **Phase 1** — tenant list (search), unified WhatsApp + email thread view (text-only) with a
+  plain-text WhatsApp composer, and a notifications list with an unread tab badge. All server
+  state runs through TanStack Query with foreground polling (paused when backgrounded).
+
+Push notifications (FCM) are **Phase 2** (not yet built). Rich HTML email rendering and
+email/rich composing remain deferred per the plan.
+
+### Phase 1 screens & data
+
+| Screen | Source | Endpoint |
+| --- | --- | --- |
+| Tenant list + search | `src/screens/TenantListScreen.tsx` | `GET /api/tenants` |
+| Thread (unified timeline) | `src/screens/ThreadScreen.tsx` | `GET /api/communications/tenants/{id}/grouped-thread` |
+| WhatsApp send | composer in ThreadScreen | `POST /api/communications/tenants/{id}/send` |
+| Notifications + badge | `src/screens/NotificationsScreen.tsx` | `GET /api/notifications`, `/unread-count` |
+
+The unified thread flattens the backend's nested grouped-thread (email threads + interleaved
+WhatsApp blocks + WhatsApp groups) into one chronological, de-duplicated bubble list
+(`flattenThread` in `src/api/communications.ts`). WhatsApp sends always target an explicit
+manual endpoint (CLAUDE.md invariant); when a tenant has more than one linked chat, the composer
+shows a chip selector.
 
 ## Stack
 
