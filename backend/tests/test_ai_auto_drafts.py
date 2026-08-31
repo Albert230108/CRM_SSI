@@ -45,6 +45,53 @@ def test_list_defaults_to_pending_statuses_across_tenants(non_admin_client, db_s
     assert sent.id not in ids
 
 
+def test_list_includes_generating_drafts(non_admin_client, db_session):
+    # A draft whose background planner run is still in flight must be returned so the UI can show a
+    # spinner in its place instead of an empty draft.
+    tenant = _create_tenant(db_session)
+    generating = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="", status="generating")
+    db_session.add(generating)
+    db_session.commit()
+
+    response = non_admin_client.get(f"/api/ai-auto-drafts?tenant_id={tenant.id}")
+    assert response.status_code == 200
+    items = {item["id"]: item for item in response.json()}
+    assert generating.id in items
+    assert items[generating.id]["status"] == "generating"
+
+
+def test_expire_stale_generating_drafts_reclassifies_old_ones(db_session):
+    # A draft left in "generating" past the timeout (its background run never finished, e.g. a
+    # restart) is rescued to needs_review so the UI stops showing an endless spinner.
+    tenant = _create_tenant(db_session)
+    stale = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="email",
+        generated_text="",
+        status="generating",
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=600),
+    )
+    fresh = AiAutoDraft(
+        tenant_id=tenant.id,
+        channel="whatsapp",
+        generated_text="",
+        status="generating",
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([stale, fresh])
+    db_session.commit()
+
+    reclassified = ai_auto_draft_service.expire_stale_generating_drafts(db_session, 300)
+
+    assert reclassified == 1
+    db_session.refresh(stale)
+    db_session.refresh(fresh)
+    assert stale.status == "needs_review"
+    assert stale.checker_feedback == "Draft generation did not finish."
+    # A recently created generating draft is left alone - its run may still be in progress.
+    assert fresh.status == "generating"
+
+
 def test_list_filters_by_tenant_and_channel(non_admin_client, db_session):
     tenant_a = _create_tenant(db_session, booking_id="B-pending-draft-a", name="Tenant A")
     tenant_b = _create_tenant(db_session, booking_id="B-pending-draft-b", name="Tenant B")

@@ -71,6 +71,11 @@ GMAIL_ACCOUNT_FAILURE_THRESHOLD = int(os.getenv("GMAIL_ACCOUNT_FAILURE_THRESHOLD
 # those settings feel responsive.
 AI_DRAFT_SCHEDULER_INTERVAL_SECONDS = 15
 
+# A planner draft that has sat in "generating" longer than this never had its background run
+# finish (e.g. the process restarted mid-run). The scheduler flips it to needs_review so the UI
+# stops showing an endless spinner. Well above a normal planner loop's duration.
+AI_DRAFT_GENERATING_TIMEOUT_SECONDS = int(os.getenv("AI_DRAFT_GENERATING_TIMEOUT_SECONDS", "300"))
+
 
 def _poll_gmail_accounts_once() -> None:
     db = SessionLocal()
@@ -180,6 +185,17 @@ def _run_due_ai_draft_triggers_once() -> None:
                     logger.exception("AI draft approval WhatsApp notification failed draft_id=%s", draft.id)
     except Exception:
         logger.exception("AI auto-draft scheduler loop failed to load due triggers")
+    finally:
+        db.close()
+
+
+def _run_expire_stale_generating_drafts_once() -> None:
+    db = SessionLocal()
+    try:
+        ai_auto_draft_service.expire_stale_generating_drafts(db, AI_DRAFT_GENERATING_TIMEOUT_SECONDS)
+    except Exception:
+        db.rollback()
+        logger.exception("Stale generating-draft sweep failed")
     finally:
         db.close()
 
@@ -339,6 +355,7 @@ async def _ai_draft_scheduler_forever() -> None:
     while True:
         await asyncio.sleep(AI_DRAFT_SCHEDULER_INTERVAL_SECONDS)
         await asyncio.to_thread(_run_due_ai_draft_triggers_once)
+        await asyncio.to_thread(_run_expire_stale_generating_drafts_once)
         await asyncio.to_thread(_run_due_ai_auto_sends_once)
         await asyncio.to_thread(_run_due_bulk_planner_schedules_once)
         await asyncio.to_thread(_run_due_tenant_brain_triggers_once)

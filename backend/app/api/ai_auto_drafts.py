@@ -18,7 +18,9 @@ router = APIRouter(prefix="/ai-auto-drafts", tags=["ai-auto-drafts"])
 
 # "needs_review" drafts came out of the planner loop without the checker ever approving them.
 # They are surfaced alongside ordinary pending drafts precisely because they need a human.
-DEFAULT_STATUSES = ("pending", "pending_auto_send", "needs_review")
+# "generating" drafts are still being produced in the background; they are returned so the UI can
+# render a spinner in their place instead of an empty draft.
+DEFAULT_STATUSES = ("generating", "pending", "pending_auto_send", "needs_review")
 
 
 def _get_draft(db: Session, draft_id: int) -> AiAutoDraft:

@@ -12,6 +12,8 @@ import TenantBrainQuickChat from './TenantBrainQuickChat'
 import { ToastCard, ToastStack } from './Toast'
 import AiDraftControls from './AiDraftControls'
 import InlineSpinner from './InlineSpinner'
+import TileLoadingOverlay from './TileLoadingOverlay'
+import { SkeletonText } from './ui/Skeleton'
 import AttachmentPicker, { type PendingAttachment } from './AttachmentPicker'
 import { MAX_EMAIL_TOTAL_BYTES, formatBytes } from '../lib/attachmentLimits'
 import { removeQuotedReplyElements, sanitizeHtml } from '../lib/sanitizeHtml'
@@ -993,6 +995,15 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     loadPendingAutoDrafts()
   }, [loadPendingAutoDrafts, livePollSignal])
 
+  // While a draft is being generated in the background, poll faster than the 7s thread poll so the
+  // finished text replaces the spinner promptly instead of lingering for several seconds.
+  const anyDraftGenerating = pendingAutoDrafts.some((draft) => draft.status === 'generating')
+  useEffect(() => {
+    if (!anyDraftGenerating) return
+    const interval = window.setInterval(loadPendingAutoDrafts, 2000)
+    return () => window.clearInterval(interval)
+  }, [anyDraftGenerating, loadPendingAutoDrafts])
+
   const pendingAutoDraftForChannel = (channel: 'email' | 'whatsapp') =>
     pendingAutoDrafts.find((draft) => draft.channel === channel) ?? null
 
@@ -1046,19 +1057,45 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
     const draft = pendingAutoDraftForChannel(channel)
     if (!draft) return null
     const draftText = (draft.formatted_text || draft.generated_text || '').trim()
+    // The planner is still writing this draft in the background: show a spinner instead of the
+    // empty body, and keep only Dismiss actionable so a stuck run can be cleared.
+    if (draft.status === 'generating') {
+      return (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-2">
+          <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
+            <InlineSpinner className="h-3 w-3 text-indigo-600" />
+            Generating draft…
+          </p>
+          <SkeletonText lines={3} className="mt-1.5" />
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => dismissAutoDraft(draft)}
+              className="rounded-lg px-2.5 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-50 hover:text-rose-600"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )
+    }
+    const redoInProgress = redoSubmitting && redoOpenDraftId === draft.id
     return (
       <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-2">
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
           {draft.status === 'pending_auto_send' ? 'AI draft - sending automatically soon' : 'Pending AI draft'}
         </p>
-        {draft.formatted_text ? (
-          <div
-            className="mt-1.5 max-h-28 overflow-y-auto break-words text-sm leading-5 text-gray-700"
-            dangerouslySetInnerHTML={{ __html: renderFormattedDraftHtml(channel, draft.formatted_text) }}
-          />
-        ) : (
-          <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draftText}</p>
-        )}
+        <div className="relative">
+          {draft.formatted_text ? (
+            <div
+              className="mt-1.5 max-h-28 overflow-y-auto break-words text-sm leading-5 text-gray-700"
+              dangerouslySetInnerHTML={{ __html: renderFormattedDraftHtml(channel, draft.formatted_text) }}
+            />
+          ) : (
+            <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5 text-gray-700">{draftText}</p>
+          )}
+          <TileLoadingOverlay active={redoInProgress} />
+        </div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           <button
             type="button"
@@ -1267,7 +1304,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
         throw new Error(data?.detail || 'Failed to run the planner')
       }
       setPlannerDraftId(data?.draft_id ?? null)
-      setPlannerNotice('Planner running - check AI Drafts.')
+      setPlannerNotice('Generating draft… it will appear below in a moment.')
     } catch (err) {
       setAiDraftError(err instanceof Error ? err.message : 'Failed to run the planner')
     } finally {

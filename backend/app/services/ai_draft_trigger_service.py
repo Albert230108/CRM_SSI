@@ -43,8 +43,10 @@ def register_inbound_message(
         AiAutoDraft.tenant_id == tenant.id,
         AiAutoDraft.channel == channel,
         # A parked "needs_review" draft is superseded too: once a newer message arrives, the
-        # stale draft is no longer the reply a human should be reviewing.
-        AiAutoDraft.status.in_(["pending", "pending_auto_send", "needs_review"]),
+        # stale draft is no longer the reply a human should be reviewing. A "generating" draft is
+        # superseded as well - its in-flight reply answers an older message, so let the background
+        # run finish and drop it rather than surface it against fresher context.
+        AiAutoDraft.status.in_(["generating", "pending", "pending_auto_send", "needs_review"]),
     ).update({"status": "superseded"}, synchronize_session=False)
 
     trigger_at = datetime.now(timezone.utc) + timedelta(seconds=_debounce_seconds(db))

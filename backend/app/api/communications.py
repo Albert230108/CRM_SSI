@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.admin_settings import AdminSettings
-from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_auto_draft import STATUS_GENERATING, AiAutoDraft
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.communication import Communication
 from app.models.communication_attachment import CommunicationAttachment
@@ -1320,7 +1320,7 @@ def run_tenant_ai_planner(
         email_thread_id=(payload.email_thread_id if channel == "email" else None),
         whatsapp_endpoint_id=(payload.whatsapp_endpoint_id if channel == "whatsapp" else None),
         generated_text="",
-        status="pending",
+        status=STATUS_GENERATING,
         scheduled_send_at=None,
     )
     db.add(draft)
@@ -1338,7 +1338,7 @@ def run_tenant_ai_planner(
         current_user.id,
     )
 
-    return AiPlanResponse(status="pending", draft_id=draft.id)
+    return AiPlanResponse(status=STATUS_GENERATING, draft_id=draft.id)
 
 
 @router.post("/tenants/{tenant_id}/ai-draft/preview", response_model=AiDraftPreviewResponse)

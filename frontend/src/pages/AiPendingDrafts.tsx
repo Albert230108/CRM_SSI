@@ -6,6 +6,8 @@ import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { whatsappMarkupToHtml } from '../lib/messageFormatting'
 import Button from '../components/ui/Button'
 import InlineSpinner from '../components/InlineSpinner'
+import TileLoadingOverlay from '../components/TileLoadingOverlay'
+import { SkeletonText } from '../components/ui/Skeleton'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -51,6 +53,15 @@ export default function AiPendingDrafts() {
     const intervalId = window.setInterval(loadDrafts, 15000)
     return () => window.clearInterval(intervalId)
   }, [loadDrafts])
+
+  // Poll faster while any draft is still being generated so its spinner is replaced by the real
+  // text promptly instead of waiting up to 15s for the next regular refresh.
+  const anyDraftGenerating = drafts.some((draft) => draft.status === 'generating')
+  useEffect(() => {
+    if (!anyDraftGenerating) return
+    const intervalId = window.setInterval(loadDrafts, 2000)
+    return () => window.clearInterval(intervalId)
+  }, [anyDraftGenerating, loadDrafts])
 
   const dismiss = async (draft: AiAutoDraftItem) => {
     await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/dismiss`, {
@@ -98,6 +109,17 @@ export default function AiPendingDrafts() {
   }
 
   const renderDraftPreview = (draft: AiAutoDraftItem) => {
+    if (draft.status === 'generating') {
+      return (
+        <div className="mt-1.5">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-indigo-600">
+            <InlineSpinner size="sm" className="text-indigo-600" />
+            Generating…
+          </p>
+          <SkeletonText lines={3} className="mt-1.5" />
+        </div>
+      )
+    }
     const text = (draft.formatted_text || draft.generated_text || '').trim()
     if (!text) return null
     if (draft.formatted_text) {
@@ -144,7 +166,10 @@ export default function AiPendingDrafts() {
       {!loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">No pending AI drafts.</p> : null}
 
       <div className="mt-4 space-y-3 stagger-list">
-        {drafts.map((draft) => (
+        {drafts.map((draft) => {
+          const isGenerating = draft.status === 'generating'
+          const redoInProgress = redoSubmitting && redoOpenDraftId === draft.id
+          return (
           <div key={draft.id} className="rounded-2xl border border-indigo-200 bg-white p-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
@@ -152,7 +177,10 @@ export default function AiPendingDrafts() {
                   {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
-                {renderDraftPreview(draft)}
+                <div className="relative">
+                  {renderDraftPreview(draft)}
+                  <TileLoadingOverlay active={redoInProgress} />
+                </div>
               </div>
             </div>
             <input
@@ -171,12 +199,13 @@ export default function AiPendingDrafts() {
                   Cancel auto-send
                 </Button>
               ) : null}
-              <Button size="sm" onClick={() => sendNow(draft)}>
+              <Button size="sm" onClick={() => sendNow(draft)} disabled={isGenerating}>
                 Send
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
+                disabled={isGenerating}
                 onClick={() => {
                   setRedoOpenDraftId((current) => (current === draft.id ? null : draft.id))
                   setRedoWhat('')
@@ -223,7 +252,8 @@ export default function AiPendingDrafts() {
             ) : null}
             {sendErrors[draft.id] ? <p className="mt-1.5 text-xs text-red-600">{sendErrors[draft.id]}</p> : null}
           </div>
-        ))}
+          )
+        })}
       </div>
     </main>
   )

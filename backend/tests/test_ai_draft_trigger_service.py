@@ -113,6 +113,24 @@ def test_supersedes_pending_draft_on_new_message(db_session):
     assert pending_draft.status == "superseded"
 
 
+def test_supersedes_generating_draft_on_new_message(db_session):
+    # An in-flight (background-generating) draft answers the older message, so a fresher inbound
+    # message supersedes it too - the background run's result is dropped rather than shown against
+    # stale context.
+    tenant = _create_tenant(db_session)
+    db_session.add(TenantAiSettings(tenant_id=tenant.id, auto_draft_whatsapp=True))
+    db_session.commit()
+    generating_draft = AiAutoDraft(tenant_id=tenant.id, channel="whatsapp", generated_text="", status="generating")
+    db_session.add(generating_draft)
+    db_session.commit()
+
+    register_inbound_message(db_session, tenant=tenant, channel="whatsapp")
+    db_session.commit()
+    db_session.refresh(generating_draft)
+
+    assert generating_draft.status == "superseded"
+
+
 def test_does_not_supersede_drafts_on_other_channels(db_session):
     tenant = _create_tenant(db_session)
     db_session.add(TenantAiSettings(tenant_id=tenant.id, auto_draft_email=True))

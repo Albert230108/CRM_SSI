@@ -2,6 +2,10 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
 
 from app.database import Base
 
+# A planner draft whose background generation is still in flight (generated_text is empty). The
+# UI keys a spinner off this so it never renders an empty draft as if it were finished.
+STATUS_GENERATING = "generating"
+
 
 class AiAutoDraft(Base):
     __tablename__ = "ai_auto_drafts"
@@ -20,11 +24,14 @@ class AiAutoDraft(Base):
     # ..."). Never concatenated into generated_text - that column is exactly what gets sent to
     # the tenant, so the quoted context must live separately or it leaks into the outbound message.
     quoted_context = Column(Text, nullable=True)
-    # pending -> pending_auto_send -> sent, or pending -> dismissed / used_as_manual_seed.
-    # A draft superseded by a fresher one (new inbound message before it was acted on) moves to
-    # "superseded" rather than being deleted, so the automatic pipeline keeps a full audit trail.
-    # "needs_review" is a terminal state for planner drafts the checker never approved: they are
-    # shown to staff but are deliberately excluded from the auto-send scheduler.
+    # generating -> pending / needs_review, then pending -> pending_auto_send -> sent, or
+    # pending -> dismissed / used_as_manual_seed. "generating" marks a draft whose planner loop is
+    # still running in the background: its generated_text is still empty, so the UI shows a
+    # spinner instead of an empty draft. Every planner completion path overwrites it with a
+    # terminal status. A draft superseded by a fresher one (new inbound message before it was
+    # acted on) moves to "superseded" rather than being deleted, so the automatic pipeline keeps a
+    # full audit trail. "needs_review" is a terminal state for planner drafts the checker never
+    # approved: they are shown to staff but are deliberately excluded from the auto-send scheduler.
     status = Column(String(20), nullable=False, default="pending", server_default="pending", index=True)
     scheduled_send_at = Column(DateTime(timezone=True), nullable=True)
     sent_communication_id = Column(Integer, ForeignKey("communications.id", ondelete="SET NULL"), nullable=True)

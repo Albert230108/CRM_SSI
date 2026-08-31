@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.api.tenants import compute_last_message_by_tenant_id
-from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_auto_draft import STATUS_GENERATING, AiAutoDraft
 from app.models.bulk_planner_schedule import BulkPlannerSchedule
 from app.models.bulk_planner_schedule_run import BulkPlannerScheduleRun
 from app.models.bulk_planner_schedule_run_result import BulkPlannerScheduleRunResult
@@ -202,7 +202,7 @@ def execute_due_schedule(
                 tenant_id=tenant_id,
                 channel=channel,
                 generated_text="",
-                status="pending",
+                status=STATUS_GENERATING,
                 scheduled_send_at=None,
             )
             db.add(draft)

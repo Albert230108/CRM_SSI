@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.models.admin_settings import AdminSettings
-from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_auto_draft import STATUS_GENERATING, AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_agent_run import STATUS_NEEDS_REVIEW
 from app.models.ai_reply_template import AiReplyTemplate
@@ -28,6 +28,27 @@ logger = logging.getLogger(__name__)
 def _auto_send_delay_seconds(db: Session) -> int:
     settings = db.query(AdminSettings).first()
     return settings.ai_auto_send_delay_seconds if settings is not None else 300
+
+
+def expire_stale_generating_drafts(db: Session, timeout_seconds: int) -> int:
+    """Rescue drafts stuck in "generating" because their background planner run never finished
+    (e.g. the process was restarted mid-run). Without this, such a draft would show a spinner in
+    the UI forever. Any generating draft older than timeout_seconds is flipped to needs_review so
+    a human can retry it. Returns the number of drafts reclassified.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+    stale = (
+        db.query(AiAutoDraft)
+        .filter(AiAutoDraft.status == STATUS_GENERATING, AiAutoDraft.created_at < cutoff)
+        .all()
+    )
+    for draft in stale:
+        draft.status = STATUS_NEEDS_REVIEW
+        draft.generated_text = draft.generated_text or ""
+        draft.checker_feedback = "Draft generation did not finish."
+    if stale:
+        db.commit()
+    return len(stale)
 
 
 def _build_quoted_context(original_text: str | None) -> str | None:

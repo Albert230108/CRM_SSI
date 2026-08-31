@@ -339,7 +339,9 @@ def test_manual_ai_plan_endpoint_queues_a_draft_and_completes_it_in_the_backgrou
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "pending"
+    # The endpoint returns immediately while the planner runs in the background, so the draft is
+    # reported as "generating" until the background task fills it in (final status asserted below).
+    assert body["status"] == "generating"
     assert body["draft_id"] is not None
     assert body["generated_text"] is None
 

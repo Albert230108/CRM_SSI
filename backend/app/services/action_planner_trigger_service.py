@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.api.tenants import compute_last_message_by_tenant_id
 from app.models.action_item import STATUS_OPEN, ActionItem
 from app.models.action_tag_definition import ActionTagDefinition
-from app.models.ai_auto_draft import AiAutoDraft
+from app.models.ai_auto_draft import STATUS_GENERATING, AiAutoDraft
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.services import action_tag_service
 from app.services.ai_plan_execution_service import run_ai_plan_for_draft
@@ -90,7 +90,7 @@ def _process_due_item(db: Session, item: ActionItem, now: datetime) -> bool:
 
     operator_note = _build_operator_note(db, item)
 
-    draft = AiAutoDraft(tenant_id=tenant_id, channel=channel, generated_text="", status="pending", scheduled_send_at=None)
+    draft = AiAutoDraft(tenant_id=tenant_id, channel=channel, generated_text="", status=STATUS_GENERATING, scheduled_send_at=None)
     db.add(draft)
     db.commit()
     db.refresh(draft)
