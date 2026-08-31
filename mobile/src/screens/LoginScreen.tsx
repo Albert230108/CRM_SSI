@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native'
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { AxiosError } from 'axios'
 
 import { useAuthStore } from '../store/authStore'
@@ -40,10 +39,7 @@ export function LoginScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView style={styles.container} behavior="padding">
       <View style={styles.card}>
         <Text style={styles.title}>CRM SSI</Text>
         <Text style={styles.subtitle}>Sign in to your account</Text>

@@ -3,8 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -12,8 +10,10 @@ import {
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { AxiosError } from 'axios'
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native'
+import { useHeaderHeight } from '@react-navigation/elements'
 
 import type { ThreadParams } from '../navigation/types'
 import type { ThreadBubble, TenantChannelEndpointRead } from '../api/communications'
@@ -30,6 +30,31 @@ function isOutbound(direction: string): boolean {
 
 function endpointLabel(e: TenantChannelEndpointRead): string {
   return e.chat_display_name || e.external_chat_namespace || e.external_account_id || `Chat ${e.id}`
+}
+
+// Greyed placeholder bubbles shown while the thread loads — far less jarring than a full-screen
+// spinner that blanks the list, especially since the composer stays mounted below it.
+const SKELETON_ROWS: { outbound: boolean; width: number }[] = [
+  { outbound: false, width: 180 },
+  { outbound: true, width: 140 },
+  { outbound: false, width: 220 },
+  { outbound: true, width: 120 },
+  { outbound: false, width: 160 },
+]
+
+function ThreadSkeleton() {
+  return (
+    <View style={styles.listContent}>
+      {SKELETON_ROWS.map((row, i) => (
+        <View
+          key={i}
+          style={[styles.bubbleRow, row.outbound ? styles.bubbleRowRight : styles.bubbleRowLeft]}
+        >
+          <View style={[styles.skeletonBubble, { width: row.width }]} />
+        </View>
+      ))}
+    </View>
+  )
 }
 
 export function ThreadScreen() {
@@ -109,18 +134,19 @@ export function ThreadScreen() {
   }
 
   const hasEndpoints = (endpoints?.length ?? 0) > 0
+  // Offset the keyboard avoidance by the real header height (varies by stack/insets) so the
+  // composer lands just above the keyboard rather than under a fixed, guessed gap.
+  const headerHeight = useHeaderHeight()
 
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
+        behavior="padding"
+        keyboardVerticalOffset={headerHeight}
       >
         {isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color="#2563eb" />
-          </View>
+          <ThreadSkeleton />
         ) : isError ? (
           <View style={styles.center}>
             <Text style={styles.errorText}>Couldn’t load this thread.</Text>
@@ -217,6 +243,7 @@ const styles = StyleSheet.create({
   bubbleRowLeft: { justifyContent: 'flex-start' },
   bubbleRowRight: { justifyContent: 'flex-end' },
   bubble: { maxWidth: '82%', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8 },
+  skeletonBubble: { height: 44, borderRadius: 14, backgroundColor: '#e5e7eb' },
   bubbleIn: { backgroundColor: '#fff', borderTopLeftRadius: 4 },
   bubbleOut: { backgroundColor: '#2563eb', borderTopRightRadius: 4 },
   bubbleMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
