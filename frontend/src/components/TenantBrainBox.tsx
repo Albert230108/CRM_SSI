@@ -300,7 +300,7 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
     <div
       className={
         fullscreen
-          ? 'fixed inset-0 z-[60] flex h-screen w-screen min-w-0 flex-col gap-1.5 bg-white p-4'
+          ? 'fixed inset-x-0 bottom-0 top-16 z-40 flex min-w-0 flex-col gap-1.5 bg-white p-4'
           : 'flex h-full w-full min-w-0 flex-col gap-1.5'
       }
     >
