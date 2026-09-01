@@ -7,8 +7,15 @@ import { CommonActions, createNavigationContainerRef } from '@react-navigation/n
  */
 export const navigationRef = createNavigationContainerRef()
 
+// A tap can be delivered (notably on a cold start) before the navigation container has mounted.
+// We stash the target and flush it from the container's onReady so the deep link is never lost.
+let pendingThread: { tenantId: number; tenantName?: string } | null = null
+
 export function navigateToThread(tenantId: number, tenantName?: string): void {
-  if (!navigationRef.isReady()) return
+  if (!navigationRef.isReady()) {
+    pendingThread = { tenantId, tenantName }
+    return
+  }
   navigationRef.dispatch(
     CommonActions.navigate({
       name: 'App',
@@ -18,4 +25,12 @@ export function navigateToThread(tenantId: number, tenantName?: string): void {
       },
     }),
   )
+}
+
+/** Flush a deep link captured before the navigator was ready. Called from NavigationContainer.onReady. */
+export function flushPendingThread(): void {
+  if (!pendingThread || !navigationRef.isReady()) return
+  const { tenantId, tenantName } = pendingThread
+  pendingThread = null
+  navigateToThread(tenantId, tenantName)
 }

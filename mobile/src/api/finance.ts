@@ -22,10 +22,14 @@ export type TenantFinance = {
     id: number
     booking_id: string
     name: string
+    room_id: number | null
     room_name: string | null
     property_name: string | null
     check_in: string | null
     check_out: string | null
+    // The full Beds24 booking payload as stored on the tenant. Shape varies by channel, so the
+    // UI renders it defensively (flattened primitive fields) rather than typing every key.
+    beds24_raw: Record<string, unknown> | null
   }
   charges: FinanceLineItem[]
   payments: FinanceLineItem[]

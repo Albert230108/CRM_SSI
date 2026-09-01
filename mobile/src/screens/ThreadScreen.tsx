@@ -1,14 +1,17 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Modal,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
@@ -39,6 +42,7 @@ import { formatBubbleTime, oneLine } from '../lib/format'
 type ThreadRoute = RouteProp<Record<'Thread', ThreadParams>, 'Thread'>
 
 type Channel = 'whatsapp' | 'email'
+type InfoScreen = 'BookingDetail' | 'Notes' | 'Brain'
 
 function isOutbound(direction: string): boolean {
   return direction.toLowerCase() === 'outbound'
@@ -75,9 +79,54 @@ function ThreadSkeleton() {
   )
 }
 
+/** A single chat bubble. Memoized so composing/polling doesn't re-render the whole history. */
+const BubbleRow = memo(function BubbleRow({
+  item,
+  onOpenEmail,
+  onForwardEmail,
+}: {
+  item: ThreadBubble
+  onOpenEmail: (item: ThreadBubble) => void
+  onForwardEmail: (threadId: number | null) => void
+}) {
+  const outbound = isOutbound(item.direction)
+  const isEmail = item.kind === 'email'
+  return (
+    <TouchableOpacity
+      activeOpacity={isEmail ? 0.7 : 1}
+      // Tap an email to read the full HTML body; long-press to forward the thread.
+      onPress={isEmail ? () => onOpenEmail(item) : undefined}
+      onLongPress={isEmail ? () => onForwardEmail(item.threadId) : undefined}
+      style={[styles.bubbleRow, outbound ? styles.bubbleRowRight : styles.bubbleRowLeft]}
+    >
+      <View style={[styles.bubble, outbound ? styles.bubbleOut : styles.bubbleIn]}>
+        <View style={styles.bubbleMeta}>
+          <Text style={[styles.channelTag, outbound ? styles.metaOut : styles.metaIn]}>
+            {item.kind === 'whatsapp' ? 'WhatsApp' : 'Email'}
+          </Text>
+          {item.aiGenerated ? (
+            <Text style={[styles.aiTag, outbound ? styles.metaOut : styles.metaIn]}>· AI</Text>
+          ) : null}
+        </View>
+        {item.kind === 'email' && item.subject ? (
+          <Text style={[styles.subject, outbound ? styles.textOut : styles.textIn]}>
+            {item.subject}
+          </Text>
+        ) : null}
+        <Text style={[styles.bubbleText, outbound ? styles.textOut : styles.textIn]}>
+          {item.text || '(no text)'}
+        </Text>
+        <Text style={[styles.bubbleTime, outbound ? styles.metaOut : styles.metaIn]}>
+          {formatBubbleTime(item.at)}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  )
+})
+
 export function ThreadScreen() {
   const route = useRoute<ThreadRoute>()
-  // Both stacks that host ThreadScreen expose identical Thread/EmailViewer params, so typing the
+  // Both stacks that host ThreadScreen expose identical Thread + info-screen params, so typing the
   // navigator against the Tenants stack is sound and gives us typed navigate() calls.
   const navigation = useNavigation<NativeStackNavigationProp<TenantsStackParamList>>()
   const { tenantId, tenantName } = route.params
@@ -97,19 +146,42 @@ export function ThreadScreen() {
   const [selectedEmailThreadId, setSelectedEmailThreadId] = useState<number | null>(null)
   const [forwardThreadId, setForwardThreadId] = useState<number | null>(null)
   const [forwardBody, setForwardBody] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
 
+  const headerTitle = data?.tenantName ?? tenantName
   const emailThreads = data?.emailThreads ?? []
   const hasEndpoints = (endpoints?.length ?? 0) > 0
   const hasEmailThreads = emailThreads.length > 0
 
+  // Header: title + a ⋯ dropdown that opens the per-tenant info screens (Beds24 details, notes, brain).
   useLayoutEffect(() => {
-    navigation.setOptions({ title: data?.tenantName ?? tenantName ?? 'Thread' })
-  }, [navigation, data?.tenantName, tenantName])
+    navigation.setOptions({
+      title: headerTitle ?? 'Thread',
+      headerRight: () => (
+        <TouchableOpacity onPress={() => setMenuOpen(true)} hitSlop={10}>
+          <Text style={styles.headerMenuButton}>⋯</Text>
+        </TouchableOpacity>
+      ),
+    })
+  }, [navigation, headerTitle])
 
-  // Cheap version poll drives full-thread refreshes: only refetch when the change-marker moves.
+  const openInfoScreen = useCallback(
+    (screen: InfoScreen) => {
+      setMenuOpen(false)
+      navigation.navigate(screen, { tenantId, tenantName: headerTitle })
+    },
+    [navigation, tenantId, headerTitle],
+  )
+
+  // Cheap version poll drives full-thread refreshes: only refetch when the change-marker actually
+  // moves. Skipping the first observed value avoids a redundant refetch right after the initial load.
   const latestAt = version.data?.latest_at ?? null
+  const prevLatestAtRef = useRef<string | null | undefined>(undefined)
   useEffect(() => {
-    if (latestAt) void refetch()
+    const prev = prevLatestAtRef.current
+    prevLatestAtRef.current = latestAt
+    if (prev === undefined) return // first value seen — the initial fetch already has it
+    if (latestAt && latestAt !== prev) void refetch()
   }, [latestAt, refetch])
 
   // Default the WhatsApp send target to the most-recent inbound chat (or the only/first one).
@@ -131,6 +203,35 @@ export function ThreadScreen() {
   }, [endpoints, hasEndpoints, hasEmailThreads])
 
   const bubbles = data?.bubbles ?? []
+  // The list renders inverted (newest pinned to the bottom, scroll up for history), so feed it the
+  // bubbles newest-first. `bubbles` arrives oldest→newest, so reverse a memoized copy.
+  const invertedBubbles = useMemo(() => bubbles.slice().reverse(), [bubbles])
+
+  // "New messages" pill: when a message arrives while the user has scrolled up into history, we
+  // don't yank them down — we offer a tap to jump to the newest instead.
+  const [atBottom, setAtBottom] = useState(true)
+  const [showNewPill, setShowNewPill] = useState(false)
+  const newestKey = invertedBubbles[0]?.key ?? null
+  const prevNewestKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevNewestKeyRef.current
+    prevNewestKeyRef.current = newestKey
+    if (prev === null || newestKey === null || newestKey === prev) return
+    if (!atBottom) setShowNewPill(true)
+  }, [newestKey, atBottom])
+
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    // Inverted list: the newest message sits at offset ~0.
+    const nearBottom = e.nativeEvent.contentOffset.y < 48
+    setAtBottom(nearBottom)
+    if (nearBottom) setShowNewPill(false)
+  }, [])
+
+  const jumpToNewest = useCallback(() => {
+    listRef.current?.scrollToOffset({ offset: 0, animated: true })
+    setShowNewPill(false)
+  }, [])
+
   const sending = sendWhatsapp.isPending || sendEmail.isPending
 
   const canSend =
@@ -179,11 +280,19 @@ export function ThreadScreen() {
     )
   }
 
-  const openForward = (threadId: number | null) => {
+  const openForward = useCallback((threadId: number | null) => {
     if (threadId === null) return
     setForwardThreadId(threadId)
     setForwardBody('')
-  }
+  }, [])
+
+  const openEmail = useCallback(
+    (item: ThreadBubble) => {
+      if (item.kind !== 'email') return
+      navigation.navigate('EmailViewer', { subject: item.subject, html: item.html, text: item.text })
+    },
+    [navigation],
+  )
 
   const submitForward = () => {
     if (forwardThreadId === null) return
@@ -202,50 +311,12 @@ export function ThreadScreen() {
     )
   }
 
-  const renderBubble = ({ item }: { item: ThreadBubble }) => {
-    const outbound = isOutbound(item.direction)
-    const isEmail = item.kind === 'email'
-    return (
-      <TouchableOpacity
-        activeOpacity={isEmail ? 0.7 : 1}
-        // Tap an email to read the full HTML body; long-press to forward the thread.
-        onPress={
-          isEmail
-            ? () =>
-                navigation.navigate('EmailViewer', {
-                  subject: item.kind === 'email' ? item.subject : null,
-                  html: item.kind === 'email' ? item.html : null,
-                  text: item.text,
-                })
-            : undefined
-        }
-        onLongPress={isEmail ? () => openForward(item.threadId) : undefined}
-        style={[styles.bubbleRow, outbound ? styles.bubbleRowRight : styles.bubbleRowLeft]}
-      >
-        <View style={[styles.bubble, outbound ? styles.bubbleOut : styles.bubbleIn]}>
-          <View style={styles.bubbleMeta}>
-            <Text style={[styles.channelTag, outbound ? styles.metaOut : styles.metaIn]}>
-              {item.kind === 'whatsapp' ? 'WhatsApp' : 'Email'}
-            </Text>
-            {item.aiGenerated ? (
-              <Text style={[styles.aiTag, outbound ? styles.metaOut : styles.metaIn]}>· AI</Text>
-            ) : null}
-          </View>
-          {item.kind === 'email' && item.subject ? (
-            <Text style={[styles.subject, outbound ? styles.textOut : styles.textIn]}>
-              {item.subject}
-            </Text>
-          ) : null}
-          <Text style={[styles.bubbleText, outbound ? styles.textOut : styles.textIn]}>
-            {item.text || '(no text)'}
-          </Text>
-          <Text style={[styles.bubbleTime, outbound ? styles.metaOut : styles.metaIn]}>
-            {formatBubbleTime(item.at)}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    )
-  }
+  const renderBubble = useCallback(
+    ({ item }: { item: ThreadBubble }) => (
+      <BubbleRow item={item} onOpenEmail={openEmail} onForwardEmail={openForward} />
+    ),
+    [openEmail, openForward],
+  )
 
   const headerHeight = useHeaderHeight()
 
@@ -260,30 +331,44 @@ export function ThreadScreen() {
         behavior="padding"
         keyboardVerticalOffset={headerHeight}
       >
-        {isLoading ? (
-          <ThreadSkeleton />
-        ) : isError ? (
-          <View style={styles.center}>
-            <Text style={styles.errorText}>Couldn’t load this thread.</Text>
-            <TouchableOpacity onPress={() => void refetch()}>
-              <Text style={styles.retry}>Retry</Text>
+        <View style={styles.listWrap}>
+          {isLoading ? (
+            <ThreadSkeleton />
+          ) : isError ? (
+            <View style={styles.center}>
+              <Text style={styles.errorText}>Couldn’t load this thread.</Text>
+              <TouchableOpacity onPress={() => void refetch()}>
+                <Text style={styles.retry}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : invertedBubbles.length === 0 ? (
+            <View style={styles.center}>
+              <Text style={styles.subtitle}>No messages yet.</Text>
+            </View>
+          ) : (
+            <FlatList
+              ref={listRef}
+              data={invertedBubbles}
+              inverted
+              style={styles.list}
+              keyExtractor={(b) => b.key}
+              renderItem={renderBubble}
+              contentContainerStyle={styles.listContent}
+              onScroll={onScroll}
+              scrollEventThrottle={16}
+              initialNumToRender={15}
+              windowSize={11}
+              removeClippedSubviews
+              keyboardDismissMode="interactive"
+            />
+          )}
+
+          {showNewPill ? (
+            <TouchableOpacity style={styles.newPill} onPress={jumpToNewest} activeOpacity={0.85}>
+              <Text style={styles.newPillText}>↓ New messages</Text>
             </TouchableOpacity>
-          </View>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={bubbles}
-            keyExtractor={(b) => b.key}
-            renderItem={renderBubble}
-            contentContainerStyle={styles.listContent}
-            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-            ListEmptyComponent={
-              <View style={styles.center}>
-                <Text style={styles.subtitle}>No messages yet.</Text>
-              </View>
-            }
-          />
-        )}
+          ) : null}
+        </View>
 
         {noTargetsAtAll ? (
           <View style={styles.composerHint}>
@@ -383,6 +468,24 @@ export function ThreadScreen() {
         )}
       </KeyboardAvoidingView>
 
+      {/* Header ⋯ dropdown */}
+      <Modal
+        visible={menuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuOpen(false)}
+      >
+        <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
+          <View style={[styles.menuCard, { top: headerHeight }]}>
+            <MenuItem label="Beds24 details & payments" onPress={() => openInfoScreen('BookingDetail')} />
+            <View style={styles.menuDivider} />
+            <MenuItem label="Notes" onPress={() => openInfoScreen('Notes')} />
+            <View style={styles.menuDivider} />
+            <MenuItem label="Brain" onPress={() => openInfoScreen('Brain')} />
+          </View>
+        </Pressable>
+      </Modal>
+
       {/* Forward modal */}
       <Modal
         visible={forwardThreadId !== null}
@@ -423,6 +526,14 @@ export function ThreadScreen() {
         </View>
       </Modal>
     </SafeAreaView>
+  )
+}
+
+function MenuItem({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.menuItem} onPress={onPress}>
+      <Text style={styles.menuItemText}>{label}</Text>
+    </TouchableOpacity>
   )
 }
 
@@ -472,12 +583,15 @@ function Chip({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
   flex: { flex: 1 },
+  listWrap: { flex: 1 },
+  list: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 8 },
   subtitle: { fontSize: 14, color: '#6b7280', textAlign: 'center' },
   errorText: { color: '#dc2626', fontSize: 15 },
   retry: { color: '#2563eb', fontSize: 15, fontWeight: '600' },
   action: { color: '#2563eb', fontWeight: '600', fontSize: 15 },
   actionMuted: { color: '#6b7280', fontWeight: '600', fontSize: 15 },
+  headerMenuButton: { fontSize: 26, color: '#2563eb', paddingHorizontal: 4, marginTop: -4 },
   listContent: { padding: 12, gap: 8 },
   bubbleRow: { flexDirection: 'row' },
   bubbleRowLeft: { justifyContent: 'flex-start' },
@@ -496,6 +610,21 @@ const styles = StyleSheet.create({
   textOut: { color: '#fff' },
   metaIn: { color: '#9ca3af' },
   metaOut: { color: '#c7dbfd' },
+  newPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 12,
+    backgroundColor: '#2563eb',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  newPillText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   composerHint: {
     padding: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -561,6 +690,23 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: { opacity: 0.5 },
   sendText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  menuBackdrop: { flex: 1 },
+  menuCard: {
+    position: 'absolute',
+    right: 8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 4,
+    minWidth: 220,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  menuItem: { paddingHorizontal: 16, paddingVertical: 12 },
+  menuItemText: { fontSize: 15, color: '#111827' },
+  menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#e5e7eb', marginLeft: 16 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',

@@ -68,6 +68,9 @@ export function EmailViewerScreen() {
           originWhitelist={['*']}
           source={{ html: buildDocument(html ?? null, text ?? '') }}
           style={styles.webview}
+          // Email HTML is untrusted content — render it statically with scripting disabled so an
+          // email can't run JS in the WebView.
+          javaScriptEnabled={false}
           // Render the inline email statically; if the user taps a link, open it in the system
           // browser rather than navigating inside the WebView (which would strand them off-email).
           onShouldStartLoadWithRequest={(req) => {

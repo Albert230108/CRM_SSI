@@ -9,8 +9,11 @@ import { useAuthStore } from '../store/authStore'
 
 function handleResponse(response: Notifications.NotificationResponse): void {
   const data = response.notification.request.content.data as { tenant_id?: unknown } | undefined
-  const tenantId = data?.tenant_id
-  if (typeof tenantId === 'number') navigateToThread(tenantId)
+  // Expo push `data` may deliver the id as a number or a numeric string, so coerce defensively.
+  const raw = data?.tenant_id
+  const tenantId =
+    typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN
+  if (Number.isFinite(tenantId)) navigateToThread(tenantId)
 }
 
 /**

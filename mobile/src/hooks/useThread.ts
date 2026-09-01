@@ -10,6 +10,7 @@ import {
   getWhatsappEndpoints,
   sendEmailReply,
   sendWhatsappMessage,
+  type MixedTimelineRead,
 } from '../api/communications'
 
 export const threadKeys = {
@@ -19,20 +20,28 @@ export const threadKeys = {
 }
 
 /**
+ * Transform the raw grouped-thread into what the screen renders. Kept at module scope (a stable
+ * reference) so React Query only re-runs the flatten/sort when `data` actually changes — an inline
+ * arrow would re-run it on every render.
+ */
+function selectThread(data: MixedTimelineRead) {
+  return {
+    tenantName: data.tenant_name,
+    bubbles: flattenThread(data),
+    emailThreads: extractEmailThreads(data),
+  }
+}
+
+/**
  * A tenant's unified WhatsApp + email timeline, flattened to chronological bubbles plus the email
- * threads available to reply into. `select` keeps the flatten off the render path except when data
- * actually changes. Polling is driven by the cheap thread-version query below (see useThreadPoll),
- * so this query itself doesn't run a full-thread interval.
+ * threads available to reply into. Polling is driven by the cheap thread-version query below, so
+ * this query itself doesn't run a full-thread interval.
  */
 export function useThread(tenantId: number) {
   return useQuery({
     queryKey: threadKeys.thread(tenantId),
     queryFn: () => getGroupedThread(tenantId),
-    select: (data) => ({
-      tenantName: data.tenant_name,
-      bubbles: flattenThread(data),
-      emailThreads: extractEmailThreads(data),
-    }),
+    select: selectThread,
   })
 }
 

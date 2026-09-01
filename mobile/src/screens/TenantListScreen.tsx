@@ -32,9 +32,9 @@ export function TenantListScreen({ navigation }: Props) {
     return (
       <TouchableOpacity
         style={styles.row}
-        onPress={() =>
-          navigation.navigate('TenantDetail', { tenantId: item.id, tenantName: item.name })
-        }
+        // Tapping a tenant opens the conversation directly; the chat header's dropdown reaches the
+        // Beds24 details, notes, and brain screens.
+        onPress={() => navigation.navigate('Thread', { tenantId: item.id, tenantName: item.name })}
       >
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials(item.name)}</Text>
@@ -61,8 +61,10 @@ export function TenantListScreen({ navigation }: Props) {
     )
   }
 
+  // No 'top' edge: this screen sits under a native-stack header, which already occupies the
+  // status-bar inset — adding it here would double-inset and leave a gap below the header.
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <View style={styles.searchWrap}>
         <TextInput
           style={styles.search}

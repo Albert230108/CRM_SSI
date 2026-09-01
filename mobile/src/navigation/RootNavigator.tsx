@@ -5,7 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { useAuthStore } from '../store/authStore'
 import { LoginScreen } from '../screens/LoginScreen'
 import { AppTabs } from './AppTabs'
-import { navigationRef } from './navigationRef'
+import { flushPendingThread, navigationRef } from './navigationRef'
 
 /**
  * Top-level routing: a loading splash during hydrate, then either the auth stack (Login) or the
@@ -31,7 +31,7 @@ export function RootNavigator() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <NavigationContainer ref={navigationRef} onReady={flushPendingThread}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {status === 'authed' ? (
           <Stack.Screen name="App" component={AppTabs} />
