@@ -11,6 +11,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.ai_auto_draft import AiAutoDraftRead
 from app.services import ai_auto_draft_service, memory_redo_service, redo_request_log_service
+from app.services.tenant_conversation_links import visible_tenant_for_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,20 @@ def _get_draft(db: Session, draft_id: int) -> AiAutoDraft:
 
 def _to_read(db: Session, draft: AiAutoDraft) -> AiAutoDraftRead:
     tenant = db.query(Tenant).filter(Tenant.id == draft.tenant_id).first()
+    # For a shared email thread, route "Open thread" to whichever tenant currently has it visible,
+    # preferring the draft's own tenant when it still does. Non-email drafts have no thread to
+    # re-resolve, so they keep their stored tenant.
+    open_thread_tenant_id = draft.tenant_id
+    if draft.channel == "email" and draft.email_thread_id is not None:
+        open_thread_tenant_id = visible_tenant_for_conversation(
+            db, draft.email_thread_id, prefer_tenant_id=draft.tenant_id
+        )
     return AiAutoDraftRead(
         id=draft.id,
         tenant_id=draft.tenant_id,
         tenant_name=tenant.name if tenant is not None else None,
+        email_thread_id=draft.email_thread_id,
+        open_thread_tenant_id=open_thread_tenant_id,
         channel=draft.channel,
         template_id=draft.template_id,
         generated_text=draft.generated_text,

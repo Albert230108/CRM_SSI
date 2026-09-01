@@ -171,6 +171,44 @@ def test_flush_prunes_device_not_registered(db_session, monkeypatch):
     assert db_session.query(DeviceToken).filter(DeviceToken.token == "dead-token").count() == 0
 
 
+def test_flush_logs_non_device_registered_error(db_session, monkeypatch, caplog):
+    # Regression: the prod push outage returned InvalidCredentials (FCM key missing on Expo) for
+    # every device, but the flush only handled DeviceNotRegistered - so the failure was swallowed
+    # silently and everything was marked dispatched as if delivered. A non-DeviceNotRegistered
+    # error must be logged, the (still-valid) token must NOT be pruned, and dispatch still advances.
+    user = _make_user(db_session, user_id=603)
+    db_session.add(DeviceToken(user_id=user.id, token="ExponentPushToken[live]", platform="android"))
+    notification = _make_notification(db_session)
+    _due_trigger(db_session)
+
+    monkeypatch.setattr(
+        push_notification_service,
+        "_send_expo_batch",
+        lambda messages: [
+            {
+                "status": "error",
+                "message": "Unable to retrieve the FCM server key for the recipient's app.",
+                "details": {"error": "InvalidCredentials", "fault": "developer"},
+            }
+        ],
+    )
+
+    with caplog.at_level("ERROR", logger="app.services.push_notification_service"):
+        flush_due_notification_push_batch(db_session)
+
+    # Token is a real, still-registered device: keep it, unlike DeviceNotRegistered.
+    assert (
+        db_session.query(DeviceToken).filter(DeviceToken.token == "ExponentPushToken[live]").count()
+        == 1
+    )
+    # Dispatch still advances (don't-retry-forever invariant is preserved).
+    db_session.refresh(notification)
+    assert notification.push_dispatched_at is not None
+    # The failure is now visible, and the raw token is not leaked into the log.
+    assert "InvalidCredentials" in caplog.text
+    assert "ExponentPushToken[live]" not in caplog.text
+
+
 def test_flush_no_due_trigger_is_noop(db_session, monkeypatch):
     _make_notification(db_session)
     calls = {"n": 0}

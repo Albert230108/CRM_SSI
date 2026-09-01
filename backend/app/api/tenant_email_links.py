@@ -25,7 +25,10 @@ from app.schemas.tenant_email_link import (
 )
 from app.services.background_jobs import start_job
 from app.services.beds24_client import BEDS24_EMAIL_INFO_CODE, add_booking_info_item, delete_booking_info_item, get_booking_info_items
-from app.services.tenant_conversation_links import remove_conversations_for_matched_email
+from app.services.tenant_conversation_links import (
+    dismiss_ai_artifacts_for_hidden_link,
+    remove_conversations_for_matched_email,
+)
 
 router = APIRouter(tags=["tenant-email-links"])
 logger = logging.getLogger(__name__)
@@ -371,6 +374,10 @@ def update_tenant_conversation_visibility(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active thread link not found")
 
     link.is_visible = payload.is_visible
+    # A hidden thread must behave as if it were never linked to this tenant: clear any pending
+    # auto-draft and its debounce trigger that were created while the thread was still visible.
+    if not payload.is_visible:
+        dismiss_ai_artifacts_for_hidden_link(db, tenant_id, conversation_id)
     db.commit()
     db.refresh(link)
 

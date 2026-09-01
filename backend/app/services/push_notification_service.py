@@ -18,6 +18,13 @@ EXPO_PUSH_API_URL = os.getenv("EXPO_PUSH_API_URL", "https://exp.host/--/api/v2/p
 _EXPO_BATCH_SIZE = 100
 
 
+def _mask_token(token: str) -> str:
+    """Redact an Expo push token for logs - keep enough to correlate, never the full value."""
+    if len(token) <= 12:
+        return "***"
+    return f"{token[:12]}...{token[-4:]}"
+
+
 def _debounce_seconds() -> int:
     try:
         return int(os.getenv("PUSH_NOTIFICATION_DEBOUNCE_SECONDS", "30"))
@@ -134,11 +141,36 @@ def flush_due_notification_push_batch(db: Session) -> None:
             logger.exception("Expo push send failed")
             tickets = []
 
+        ok_count = 0
+        error_count = 0
         for device, ticket in zip(devices, tickets):
-            if isinstance(ticket, dict) and ticket.get("status") == "error":
-                details = ticket.get("details") or {}
-                if isinstance(details, dict) and details.get("error") == "DeviceNotRegistered":
-                    db.delete(device)
+            if not isinstance(ticket, dict) or ticket.get("status") != "error":
+                ok_count += 1
+                continue
+            error_count += 1
+            details = ticket.get("details") or {}
+            error_type = details.get("error") if isinstance(details, dict) else None
+            if error_type == "DeviceNotRegistered":
+                # Expected/self-healing: the token is dead, prune it quietly.
+                db.delete(device)
+            else:
+                # Everything else (e.g. InvalidCredentials, MismatchSenderId) is a real
+                # delivery failure - often a project-level misconfiguration affecting every
+                # device - that must not be swallowed silently. Log it (token masked) so it's
+                # diagnosable without a live probe.
+                logger.error(
+                    "Expo push rejected token=%s error=%s message=%s",
+                    _mask_token(device.token),
+                    error_type or "unknown",
+                    ticket.get("message"),
+                )
+        if error_count:
+            logger.warning(
+                "Expo push batch: %d ok, %d error out of %d device(s)",
+                ok_count,
+                error_count,
+                len(devices),
+            )
 
     for notification in pending:
         notification.push_dispatched_at = now

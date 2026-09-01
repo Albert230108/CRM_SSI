@@ -15,6 +15,8 @@ type AiAutoDraftItem = {
   id: number
   tenant_id: number
   tenant_name: string | null
+  email_thread_id: number | null
+  open_thread_tenant_id: number | null
   channel: string
   generated_text: string
   formatted_text: string | null
@@ -105,7 +107,15 @@ export default function AiPendingDrafts() {
   }
 
   const openTenant = (draft: AiAutoDraftItem) => {
-    navigate(`/dashboard/tenant/${draft.tenant_id}`)
+    // Route to whichever tenant currently has the thread visible (the backend re-resolves shared
+    // email threads), and deep-link the specific thread so it is auto-selected on arrival.
+    const tenantId = draft.open_thread_tenant_id ?? draft.tenant_id
+    if (draft.channel === 'email' && draft.email_thread_id != null) {
+      const params = new URLSearchParams({ channel: 'email', thread_ref: String(draft.email_thread_id) })
+      navigate(`/dashboard/tenant/${tenantId}?${params}`)
+      return
+    }
+    navigate(`/dashboard/tenant/${tenantId}`)
   }
 
   const renderDraftPreview = (draft: AiAutoDraftItem) => {
