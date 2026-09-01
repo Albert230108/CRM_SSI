@@ -349,3 +349,44 @@ export async function generateAiDraft(args: {
   )
   return data
 }
+
+export type AiPlanResponse = {
+  status: string
+  draft_id: number | null
+  generated_text: string | null
+  formatted_text: string | null
+  template_id: number | null
+  run_id: number | null
+}
+
+/**
+ * POST /api/communications/tenants/{id}/ai-plan — run the full planner→drafter→checker loop.
+ *
+ * Unlike ai-draft, this does NOT return usable text inline: it kicks the run off in the background
+ * and returns a `draft_id`; the finished draft surfaces asynchronously in the AI drafts queue
+ * (`useAiDrafts`). The backend 400s with `detail` "The planner is turned off for this tenant." when
+ * the tenant's planner mode is "off" — callers should surface that detail rather than swallowing it.
+ */
+export async function runAiPlanner(args: {
+  tenantId: number
+  channel: 'email' | 'whatsapp'
+  whatsappEndpointId?: number | null
+  emailThreadId?: number | null
+  roughDraft?: string
+}): Promise<AiPlanResponse> {
+  const { data } = await apiClient.post<AiPlanResponse>(
+    `/api/communications/tenants/${args.tenantId}/ai-plan`,
+    {
+      channel: args.channel,
+      ...(args.channel === 'email' && args.emailThreadId != null
+        ? { email_thread_id: args.emailThreadId }
+        : {}),
+      ...(args.channel === 'whatsapp' && args.whatsappEndpointId != null
+        ? { whatsapp_endpoint_id: args.whatsappEndpointId }
+        : {}),
+      rough_draft: args.roughDraft ?? undefined,
+      attachment_ids: [],
+    },
+  )
+  return data
+}

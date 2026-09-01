@@ -27,8 +27,8 @@ import type {
   TenantChannelEndpointRead,
 } from '../api/communications'
 import {
-  useAiDraft,
   useForwardEmail,
+  useRunAiPlanner,
   useSendEmail,
   useSendWhatsapp,
   useThread,
@@ -138,7 +138,7 @@ export function ThreadScreen() {
   const sendWhatsapp = useSendWhatsapp(tenantId)
   const sendEmail = useSendEmail(tenantId)
   const forwardEmail = useForwardEmail(tenantId)
-  const aiDraft = useAiDraft(tenantId)
+  const runPlanner = useRunAiPlanner(tenantId)
 
   const [channel, setChannel] = useState<Channel>('whatsapp')
   const [text, setText] = useState('')
@@ -264,17 +264,25 @@ export function ThreadScreen() {
     }
   }
 
-  const onGenerateAiDraft = () => {
-    aiDraft.mutate(
-      { channel, roughDraft: text.trim() || undefined },
+  // Run the full planner instead of a one-shot draft: the result lands in the AI Drafts queue
+  // asynchronously rather than in this composer, so we confirm and point the user there.
+  const onRunPlanner = () => {
+    runPlanner.mutate(
       {
-        onSuccess: (res) => setText(res.formatted_text || res.generated_text),
+        channel,
+        whatsappEndpointId: channel === 'whatsapp' ? selectedEndpointId : undefined,
+        emailThreadId: channel === 'email' ? selectedEmailThreadId : undefined,
+        roughDraft: text.trim() || undefined,
+      },
+      {
+        onSuccess: () =>
+          Alert.alert('Planner running', 'Generating a draft — it will appear in AI Drafts shortly.'),
         onError: (err) => {
           const detail =
             err instanceof AxiosError
               ? (err.response?.data as { detail?: string } | undefined)?.detail
               : undefined
-          Alert.alert('Draft failed', detail ?? 'Could not generate a draft. Please try again.')
+          Alert.alert('Planner failed', detail ?? 'Could not run the planner. Please try again.')
         },
       },
     )
@@ -396,13 +404,13 @@ export function ThreadScreen() {
               <View style={styles.channelSpacer} />
               <TouchableOpacity
                 style={styles.aiButton}
-                onPress={onGenerateAiDraft}
-                disabled={aiDraft.isPending || !channelReady}
+                onPress={onRunPlanner}
+                disabled={runPlanner.isPending || !channelReady}
               >
-                {aiDraft.isPending ? (
+                {runPlanner.isPending ? (
                   <ActivityIndicator size="small" color="#7c3aed" />
                 ) : (
-                  <Text style={styles.aiButtonText}>✨ AI draft</Text>
+                  <Text style={styles.aiButtonText}>✨ Run planner</Text>
                 )}
               </TouchableOpacity>
             </View>

@@ -2,7 +2,9 @@
 
 An open, tenant-bound action with a due date carrying at least one active tag flagged
 `triggers_planner` runs the planner for its tenant when its due date/time passes. General
-(tenant-less) items never trigger. The draft channel is the tenant's most recent conversation.
+(tenant-less) items never trigger. The draft channel is whichever channel the action's
+description/ai_instruction names ("send this by WhatsApp"), falling back to the tenant's most
+recent conversation channel when the instruction names none.
 The action's own fields (title, description, ai_instruction, tags, created_at, due date+time) are
 handed to the planner as the operator note - run_planner_loop already threads operator_note into
 its prompt.
@@ -27,11 +29,19 @@ from app.models.action_item import STATUS_OPEN, ActionItem
 from app.models.action_tag_definition import ActionTagDefinition
 from app.models.ai_auto_draft import STATUS_GENERATING, AiAutoDraft
 from app.models.tenant_ai_settings import TenantAiSettings
-from app.services import action_tag_service
+from app.services import action_tag_service, gemini_client
 from app.services.ai_plan_execution_service import run_ai_plan_for_draft
 from app.services.bulk_planner_schedule_service import _channel_is_eligible
 
 logger = logging.getLogger(__name__)
+
+# Constrains the channel-extraction call to a single enum value so the instruction can only ever
+# resolve to a channel we support or an explicit "none" (fall back to the last-message channel).
+_CHANNEL_SCHEMA = {
+    "type": "object",
+    "properties": {"channel": {"type": "string", "enum": ["email", "whatsapp", "none"]}},
+    "required": ["channel"],
+}
 
 # Matches the bulk planner's timezone. A due action with no explicit time fires at this local time.
 _LOCAL_TZ = ZoneInfo("Europe/Amsterdam")
@@ -65,6 +75,39 @@ def _build_operator_note(db: Session, item: ActionItem) -> str:
     return "\n".join(lines)
 
 
+def extract_instructed_channel(item: ActionItem) -> str | None:
+    """Return the channel the action's instruction/description explicitly asks for, else None.
+
+    Only the operator's own directive fields are inspected - `ai_instruction` and `description`.
+    When neither carries text we skip the model call entirely and return None so the caller falls
+    back to the last-message channel. A model failure also returns None: an unreachable Gemini must
+    never block a due action from firing, it just loses the channel override for that run.
+    """
+    parts = [text for text in (item.ai_instruction, item.description) if text and text.strip()]
+    if not parts:
+        return None
+
+    prompt = "\n".join(
+        [
+            "You route a short-stay rental CRM's outbound reply. Decide which channel the operator's",
+            "instruction below says to reply on. Return \"whatsapp\" or \"email\" only when the text",
+            "clearly names that channel (e.g. \"reply on WhatsApp\", \"send this by email\").",
+            "Return \"none\" if no channel is named - do not guess from context.",
+            "",
+            "Instruction:",
+            *parts,
+        ]
+    )
+    try:
+        result = gemini_client.generate(prompt, response_schema=_CHANNEL_SCHEMA)
+    except gemini_client.GeminiClientError:
+        logger.warning("Action planner channel extraction failed for item_id=%s; using fallback", item.id)
+        return None
+
+    channel = str((result.parsed or {}).get("channel") or "").strip().lower()
+    return channel if channel in ("email", "whatsapp") else None
+
+
 def _process_due_item(db: Session, item: ActionItem, now: datetime) -> bool:
     """Fire the planner for one due item. Returns True if it fired, False if it was skipped.
 
@@ -77,6 +120,12 @@ def _process_due_item(db: Session, item: ActionItem, now: datetime) -> bool:
         logger.info("Action planner trigger skipped item_id=%s: no conversation history", item.id)
         return False
     _occurred_at, channel, _direction = last_message
+
+    # The action's own instruction wins when it names a channel; the last-message channel is only a
+    # fallback. Eligibility below is evaluated against whichever channel we end up drafting on.
+    instructed_channel = extract_instructed_channel(item)
+    if instructed_channel is not None:
+        channel = instructed_channel
 
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
     eligible, skip_reason = _channel_is_eligible(ai_settings, channel)

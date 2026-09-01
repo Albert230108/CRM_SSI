@@ -22,6 +22,14 @@ def apply_default_planner_mode(db: Session, tenant_id: int) -> None:
         tenant_settings = TenantAiSettings(tenant_id=tenant_id)
         db.add(tenant_settings)
     tenant_settings.planner_mode = mode
+    # Mirror the invariant the settings endpoints enforce (tenant_ai_settings.py): "auto-draft"/
+    # "auto-send" planner mode is meaningless unless the inbound pipeline's per-channel auto_draft
+    # triggers are on, so seeding either mode must switch them on too. Without this a booking imported
+    # in "auto-draft" shows the mode selected but never actually drafts until manually re-toggled.
+    # auto_send_* is left at its False default: like the endpoints, auto-send needs an explicit opt-in.
+    if mode in ("auto-draft", "auto-send"):
+        tenant_settings.auto_draft_email = True
+        tenant_settings.auto_draft_whatsapp = True
 
 
 def apply_default_brain_action_writer_settings(db: Session, tenant_id: int) -> None:

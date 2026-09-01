@@ -44,6 +44,34 @@ def test_webhook_seeds_planner_default_for_a_newly_created_tenant(client, db_ses
     settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
     assert settings is not None
     assert settings.planner_mode == "auto-draft"
+    # "auto-draft" is meaningless unless the per-channel auto_draft triggers are on, so seeding must
+    # switch them on too (mirroring the settings endpoints). Without this the imported booking shows
+    # auto-draft selected but never actually drafts. auto_send stays off until an explicit opt-in.
+    assert settings.auto_draft_email is True
+    assert settings.auto_draft_whatsapp is True
+    assert settings.auto_send_email is False
+    assert settings.auto_send_whatsapp is False
+
+
+def test_webhook_seeds_auto_send_default_with_draft_triggers_on(client, db_session, monkeypatch):
+    db_session.add(AdminSettings(planner_default_mode="auto-send"))
+    db_session.commit()
+
+    monkeypatch.setattr("app.api.beds24_webhooks.fetch_booking_with_invoice", fake_booking_fetch)
+    monkeypatch.setattr("app.api.beds24_webhooks.get_booking_info_items", _fake_info_items_returning([]))
+
+    response = client.get("/api/webhooks/beds24", params={"bookid": "WEBHOOK-AUTOSEND-DEFAULT", "status": "new"})
+    assert response.status_code == 200
+
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "WEBHOOK-AUTOSEND-DEFAULT").first()
+    settings = db_session.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
+    assert settings.planner_mode == "auto-send"
+    assert settings.auto_draft_email is True
+    assert settings.auto_draft_whatsapp is True
+    # auto-send mode still requires an explicit opt-in for the auto_send toggles (endpoints don't
+    # auto-enable them either), so seeding leaves them at their False default.
+    assert settings.auto_send_email is False
+    assert settings.auto_send_whatsapp is False
 
 
 def test_webhook_does_not_retrofit_planner_mode_for_an_existing_tenant(client, db_session, monkeypatch):

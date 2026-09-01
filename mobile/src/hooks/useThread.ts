@@ -8,10 +8,12 @@ import {
   getGroupedThread,
   getThreadVersion,
   getWhatsappEndpoints,
+  runAiPlanner,
   sendEmailReply,
   sendWhatsappMessage,
   type MixedTimelineRead,
 } from '../api/communications'
+import { aiDraftKeys } from './useAiDrafts'
 
 export const threadKeys = {
   thread: (tenantId: number) => ['thread', tenantId] as const,
@@ -109,5 +111,24 @@ export function useAiDraft(tenantId: number) {
   return useMutation({
     mutationFn: (args: { channel: 'email' | 'whatsapp'; roughDraft?: string }) =>
       generateAiDraft({ tenantId, ...args }),
+  })
+}
+
+/**
+ * Run the full planner for a tenant. The draft is produced in the background and shows up in the AI
+ * drafts queue, so we refresh that queue on success rather than dropping text into the composer.
+ */
+export function useRunAiPlanner(tenantId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (args: {
+      channel: 'email' | 'whatsapp'
+      whatsappEndpointId?: number | null
+      emailThreadId?: number | null
+      roughDraft?: string
+    }) => runAiPlanner({ tenantId, ...args }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: aiDraftKeys.list })
+    },
   })
 }
