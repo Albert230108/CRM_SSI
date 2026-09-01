@@ -254,7 +254,14 @@ def test_action_writer_creates_new_item_directly(db_session, monkeypatch):
     monkeypatch.setattr(
         action_writer_service.gemini_client,
         "generate",
-        _fake_generate({"new_items": [{"title": "Call tenant about invoice", "tags": ["Invoice", "Follow-up"]}], "reasoning": "Explicit callback request."}),
+        _fake_generate(
+            {
+                "new_items": [
+                    {"title": "Call tenant about invoice", "due_date": "2026-08-05", "due_time": "14:30", "tags": ["Invoice", "Follow-up"]}
+                ],
+                "reasoning": "Explicit callback request.",
+            }
+        ),
     )
     trigger = ActionWriterTrigger(tenant_id=tenant.id, channel="email", trigger_at=datetime.now(timezone.utc))
 
@@ -265,6 +272,8 @@ def test_action_writer_creates_new_item_directly(db_session, monkeypatch):
     assert item.title == "Call tenant about invoice"
     assert item.source == "ai"
     assert item.status == "open"
+    assert item.due_date == date(2026, 8, 5)
+    assert item.due_time.isoformat() == "14:30:00"
     assert item.tag_ids == [tag_a.id, tag_b.id]
     run = db_session.query(AiAgentRun).filter(AiAgentRun.tenant_id == tenant.id).one()
     assert run.status == "completed"
@@ -326,6 +335,7 @@ def test_action_writer_modify_creates_pending_suggestion_not_direct_change(db_se
                     {
                         "action_item_id": existing.id,
                         "due_date": "2026-08-08",
+                        "due_time": "16:00",
                         "tags": ["New A", "New B"],
                         "reasoning": "Guest asked to push it back.",
                     }
@@ -342,11 +352,13 @@ def test_action_writer_modify_creates_pending_suggestion_not_direct_change(db_se
     # The existing item is untouched - only a pending suggestion was created.
     db_session.refresh(existing)
     assert existing.due_date == date(2026, 8, 1)
+    assert existing.due_time is None
     suggestion = db_session.query(MemorySuggestion).filter(MemorySuggestion.kind == "action_item_modify").one()
     assert suggestion.target_id == existing.id
     assert suggestion.status == "pending"
     assert suggestion.tenant_id == tenant.id
     assert suggestion.proposed_value["due_date"] == "2026-08-08"
+    assert suggestion.proposed_value["due_time"] == "16:00:00"
     assert suggestion.proposed_value["tag_ids"] == [new_tag_a.id, new_tag_b.id]
 
 
@@ -451,6 +463,30 @@ def test_approve_action_item_modify_suggestion_applies_change(db_session):
     assert result.applied is True
     db_session.refresh(item)
     assert item.title == "New title"
+
+
+def test_approve_action_item_modify_suggestion_applies_due_time(db_session):
+    from app.services import memory_suggestion_service
+
+    tenant = _create_tenant(db_session)
+    item = action_item_service.create(db_session, tenant.id, "Original title", due_date=date(2026, 8, 1))
+    db_session.commit()
+    suggestion = MemorySuggestion(
+        kind="action_item_modify",
+        tenant_id=tenant.id,
+        target_id=item.id,
+        proposed_value={"due_time": "16:00:00"},
+        status="pending",
+    )
+    db_session.add(suggestion)
+    db_session.commit()
+
+    result = memory_suggestion_service.approve(db_session, suggestion, reviewer_id=None)
+    db_session.commit()
+
+    assert result.applied is True
+    db_session.refresh(item)
+    assert item.due_time.isoformat() == "16:00:00"
 
 
 def test_approve_action_item_modify_suggestion_applies_tag_changes(db_session):
@@ -642,7 +678,7 @@ def test_pending_suggestions_endpoint_returns_modify_diff_with_old_and_new(user_
         kind="action_item_modify",
         tenant_id=tenant.id,
         target_id=item.id,
-        proposed_value={"title": "New title", "due_date": "2026-08-08", "priority": "p1", "tag_ids": [new_tag_a.id, new_tag_b.id]},
+        proposed_value={"title": "New title", "due_date": "2026-08-08", "due_time": "14:30:00", "priority": "p1", "tag_ids": [new_tag_a.id, new_tag_b.id]},
         reasoning="Guest asked to push it back and bump urgency.",
         status="pending",
     )
@@ -663,6 +699,7 @@ def test_pending_suggestions_endpoint_returns_modify_diff_with_old_and_new(user_
         "description": None,
         "ai_instruction": None,
         "due_date": "2026-08-01",
+        "due_time": None,
         "priority": "p3",
         "tags": [
             {"id": old_tag_a.id, "name": "Old Tag A", "color": "#111111"},
@@ -672,6 +709,7 @@ def test_pending_suggestions_endpoint_returns_modify_diff_with_old_and_new(user_
     }
     assert row["proposed"]["title"] == "New title"
     assert row["proposed"]["due_date"] == "2026-08-08"
+    assert row["proposed"]["due_time"] == "14:30:00"
     assert row["proposed"]["priority"] == "p1"
     assert row["proposed"]["tag_ids"] == [new_tag_a.id, new_tag_b.id]
     assert row["proposed"]["tag_names"] == ["New Tag A", "New Tag B"]

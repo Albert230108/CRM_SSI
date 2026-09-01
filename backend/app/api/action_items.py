@@ -135,6 +135,7 @@ class ActionItemSuggestionSnapshot(BaseModel):
     description: Optional[str] = None
     ai_instruction: Optional[str] = None
     due_date: Optional[date] = None
+    due_time: Optional[time] = None
     priority: Optional[Priority] = None
     tags: list[ActionTagOut]
     status: str
@@ -212,6 +213,7 @@ def list_action_item_pending_suggestions(
                     description=item.description,
                     ai_instruction=item.ai_instruction,
                     due_date=item.due_date,
+                    due_time=item.due_time,
                     priority=item.priority,
                     tags=current_tags,
                     status=item.status,

@@ -5,7 +5,7 @@ for a while during which the target might be edited or removed by someone else.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy.orm import Session
 
@@ -153,12 +153,20 @@ def _apply_action_item_modify(db: Session, suggestion: MemorySuggestion) -> Appl
             due_date = date.fromisoformat(str(due_date_raw))
         except ValueError:
             due_date = None
+    due_time_raw = proposed.get("due_time")
+    due_time = None
+    if due_time_raw:
+        try:
+            due_time = time.fromisoformat(str(due_time_raw))
+        except ValueError:
+            due_time = None
     action_item_service.update(
         db,
         item,
         title=proposed.get("title"),
         ai_instruction=proposed.get("ai_instruction"),
         due_date=due_date,
+        due_time=due_time,
         tag_ids=proposed.get("tag_ids"),
         priority=proposed.get("priority"),
     )

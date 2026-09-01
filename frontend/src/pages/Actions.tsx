@@ -316,6 +316,7 @@ type ActionItemSuggestionSnapshot = {
   description: string | null
   ai_instruction: string | null
   due_date: string | null
+  due_time: string | null
   priority: Priority | null
   tags: ActionTag[]
   status: string
@@ -1098,6 +1099,13 @@ export default function Actions() {
                             ) : null}
                             {'due_date' in suggestion.proposed ? (
                               <DiffRow label="Due" oldValue={suggestion.current.due_date ?? ''} newValue={String(suggestion.proposed.due_date ?? '')} />
+                            ) : null}
+                            {'due_time' in suggestion.proposed ? (
+                              <DiffRow
+                                label="Time"
+                                oldValue={formatDueTime(suggestion.current.due_time)}
+                                newValue={formatDueTime(typeof suggestion.proposed.due_time === 'string' ? suggestion.proposed.due_time : null)}
+                              />
                             ) : null}
                             {'priority' in suggestion.proposed ? (
                               <DiffRow label="Priority" oldValue={suggestion.current.priority ?? ''} newValue={String(suggestion.proposed.priority ?? '')} />

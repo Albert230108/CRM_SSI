@@ -15,6 +15,7 @@ import logging
 import time
 from collections import defaultdict
 from datetime import date
+from datetime import time as time_of_day
 
 from sqlalchemy.orm import Session
 
@@ -46,6 +47,7 @@ ACTION_WRITER_SCHEMA = {
                     "description": {"type": "string"},
                     "ai_instruction": {"type": "string"},
                     "due_date": {"type": "string"},
+                    "due_time": {"type": "string"},
                     "priority": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                 },
@@ -61,6 +63,7 @@ ACTION_WRITER_SCHEMA = {
                     "title": {"type": "string"},
                     "ai_instruction": {"type": "string"},
                     "due_date": {"type": "string"},
+                    "due_time": {"type": "string"},
                     "priority": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "reasoning": {"type": "string"},
@@ -104,7 +107,7 @@ _ACTION_WRITER_PREAMBLE = (
     "treat \"removed\" as the task is no longer needed or relevant."
 )
 
-_OPEN_ITEMS_HEADER = "## Open Action Items (id | title | due date | priority | tags)"
+_OPEN_ITEMS_HEADER = "## Open Action Items (id | title | due date/time | priority | tags)"
 _TAGS_HEADER = "## Available Tags (choose `tags` from this list only, or omit)"
 
 _OUTPUT_INSTRUCTION = (
@@ -115,6 +118,8 @@ _OUTPUT_INSTRUCTION = (
     "implied. `tags` must be zero or more of the available tag names above, omit if none fits. "
     "`ai_instruction` is an optional short directive for a future AI planner run on this task "
     "(what the reply/action should accomplish), distinct from the human-facing `description`; omit if none is warranted. "
+    "`due_time` is an optional time of day for `due_date`, formatted HH:MM (24-hour) - only set it when the message "
+    "clearly implies a specific time, omit otherwise. "
     "`reasoning` at the top level briefly explains the overall decision."
 )
 
@@ -138,8 +143,9 @@ def _open_items_block(db: Session, tenant_id: int) -> str:
         if tag is not None:
             tag_names_by_item_id[item_id].append(tag.name)
     lines = [
-        f"- id={item.id} | {item.title} | due: {item.due_date or '(none)'} | priority: {item.priority or '(none)'} | "
-        f"tags: {', '.join(tag_names_by_item_id.get(item.id, [])) or '(none)'}"
+        f"- id={item.id} | {item.title} | due: "
+        f"{f'{item.due_date} {item.due_time}' if item.due_date and item.due_time else (item.due_date or '(none)')} | "
+        f"priority: {item.priority or '(none)'} | tags: {', '.join(tag_names_by_item_id.get(item.id, [])) or '(none)'}"
         for item in items
     ]
     return ai_prompt_blocks.join(_OPEN_ITEMS_HEADER, "\n".join(lines))
@@ -208,6 +214,16 @@ def _resolve_due_date(raw: str | None) -> date | None:
         return None
 
 
+def _resolve_due_time(raw: str | None) -> time_of_day | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        return time_of_day.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def _suggestion_exists(db: Session, *, kind: str, target_id: int) -> bool:
     """Avoids spamming a duplicate pending suggestion for the same item every time the debounced
     trigger fires again before a human has reviewed the first one."""
@@ -238,6 +254,7 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int,
             description,
             _resolve_due_date((raw_item or {}).get("due_date")),
             ai_instruction=ai_instruction,
+            due_time=_resolve_due_time((raw_item or {}).get("due_time")),
             tag_ids=action_tag_service.resolve_tag_ids(db, (raw_item or {}).get("tags")),
             priority=_resolve_priority((raw_item or {}).get("priority")),
         )
@@ -261,6 +278,9 @@ def _apply_plan(db: Session, tenant: Tenant, plan: dict) -> tuple[int, int, int,
         due_date = _resolve_due_date((raw_item or {}).get("due_date"))
         if due_date is not None:
             proposed_value["due_date"] = due_date.isoformat()
+        due_time = _resolve_due_time((raw_item or {}).get("due_time"))
+        if due_time is not None:
+            proposed_value["due_time"] = due_time.isoformat()
         priority = _resolve_priority((raw_item or {}).get("priority"))
         if priority is not None:
             proposed_value["priority"] = priority
