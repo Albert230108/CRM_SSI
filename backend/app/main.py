@@ -73,6 +73,12 @@ GMAIL_ACCOUNT_FAILURE_THRESHOLD = int(os.getenv("GMAIL_ACCOUNT_FAILURE_THRESHOLD
 # those settings feel responsive.
 AI_DRAFT_SCHEDULER_INTERVAL_SECONDS = 15
 
+# Notification dispatch (WhatsApp + push alerts) runs on its own loop, separate from the AI
+# scheduler above, so a slow LLM job never delays a user-facing alert. Each flush still fires
+# only when its own debounce trigger is due, so this interval is just how quickly a due alert
+# goes out - kept short for responsiveness.
+NOTIFICATION_SCHEDULER_INTERVAL_SECONDS = 10
+
 # A planner draft that has sat in "generating" longer than this never had its background run
 # finish (e.g. the process restarted mid-run). The scheduler flips it to needs_review so the UI
 # stops showing an endless spinner. Well above a normal planner loop's duration.
@@ -374,9 +380,22 @@ async def _ai_draft_scheduler_forever() -> None:
         await asyncio.to_thread(_run_due_tenant_brain_triggers_once)
         await asyncio.to_thread(_run_due_action_writer_triggers_once)
         await asyncio.to_thread(_run_due_action_planner_triggers_once)
+        await _maybe_refresh_beds24_availability_once()
+
+
+async def _notification_scheduler_forever() -> None:
+    """Dispatches the debounced WhatsApp + push notification alerts on their own cadence.
+
+    Deliberately separate from _ai_draft_scheduler_forever: those jobs make LLM calls that can
+    take minutes, and running the alert flushes behind them starved notifications by that long.
+    Both flushes are dispatched via asyncio.to_thread - required because
+    flush_due_notification_whatsapp_batch calls asyncio.run() internally, which cannot run inside
+    this loop's event loop.
+    """
+    while True:
+        await asyncio.sleep(NOTIFICATION_SCHEDULER_INTERVAL_SECONDS)
         await asyncio.to_thread(_run_due_notification_whatsapp_batch_once)
         await asyncio.to_thread(_run_due_notification_push_batch_once)
-        await _maybe_refresh_beds24_availability_once()
 
 
 @asynccontextmanager
@@ -389,12 +408,15 @@ async def lifespan(_: FastAPI):
     logger.info("Started Gmail push watch renewal loop interval_seconds=%s", GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS)
     ai_draft_task = asyncio.create_task(_ai_draft_scheduler_forever())
     logger.info("Started AI auto-draft scheduler loop interval_seconds=%s", AI_DRAFT_SCHEDULER_INTERVAL_SECONDS)
+    notification_task = asyncio.create_task(_notification_scheduler_forever())
+    logger.info("Started notification dispatch scheduler loop interval_seconds=%s", NOTIFICATION_SCHEDULER_INTERVAL_SECONDS)
     try:
         yield
     finally:
         task.cancel()
         renewal_task.cancel()
         ai_draft_task.cancel()
+        notification_task.cancel()
 
 
 app = FastAPI(title="CRM API", redirect_slashes=False, lifespan=lifespan)
