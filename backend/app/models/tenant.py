@@ -41,6 +41,10 @@ class Tenant(Base):
     name = Column(String(255), nullable=False, index=True)
     responsible_comm = Column(Text, nullable=True)
     auto_add_shared_email_threads = Column(Boolean, nullable=False, server_default=text("true"))
+    # Marks a freshly imported/created tenant so the sidebar shows a "New" badge. Cleared on the
+    # first outbound message to the tenant (see communications.send_tenant_communication) or when
+    # the operator manually dismisses it (see tenants.dismiss_tenant_new).
+    is_new = Column(Boolean, nullable=False, server_default=text("true"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

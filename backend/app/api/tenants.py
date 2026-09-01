@@ -679,6 +679,27 @@ def delete_tenant_draft_notes(
     return {"draft_notes": None}
 
 
+@router.patch("/tenants/{tenant_id}/dismiss-new")
+def dismiss_tenant_new(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Manually clear the "New import" sidebar badge without sending a message.
+
+    The badge is tenant-global (a single flag on the tenant), so dismissing it here
+    hides it for everyone - matching the auto-clear that happens on the first outbound
+    message (see communications.send_tenant_communication).
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    tenant.is_new = False
+    db.commit()
+    return {"is_new": False}
+
+
 class TenantNotesHistoryEntry(BaseModel):
     id: int
     old_value: Optional[str] = None

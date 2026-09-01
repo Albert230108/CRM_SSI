@@ -814,6 +814,9 @@ async def send_tenant_communication(
             logger.exception("Failed to send Gmail reply")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send email: {str(exc)}") from exc
 
+        # First outbound message to a tenant clears its "New import" sidebar badge.
+        if tenant.is_new:
+            tenant.is_new = False
         return persist_gmail_outbound_message(
             db,
             tenant_id=tenant.id,
@@ -829,6 +832,9 @@ async def send_tenant_communication(
         )
 
     if channel == "whatsapp":
+        # First outbound message to a tenant clears its "New import" sidebar badge.
+        if tenant.is_new:
+            tenant.is_new = False
         # Immediately persist the outbound message to ensure UI visibility
         # Use the selected endpoint's chat namespace if available for better identity matching
         persisted_communications = _persist_whatsapp_send_result(
@@ -926,6 +932,9 @@ async def send_first_whatsapp_message(
     except WhatsAppBridgeError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
+    # First outbound message to a tenant clears its "New import" sidebar badge.
+    if tenant.is_new:
+        tenant.is_new = False
     persisted_communications = _persist_whatsapp_send_result(
         db,
         tenant=tenant,

@@ -2272,7 +2272,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             role="dialog"
             aria-modal="true"
             aria-labelledby="email-thread-modal-title"
-            className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
+            className="relative flex max-h-[95vh] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
             style={{ ...emailThreadDrag.style, ...emailThreadSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
@@ -2577,9 +2577,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             />
             </div>
 
-            <div className="shrink-0 border-t border-gray-200 px-3 py-2">
+            <div className="flex max-h-[70%] min-h-0 shrink-0 flex-col overflow-hidden border-t border-gray-200 px-3 py-2">
               {replyTarget?.type === 'email' && replyTarget.threadId === selectedEmailThread.thread_id ? (
-                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-2.5">
+                <form onSubmit={handleSendReply} className="relative flex min-h-0 flex-1 flex-col space-y-2 overflow-y-auto rounded-xl border border-brand-200 bg-brand-50 p-2.5">
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-email-subject">
                       Subject
@@ -2640,7 +2640,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       disabled={replySending}
                     />
                   ) : null}
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="sticky bottom-0 z-10 -mx-2.5 -mb-2.5 flex items-center justify-between gap-2 rounded-b-xl border-t border-brand-200 bg-brand-50 px-2.5 py-2">
                     <button
                       type="button"
                       onClick={() => setReplyTarget(null)}
@@ -2651,7 +2651,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     <button
                       type="submit"
                       disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0)}
-                      className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
                     </button>
@@ -2696,7 +2696,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="whatsapp-block-panel-title"
-                className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
+                className="relative flex max-h-[95vh] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
                 style={whatsappBlockSize.style}
                 onClick={(event) => event.stopPropagation()}
               >
@@ -2776,9 +2776,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
               />
               </div>
 
-              <div className="shrink-0 border-t border-gray-200 px-3 py-2">
+              <div className="flex max-h-[70%] min-h-0 shrink-0 flex-col overflow-hidden border-t border-gray-200 px-3 py-2">
                 {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappBlock.block_id ? (
-                  <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-2.5">
+                  <form onSubmit={handleSendReply} className="relative flex min-h-0 flex-1 flex-col space-y-2 overflow-y-auto rounded-xl border border-brand-200 bg-brand-50 p-2.5">
                     <div className="space-y-1">
                       <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="block-whatsapp-endpoint">
                         WhatsApp account
@@ -2834,7 +2834,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                         disabled={replySending}
                       />
                     ) : null}
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="sticky bottom-0 z-10 -mx-2.5 -mb-2.5 flex items-center justify-between gap-2 rounded-b-xl border-t border-brand-200 bg-brand-50 px-2.5 py-2">
                       <button
                         type="button"
                         onClick={() => setReplyTarget(null)}
@@ -2845,7 +2845,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       <button
                         type="submit"
                         disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
-                        className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {replySending ? 'Sending...' : 'Send'}
                       </button>
@@ -2894,7 +2894,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             role="dialog"
             aria-modal="true"
             aria-labelledby="whatsapp-group-modal-title"
-            className="relative flex flex-col rounded-2xl border border-gray-200 bg-white shadow-sm"
+            className="relative flex max-h-[95vh] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
             style={{ ...whatsappGroupDrag.style, ...whatsappGroupSize.style }}
             onClick={(event) => event.stopPropagation()}
           >
@@ -2978,9 +2978,9 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
             />
             </div>
 
-            <div className="shrink-0 border-t border-gray-200 px-3 py-2">
+            <div className="flex max-h-[70%] min-h-0 shrink-0 flex-col overflow-hidden border-t border-gray-200 px-3 py-2">
               {replyTarget?.type === 'whatsapp' && replyTarget.groupId === selectedWhatsappGroup.group_id ? (
-                <form onSubmit={handleSendReply} className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-2.5">
+                <form onSubmit={handleSendReply} className="relative flex min-h-0 flex-1 flex-col space-y-2 overflow-y-auto rounded-xl border border-brand-200 bg-brand-50 p-2.5">
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="modal-whatsapp-endpoint">
                       WhatsApp account
@@ -3036,7 +3036,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                       disabled={replySending}
                     />
                   ) : null}
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="sticky bottom-0 z-10 -mx-2.5 -mb-2.5 flex items-center justify-between gap-2 rounded-b-xl border-t border-brand-200 bg-brand-50 px-2.5 py-2">
                     <button
                       type="button"
                       onClick={() => setReplyTarget(null)}
@@ -3047,7 +3047,7 @@ export default function ThreadView({ tenantId, reloadSignal, onReady, onTenantLo
                     <button
                       type="submit"
                       disabled={replySending || (!hasReplyBodyContent && currentReplyAttachmentIds.length === 0) || !selectedWhatsappEndpointId}
-                      className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {replySending ? 'Sending...' : 'Send'}
                     </button>

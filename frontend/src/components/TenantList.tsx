@@ -37,6 +37,7 @@ type Tenant = {
   check_out: string | null
   num_nights: number | null
   unread_count: number
+  is_new: boolean
 }
 
 type ThreadVersion = {
@@ -201,6 +202,18 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
       })
 
       return next
+    })
+  }
+
+  const dismissNew = (tenantId: number) => {
+    // The "New" badge is tenant-global; clear it optimistically and persist best-effort.
+    setTenants((current) => current.map((tenant) => (tenant.id === tenantId ? { ...tenant, is_new: false } : tenant)))
+
+    fetch(`${API_BASE_URL}/api/tenants/${tenantId}/dismiss-new`, {
+      method: 'PATCH',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    }).catch(() => {
+      // Best-effort save; the local update already hides the badge for this session.
     })
   }
 
@@ -583,6 +596,29 @@ export default function TenantList({ selectedTenantId, reloadSignal, onNewMessag
                           className="shrink-0 text-amber-500"
                         >
                           ⚠
+                        </span>
+                      ) : null}
+                      {tenant.is_new ? (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            dismissNew(tenant.id)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              dismissNew(tenant.id)
+                            }
+                          }}
+                          title="Newly imported — click to dismiss"
+                          aria-label="Newly imported tenant, click to dismiss"
+                          className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-brand-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white transition hover:bg-brand-700"
+                        >
+                          New
+                          <span aria-hidden className="text-[10px] leading-none">×</span>
                         </span>
                       ) : null}
                       <span
