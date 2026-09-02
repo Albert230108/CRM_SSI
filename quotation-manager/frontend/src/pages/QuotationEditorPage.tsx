@@ -3,7 +3,24 @@ import { useParams } from 'react-router-dom'
 import ChargesTable from '../components/ChargesTable'
 import PaymentsTable from '../components/PaymentsTable'
 import { ApiError, apiGet, apiPost } from '../lib/apiClient'
-import type { Beds24Booking, Beds24InvoiceItem, BuildChargesResult, DiscountResult, EditableInvoiceItem } from '../lib/types'
+import { LONG_STAY_DEPOSIT_DEFAULT, LONG_STAY_DEPOSIT_NIGHT_THRESHOLD, ROOM_CAPACITY } from '../lib/constants'
+import type {
+  Beds24Booking,
+  Beds24InvoiceItem,
+  BookingGroupResult,
+  BuildChargesResult,
+  DiscountResult,
+  EditableInvoiceItem,
+  PaymentPlanResult,
+} from '../lib/types'
+
+function bookingNights(booking: Beds24Booking): number {
+  const arrival = (booking as Record<string, unknown>).arrival
+  const departure = (booking as Record<string, unknown>).departure
+  if (typeof arrival !== 'string' || typeof departure !== 'string') return 0
+  const diff = (new Date(departure).getTime() - new Date(arrival).getTime()) / (1000 * 60 * 60 * 24)
+  return Number.isFinite(diff) && diff > 0 ? Math.round(diff) : 0
+}
 
 let nextLocalId = 1
 function makeLocalId(): string {
@@ -58,6 +75,10 @@ export default function QuotationEditorPage() {
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [sending, setSending] = useState(false)
   const [buildingCharges, setBuildingCharges] = useState(false)
+  const [installments, setInstallments] = useState(1)
+  const [buildingPlan, setBuildingPlan] = useState(false)
+  const [generatingCombined, setGeneratingCombined] = useState(false)
+  const [pdfLink, setPdfLink] = useState<{ url: string; name: string } | null>(null)
 
   useEffect(() => {
     if (!bookingId) return
@@ -94,6 +115,43 @@ export default function QuotationEditorPage() {
     return Number.isFinite(diff) && diff > 0 ? Math.round(diff) : null
   }, [checkIn, checkOut])
 
+  const isLongStay = nights !== null && nights > LONG_STAY_DEPOSIT_NIGHT_THRESHOLD
+
+  // Long-stay bookings (>183 nights) carry a fixed refundable deposit. Only
+  // auto-fill when no deposit was carried over from the booking, so we never
+  // clobber a real value the user (or Beds24) already set.
+  useEffect(() => {
+    if (isLongStay && securityDeposit === 0) {
+      setSecurityDeposit(LONG_STAY_DEPOSIT_DEFAULT)
+    }
+  }, [isLongStay, securityDeposit])
+
+  const occupancy = useMemo(() => {
+    const totalGuests = adults + children
+    const capacity = ROOM_CAPACITY[roomName]
+    if (!capacity || capacity >= 99) return null
+    return { totalGuests, capacity, exceeded: totalGuests > capacity }
+  }, [adults, children, roomName])
+
+  const chargesTotal = useMemo(
+    () => charges.reduce((sum, item) => sum + item.qty * item.amount, 0),
+    [charges],
+  )
+  // Deposit-refund rows are excluded from the payments total, matching the desktop app.
+  const paymentsTotal = useMemo(
+    () =>
+      payments.reduce(
+        (sum, item) => (item.description.toLowerCase().includes('refund of deposit') ? sum : sum + item.qty * item.amount),
+        0,
+      ),
+    [payments],
+  )
+  const balance = useMemo(() => {
+    const diff = Math.round((chargesTotal - paymentsTotal) * 100) / 100
+    if (Math.abs(diff) <= 0.01) return { state: 'balanced' as const, diff: 0 }
+    return { state: paymentsTotal < chargesTotal ? ('under' as const) : ('over' as const), diff: Math.abs(diff) }
+  }, [chargesTotal, paymentsTotal])
+
   const handleChargeChange = (localId: string, patch: Partial<EditableInvoiceItem>) => {
     setCharges((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)))
   }
@@ -107,6 +165,60 @@ export default function QuotationEditorPage() {
 
   const handleRemoveCharge = (localId: string) => {
     setCharges((prev) => prev.filter((item) => item.localId !== localId))
+  }
+
+  const handlePaymentChange = (localId: string, patch: Partial<EditableInvoiceItem>) => {
+    setPayments((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)))
+  }
+
+  const handleAddPayment = () => {
+    setPayments((prev) => [
+      ...prev,
+      { localId: makeLocalId(), type: 'payment', description: '', qty: 1, amount: 0, vat_rate: 0, currency: 'EUR', status: 'not paid' },
+    ])
+  }
+
+  const handleRemovePayment = (localId: string) => {
+    setPayments((prev) => prev.filter((item) => item.localId !== localId))
+  }
+
+  const handleAddPaymentPlan = async () => {
+    if (!checkIn || !checkOut) {
+      setError('Valid check-in and check-out dates are needed to build a payment plan.')
+      return
+    }
+    if (payments.length > 0 && !window.confirm('Replace the current payment rows with the generated plan?')) {
+      return
+    }
+    setBuildingPlan(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await apiPost<PaymentPlanResult>('/api/quotation/build-payment-plan', {
+        check_in: checkIn,
+        check_out: checkOut,
+        installments,
+        security_deposit: securityDeposit,
+        charges: charges.map((c) => ({ description: c.description, qty: c.qty, amount: c.amount })),
+      })
+      setPayments(
+        result.payments.map((p) => ({
+          localId: makeLocalId(),
+          type: 'payment' as const,
+          description: p.description,
+          qty: p.qty,
+          amount: p.amount,
+          vat_rate: p.vat_rate,
+          currency: 'EUR',
+          status: p.status,
+        })),
+      )
+      setNotice(`Generated ${result.payments.length} payment rows across ${result.installments} installment(s).`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to build payment plan')
+    } finally {
+      setBuildingPlan(false)
+    }
   }
 
   const handleCheckDiscount = async () => {
@@ -176,8 +288,9 @@ export default function QuotationEditorPage() {
     setGeneratingPdf(true)
     setError(null)
     setNotice(null)
+    setPdfLink(null)
     try {
-      const result = await apiPost<{ file_path: string; quotation_number: number }>('/api/quotation/generate-pdf', {
+      const result = await apiPost<{ file_path: string; quotation_number: number; location: string; web_url?: string | null; name?: string | null }>('/api/quotation/generate-pdf', {
         booking_id: bookingId,
         first_name: firstName,
         last_name: lastName,
@@ -197,11 +310,79 @@ export default function QuotationEditorPage() {
         })),
         quotation_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
       })
-      setNotice(`Quotation Q${String(result.quotation_number).padStart(3, '0')} saved to ${result.file_path}`)
+      const where = result.location === 'onedrive' ? 'OneDrive' : 'the tenant folder'
+      setNotice(`Quotation Q${String(result.quotation_number).padStart(3, '0')} saved to ${where}.`)
+      if (result.web_url) setPdfLink({ url: result.web_url, name: result.name ?? 'Open in OneDrive' })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to generate PDF')
     } finally {
       setGeneratingPdf(false)
+    }
+  }
+
+  const handleGenerateCombinedPdf = async () => {
+    if (!bookingId) return
+    setGeneratingCombined(true)
+    setError(null)
+    setNotice(null)
+    setPdfLink(null)
+    try {
+      const group = await apiGet<BookingGroupResult>(`/api/booking/group/${encodeURIComponent(bookingId)}`)
+      if (group.bookings.length <= 1) {
+        setNotice('This booking is not part of a multi-booking group — use "Generate PDF" instead.')
+        return
+      }
+
+      const combinedItems: Beds24InvoiceItem[] = []
+      const roomNames: string[] = []
+      let totalNights = 0
+      let totalChargesExclDeposit = 0
+
+      for (const booking of group.bookings) {
+        totalNights += bookingNights(booking)
+        const rn = firstString(booking.roomName, booking.unitName)
+        if (rn && !roomNames.includes(rn)) roomNames.push(rn)
+        for (const item of booking.invoiceItems ?? []) {
+          combinedItems.push(item)
+          if (item.type === 'charge' && !(item.description ?? '').toLowerCase().includes('security deposit')) {
+            totalChargesExclDeposit += (item.qty ?? 1) * (item.amount ?? 0)
+          }
+        }
+      }
+
+      const overridePricePerNight = totalNights > 0 ? Math.round((totalChargesExclDeposit / totalNights) * 100) / 100 : 0
+      const combinedRoomName = roomNames.length ? roomNames.join(' + ') : roomName
+
+      const result = await apiPost<{ file_path: string; quotation_number: number; location: string; web_url?: string | null; name?: string | null }>('/api/quotation/generate-pdf', {
+        booking_id: String(group.master_id ?? bookingId),
+        first_name: firstName,
+        last_name: lastName,
+        room_name: combinedRoomName,
+        property_name: propertyName,
+        check_in: checkIn,
+        check_out: checkOut,
+        security_deposit: securityDeposit,
+        override_price_per_night: overridePricePerNight,
+        override_total_nights: totalNights,
+        invoice_items: combinedItems.map((item) => ({
+          type: item.type,
+          description: item.description ?? '',
+          qty: item.qty ?? 1,
+          amount: item.amount ?? 0,
+          vat_rate: item.vatRate ?? 0,
+          currency: 'EUR',
+          status: item.status,
+        })),
+        quotation_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      })
+      setNotice(
+        `Combined quotation Q${String(result.quotation_number).padStart(3, '0')} for ${group.bookings.length} bookings saved to ${result.location === 'onedrive' ? 'OneDrive' : 'the tenant folder'}.`,
+      )
+      if (result.web_url) setPdfLink({ url: result.web_url, name: result.name ?? 'Open in OneDrive' })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to generate combined PDF')
+    } finally {
+      setGeneratingCombined(false)
     }
   }
 
@@ -244,6 +425,16 @@ export default function QuotationEditorPage() {
       ) : null}
       {notice ? (
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>
+      ) : null}
+      {pdfLink ? (
+        <a
+          href={pdfLink.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block rounded-lg border border-cyan-600 px-3 py-1.5 text-sm font-medium text-cyan-700 hover:bg-cyan-50"
+        >
+          Open “{pdfLink.name}” in OneDrive ↗
+        </a>
       ) : null}
 
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -312,6 +503,17 @@ export default function QuotationEditorPage() {
             SSI registration (municipality cost)
           </label>
         </div>
+        {occupancy ? (
+          <p className={`mt-2 text-xs font-medium ${occupancy.exceeded ? 'text-rose-600' : 'text-emerald-600'}`}>
+            {occupancy.exceeded ? '🔴' : '🟢'} {occupancy.totalGuests}/{occupancy.capacity} guests
+            {occupancy.exceeded ? ' — MAX OCCUPANCY EXCEEDED' : ''}
+          </p>
+        ) : null}
+        {isLongStay ? (
+          <p className="mt-1 text-xs font-medium text-amber-600">
+            Long stay ({nights} nights): a fixed €{LONG_STAY_DEPOSIT_DEFAULT} refundable deposit applies.
+          </p>
+        ) : null}
       </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -346,7 +548,32 @@ export default function QuotationEditorPage() {
       </div>
 
       <ChargesTable items={charges} onChange={handleChargeChange} onRemove={handleRemoveCharge} onAdd={handleAddCharge} />
-      <PaymentsTable items={payments} />
+      <PaymentsTable
+        items={payments}
+        onChange={handlePaymentChange}
+        onRemove={handleRemovePayment}
+        onAdd={handleAddPayment}
+        installments={installments}
+        onInstallmentsChange={setInstallments}
+        onAddPaymentPlan={handleAddPaymentPlan}
+        buildingPlan={buildingPlan}
+      />
+
+      <div
+        className={`rounded-xl border p-3 text-sm font-medium ${
+          balance.state === 'balanced'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : balance.state === 'under'
+              ? 'border-rose-200 bg-rose-50 text-rose-700'
+              : 'border-amber-200 bg-amber-50 text-amber-700'
+        }`}
+      >
+        {balance.state === 'balanced'
+          ? '✓ Charges and payments are balanced'
+          : balance.state === 'under'
+            ? `⚠️ Payments are €${balance.diff.toFixed(2)} less than charges`
+            : `⚠️ Payments are €${balance.diff.toFixed(2)} more than charges`}
+      </div>
 
       <div className="flex gap-3">
         <button
@@ -356,6 +583,15 @@ export default function QuotationEditorPage() {
           className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50"
         >
           {generatingPdf ? 'Generating...' : 'Generate PDF'}
+        </button>
+        <button
+          type="button"
+          onClick={handleGenerateCombinedPdf}
+          disabled={generatingCombined}
+          className="rounded-lg border border-cyan-600 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+          title="For grouped bookings: one PDF combining every booking in the group"
+        >
+          {generatingCombined ? 'Building...' : 'Combined PDF (group)'}
         </button>
         <button
           type="button"

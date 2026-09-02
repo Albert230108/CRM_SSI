@@ -16,6 +16,15 @@ async def get_tenant_context(
     return await crm_client.get_tenant_context(tenant_id, token)
 
 
+@router.get("/group/{booking_id}")
+async def get_booking_group(
+    booking_id: str,
+    _payload: QuotationTokenPayload = Depends(verify_quotation_token),
+    token: str = Depends(get_raw_token),
+) -> dict:
+    return await crm_client.get_beds24_booking_group(booking_id, token)
+
+
 @router.get("/{booking_id}")
 async def get_booking(
     booking_id: str,

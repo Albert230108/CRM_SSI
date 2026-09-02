@@ -64,11 +64,31 @@ class GeneratePdfRequest(BaseModel):
     security_deposit: float = 0.0
     invoice_items: list[InvoiceItem]
     quotation_date: str
+    # For combined (group) quotations: pre-computed price/night and total nights
+    # across all bookings, so the PDF's derived figures reflect the whole group.
+    override_price_per_night: float | None = None
+    override_total_nights: int | None = None
 
 
 class SendToBeds24Request(BaseModel):
     all_original_invoice_item_ids: list[str]
     invoice_items: list[InvoiceItem]
+
+
+class CreateBookingRequest(BaseModel):
+    room_id: int
+    arrival: str
+    departure: str
+    status: str = "inquiry"
+    first_name: str
+    last_name: str = ""
+    email: str = ""
+    phone: str = ""
+    num_adults: int = Field(1, ge=0)
+    num_children: int = Field(0, ge=0)
+    flag_text: str | None = None
+    company_info: str | None = None
+    invoice_items: list[InvoiceItem] = []
 
 
 class VatSplitRequest(BaseModel):
@@ -89,6 +109,9 @@ class VatSplitSegment(BaseModel):
 class GeneratePdfResponse(BaseModel):
     file_path: str
     quotation_number: int
+    location: str = "local"  # "onedrive" or "local"
+    web_url: str | None = None
+    name: str | None = None
 
 
 class BuildChargesRequest(BaseModel):
@@ -115,3 +138,32 @@ class BuildChargesResponse(BaseModel):
     total_guests: int
     charges: list[GeneratedCharge]
     notes: list[str] = []
+
+
+class PaymentPlanChargeLine(BaseModel):
+    description: str
+    qty: float = 1
+    amount: float = 0
+
+
+class PaymentPlanRequest(BaseModel):
+    check_in: date
+    check_out: date
+    installments: int = Field(1, ge=1, le=24)
+    security_deposit: float = 0.0
+    charges: list[PaymentPlanChargeLine] = []
+
+
+class GeneratedPayment(BaseModel):
+    kind: str
+    description: str
+    status: str = "not paid"
+    qty: float = 1
+    amount: float
+    vat_rate: float = 0
+
+
+class PaymentPlanResponse(BaseModel):
+    installments: int
+    total_charges: float
+    payments: list[GeneratedPayment]

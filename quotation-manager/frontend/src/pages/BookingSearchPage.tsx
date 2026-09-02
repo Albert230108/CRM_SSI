@@ -52,7 +52,25 @@ export default function BookingSearchPage() {
 
   return (
     <div className="mx-auto max-w-2xl p-6">
-      <h1 className="text-xl font-semibold text-gray-900">Quotation Manager</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-gray-900">Quotation Manager</h1>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/new')}
+            className="rounded-lg border border-cyan-600 px-3 py-1.5 text-sm font-medium text-cyan-700 hover:bg-cyan-50"
+          >
+            + New quotation
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/settings')}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Settings
+          </button>
+        </div>
+      </div>
 
       {error ? (
         <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>

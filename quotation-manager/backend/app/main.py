@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.booking import router as booking_router
+from app.api.config import router as config_router
 from app.api.quotation import router as quotation_router
 from app.config import CORS_ORIGINS
 
@@ -18,6 +19,7 @@ if CORS_ORIGINS:
 
 app.include_router(booking_router, prefix="/api")
 app.include_router(quotation_router, prefix="/api")
+app.include_router(config_router, prefix="/api")
 
 
 @app.get("/health")

@@ -59,6 +59,9 @@ services:
       TENANT_FILES_ROOT: /app/tenant_files
     volumes:
       - ${TENANT_FILES_HOST_PATH}:/app/tenant_files
+      # Named volume so Price/Discount/Admin edits made through the Settings UI
+      # survive redeploys. Docker seeds it from the image's app/data on first run.
+      - quotation_config:/app/backend/app/data
     depends_on:
       - backend
     expose:
@@ -96,3 +99,4 @@ services:
 
 volumes:
   postgres_data:
+  quotation_config:

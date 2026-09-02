@@ -77,3 +77,23 @@ export interface BuildChargesResult {
   charges: GeneratedCharge[]
   notes: string[]
 }
+
+export interface GeneratedPayment {
+  kind: string
+  description: string
+  status: string
+  qty: number
+  amount: number
+  vat_rate: number
+}
+
+export interface PaymentPlanResult {
+  installments: number
+  total_charges: number
+  payments: GeneratedPayment[]
+}
+
+export interface BookingGroupResult {
+  master_id: string | number | null
+  bookings: Beds24Booking[]
+}

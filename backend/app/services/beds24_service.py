@@ -111,6 +111,55 @@ async def fetch_booking_with_invoice(booking_id: str) -> dict[str, Any]:
     return data
 
 
+async def _get_bookings(client: httpx.AsyncClient, params: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        response = await client.get('https://beds24.com/api/v2/bookings', params=params)
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Beds24 booking fetch timed out') from exc
+    except httpx.HTTPStatusError as exc:
+        upstream_status = exc.response.status_code if exc.response is not None else 502
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'Beds24 booking fetch failed ({upstream_status})') from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Beds24 booking fetch unavailable') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Beds24 booking fetch returned invalid JSON') from exc
+    data = payload.get('data') if isinstance(payload, dict) else payload
+    if isinstance(data, dict):
+        data = [data]
+    return [item for item in (data or []) if isinstance(item, dict)]
+
+
+async def fetch_booking_group(booking_id: str) -> list[dict[str, Any]]:
+    """
+    Fetch a booking with its invoice items and, when it belongs to a Beds24
+    booking group, all sibling bookings too (each with invoice items). Returns a
+    list of booking dicts - a solo booking yields a single-element list. Used by
+    the combined-quotation flow (desktop: display_bookings_in_tabs).
+    """
+    headers = await _auth_headers()
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        first = await _get_bookings(
+            client,
+            {'id': booking_id, 'includeInvoiceItems': 'true', 'includeBookingGroup': 'true'},
+        )
+        if not first:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Booking not found')
+
+        booking = first[0]
+        group = booking.get('bookingGroup') or {}
+        ids = group.get('ids') or []
+        if len(ids) <= 1:
+            return [booking]
+
+        members = await _get_bookings(
+            client,
+            {'id': [str(gid) for gid in ids], 'includeInvoiceItems': 'true', 'includeBookingGroup': 'true'},
+        )
+        return members or [booking]
+
+
 async def _post_booking_update(client: httpx.AsyncClient, booking_id: str, payload: dict[str, Any], step: str) -> None:
     try:
         response = await client.post('https://beds24.com/api/v2/bookings', json=[payload])
@@ -162,3 +211,46 @@ async def update_booking_invoice_items(
 
         final_payload = {'id': booking_id, 'invoiceItems': final_invoice_items}
         await _post_booking_update(client, booking_id, final_payload, step='update_booking')
+
+
+async def create_booking(booking_payload: dict[str, Any]) -> str:
+    """
+    Create a brand-new Beds24 booking and return its new id.
+
+    Mirrors the desktop Quotation Manager's create flow (interface.py's
+    submit_form / _handle_successful_creation): POST a single booking object
+    WITHOUT an id, and read the created id back from the ``new`` field of the
+    success response. Raises HTTPException if Beds24 rejects the create or does
+    not return a new id, so callers can treat it as a hard failure.
+    """
+    payload = {key: value for key, value in booking_payload.items() if key != 'id'}
+    headers = await _auth_headers()
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        try:
+            response = await client.post('https://beds24.com/api/v2/bookings', json=[payload])
+            response.raise_for_status()
+            data = response.json()
+        except httpx.TimeoutException as exc:
+            logger.warning('Beds24 booking create timed out')
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Beds24 booking create timed out') from exc
+        except httpx.HTTPStatusError as exc:
+            upstream_status = exc.response.status_code if exc.response is not None else 502
+            logger.warning('Beds24 booking create failed upstream_status=%s body=%s', upstream_status, _response_snippet(exc.response) if exc.response is not None else '<no response>')
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'Beds24 booking create failed (upstream status {upstream_status})') from exc
+        except httpx.HTTPError as exc:
+            logger.warning('Beds24 booking create network error error=%s', type(exc).__name__)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Beds24 booking create unavailable') from exc
+        except ValueError as exc:
+            logger.warning('Beds24 booking create returned invalid JSON')
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Beds24 booking create returned invalid JSON') from exc
+
+    if not (isinstance(data, list) and data and isinstance(data[0], dict) and data[0].get('success')):
+        error_detail = _response_snippet(response)
+        logger.warning('Beds24 booking create rejected response=%s', error_detail)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'Beds24 rejected the booking creation: {error_detail}')
+
+    new_info = data[0].get('new') or {}
+    new_id = new_info.get('id')
+    if not new_id:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Beds24 created the booking but did not return a new id')
+    return str(new_id)

@@ -61,5 +61,21 @@ async def get_beds24_booking(booking_id: str, token: str) -> dict:
     return await _get(f"/api/quotation/beds24-booking/{booking_id}", token)
 
 
+async def get_beds24_booking_group(booking_id: str, token: str) -> dict:
+    return await _get(f"/api/quotation/beds24-booking-group/{booking_id}", token)
+
+
 async def send_invoice_items_to_beds24(booking_id: str, token: str, payload: dict) -> dict:
     return await _post(f"/api/quotation/beds24-booking/{booking_id}/invoice-items", token, payload)
+
+
+async def create_booking(token: str, payload: dict) -> dict:
+    return await _post("/api/quotation/beds24-booking", token, payload)
+
+
+async def onedrive_next_number(token: str, payload: dict) -> dict:
+    return await _post("/api/quotation/onedrive/next-number", token, payload)
+
+
+async def onedrive_upload(token: str, payload: dict) -> dict:
+    return await _post("/api/quotation/onedrive/upload", token, payload)

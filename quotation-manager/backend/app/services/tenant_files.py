@@ -66,6 +66,45 @@ class NextQuotationOutput(NamedTuple):
     quotation_number: int
 
 
+def _format_quotation_date(date_str: str | None) -> str:
+    if not date_str:
+        return "Unknown"
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%d %b %Y")
+    except ValueError:
+        return "Unknown"
+
+
+def build_quotation_filename(
+    booking_id: str,
+    quotation_number: int,
+    room_label: str,
+    tenant_name: str,
+    checkin_date_str: str | None,
+    checkout_date_str: str | None,
+) -> str:
+    """The desktop app's quotation filename convention, as a pure function so both
+    the local-disk and OneDrive/Graph flows produce identical names:
+    Quotation_{booking_id}_{NNN} - {room} - {tenant} - (DD Mon YYYY~DD Mon YYYY).pdf
+    """
+    safe_room_label = _safe_name_component(room_label or "Unknown")[:20]
+    safe_tenant_name = _safe_name_component(tenant_name or "Unknown")[:20]
+    safe_checkin = _format_quotation_date(checkin_date_str)
+    safe_checkout = _format_quotation_date(checkout_date_str)
+    return (
+        f"Quotation_{booking_id}_{quotation_number:03d} - {safe_room_label} - "
+        f"{safe_tenant_name} - ({safe_checkin}~{safe_checkout}).pdf"
+    )
+
+
+def next_quotation_number_from_names(existing_names: list[str], booking_id: str) -> int:
+    """Next quotation number given the filenames already in a folder (OneDrive
+    listing), matching the local glob-based count+1 numbering."""
+    prefix = f"Quotation_{booking_id}_"
+    existing = [name for name in existing_names if name.startswith(prefix) and name.endswith(".pdf")]
+    return len(existing) + 1
+
+
 def next_quotation_output_path(
     folder: pathlib.Path,
     booking_id: str,
@@ -76,32 +115,15 @@ def next_quotation_output_path(
 ) -> NextQuotationOutput:
     """
     Compute the next auto-incrementing quotation PDF path in `folder`, matching
-    the desktop app's naming convention and glob-based numbering exactly:
-    Quotation_{booking_id}_{NNN} - {room_label} - {tenant_name} - (DD Mon YYYY~DD Mon YYYY).pdf
+    the desktop app's naming convention and glob-based numbering exactly.
     """
     existing_files = glob.glob(os.path.join(str(folder), f"Quotation_{booking_id}_*.pdf"))
     quotation_number = len(existing_files) + 1
 
-    safe_room_label = _safe_name_component(room_label or "Unknown")[:20]
-    safe_tenant_name = _safe_name_component(tenant_name or "Unknown")[:20]
-
-    def _format_date(date_str: str | None) -> str:
-        if not date_str:
-            return "Unknown"
-        try:
-            return datetime.strptime(date_str, "%Y-%m-%d").strftime("%d %b %Y")
-        except ValueError:
-            return "Unknown"
-
-    safe_checkin = _format_date(checkin_date_str)
-    safe_checkout = _format_date(checkout_date_str)
-
     def _build_path(number: int) -> pathlib.Path:
-        filename = (
-            f"Quotation_{booking_id}_{number:03d} - {safe_room_label} - "
-            f"{safe_tenant_name} - ({safe_checkin}~{safe_checkout}).pdf"
+        return folder / build_quotation_filename(
+            booking_id, number, room_label, tenant_name, checkin_date_str, checkout_date_str
         )
-        return folder / filename
 
     output_path = _build_path(quotation_number)
     while output_path.exists():
