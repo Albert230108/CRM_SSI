@@ -97,6 +97,14 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
   const runCommand = (action: ToolbarAction) => {
     if (disabled || !editorRef.current || typeof document.execCommand !== 'function') return
     editorRef.current.focus()
+    // Prefer semantic tags (<b>/<i>/<u>) over inline-styled spans so the sanitizer keeps the
+    // formatting. Best-effort: Firefox ignores this for some commands, which the composer's
+    // style->semantic normalization backstops.
+    try {
+      document.execCommand('styleWithCSS', false, 'false')
+    } catch {
+      // Some browsers throw on unsupported command names; the normalization handles the fallout.
+    }
     document.execCommand(action.command, false, action.value)
     setActiveCommands((current) => {
       const next = new Set(current)

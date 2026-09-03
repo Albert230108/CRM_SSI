@@ -32,6 +32,28 @@ describe('RichMessageComposer', () => {
     expect(composer.innerHTML).toBe('Hello world')
   })
 
+  it('keeps style-based formatting when the editor is normalized on blur', () => {
+    // Reproduces the reported bug: dragging/resizing the dialog blurs the editor, which rewrites
+    // the DOM from the sanitized value. Style-based bold from execCommand must survive as a
+    // semantic tag rather than collapsing to raw text.
+    render(
+      <RichMessageComposer
+        channel="email"
+        value={{ body: '', bodyHtml: null, bodyFormat: 'plain' }}
+        placeholder="Write your reply..."
+        onChange={vi.fn()}
+      />,
+    )
+
+    const composer = screen.getByRole('textbox', { name: 'Write your reply...' })
+    composer.innerHTML = '<span style="font-weight:bold">hi</span>'
+
+    fireEvent.blur(composer)
+
+    expect(composer.innerHTML).toContain('<strong>hi</strong>')
+    expect(composer.innerHTML).not.toContain('style=')
+  })
+
   it('applies list styling utilities to the editor surface', () => {
     render(
       <RichMessageComposer
