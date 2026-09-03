@@ -17,6 +17,7 @@ const AiAgentProfiles = lazy(() => import('./pages/AiAgentProfiles'))
 const AiAgentProfileEditor = lazy(() => import('./pages/AiAgentProfileEditor'))
 const AiAgentRuns = lazy(() => import('./pages/AiAgentRuns'))
 const AiAgentRunDetail = lazy(() => import('./pages/AiAgentRunDetail'))
+const RunQaChat = lazy(() => import('./pages/RunQaChat'))
 const RedoQaChat = lazy(() => import('./pages/RedoQaChat'))
 const BrainSections = lazy(() => import('./pages/BrainSections'))
 const AiPendingDrafts = lazy(() => import('./pages/AiPendingDrafts'))
@@ -98,6 +99,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <AiAgentRunDetail />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ai-runs/:runId/chat"
+          element={
+            <ProtectedRoute>
+              <RunQaChat />
             </ProtectedRoute>
           }
         />

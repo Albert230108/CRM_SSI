@@ -24,6 +24,9 @@ MEMORY_REDO_ROLE = "memory_redo"
 # Answers a staff member's ad-hoc question about one tenant's working memory - see
 # memory_qa_service.py. Read-only; never writes to the brain/fields/action list.
 MEMORY_QA_ROLE = "memory_qa"
+# Answers a staff member's questions about one specific AI agent run (planner, brain writer, or
+# action writer), grounded on that run's own step log - see run_qa_service.py. Read-only.
+RUN_QA_ROLE = "run_qa"
 
 
 class AiAgentProfile(Base):

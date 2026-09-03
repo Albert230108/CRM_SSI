@@ -1,4 +1,4 @@
-export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'memory_redo' | 'memory_qa'
+export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'memory_redo' | 'memory_qa' | 'run_qa'
 
 export type AiAgentProfile = {
   id: number

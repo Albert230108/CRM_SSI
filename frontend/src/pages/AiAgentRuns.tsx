@@ -359,9 +359,14 @@ export default function AiAgentRuns() {
                       {run.pricing_missing ? '—' : formatCost(run.total_cost)}
                     </td>
                     <td className="py-1.5">
-                      <Button variant="secondary" size="sm" onClick={() => window.open(`/ai-runs/${run.id}`, '_blank')}>
-                        Inspect
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="secondary" size="sm" onClick={() => window.open(`/ai-runs/${run.id}`, '_blank')}>
+                          Inspect
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => window.open(`/ai-runs/${run.id}/chat`, '_blank')}>
+                          Debug chat
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}

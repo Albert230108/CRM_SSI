@@ -1,7 +1,8 @@
 from collections import defaultdict
 from datetime import datetime, time, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,7 @@ from app.models.redo_request_log import RedoRequestLog
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.ai_agent_run import AiAgentRunDetail, AiAgentRunListRead, AiAgentRunRead, AiAgentRunStatsRead, AiModelUsageStat
+from app.services import run_qa_service
 
 router = APIRouter(prefix="/ai-agent-runs", tags=["ai-agent-runs"])
 
@@ -295,3 +297,70 @@ def get_agent_run(
             "display_mode": display_mode,
         }
     )
+
+
+class RunQaMessageRead(BaseModel):
+    id: int
+    qa_run_id: int | None = None
+    role: str
+    content: str
+    created_at: datetime
+
+
+class RunQaContextRead(BaseModel):
+    run_summary: str
+    instructions: str
+    qa_preamble: str
+    model: str
+    temperature: float | None = None
+    max_output_tokens: int | None = None
+    run_log_text: str
+
+
+class RunQaAskRequest(BaseModel):
+    question: str
+
+
+def _get_run_or_404(db: Session, run_id: int) -> AiAgentRun:
+    run = db.query(AiAgentRun).filter(AiAgentRun.id == run_id).first()
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found")
+    return run
+
+
+@router.get("/{run_id}/qa/context", response_model=RunQaContextRead)
+def get_run_qa_context(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    run = _get_run_or_404(db, run_id)
+    return run_qa_service.get_context(db, run)
+
+
+@router.get("/{run_id}/qa", response_model=list[RunQaMessageRead])
+def list_run_qa_history(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    run = _get_run_or_404(db, run_id)
+    return run_qa_service.list_history(db, run.id)
+
+
+@router.post("/{run_id}/qa", response_model=RunQaMessageRead, status_code=status.HTTP_201_CREATED)
+def ask_run_qa(
+    run_id: int,
+    payload: RunQaAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    run = _get_run_or_404(db, run_id)
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="question is required")
+
+    assistant_message = run_qa_service.answer_question(db, run, question, asked_by_user_id=current_user.id)
+    db.commit()
+    db.refresh(assistant_message)
+    return assistant_message

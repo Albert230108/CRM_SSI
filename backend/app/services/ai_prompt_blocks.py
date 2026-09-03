@@ -24,6 +24,7 @@ DRAFTER_ROLE = "drafter"
 FORMATTER_ROLE = "formatter"
 MEMORY_REDO_ROLE = "memory_redo"
 MEMORY_QA_ROLE = "memory_qa"
+RUN_QA_ROLE = "run_qa"
 
 STRUCTURE_GROUP = "structure"
 CONTEXT_GROUP = "context"
@@ -711,6 +712,58 @@ MEMORY_REDO_BLOCKS: tuple[PromptBlock, ...] = (
 )
 
 
+RUN_QA_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        key="qa_preamble",
+        label="Run QA Chat Preamble",
+        help="The opening line for the run-debug chat. Emitted first.",
+        default=(
+            "You are answering a staff member's questions about one specific AI agent run in a "
+            "short-stay rental CRM - it may be a planner, brain writer, or action writer run. Use "
+            "only the run log provided below (its prompts, responses, model, and settings), and say "
+            "plainly when the log does not support an answer instead of guessing."
+        ),
+    ),
+    PromptBlock(
+        key="instructions_header",
+        label="Instructions heading",
+        help="Sits above the Instructions you wrote for this profile. Omitted when Instructions is blank.",
+        default=_INSTRUCTIONS_HEADER_DEFAULT,
+    ),
+    PromptBlock(
+        key="ctx_run_summary",
+        label="Run summary heading",
+        help="Sits above the one-line summary of the run being debugged (id, mode, channel, status).",
+        default="## Run Summary",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_run_log",
+        label="Full run log heading",
+        help=(
+            "Sits above the full step log of the run being debugged - every stage's prompt and "
+            "response, the model used, and which profile/template drove it."
+        ),
+        default="## Full Run Log",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_history",
+        label="Run QA history heading",
+        help="Sits above prior run-QA turns in this session.",
+        default="## Prior Questions In This Session",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_question",
+        label="Question heading",
+        help="Sits above the staff member's follow-up question in the run QA chat.",
+        default="## Question",
+        group=CONTEXT_GROUP,
+    ),
+)
+
+
 BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     PLANNER_ROLE: PLANNER_BLOCKS,
     CHECKER_ROLE: CHECKER_BLOCKS,
@@ -718,6 +771,7 @@ BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     FORMATTER_ROLE: FORMATTER_BLOCKS,
     MEMORY_QA_ROLE: MEMORY_QA_BLOCKS,
     MEMORY_REDO_ROLE: MEMORY_REDO_BLOCKS,
+    RUN_QA_ROLE: RUN_QA_BLOCKS,
 }
 
 DEFAULTS_BY_ROLE: dict[str, dict[str, str]] = {

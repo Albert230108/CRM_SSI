@@ -28,6 +28,7 @@ from app.models.notification_whatsapp_delivery import NotificationWhatsappDelive
 from app.models.notification_whatsapp_trigger import NotificationWhatsappTrigger
 from app.models.memory_qa_message import MemoryQaMessage
 from app.models.redo_qa_message import RedoQaMessage
+from app.models.run_qa_message import RunQaMessage
 from app.models.memory_suggestion import MemorySuggestion
 from app.models.password_reset import PasswordResetToken
 from app.models.redo_request_log import RedoRequestLog
