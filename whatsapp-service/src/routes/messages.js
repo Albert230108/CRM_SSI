@@ -1,9 +1,18 @@
 const express = require("express");
+const QRCode = require("qrcode");
 
 const {
   maxOutboundAttachmentBytes: defaultMaxOutboundAttachmentBytes,
   maxOutboundAttachmentsTotalBytes: defaultMaxOutboundAttachmentsTotalBytes,
 } = require("../config");
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 function createMessageRouter({
   requireApiKey,
@@ -13,6 +22,12 @@ function createMessageRouter({
   runHistoryDebugSample,
   debugChatModelBuild,
   listChats,
+  getConnectionStatus,
+  getLatestQr,
+  // Auth guard for the read-only /admin/status and /admin/qr GETs that also accepts the API key as
+  // a ?key= query param so the QR page can be opened directly in a browser. Falls back to the
+  // header-only guard when not supplied.
+  requireApiKeyForAdminGet = requireApiKey,
   maxOutboundAttachmentBytes = defaultMaxOutboundAttachmentBytes,
   maxOutboundAttachmentsTotalBytes = defaultMaxOutboundAttachmentsTotalBytes,
 }) {
@@ -239,6 +254,81 @@ function createMessageRouter({
       const status = message.includes("not ready") ? 503 : 500;
       console.error("Failed to handle /admin/debug/chat-model request:", error);
       return res.status(status).json({ ok: false, error: message });
+    }
+  });
+
+  router.get("/admin/status", requireApiKeyForAdminGet, (req, res) => {
+    try {
+      const status = typeof getConnectionStatus === "function" ? getConnectionStatus() : {};
+      return res.json({ ok: true, ...status });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to read WhatsApp status";
+      console.error("Failed to handle /admin/status request:", error);
+      return res.status(500).json({ ok: false, error: message });
+    }
+  });
+
+  router.get("/admin/qr", requireApiKeyForAdminGet, async (req, res) => {
+    try {
+      const status = typeof getConnectionStatus === "function" ? getConnectionStatus() : {};
+      if (status.ready) {
+        return res.json({ ok: true, ready: true, message: "already linked" });
+      }
+
+      const { qr, generated_at: generatedAt } = typeof getLatestQr === "function"
+        ? getLatestQr()
+        : { qr: null, generated_at: null };
+      if (!qr) {
+        return res.status(503).json({ ok: false, ready: false, error: "no QR available yet" });
+      }
+
+      const format = typeof req.query?.format === "string" ? req.query.format.trim().toLowerCase() : "";
+
+      if (format === "json") {
+        return res.json({ ok: true, ready: false, qr, generated_at: generatedAt });
+      }
+
+      if (format === "png") {
+        const buffer = await QRCode.toBuffer(qr, { type: "png", width: 400, margin: 2 });
+        res.setHeader("Content-Type", "image/png");
+        res.setHeader("Cache-Control", "no-store");
+        return res.end(buffer);
+      }
+
+      // Default: a self-contained page that a browser can open directly. It re-fetches itself every
+      // 15s because the WhatsApp QR rotates roughly every 20s.
+      const dataUrl = await QRCode.toDataURL(qr, { width: 400, margin: 2 });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      return res.end(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="refresh" content="15" />
+<title>WhatsApp link — ${escapeHtml(status.client_id || "")}</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; text-align: center; background: #f6f7f9; color: #111; }
+  img { width: 320px; height: 320px; image-rendering: pixelated; }
+  .card { display: inline-block; background: #fff; padding: 1.5rem 2rem; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  .muted { color: #666; font-size: .85rem; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Scan to link WhatsApp</h1>
+    <p>Account: <strong>${escapeHtml(status.client_id || "unknown")}</strong></p>
+    <img src="${dataUrl}" alt="WhatsApp QR code" />
+    <p class="muted">On the phone: Settings &rarr; Linked Devices &rarr; Link a device.</p>
+    <p class="muted">QR generated ${escapeHtml(generatedAt || "just now")} &middot; page auto-refreshes every 15s.</p>
+    ${status.last_disconnect ? `<p class="muted">Last disconnect: ${escapeHtml(status.last_disconnect.reason)} at ${escapeHtml(status.last_disconnect.at)}</p>` : ""}
+  </div>
+</body>
+</html>`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to render WhatsApp QR";
+      console.error("Failed to handle /admin/qr request:", error);
+      return res.status(500).json({ ok: false, error: message });
     }
   });
 

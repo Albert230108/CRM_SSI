@@ -71,9 +71,31 @@ const logStatuses = ['', 'received', 'processed', 'failed', 'ignored', 'duplicat
 const ADMIN_TABS: SettingsTab[] = [
   { id: 'users', label: 'Users & Invites' },
   { id: 'ai', label: 'AI Settings' },
+  { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'logs', label: 'Webhook Logs' },
   { id: 'maintenance', label: 'Maintenance' },
 ]
+
+type WhatsAppAccountStatus = {
+  external_account_id: string
+  label: string
+  provider: string
+  reachable: boolean
+  ready: boolean | null
+  client_id: string | null
+  last_ready_at: string | null
+  last_disconnect: { reason: string | null; at: string | null } | null
+  last_auth_failure_at: string | null
+  has_qr: boolean
+  error: string | null
+}
+
+type WhatsAppAccountQr = {
+  external_account_id: string
+  ready: boolean
+  qr_data_url: string | null
+  message: string | null
+}
 
 function formatJson(value: unknown) {
   return JSON.stringify(value ?? null, null, 2)
@@ -144,6 +166,11 @@ export default function AdminSettings() {
   const [notificationWhatsappDebounceSeconds, setNotificationWhatsappDebounceSeconds] = useState(120)
   const [notificationWhatsappExternalAccountId, setNotificationWhatsappExternalAccountId] = useState('')
   const [whatsappAccounts, setWhatsappAccounts] = useState<{ external_account_id: string; provider: string; label: string }[]>([])
+  const [whatsappStatuses, setWhatsappStatuses] = useState<WhatsAppAccountStatus[]>([])
+  const [whatsappStatusLoading, setWhatsappStatusLoading] = useState(false)
+  const [whatsappStatusError, setWhatsappStatusError] = useState('')
+  const [whatsappQrByAccount, setWhatsappQrByAccount] = useState<Record<string, WhatsAppAccountQr>>({})
+  const [whatsappQrOpen, setWhatsappQrOpen] = useState<Record<string, boolean>>({})
   const [savingNotificationWhatsappDebounce, setSavingNotificationWhatsappDebounce] = useState(false)
   const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
   const [plannerDefaultMode, setPlannerDefaultMode] = useState<'off' | 'manual' | 'auto-draft' | 'auto-send'>('off')
@@ -202,6 +229,59 @@ export default function AdminSettings() {
       setModelPricingLoading(false)
     }
   }
+
+  const loadWhatsappStatuses = async () => {
+    setWhatsappStatusLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/whatsapp/accounts/status`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (response.ok) {
+        setWhatsappStatuses(await response.json())
+        setWhatsappStatusError('')
+      } else {
+        setWhatsappStatusError('Failed to load WhatsApp status')
+      }
+    } catch {
+      setWhatsappStatusError('Failed to load WhatsApp status')
+    } finally {
+      setWhatsappStatusLoading(false)
+    }
+  }
+
+  const loadWhatsappQr = async (externalAccountId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/whatsapp/accounts/${encodeURIComponent(externalAccountId)}/qr`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (response.ok) {
+        const data: WhatsAppAccountQr = await response.json()
+        setWhatsappQrByAccount((current) => ({ ...current, [externalAccountId]: data }))
+      }
+    } catch {
+      /* transient; the next poll retries */
+    }
+  }
+
+  // Live-poll status while the WhatsApp tab is open, and refresh the QR for any account that is
+  // showing its QR (the underlying WhatsApp QR rotates ~every 20s, so re-fetch on a similar cadence).
+  useEffect(() => {
+    if (activeTab !== 'whatsapp') return
+    loadWhatsappStatuses()
+    const statusTimer = setInterval(loadWhatsappStatuses, 10000)
+    return () => clearInterval(statusTimer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, token])
+
+  useEffect(() => {
+    if (activeTab !== 'whatsapp') return
+    const openAccounts = Object.keys(whatsappQrOpen).filter((id) => whatsappQrOpen[id])
+    if (openAccounts.length === 0) return
+    openAccounts.forEach((id) => loadWhatsappQr(id))
+    const qrTimer = setInterval(() => openAccounts.forEach((id) => loadWhatsappQr(id)), 15000)
+    return () => clearInterval(qrTimer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, token, whatsappQrOpen])
 
   useEffect(() => {
     const load = async () => {
@@ -1311,6 +1391,102 @@ export default function AdminSettings() {
             <Button className="mt-3" loading={backfillingBodies} onClick={backfillEmailBodies}>
               {backfillingBodies ? 'Backfilling…' : 'Backfill email bodies'}
             </Button>
+          </section>
+        ) : null}
+
+        {activeTab === 'whatsapp' ? (
+          <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">WhatsApp services</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Live connection status for each configured WhatsApp account. When an account is not linked
+                  (for example after a logout), open its QR and scan it from the phone: Settings → Linked Devices → Link a device.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {whatsappStatusLoading ? <InlineSpinner /> : null}
+                <Button variant="secondary" onClick={loadWhatsappStatuses}>Refresh</Button>
+              </div>
+            </div>
+
+            {whatsappStatusError ? (
+              <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{whatsappStatusError}</p>
+            ) : null}
+
+            {whatsappStatuses.length === 0 && !whatsappStatusLoading ? (
+              <p className="mt-3 text-sm text-gray-500">No WhatsApp accounts are configured.</p>
+            ) : null}
+
+            <div className="mt-3 space-y-3">
+              {whatsappStatuses.map((account) => {
+                const badge = !account.reachable
+                  ? { text: 'Offline', className: 'bg-slate-200 text-slate-800' }
+                  : account.ready
+                    ? { text: 'Connected', className: 'bg-emerald-100 text-emerald-800' }
+                    : { text: 'Not linked', className: 'bg-red-100 text-red-800' }
+                const qr = whatsappQrByAccount[account.external_account_id]
+                const showQr = Boolean(whatsappQrOpen[account.external_account_id])
+                const canLink = account.reachable && !account.ready
+                return (
+                  <div key={account.external_account_id} className="rounded-xl border border-gray-200 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900">{account.label}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>{badge.text}</span>
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-gray-500">{account.external_account_id}</p>
+                      </div>
+                      {canLink ? (
+                        <Button
+                          variant="secondary"
+                          onClick={() =>
+                            setWhatsappQrOpen((current) => ({
+                              ...current,
+                              [account.external_account_id]: !current[account.external_account_id],
+                            }))
+                          }
+                        >
+                          {showQr ? 'Hide QR' : 'Show QR to re-link'}
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-1.5 text-xs text-gray-500">
+                      {account.last_ready_at ? <span>Last connected: {new Date(account.last_ready_at).toLocaleString()}. </span> : null}
+                      {account.last_disconnect?.reason ? (
+                        <span>
+                          Last disconnect: <span className="font-medium text-gray-700">{account.last_disconnect.reason}</span>
+                          {account.last_disconnect.at ? ` at ${new Date(account.last_disconnect.at).toLocaleString()}` : ''}.
+                        </span>
+                      ) : null}
+                      {!account.reachable && account.error ? <span className="text-red-600">{account.error}</span> : null}
+                    </div>
+
+                    {canLink && showQr ? (
+                      <div className="mt-3 flex flex-col items-center gap-2">
+                        {qr?.qr_data_url ? (
+                          <>
+                            <img
+                              src={qr.qr_data_url}
+                              alt={`WhatsApp QR for ${account.label}`}
+                              className="h-64 w-64 rounded-lg border border-gray-200 bg-white p-2"
+                              style={{ imageRendering: 'pixelated' }}
+                            />
+                            <p className="text-xs text-gray-500">Auto-refreshes every 15s. Scan from the phone linked to this account.</p>
+                          </>
+                        ) : qr?.ready ? (
+                          <p className="text-sm text-emerald-700">Already linked.</p>
+                        ) : (
+                          <p className="text-sm text-gray-500">{qr?.message ?? 'Waiting for a QR code…'}</p>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
           </section>
         ) : null}
       </SettingsSidebarLayout>

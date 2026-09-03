@@ -36,6 +36,69 @@ def test_get_whatsapp_accounts(user_client, monkeypatch):
     assert body == [{"external_account_id": "edi-crm-whatsapp", "provider": "whatsapp-service", "label": "EDI CRM WhatsApp"}]
 
 
+def test_get_whatsapp_accounts_status_reports_reachable_and_offline(user_client):
+    from app.services.whatsapp_client import WhatsAppBridgeError
+
+    accounts = [
+        {"external_account_id": "ssi-crm-whatsapp", "provider": "whatsapp-service", "label": "SSI"},
+        {"external_account_id": "edi-crm-whatsapp", "provider": "whatsapp-service", "label": "EDI"},
+    ]
+
+    async def fake_status(external_account_id):
+        if external_account_id == "ssi-crm-whatsapp":
+            return {
+                "ready": False,
+                "client_id": "ssi-crm-whatsapp",
+                "last_ready_at": "2026-09-03T14:21:40.000Z",
+                "last_disconnect": {"reason": "LOGOUT", "at": "2026-09-03T14:26:43.000Z"},
+                "has_qr": True,
+            }
+        raise WhatsAppBridgeError(503, "WhatsApp bridge is unavailable")
+
+    with patch("app.api.whatsapp_thread_links.list_whatsapp_accounts", return_value=accounts), patch(
+        "app.api.whatsapp_thread_links.fetch_whatsapp_status", new=AsyncMock(side_effect=fake_status)
+    ):
+        response = user_client.get("/api/whatsapp/accounts/status")
+
+    assert response.status_code == 200
+    body = {row["external_account_id"]: row for row in response.json()}
+    assert body["ssi-crm-whatsapp"]["reachable"] is True
+    assert body["ssi-crm-whatsapp"]["ready"] is False
+    assert body["ssi-crm-whatsapp"]["last_disconnect"]["reason"] == "LOGOUT"
+    # An offline instance is reported, not fatal to the whole call.
+    assert body["edi-crm-whatsapp"]["reachable"] is False
+    assert body["edi-crm-whatsapp"]["ready"] is None
+    assert body["edi-crm-whatsapp"]["error"]
+
+
+def test_get_whatsapp_account_qr_returns_data_url(user_client):
+    async def fake_qr(external_account_id):
+        return {"ready": False, "qr_data_url": "data:image/png;base64,AAAA", "message": None}
+
+    with patch("app.api.whatsapp_thread_links.fetch_whatsapp_qr", new=AsyncMock(side_effect=fake_qr)):
+        response = user_client.get("/api/whatsapp/accounts/ssi-crm-whatsapp/qr")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["external_account_id"] == "ssi-crm-whatsapp"
+    assert body["ready"] is False
+    assert body["qr_data_url"] == "data:image/png;base64,AAAA"
+
+
+def test_get_whatsapp_account_qr_reports_already_linked(user_client):
+    async def fake_qr(external_account_id):
+        return {"ready": True, "qr_data_url": None, "message": "already linked"}
+
+    with patch("app.api.whatsapp_thread_links.fetch_whatsapp_qr", new=AsyncMock(side_effect=fake_qr)):
+        response = user_client.get("/api/whatsapp/accounts/ssi-crm-whatsapp/qr")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is True
+    assert body["qr_data_url"] is None
+    assert body["message"] == "already linked"
+
+
 def test_get_whatsapp_account_chats_search_by_chat_id(user_client, db_session):
     fake_chats = [
         {"chat_id": "326472368@lid", "chat_name": "Alberto", "last_message_timestamp": None, "last_message_preview": "Hi there"},

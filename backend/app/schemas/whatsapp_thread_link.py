@@ -9,6 +9,28 @@ class WhatsAppAccountRead(BaseModel):
     label: str
 
 
+class WhatsAppAccountStatusRead(BaseModel):
+    external_account_id: str
+    label: str
+    provider: str
+    # reachable=False means the service instance itself could not be contacted; ready is then None.
+    reachable: bool
+    ready: bool | None = None
+    client_id: str | None = None
+    last_ready_at: datetime | None = None
+    last_disconnect: dict | None = None
+    last_auth_failure_at: datetime | None = None
+    has_qr: bool = False
+    error: str | None = None
+
+
+class WhatsAppAccountQrRead(BaseModel):
+    external_account_id: str
+    ready: bool
+    qr_data_url: str | None = None
+    message: str | None = None
+
+
 class WhatsAppChatRead(BaseModel):
     chat_id: str
     chat_name: str | None = None

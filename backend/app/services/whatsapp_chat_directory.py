@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from typing import Any
@@ -125,6 +126,84 @@ async def fetch_whatsapp_chats(
 
     chats = payload.get("chats") if isinstance(payload, dict) else None
     return chats if isinstance(chats, list) else []
+
+
+async def fetch_whatsapp_status(external_account_id: str) -> dict[str, Any]:
+    """Fetch the live connection status for an account from its whatsapp-service instance.
+
+    Returns the service's /admin/status payload (ready flag, last disconnect reason, etc.). Raises
+    WhatsAppBridgeError when the service is unreachable/misconfigured so the caller can decide how
+    to surface an offline instance.
+    """
+    service_url = _resolve_service_url(external_account_id)
+    if not service_url:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge URL is not configured for this account")
+    if not WHATSAPP_API_KEY:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge API key is not configured")
+
+    url = urljoin(service_url.rstrip("/") + "/", "admin/status")
+    timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers={"X-API-Key": WHATSAPP_API_KEY})
+    except httpx.TimeoutException as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge request timed out") from exc
+    except httpx.RequestError as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge is unavailable") from exc
+
+    if not response.is_success:
+        raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned an error for status")
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned invalid JSON") from exc
+
+    return payload if isinstance(payload, dict) else {}
+
+
+async def fetch_whatsapp_qr(external_account_id: str) -> dict[str, Any]:
+    """Fetch the current QR (as a data URL) for re-linking an account.
+
+    The whatsapp-service returns a PNG while the client is waiting to link, or a JSON body
+    (`ready: true` / "no QR available yet") otherwise. We normalise both into a single dict:
+    `{ ready, qr_data_url, message }`. The service API key stays server-side; only the rendered
+    image is returned to the browser.
+    """
+    service_url = _resolve_service_url(external_account_id)
+    if not service_url:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge URL is not configured for this account")
+    if not WHATSAPP_API_KEY:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge API key is not configured")
+
+    url = urljoin(service_url.rstrip("/") + "/", "admin/qr")
+    timeout = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers={"X-API-Key": WHATSAPP_API_KEY}, params={"format": "png"})
+    except httpx.TimeoutException as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge request timed out") from exc
+    except httpx.RequestError as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge is unavailable") from exc
+
+    content_type = response.headers.get("content-type", "")
+
+    if "image/png" in content_type and response.is_success:
+        encoded = base64.b64encode(response.content).decode("ascii")
+        return {"ready": False, "qr_data_url": f"data:image/png;base64,{encoded}", "message": None}
+
+    # Non-image responses are JSON: either already linked, or no QR yet, or an error.
+    message: str | None = None
+    ready = False
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            ready = bool(body.get("ready"))
+            message = body.get("message") or body.get("error")
+    except ValueError:
+        message = "WhatsApp bridge returned an unexpected response"
+
+    return {"ready": ready, "qr_data_url": None, "message": message}
 
 
 async def resync_whatsapp_chat(external_account_id: str, chat_id: str) -> dict[str, Any]:

@@ -15,12 +15,20 @@ from app.schemas.whatsapp_thread_link import (
     ThreadWhatsAppLinkRead,
     ThreadWhatsAppLinkResyncRead,
     ThreadWhatsAppResyncAllRead,
+    WhatsAppAccountQrRead,
     WhatsAppAccountRead,
+    WhatsAppAccountStatusRead,
     WhatsAppChatRead,
     WhatsAppChatResyncResult,
 )
 from app.services.whatsapp_auto_resync import claim_auto_resync_slot
-from app.services.whatsapp_chat_directory import fetch_whatsapp_chats, list_whatsapp_accounts, resync_whatsapp_chat
+from app.services.whatsapp_chat_directory import (
+    fetch_whatsapp_chats,
+    fetch_whatsapp_qr,
+    fetch_whatsapp_status,
+    list_whatsapp_accounts,
+    resync_whatsapp_chat,
+)
 from app.services.whatsapp_client import WhatsAppBridgeError
 
 router = APIRouter(tags=["whatsapp-thread-links"])
@@ -157,6 +165,71 @@ def _active_whatsapp_links_query(db: Session):
 @router.get("/whatsapp/accounts", response_model=list[WhatsAppAccountRead])
 def get_whatsapp_accounts(current_user: User = Depends(get_current_user)) -> list[WhatsAppAccountRead]:
     return [WhatsAppAccountRead(**account) for account in list_whatsapp_accounts()]
+
+
+@router.get("/whatsapp/accounts/status", response_model=list[WhatsAppAccountStatusRead])
+async def get_whatsapp_accounts_status(
+    current_user: User = Depends(get_current_user),
+) -> list[WhatsAppAccountStatusRead]:
+    """Live connection status for every configured WhatsApp account.
+
+    An unreachable/offline instance is reported with ``reachable=False`` rather than failing the
+    whole call, so one dead service never blanks out the others in the admin panel.
+    """
+    results: list[WhatsAppAccountStatusRead] = []
+    for account in list_whatsapp_accounts():
+        external_account_id = str(account.get("external_account_id") or "").strip()
+        label = str(account.get("label") or external_account_id)
+        provider = str(account.get("provider") or "whatsapp-service")
+        try:
+            payload = await fetch_whatsapp_status(external_account_id)
+        except WhatsAppBridgeError as exc:
+            results.append(
+                WhatsAppAccountStatusRead(
+                    external_account_id=external_account_id,
+                    label=label,
+                    provider=provider,
+                    reachable=False,
+                    error=exc.args[0] if exc.args else "WhatsApp bridge is unavailable",
+                )
+            )
+            continue
+
+        results.append(
+            WhatsAppAccountStatusRead(
+                external_account_id=external_account_id,
+                label=label,
+                provider=provider,
+                reachable=True,
+                ready=bool(payload.get("ready")),
+                client_id=payload.get("client_id"),
+                last_ready_at=payload.get("last_ready_at"),
+                last_disconnect=payload.get("last_disconnect"),
+                last_auth_failure_at=payload.get("last_auth_failure_at"),
+                has_qr=bool(payload.get("has_qr")),
+            )
+        )
+    return results
+
+
+@router.get("/whatsapp/accounts/{external_account_id}/qr", response_model=WhatsAppAccountQrRead)
+async def get_whatsapp_account_qr(
+    external_account_id: str,
+    current_user: User = Depends(get_current_user),
+) -> WhatsAppAccountQrRead:
+    """Proxy the current re-link QR for an account. The service API key stays server-side; only the
+    rendered PNG (as a data URL) reaches the browser."""
+    external_account_id = external_account_id.strip()
+    try:
+        result = await fetch_whatsapp_qr(external_account_id)
+    except WhatsAppBridgeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.args[0] if exc.args else "Failed to fetch WhatsApp QR") from exc
+    return WhatsAppAccountQrRead(
+        external_account_id=external_account_id,
+        ready=bool(result.get("ready")),
+        qr_data_url=result.get("qr_data_url"),
+        message=result.get("message"),
+    )
 
 
 @router.get("/whatsapp/accounts/{external_account_id}/chats", response_model=list[WhatsAppChatRead])

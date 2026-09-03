@@ -4,8 +4,19 @@ const crypto = require("crypto");
 const express = require("express");
 
 const { apiKey, port, maxRequestBody } = require("./config");
-const { initializeClient, isReady, sendTextMessage, sendSystemMessage, shutdownClient, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats } = require("./whatsappClient");
+const { initializeClient, isReady, sendTextMessage, sendSystemMessage, shutdownClient, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats, getConnectionStatus, getLatestQr } = require("./whatsappClient");
 const { createMessageRouter } = require("./routes/messages");
+
+function isValidApiKey(provided) {
+  if (provided.length !== apiKey.length) {
+    return false;
+  }
+  try {
+    return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(apiKey));
+  } catch (error) {
+    return false;
+  }
+}
 
 function requireApiKey(req, res, next) {
   if (!apiKey) {
@@ -15,16 +26,27 @@ function requireApiKey(req, res, next) {
     });
   }
 
-  const provided = String(req.get("X-API-Key") || "");
-  if (provided.length !== apiKey.length) {
+  if (!isValidApiKey(String(req.get("X-API-Key") || ""))) {
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
-  try {
-    if (!crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(apiKey))) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
-    }
-  } catch (error) {
+  return next();
+}
+
+// Read-only variant for the /admin/status and /admin/qr GETs: also accepts the API key via the
+// ?key= query param so the QR page can be opened directly in a browser (a plain navigation cannot
+// set the X-API-Key header). Tradeoff: the key then appears in the URL and access logs, so this is
+// used ONLY for these read-only endpoints.
+function requireApiKeyForAdminGet(req, res, next) {
+  if (!apiKey) {
+    return res.status(500).json({
+      ok: false,
+      error: "API key is not configured.",
+    });
+  }
+
+  const provided = String(req.get("X-API-Key") || req.query?.key || "");
+  if (!isValidApiKey(provided)) {
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
@@ -36,7 +58,7 @@ async function main() {
   app.disable("x-powered-by");
   app.use(express.json({ limit: maxRequestBody }));
 
-  app.use(createMessageRouter({ requireApiKey, sendTextMessage, sendSystemMessage, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats }));
+  app.use(createMessageRouter({ requireApiKey, requireApiKeyForAdminGet, sendTextMessage, sendSystemMessage, runHistoryBackfill, runHistoryDebugSample, debugChatModelBuild, listChats, getConnectionStatus, getLatestQr }));
 
   app.use((err, req, res, next) => {
     console.error("Unhandled WhatsApp service error:", err);

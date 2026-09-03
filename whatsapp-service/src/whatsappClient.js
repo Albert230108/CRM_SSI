@@ -74,6 +74,13 @@ let reconnectTimer = null;
 let shuttingDown = false;
 let startupBackfillTriggered = false;
 let lastReadyAt = 0;
+// Observability for the /admin/status and /admin/qr endpoints. The `qr` event is otherwise only
+// printed to stdout (journal), which rotates away; persisting the latest QR and the last
+// disconnect reason lets operators see connection state and re-link over HTTP without shell access.
+let latestQr = null;
+let latestQrAt = 0;
+let lastDisconnect = null; // { reason, at }
+let lastAuthFailureAt = 0;
 const forwardedMessages = createForwardedMessageCache({ ttlMs: forwardedMessageCacheTtlMs });
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
@@ -1414,6 +1421,8 @@ async function maybeRunStartupBackfill() {
 
 function attachClientEvents(nextClient) {
   nextClient.on("qr", (qr) => {
+    latestQr = qr;
+    latestQrAt = Date.now();
     console.log("Scan this QR code with WhatsApp to connect the service:");
     qrcode.generate(qr, { small: true });
   });
@@ -1425,6 +1434,8 @@ function attachClientEvents(nextClient) {
   nextClient.on("ready", () => {
     ready = true;
     lastReadyAt = Date.now();
+    // The QR is consumed once the session is linked; drop it so /admin/qr reports "already linked".
+    latestQr = null;
     console.log("WhatsApp client ready.");
     void maybeRunStartupBackfill();
   });
@@ -1516,12 +1527,17 @@ function attachClientEvents(nextClient) {
 
   nextClient.on("auth_failure", (message) => {
     ready = false;
+    lastAuthFailureAt = Date.now();
     console.error(`WhatsApp authentication failed: ${message}`);
     scheduleReconnect();
   });
 
   nextClient.on("disconnected", (reason) => {
     ready = false;
+    // Persist the reason (e.g. "LOGOUT") so /admin/status can explain why the client is not ready
+    // after the journal has rotated. A LOGOUT means the linked device was removed and a fresh QR
+    // scan is required; a transient reason usually recovers via scheduleReconnect().
+    lastDisconnect = { reason: reason == null ? null : String(reason), at: Date.now() };
     console.warn(`WhatsApp client disconnected: ${reason}`);
     scheduleReconnect();
   });
@@ -1598,6 +1614,30 @@ async function initializeClient(forceRestart = false) {
 
 function isReady() {
   return ready;
+}
+
+// Connection state for the /admin/status endpoint. Deliberately omits the raw QR string so the
+// status view is safe to expose more freely than the QR itself.
+function getConnectionStatus() {
+  return {
+    ready,
+    client_id: whatsappClientId || null,
+    last_ready_at: lastReadyAt ? new Date(lastReadyAt).toISOString() : null,
+    last_disconnect: lastDisconnect
+      ? { reason: lastDisconnect.reason, at: new Date(lastDisconnect.at).toISOString() }
+      : null,
+    last_auth_failure_at: lastAuthFailureAt ? new Date(lastAuthFailureAt).toISOString() : null,
+    has_qr: Boolean(latestQr) && !ready,
+    qr_age_ms: latestQr && !ready && latestQrAt ? Date.now() - latestQrAt : null,
+  };
+}
+
+// Latest QR string for the /admin/qr endpoint. Returns null qr once the client is ready (linked).
+function getLatestQr() {
+  if (ready || !latestQr) {
+    return { qr: null, generated_at: null };
+  }
+  return { qr: latestQr, generated_at: latestQrAt ? new Date(latestQrAt).toISOString() : null };
 }
 
 function getChatLastMessageTimestamp(chat) {
@@ -2091,6 +2131,8 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
 module.exports = {
   initializeClient,
   isReady,
+  getConnectionStatus,
+  getLatestQr,
   sendTextMessage,
   sendSystemMessage,
   shutdownClient,

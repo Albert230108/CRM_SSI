@@ -38,6 +38,37 @@ The first launch prints a QR code in the terminal or journal output. Scan it in 
 
 The session is persisted by `LocalAuth`, so the QR scan is only needed once unless the session is removed.
 
+## Connection status & re-linking over HTTP
+
+The QR is also exposed over HTTP so you can re-link without shell/journal access.
+
+`GET /admin/status` — connection state as JSON:
+
+```json
+{ "ok": true, "ready": false, "client_id": "ssi-crm-whatsapp",
+  "last_ready_at": "...", "last_disconnect": { "reason": "LOGOUT", "at": "..." },
+  "has_qr": true }
+```
+
+`GET /admin/qr` — the current QR (only while not `ready`):
+
+- default (`text/html`): a self-contained page showing the QR, auto-refreshing every 15s — open it in a browser and scan.
+- `?format=png`: raw `image/png`.
+- `?format=json`: `{ "ok": true, "qr": "...", "generated_at": "..." }`.
+- when already linked: `{ "ok": true, "ready": true, "message": "already linked" }`.
+
+These two GETs accept the API key via the `X-API-Key` header **or** a `?key=` query param (so the
+page opens in a browser). All other endpoints remain header-only. Note the query key appears in URLs
+and access logs.
+
+### If the client shows `disconnected: LOGOUT`
+
+A `LOGOUT` disconnect means the linked device was removed (manually from the phone's Linked Devices
+list, or revoked by WhatsApp). The service then loops on QR codes and stays `ready: false`. To
+recover: open `GET /admin/qr` and scan it from the phone (Settings → Linked Devices → Link a
+device). No restart is required. If logouts recur, check the phone's Linked Devices list and confirm
+the number is not linked simultaneously by another `whatsapp-web.js` instance.
+
 ## API
 
 `POST /send`
