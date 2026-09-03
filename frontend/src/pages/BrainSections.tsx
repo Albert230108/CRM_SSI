@@ -98,7 +98,9 @@ export default function BrainSections() {
   const rows = flatten(tree)
   const visibleRows = filter.trim()
     ? rows.filter(({ node }) =>
-        `${node.path} ${node.title}`.toLowerCase().includes(filter.trim().toLowerCase()),
+        `${node.path} ${node.title} ${node.content ?? ''}`
+          .toLowerCase()
+          .includes(filter.trim().toLowerCase()),
       )
     : rows
 
@@ -242,7 +244,7 @@ export default function BrainSections() {
             type="text"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter by path or title..."
+            placeholder="Search path, title, or content..."
             wrapperClassName="mt-2.5"
           />
 

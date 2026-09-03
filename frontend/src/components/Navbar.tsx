@@ -1,10 +1,12 @@
-import { useEffect, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import AiSettingsDropdown from './AiSettingsDropdown'
+import GlobalSearchModal from './GlobalSearchModal'
 import ImportModal from './ImportModal'
 import NotificationBell from './NotificationBell'
 import SyncProgressOverlay from './SyncProgressOverlay'
 import { ToastCard, ToastStack } from './Toast'
+import { useGlobalShortcut } from '../hooks/useGlobalShortcut'
 import { useAuthStore } from '../store/authStore'
 import { useNotesDraftStore } from '../store/notesDraftStore'
 import { useSyncStore } from '../store/syncStore'
@@ -54,6 +56,10 @@ export default function Navbar() {
   const setSyncProgress = useSyncStore((state) => state.setSyncProgress)
 
   const [importModalOpen, setImportModalOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const openSearch = useCallback(() => setSearchOpen(true), [])
+  // Cmd/Ctrl+K opens the global search from anywhere in the app.
+  useGlobalShortcut('k', openSearch)
   // Seeded from the store so a remount during an in-flight job (e.g. after navigating) shows
   // the button as busy instead of inviting a second run.
   const [syncRunning, setSyncRunning] = useState(Boolean(syncJobId))
@@ -233,6 +239,19 @@ export default function Navbar() {
           </Link>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-500">{user?.full_name || user?.email || 'Signed in'}</span>
+            <button
+              type="button"
+              onClick={openSearch}
+              title="Search everything (Ctrl/Cmd+K)"
+              aria-label="Search everything"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-500 transition hover:border-gray-400 hover:text-gray-900"
+            >
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+                <circle cx="9" cy="9" r="6" stroke="currentColor" strokeWidth="1.6" />
+                <path d="m14 14 3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+              <span className="hidden lg:inline">Search</span>
+            </button>
             <NotificationBell />
             {user?.is_admin ? (
               <Link
@@ -329,6 +348,8 @@ export default function Navbar() {
         onClose={() => setImportModalOpen(false)}
         onImported={notifyImportCompleted}
       />
+
+      <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
 
       {toastVisible && (syncSummary || syncError) ? (
         <ToastStack>
