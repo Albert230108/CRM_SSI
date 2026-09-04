@@ -24,6 +24,7 @@ function createMessageRouter({
   listChats,
   getConnectionStatus,
   getLatestQr,
+  resumeReconnect,
   // Auth guard for the read-only /admin/status and /admin/qr GETs that also accepts the API key as
   // a ?key= query param so the QR page can be opened directly in a browser. Falls back to the
   // header-only guard when not supplied.
@@ -214,6 +215,23 @@ function createMessageRouter({
       const status = message.includes("not ready") ? 503 : 500;
       console.error("Failed to handle /admin/backfill request:", error);
       return res.status(status).json({ ok: false, error: message });
+    }
+  });
+
+  // Resume auto-reconnect after the LOGOUT-threshold guard paused it (see whatsappClient.js). Lets a
+  // human bring the client back after the number has rested, without a full service restart.
+  router.post("/admin/reconnect", requireApiKey, async (req, res) => {
+    try {
+      if (typeof resumeReconnect !== "function") {
+        return res.status(501).json({ ok: false, error: "reconnect not supported" });
+      }
+      const result = resumeReconnect();
+      console.info("[whatsapp] /admin/reconnect invoked", result);
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to resume WhatsApp reconnect";
+      console.error("Failed to handle /admin/reconnect request:", error);
+      return res.status(500).json({ ok: false, error: message });
     }
   });
 

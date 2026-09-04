@@ -13,11 +13,16 @@ const {
   crmOutboundResolutionUrl,
   reconnectDelayMs,
   reconnectReplayGraceMs,
+  reconnectBackoffMaxMs,
+  reconnectLogoutThreshold,
+  reconnectLogoutWindowMs,
   whatsappClientId,
   whatsappWebVersion,
   whatsappHistoryBackfillBatchSize,
   whatsappHistoryBackfillLimit,
   whatsappHistoryBackfillEnabled,
+  whatsappBackfillPaceMs,
+  whatsappBackfillDedupeWindowMs,
   forwardedMessageCacheTtlMs,
   maxInboundMediaBytes,
 } = require("./config");
@@ -79,8 +84,12 @@ let lastReadyAt = 0;
 // disconnect reason lets operators see connection state and re-link over HTTP without shell access.
 let latestQr = null;
 let latestQrAt = 0;
-let lastDisconnect = null; // { reason, at }
+let lastDisconnect = null; // { reason, at, raw_state }
 let lastAuthFailureAt = 0;
+// Repeated-LOGOUT tracking for reconnect backoff. See config.reconnect* knobs.
+let consecutiveLogoutCount = 0;
+let logoutWindowStartAt = 0;
+let autoReconnectPaused = false;
 const forwardedMessages = createForwardedMessageCache({ ttlMs: forwardedMessageCacheTtlMs });
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
@@ -1406,7 +1415,9 @@ async function maybeRunStartupBackfill() {
 
   startupBackfillTriggered = true;
   try {
-    const result = await backfillAllChats({ limit: whatsappHistoryBackfillLimit, all: false, postSyncDelayMs: 0 });
+    // Go through runHistoryBackfill (not backfillAllChats directly) so the startup sweep is
+    // serialized and paced alongside any CRM-triggered backfills instead of racing them.
+    const result = await runHistoryBackfill({ limit: whatsappHistoryBackfillLimit, all: false });
     console.info(
       "Startup WhatsApp history backfill finished: chats=%s imported=%s deduped=%s failed=%s",
       result.chats,
@@ -1436,6 +1447,10 @@ function attachClientEvents(nextClient) {
     lastReadyAt = Date.now();
     // The QR is consumed once the session is linked; drop it so /admin/qr reports "already linked".
     latestQr = null;
+    // A clean ready clears the repeated-LOGOUT backoff state: the device is accepted again.
+    consecutiveLogoutCount = 0;
+    logoutWindowStartAt = 0;
+    autoReconnectPaused = false;
     console.log("WhatsApp client ready.");
     void maybeRunStartupBackfill();
   });
@@ -1534,13 +1549,96 @@ function attachClientEvents(nextClient) {
 
   nextClient.on("disconnected", (reason) => {
     ready = false;
+    const reasonStr = reason == null ? null : String(reason);
+    const at = Date.now();
     // Persist the reason (e.g. "LOGOUT") so /admin/status can explain why the client is not ready
     // after the journal has rotated. A LOGOUT means the linked device was removed and a fresh QR
     // scan is required; a transient reason usually recovers via scheduleReconnect().
-    lastDisconnect = { reason: reason == null ? null : String(reason), at: Date.now() };
-    console.warn(`WhatsApp client disconnected: ${reason}`);
-    scheduleReconnect();
+    lastDisconnect = { reason: reasonStr, at, raw_state: null };
+    console.warn(`WhatsApp client disconnected: ${reasonStr}`);
+    // Best-effort: read the raw page-side WhatsApp state so a future logout tells us CONFLICT vs a
+    // true LOGOUT vs a transient navigation, instead of only the generic wwebjs reason. The page
+    // has usually already navigated on logout so this frequently returns null; that's expected.
+    void captureDisconnectState(nextClient, at).catch(() => {});
+
+    // Track rapid, repeated LOGOUTs (WhatsApp force-unlinking the device). Reset the counter once a
+    // window elapses without one, so isolated logouts still reconnect promptly.
+    if (reasonStr === "LOGOUT") {
+      if (at - logoutWindowStartAt > reconnectLogoutWindowMs) {
+        logoutWindowStartAt = at;
+        consecutiveLogoutCount = 0;
+      }
+      consecutiveLogoutCount += 1;
+
+      if (consecutiveLogoutCount >= reconnectLogoutThreshold) {
+        autoReconnectPaused = true;
+        console.error(
+          `WhatsApp client hit ${consecutiveLogoutCount} LOGOUTs within ${reconnectLogoutWindowMs}ms; ` +
+            "pausing auto-reconnect to avoid thrashing a device WhatsApp keeps rejecting. " +
+            "Re-scan the QR, or POST /admin/reconnect once the number has rested, to resume.",
+        );
+        return;
+      }
+    }
+
+    scheduleReconnect(computeReconnectDelayMs());
   });
+}
+
+// Exponential backoff keyed off consecutive LOGOUTs so we don't re-link every few seconds into a
+// device WhatsApp is actively rejecting (which itself reads as abuse). Non-LOGOUT disconnects keep
+// the base delay because consecutiveLogoutCount stays 0 for them.
+function computeReconnectDelayMs() {
+  if (consecutiveLogoutCount <= 1) {
+    return reconnectDelayMs;
+  }
+  const backoff = reconnectDelayMs * 2 ** (consecutiveLogoutCount - 1);
+  return Math.min(backoff, reconnectBackoffMaxMs);
+}
+
+async function captureDisconnectState(activeClient, disconnectedAt) {
+  try {
+    const page = activeClient?.pupPage;
+    if (!page) {
+      return;
+    }
+    const state = await page.evaluate(() => {
+      try {
+        const store = window.Store;
+        if (!store) {
+          return null;
+        }
+        if (store.AppState && store.AppState.state != null) {
+          return store.AppState.state;
+        }
+        if (store.State && store.State.default && store.State.default.state != null) {
+          return store.State.default.state;
+        }
+        return null;
+      } catch (error) {
+        return null;
+      }
+    });
+    // Only annotate if this is still the same disconnect we were called for (avoid clobbering a
+    // newer disconnect/reconnect that raced ahead while evaluate() was pending).
+    if (lastDisconnect && lastDisconnect.at === disconnectedAt) {
+      lastDisconnect.raw_state = state == null ? null : String(state);
+    }
+  } catch (error) {
+    // The execution context is routinely destroyed by the logout navigation; diagnostics here are
+    // strictly best-effort, so swallow the (known-transient) failure.
+  }
+}
+
+// Clears a paused auto-reconnect (see the LOGOUT-threshold guard above) and kicks off a reconnect
+// attempt. Exposed via POST /admin/reconnect so a human can resume without a full service restart.
+function resumeReconnect() {
+  const wasPaused = autoReconnectPaused;
+  autoReconnectPaused = false;
+  consecutiveLogoutCount = 0;
+  logoutWindowStartAt = 0;
+  scheduleReconnect(0);
+  return { resumed: wasPaused };
 }
 
 function createClient() {
@@ -1564,20 +1662,21 @@ function createClient() {
   return nextClient;
 }
 
-function scheduleReconnect() {
-  if (shuttingDown || reconnectTimer) {
+function scheduleReconnect(delayMs) {
+  if (shuttingDown || reconnectTimer || autoReconnectPaused) {
     return;
   }
 
+  const delay = Number.isFinite(delayMs) ? Math.max(0, delayMs) : reconnectDelayMs;
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
     try {
       await initializeClient(true);
     } catch (error) {
       console.error("WhatsApp reconnect attempt failed:", error);
-      scheduleReconnect();
+      scheduleReconnect(computeReconnectDelayMs());
     }
-  }, reconnectDelayMs);
+  }, delay);
 }
 
 async function initializeClient(forceRestart = false) {
@@ -1624,9 +1723,15 @@ function getConnectionStatus() {
     client_id: whatsappClientId || null,
     last_ready_at: lastReadyAt ? new Date(lastReadyAt).toISOString() : null,
     last_disconnect: lastDisconnect
-      ? { reason: lastDisconnect.reason, at: new Date(lastDisconnect.at).toISOString() }
+      ? {
+          reason: lastDisconnect.reason,
+          at: new Date(lastDisconnect.at).toISOString(),
+          raw_state: lastDisconnect.raw_state ?? null,
+        }
       : null,
     last_auth_failure_at: lastAuthFailureAt ? new Date(lastAuthFailureAt).toISOString() : null,
+    consecutive_logouts: consecutiveLogoutCount,
+    auto_reconnect_paused: autoReconnectPaused,
     has_qr: Boolean(latestQr) && !ready,
     qr_age_ms: latestQr && !ready && latestQrAt ? Date.now() - latestQrAt : null,
   };
@@ -2012,8 +2117,59 @@ async function sendSystemMessage({ to, message, external_account_id: externalAcc
   };
 }
 
+// Backfill throttling. The CRM triggers /admin/backfill on every chat link/relink, and a burst of
+// those (seen 2026-09: 261 calls in one hour on the SSI account) each launches a full-chat scan +
+// history fetch. That volume of automation is what gets a linked device flagged and force-unlinked
+// by WhatsApp. Two guards keep the footprint bounded regardless of caller behavior:
+//   1. Serialization: only one backfill sweep runs at a time (chained on backfillChain).
+//   2. De-dupe: identical requests (same chat/scope) within whatsappBackfillDedupeWindowMs coalesce
+//      onto the in-flight/most-recent run instead of each starting their own scan.
+let backfillChain = Promise.resolve();
+const recentBackfillByKey = new Map(); // key -> { at, promise }
+
+function backfillDedupeKey(options = {}) {
+  return JSON.stringify({
+    chatId: options.chatId ? String(options.chatId).trim() : null,
+    all: Boolean(options.all),
+    onlyOutbound: Boolean(options.onlyOutbound),
+    limit: Number.isFinite(options.limit) ? options.limit : null,
+  });
+}
+
 async function runHistoryBackfill(options = {}) {
-  return backfillAllChats({ ...options, postSyncDelayMs: options.postSyncDelayMs ?? 0 });
+  const key = backfillDedupeKey(options);
+  const now = Date.now();
+  const recent = recentBackfillByKey.get(key);
+  if (recent && now - recent.at < whatsappBackfillDedupeWindowMs) {
+    console.info(JSON.stringify({ event: "whatsapp_history_backfill_coalesced", dedupe_key: key }));
+    return recent.promise;
+  }
+
+  const paceMs = options.postSyncDelayMs ?? whatsappBackfillPaceMs;
+  // Chain after any in-flight sweep so two scans never hit WhatsApp Web concurrently. Swallow the
+  // predecessor's rejection here so one failed backfill can't break the chain for later callers.
+  const runPromise = backfillChain
+    .catch(() => {})
+    .then(() => backfillAllChats({ ...options, postSyncDelayMs: paceMs }));
+  backfillChain = runPromise.catch(() => {});
+
+  const entry = { at: now, promise: runPromise };
+  recentBackfillByKey.set(key, entry);
+  runPromise
+    .finally(() => {
+      // Extend the window to cover completion, and prune stale keys so the map can't grow unbounded.
+      if (recentBackfillByKey.get(key) === entry) {
+        entry.at = Date.now();
+      }
+      for (const [existingKey, value] of recentBackfillByKey) {
+        if (Date.now() - value.at > whatsappBackfillDedupeWindowMs * 4) {
+          recentBackfillByKey.delete(existingKey);
+        }
+      }
+    })
+    .catch(() => {});
+
+  return runPromise;
 }
 
 async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyncDelayMs = 1500 } = {}) {
@@ -2133,6 +2289,7 @@ module.exports = {
   isReady,
   getConnectionStatus,
   getLatestQr,
+  resumeReconnect,
   sendTextMessage,
   sendSystemMessage,
   shutdownClient,
