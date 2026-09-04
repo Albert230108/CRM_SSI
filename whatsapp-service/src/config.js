@@ -20,10 +20,12 @@ const crmBackfillIdentitiesUrl = String(process.env.CRM_BACKFILL_IDENTITIES_URL 
 const crmWhatsAppResolveUrl = String(process.env.CRM_WHATSAPP_RESOLVE_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/webhooks/whatsapp/resolve` : "");
 const crmBackfillBatchUrl = String(process.env.CRM_BACKFILL_BATCH_URL || "").trim() || (crmApiBaseUrl ? `${crmApiBaseUrl}/webhooks/whatsapp/backfill-batch` : "");
 
+const whatsappClientId = String(process.env.WHATSAPP_CLIENT_ID || "edi-crm-whatsapp").trim();
+
 module.exports = {
   port: toInteger(process.env.PORT, 3001),
   apiKey: String(process.env.API_KEY || "").trim(),
-  whatsappClientId: String(process.env.WHATSAPP_CLIENT_ID || "edi-crm-whatsapp").trim(),
+  whatsappClientId,
   // Pins the WhatsApp Web client build whatsapp-web.js loads. Without a pin, whatsapp-web.js
   // fetches whatever build WhatsApp is currently serving on every fresh browser session (i.e.
   // every service restart), so an unannounced WhatsApp-side rollout can silently break chat
@@ -41,6 +43,29 @@ module.exports = {
   reconnectBackoffMaxMs: Math.max(1000, toInteger(process.env.WHATSAPP_RECONNECT_BACKOFF_MAX_MS, 5 * 60 * 1000)),
   reconnectLogoutThreshold: Math.max(1, toInteger(process.env.WHATSAPP_RECONNECT_LOGOUT_THRESHOLD, 5)),
   reconnectLogoutWindowMs: Math.max(1000, toInteger(process.env.WHATSAPP_RECONNECT_LOGOUT_WINDOW_MS, 15 * 60 * 1000)),
+  // How long after a knowingly-initiated teardown (LOGOUT, auth failure, forced restart, shutdown)
+  // page errors stay non-fatal. Puppeteer errors from the dying page keep arriving well after the
+  // teardown call returns, and killing the process mid-teardown is what corrupts the LocalAuth
+  // session and forces a fresh QR scan. Must comfortably exceed reconnectDelayMs + browser start.
+  teardownGraceMs: Math.max(1000, toInteger(process.env.WHATSAPP_TEARDOWN_GRACE_MS, 90 * 1000)),
+  // How long the client must stay continuously ready before the repeated-LOGOUT counters are
+  // cleared. Reaching `ready` is NOT on its own evidence that WhatsApp accepted the device: in the
+  // observed loop it goes ready and is force-unlinked ~5 minutes later, so clearing the counters on
+  // `ready` meant the pause threshold could never be reached. Must exceed that flap interval.
+  readyStabilityMs: Math.max(1000, toInteger(process.env.WHATSAPP_READY_STABILITY_MS, 10 * 60 * 1000)),
+  // systemd unit backing /admin/logs. Left empty by default: the service detects its own unit from
+  // /proc/self/cgroup, which keeps this zero-config across both account instances. Only set this
+  // when that detection cannot work (e.g. running outside systemd).
+  serviceUnitName: String(process.env.WHATSAPP_SERVICE_UNIT || "").trim() || null,
+  // Where the repeated-LOGOUT counters are persisted so the auto-reconnect pause threshold survives
+  // a restart. Set to an empty string to disable persistence (in-memory only).
+  reconnectStatePath:
+    process.env.WHATSAPP_RECONNECT_STATE_PATH === ""
+      ? ""
+      : String(
+          process.env.WHATSAPP_RECONNECT_STATE_PATH ||
+            `/var/lib/whatsapp-service-crm/reconnect-state-${whatsappClientId}.json`,
+        ).trim(),
   crmWebhookUrl,
   crmWebhookSecret: String(process.env.CRM_WEBHOOK_SECRET || "").trim(),
   crmWebhookRouteToken: String(process.env.CRM_WEBHOOK_ROUTE_TOKEN || "").trim(),

@@ -4,7 +4,9 @@ const QRCode = require("qrcode");
 const {
   maxOutboundAttachmentBytes: defaultMaxOutboundAttachmentBytes,
   maxOutboundAttachmentsTotalBytes: defaultMaxOutboundAttachmentsTotalBytes,
+  serviceUnitName: defaultServiceUnitName,
 } = require("../config");
+const { readServiceLogs: defaultReadServiceLogs } = require("../serviceLogs");
 
 function escapeHtml(value) {
   return String(value == null ? "" : value)
@@ -31,6 +33,8 @@ function createMessageRouter({
   requireApiKeyForAdminGet = requireApiKey,
   maxOutboundAttachmentBytes = defaultMaxOutboundAttachmentBytes,
   maxOutboundAttachmentsTotalBytes = defaultMaxOutboundAttachmentsTotalBytes,
+  serviceUnitName = defaultServiceUnitName,
+  readServiceLogs = defaultReadServiceLogs,
 }) {
   const router = express.Router();
 
@@ -282,6 +286,24 @@ function createMessageRouter({
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to read WhatsApp status";
       console.error("Failed to handle /admin/status request:", error);
+      return res.status(500).json({ ok: false, error: message });
+    }
+  });
+
+  // Recent journal output for this instance, so logout/crash loops can be diagnosed from the CRM
+  // admin UI without shell access. The QR art is stripped upstream in serviceLogs (it is a live
+  // linking credential).
+  router.get("/admin/logs", requireApiKeyForAdminGet, async (req, res) => {
+    try {
+      const requestedLines = Number.parseInt(String(req.query?.lines ?? ""), 10);
+      const result = await readServiceLogs({
+        unit: serviceUnitName,
+        lines: Number.isFinite(requestedLines) ? requestedLines : 200,
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to read service logs";
+      console.error("Failed to handle /admin/logs request:", error);
       return res.status(500).json({ ok: false, error: message });
     }
   });

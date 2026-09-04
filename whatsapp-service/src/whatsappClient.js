@@ -16,6 +16,9 @@ const {
   reconnectBackoffMaxMs,
   reconnectLogoutThreshold,
   reconnectLogoutWindowMs,
+  reconnectStatePath,
+  readyStabilityMs,
+  teardownGraceMs,
   whatsappClientId,
   whatsappWebVersion,
   whatsappHistoryBackfillBatchSize,
@@ -28,22 +31,28 @@ const {
 } = require("./config");
 const { resolveOutboundTenantOwnership } = require("./outboundResolution");
 const { createForwardedMessageCache } = require("./forwardedMessageCache");
+const { createTeardownWindow, getErrorMessage, isTransientPageError } = require("./transientErrors");
+const { createReconnectStateStore } = require("./reconnectState");
+const {
+  applyLogout,
+  computeReconnectDelayMs: computeReconnectDelayMsFor,
+  shouldPauseAutoReconnect,
+} = require("./logoutTracking");
 const { buildWhatsAppIdentityCandidates, getCanonicalWhatsAppIdentity, normalizeWhatsAppChatId, normalizeWhatsAppPhone } = require("./whatsappIdentity");
 
-function getWhatsAppTransientNavigationErrorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
+// Grace window covering any teardown we knowingly started (LOGOUT, auth failure, forced restart,
+// shutdown). See openTeardownWindow() for why a synchronous scope guard is not sufficient.
+const teardownWindow = createTeardownWindow();
 
-function shouldIgnoreWhatsAppTransientNavigationError(error) {
-  const message = getWhatsAppTransientNavigationErrorMessage(error);
-  return (
-    message.includes("Execution context was destroyed") ||
-    message.includes("Attempted to use detached Frame")
+function openTeardownWindow(reason) {
+  teardownWindow.open(teardownGraceMs);
+  console.warn(
+    `WhatsApp client teardown started (${reason}); page errors are non-fatal for the next ${teardownGraceMs}ms.`,
   );
 }
 
 function logIgnoredWhatsAppTransientNavigationError(prefix, error) {
-  console.warn(prefix, getWhatsAppTransientNavigationErrorMessage(error));
+  console.warn(prefix, getErrorMessage(error));
 }
 
 // whatsapp-web.js's own `framenavigated` listener (Client.js) re-calls inject() on every page
@@ -51,25 +60,39 @@ function logIgnoredWhatsAppTransientNavigationError(prefix, error) {
 // mid-evaluate. That throws inside an unguarded async event handler -> unhandled rejection or
 // uncaught exception -> this whole process gets killed by Node, and systemd then kills the Chrome
 // subprocess mid-write, corrupting the LocalAuth session and forcing a fresh QR scan every time.
-// The page itself is fine (WhatsApp Web settles and the next navigation event re-injects
-// successfully), so this specific, known-transient error is logged and ignored instead of
-// crashing the process.
-process.on("unhandledRejection", (error) => {
-  if (shouldIgnoreWhatsAppTransientNavigationError(error)) {
+//
+// That crash path also silently defeated the repeated-LOGOUT backoff further down this file: the
+// counters were in-memory, so every crash-restart reset them to 0 and the "pause auto-reconnect"
+// threshold was never reached, no matter how often WhatsApp unlinked the device. Observed
+// 2026-09-04 on both units as LOGOUT -> "Failed to add page binding ... already exists!" ->
+// process.exit(1) -> systemd restart -> fresh QR.
+//
+// So there are two layers now:
+//   1. Known-transient page errors are always ignored (see transientErrors.js).
+//   2. While a teardown is in flight, ANY error is non-fatal. The client is already being rebuilt
+//      by scheduleReconnect(), and staying alive preserves the very session that exiting corrupts.
+// Outside a teardown an unrecognised error is still fatal, so real bugs stay loud.
+function handleFatalErrorCandidate(kind, error) {
+  if (isTransientPageError(error)) {
     logIgnoredWhatsAppTransientNavigationError("Ignored transient WhatsApp page-navigation race:", error);
     return;
   }
-  console.error("Unhandled rejection:", error);
+
+  if (teardownWindow.isOpen()) {
+    console.error(`Ignored ${kind} during WhatsApp client teardown (not fatal, client is restarting):`, error);
+    return;
+  }
+
+  console.error(`${kind}:`, error);
   process.exit(1);
+}
+
+process.on("unhandledRejection", (error) => {
+  handleFatalErrorCandidate("Unhandled rejection", error);
 });
 
 process.on("uncaughtException", (error) => {
-  if (shouldIgnoreWhatsAppTransientNavigationError(error)) {
-    logIgnoredWhatsAppTransientNavigationError("Ignored transient WhatsApp page-navigation race:", error);
-    return;
-  }
-  console.error("Uncaught exception:", error);
-  process.exit(1);
+  handleFatalErrorCandidate("Uncaught exception", error);
 });
 
 let client = null;
@@ -87,9 +110,56 @@ let latestQrAt = 0;
 let lastDisconnect = null; // { reason, at, raw_state }
 let lastAuthFailureAt = 0;
 // Repeated-LOGOUT tracking for reconnect backoff. See config.reconnect* knobs.
-let consecutiveLogoutCount = 0;
-let logoutWindowStartAt = 0;
-let autoReconnectPaused = false;
+// Rehydrated from disk so the pause threshold survives a restart: a counter that resets on every
+// respawn can never reach the threshold when the restarts are themselves caused by the logouts.
+const reconnectStateStore = createReconnectStateStore({ filePath: reconnectStatePath });
+const persistedReconnectState = reconnectStateStore.load();
+let consecutiveLogoutCount = persistedReconnectState.consecutiveLogoutCount;
+let lastLogoutAt = persistedReconnectState.lastLogoutAt;
+let autoReconnectPaused = persistedReconnectState.autoReconnectPaused;
+
+if (consecutiveLogoutCount > 0 || autoReconnectPaused) {
+  console.warn(
+    `Restored WhatsApp reconnect state: ${consecutiveLogoutCount} recent LOGOUT(s), ` +
+      `auto_reconnect_paused=${autoReconnectPaused}.` +
+      (autoReconnectPaused ? " POST /admin/reconnect to resume once the number has rested." : ""),
+  );
+}
+
+function persistReconnectState() {
+  reconnectStateStore.save({ consecutiveLogoutCount, lastLogoutAt, autoReconnectPaused });
+}
+
+// Fires once a session has held for readyStabilityMs, which is the only thing that actually proves
+// WhatsApp accepted this device. See the `ready` handler for why reaching ready is not enough.
+let logoutStateResetTimer = null;
+
+function clearLogoutStateResetTimer() {
+  if (logoutStateResetTimer) {
+    clearTimeout(logoutStateResetTimer);
+    logoutStateResetTimer = null;
+  }
+}
+
+function scheduleLogoutStateReset() {
+  clearLogoutStateResetTimer();
+  if (consecutiveLogoutCount === 0) {
+    return;
+  }
+
+  logoutStateResetTimer = setTimeout(() => {
+    logoutStateResetTimer = null;
+    consecutiveLogoutCount = 0;
+    lastLogoutAt = 0;
+    persistReconnectState();
+    console.log(`WhatsApp session held for ${readyStabilityMs}ms; cleared the repeated-LOGOUT backoff state.`);
+  }, readyStabilityMs);
+
+  // Bookkeeping only - must never be the reason the process stays alive.
+  if (typeof logoutStateResetTimer.unref === "function") {
+    logoutStateResetTimer.unref();
+  }
+}
 const forwardedMessages = createForwardedMessageCache({ ttlMs: forwardedMessageCacheTtlMs });
 const pendingOutboundTenantByMessageId = new Map();
 const pendingOutboundTenantByChatId = new Map();
@@ -1447,10 +1517,15 @@ function attachClientEvents(nextClient) {
     lastReadyAt = Date.now();
     // The QR is consumed once the session is linked; drop it so /admin/qr reports "already linked".
     latestQr = null;
-    // A clean ready clears the repeated-LOGOUT backoff state: the device is accepted again.
-    consecutiveLogoutCount = 0;
-    logoutWindowStartAt = 0;
+    // Linking succeeded, so auto-reconnect is allowed again (reaching ready while paused means a
+    // human re-scanned the QR or called /admin/reconnect).
     autoReconnectPaused = false;
+    // But do NOT clear the repeated-LOGOUT counters here. In the observed loop the client reaches
+    // ready and is force-unlinked ~5 minutes later, so `ready` is not evidence WhatsApp accepted
+    // the device - and clearing on every ready is what let the flap run indefinitely without the
+    // pause threshold ever being reached. Only a session that survives readyStabilityMs counts.
+    persistReconnectState();
+    scheduleLogoutStateReset();
     console.log("WhatsApp client ready.");
     void maybeRunStartupBackfill();
   });
@@ -1544,6 +1619,7 @@ function attachClientEvents(nextClient) {
     ready = false;
     lastAuthFailureAt = Date.now();
     console.error(`WhatsApp authentication failed: ${message}`);
+    openTeardownWindow("auth_failure");
     scheduleReconnect();
   });
 
@@ -1551,6 +1627,11 @@ function attachClientEvents(nextClient) {
     ready = false;
     const reasonStr = reason == null ? null : String(reason);
     const at = Date.now();
+    // The session did not survive long enough to count as stable, so the LOGOUT history stands.
+    clearLogoutStateResetTimer();
+    // The page is already being torn down by WhatsApp at this point; everything Puppeteer throws
+    // from here until the reconnect settles is expected, and must not kill the process.
+    openTeardownWindow(`disconnected: ${reasonStr}`);
     // Persist the reason (e.g. "LOGOUT") so /admin/status can explain why the client is not ready
     // after the journal has rotated. A LOGOUT means the linked device was removed and a fresh QR
     // scan is required; a transient reason usually recovers via scheduleReconnect().
@@ -1564,36 +1645,34 @@ function attachClientEvents(nextClient) {
     // Track rapid, repeated LOGOUTs (WhatsApp force-unlinking the device). Reset the counter once a
     // window elapses without one, so isolated logouts still reconnect promptly.
     if (reasonStr === "LOGOUT") {
-      if (at - logoutWindowStartAt > reconnectLogoutWindowMs) {
-        logoutWindowStartAt = at;
-        consecutiveLogoutCount = 0;
-      }
-      consecutiveLogoutCount += 1;
+      ({ consecutiveLogoutCount, lastLogoutAt } = applyLogout(
+        { consecutiveLogoutCount, lastLogoutAt },
+        at,
+        reconnectLogoutWindowMs,
+      ));
 
-      if (consecutiveLogoutCount >= reconnectLogoutThreshold) {
+      if (shouldPauseAutoReconnect(consecutiveLogoutCount, reconnectLogoutThreshold)) {
         autoReconnectPaused = true;
+        persistReconnectState();
         console.error(
-          `WhatsApp client hit ${consecutiveLogoutCount} LOGOUTs within ${reconnectLogoutWindowMs}ms; ` +
+          `WhatsApp client hit ${consecutiveLogoutCount} consecutive LOGOUTs, each within ` +
+            `${reconnectLogoutWindowMs}ms of the previous; ` +
             "pausing auto-reconnect to avoid thrashing a device WhatsApp keeps rejecting. " +
             "Re-scan the QR, or POST /admin/reconnect once the number has rested, to resume.",
         );
         return;
       }
+
+      persistReconnectState();
     }
 
     scheduleReconnect(computeReconnectDelayMs());
   });
 }
 
-// Exponential backoff keyed off consecutive LOGOUTs so we don't re-link every few seconds into a
-// device WhatsApp is actively rejecting (which itself reads as abuse). Non-LOGOUT disconnects keep
-// the base delay because consecutiveLogoutCount stays 0 for them.
+// Non-LOGOUT disconnects keep the base delay because consecutiveLogoutCount stays 0 for them.
 function computeReconnectDelayMs() {
-  if (consecutiveLogoutCount <= 1) {
-    return reconnectDelayMs;
-  }
-  const backoff = reconnectDelayMs * 2 ** (consecutiveLogoutCount - 1);
-  return Math.min(backoff, reconnectBackoffMaxMs);
+  return computeReconnectDelayMsFor(consecutiveLogoutCount, reconnectDelayMs, reconnectBackoffMaxMs);
 }
 
 async function captureDisconnectState(activeClient, disconnectedAt) {
@@ -1636,7 +1715,8 @@ function resumeReconnect() {
   const wasPaused = autoReconnectPaused;
   autoReconnectPaused = false;
   consecutiveLogoutCount = 0;
-  logoutWindowStartAt = 0;
+  lastLogoutAt = 0;
+  persistReconnectState();
   scheduleReconnect(0);
   return { resumed: wasPaused };
 }
@@ -1685,6 +1765,9 @@ async function initializeClient(forceRestart = false) {
   }
 
   if (client && forceRestart) {
+    // destroy() closes the CDP target out from under any in-flight page work, which is a reliable
+    // source of async "Target closed"/"Protocol error" rejections landing after this returns.
+    openTeardownWindow("client restart");
     try {
       await client.destroy();
     } catch (error) {
@@ -1732,6 +1815,11 @@ function getConnectionStatus() {
     last_auth_failure_at: lastAuthFailureAt ? new Date(lastAuthFailureAt).toISOString() : null,
     consecutive_logouts: consecutiveLogoutCount,
     auto_reconnect_paused: autoReconnectPaused,
+    // Whether consecutive_logouts survives a restart. If false, the auto-reconnect pause threshold
+    // can be silently reset by a respawn (the failure mode that hid the LOGOUT loop until now).
+    reconnect_state_persisted: Boolean(reconnectStateStore.filePath),
+    // True while a known teardown is in flight, during which page errors are deliberately non-fatal.
+    teardown_window_open: teardownWindow.isOpen(),
     has_qr: Boolean(latestQr) && !ready,
     qr_age_ms: latestQr && !ready && latestQrAt ? Date.now() - latestQrAt : null,
   };
@@ -2267,6 +2355,8 @@ async function runHistoryDebugSample({ chatCount = 3, messageLimit = 50, postSyn
 }async function shutdownClient() {
   shuttingDown = true;
   ready = false;
+  clearLogoutStateResetTimer();
+  openTeardownWindow("shutdown");
 
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);

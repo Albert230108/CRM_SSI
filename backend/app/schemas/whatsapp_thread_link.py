@@ -21,6 +21,10 @@ class WhatsAppAccountStatusRead(BaseModel):
     last_disconnect: dict | None = None
     last_auth_failure_at: datetime | None = None
     has_qr: bool = False
+    # Reconnect health. auto_reconnect_paused means the service gave up re-linking after repeated
+    # LOGOUTs and is waiting for a human (re-scan the QR, or POST /admin/reconnect).
+    consecutive_logouts: int = 0
+    auto_reconnect_paused: bool = False
     error: str | None = None
 
 
@@ -28,6 +32,16 @@ class WhatsAppAccountQrRead(BaseModel):
     external_account_id: str
     ready: bool
     qr_data_url: str | None = None
+    message: str | None = None
+
+
+class WhatsAppAccountLogsRead(BaseModel):
+    external_account_id: str
+    # available=False covers both "not running under systemd" and "journal unreadable"; the reason
+    # is in message so the admin UI can explain itself instead of showing an empty box.
+    available: bool
+    unit: str | None = None
+    lines: list[str] = []
     message: str | None = None
 
 

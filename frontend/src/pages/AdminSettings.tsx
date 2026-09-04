@@ -87,7 +87,17 @@ type WhatsAppAccountStatus = {
   last_disconnect: { reason: string | null; at: string | null } | null
   last_auth_failure_at: string | null
   has_qr: boolean
+  consecutive_logouts: number
+  auto_reconnect_paused: boolean
   error: string | null
+}
+
+type WhatsAppAccountLogs = {
+  external_account_id: string
+  available: boolean
+  unit: string | null
+  lines: string[]
+  message: string | null
 }
 
 type WhatsAppAccountQr = {
@@ -171,6 +181,9 @@ export default function AdminSettings() {
   const [whatsappStatusError, setWhatsappStatusError] = useState('')
   const [whatsappQrByAccount, setWhatsappQrByAccount] = useState<Record<string, WhatsAppAccountQr>>({})
   const [whatsappQrOpen, setWhatsappQrOpen] = useState<Record<string, boolean>>({})
+  const [whatsappLogsByAccount, setWhatsappLogsByAccount] = useState<Record<string, WhatsAppAccountLogs>>({})
+  const [whatsappLogsOpen, setWhatsappLogsOpen] = useState<Record<string, boolean>>({})
+  const [whatsappLogsError, setWhatsappLogsError] = useState<Record<string, string>>({})
   const [savingNotificationWhatsappDebounce, setSavingNotificationWhatsappDebounce] = useState(false)
   const [autoSendDelaySeconds, setAutoSendDelaySeconds] = useState(300)
   const [plannerDefaultMode, setPlannerDefaultMode] = useState<'off' | 'manual' | 'auto-draft' | 'auto-send'>('off')
@@ -263,6 +276,26 @@ export default function AdminSettings() {
     }
   }
 
+  const loadWhatsappLogs = async (externalAccountId: string) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/whatsapp/accounts/${encodeURIComponent(externalAccountId)}/logs?lines=300`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+      )
+      if (response.ok) {
+        const data: WhatsAppAccountLogs = await response.json()
+        setWhatsappLogsByAccount((current) => ({ ...current, [externalAccountId]: data }))
+        setWhatsappLogsError((current) => ({ ...current, [externalAccountId]: '' }))
+      } else if (response.status === 403) {
+        setWhatsappLogsError((current) => ({ ...current, [externalAccountId]: 'Admin access is required to view service logs.' }))
+      } else {
+        setWhatsappLogsError((current) => ({ ...current, [externalAccountId]: 'Failed to load service logs.' }))
+      }
+    } catch {
+      setWhatsappLogsError((current) => ({ ...current, [externalAccountId]: 'Failed to load service logs.' }))
+    }
+  }
+
   // Live-poll status while the WhatsApp tab is open, and refresh the QR for any account that is
   // showing its QR (the underlying WhatsApp QR rotates ~every 20s, so re-fetch on a similar cadence).
   useEffect(() => {
@@ -282,6 +315,18 @@ export default function AdminSettings() {
     return () => clearInterval(qrTimer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, token, whatsappQrOpen])
+
+  // Tail the logs for any account whose log panel is open. 5s is responsive enough to watch a
+  // reconnect happen without hammering journalctl on the box.
+  useEffect(() => {
+    if (activeTab !== 'whatsapp') return
+    const openAccounts = Object.keys(whatsappLogsOpen).filter((id) => whatsappLogsOpen[id])
+    if (openAccounts.length === 0) return
+    openAccounts.forEach((id) => loadWhatsappLogs(id))
+    const logsTimer = setInterval(() => openAccounts.forEach((id) => loadWhatsappLogs(id)), 5000)
+    return () => clearInterval(logsTimer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, token, whatsappLogsOpen])
 
   useEffect(() => {
     const load = async () => {
@@ -1428,6 +1473,9 @@ export default function AdminSettings() {
                 const qr = whatsappQrByAccount[account.external_account_id]
                 const showQr = Boolean(whatsappQrOpen[account.external_account_id])
                 const canLink = account.reachable && !account.ready
+                const showLogs = Boolean(whatsappLogsOpen[account.external_account_id])
+                const logs = whatsappLogsByAccount[account.external_account_id]
+                const logsError = whatsappLogsError[account.external_account_id]
                 return (
                   <div key={account.external_account_id} className="rounded-xl border border-gray-200 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1438,19 +1486,32 @@ export default function AdminSettings() {
                         </div>
                         <p className="mt-0.5 truncate text-xs text-gray-500">{account.external_account_id}</p>
                       </div>
-                      {canLink ? (
+                      <div className="flex items-center gap-2">
                         <Button
                           variant="secondary"
                           onClick={() =>
-                            setWhatsappQrOpen((current) => ({
+                            setWhatsappLogsOpen((current) => ({
                               ...current,
                               [account.external_account_id]: !current[account.external_account_id],
                             }))
                           }
                         >
-                          {showQr ? 'Hide QR' : 'Show QR to re-link'}
+                          {showLogs ? 'Hide logs' : 'View logs'}
                         </Button>
-                      ) : null}
+                        {canLink ? (
+                          <Button
+                            variant="secondary"
+                            onClick={() =>
+                              setWhatsappQrOpen((current) => ({
+                                ...current,
+                                [account.external_account_id]: !current[account.external_account_id],
+                              }))
+                            }
+                          >
+                            {showQr ? 'Hide QR' : 'Show QR to re-link'}
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
 
                     <div className="mt-1.5 text-xs text-gray-500">
@@ -1463,6 +1524,40 @@ export default function AdminSettings() {
                       ) : null}
                       {!account.reachable && account.error ? <span className="text-red-600">{account.error}</span> : null}
                     </div>
+
+                    {account.auto_reconnect_paused ? (
+                      <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        Auto-reconnect is <span className="font-semibold">paused</span> after {account.consecutive_logouts} repeated
+                        logouts — WhatsApp kept rejecting this device, so the service stopped re-linking instead of thrashing.
+                        Re-scan the QR to resume, ideally after letting the number rest.
+                      </p>
+                    ) : account.consecutive_logouts > 0 ? (
+                      <p className="mt-2 text-xs text-amber-700">
+                        {account.consecutive_logouts} recent logout{account.consecutive_logouts === 1 ? '' : 's'} — reconnect is backing off.
+                      </p>
+                    ) : null}
+
+                    {showLogs ? (
+                      <div className="mt-3">
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                          <p className="text-xs text-gray-500">
+                            {logs?.unit ? `${logs.unit} — last ${logs.lines.length} lines, refreshing every 5s` : 'Service logs'}
+                          </p>
+                          <Button variant="secondary" onClick={() => loadWhatsappLogs(account.external_account_id)}>Refresh</Button>
+                        </div>
+                        {logsError ? (
+                          <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{logsError}</p>
+                        ) : logs && !logs.available ? (
+                          <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">{logs.message ?? 'Logs are unavailable.'}</p>
+                        ) : logs ? (
+                          <pre className="max-h-96 overflow-auto rounded-xl bg-slate-900 px-3 py-2 text-[11px] leading-relaxed text-slate-100">
+                            {logs.lines.length > 0 ? logs.lines.join('\n') : 'No log lines returned.'}
+                          </pre>
+                        ) : (
+                          <p className="text-sm text-gray-500">Loading logs…</p>
+                        )}
+                      </div>
+                    ) : null}
 
                     {canLink && showQr ? (
                       <div className="mt-3 flex flex-col items-center gap-2">

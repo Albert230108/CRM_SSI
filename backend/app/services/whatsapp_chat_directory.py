@@ -162,6 +162,40 @@ async def fetch_whatsapp_status(external_account_id: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+async def fetch_whatsapp_logs(external_account_id: str, lines: int = 200) -> dict[str, Any]:
+    """Fetch recent journal output from an account's whatsapp-service instance.
+
+    Used by the admin panel to diagnose logout/crash loops without shell access. The service strips
+    the linking QR before returning anything, so no credential material crosses this boundary.
+    """
+    service_url = _resolve_service_url(external_account_id)
+    if not service_url:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge URL is not configured for this account")
+    if not WHATSAPP_API_KEY:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge API key is not configured")
+
+    url = urljoin(service_url.rstrip("/") + "/", "admin/logs")
+    # Reading the journal is slower than a status ping, so allow a longer read budget.
+    timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers={"X-API-Key": WHATSAPP_API_KEY}, params={"lines": lines})
+    except httpx.TimeoutException as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge request timed out") from exc
+    except httpx.RequestError as exc:
+        raise WhatsAppBridgeError(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp bridge is unavailable") from exc
+
+    if not response.is_success:
+        raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned an error for logs")
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise WhatsAppBridgeError(status.HTTP_502_BAD_GATEWAY, "WhatsApp bridge returned invalid JSON") from exc
+
+    return payload if isinstance(payload, dict) else {}
+
+
 async def fetch_whatsapp_qr(external_account_id: str) -> dict[str, Any]:
     """Fetch the current QR (as a data URL) for re-linking an account.
 

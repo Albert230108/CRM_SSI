@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, get_db
+from app.core.dependencies import get_current_admin_user, get_current_user, get_db
 from app.models.communication import Communication
 from app.models.tenant import Tenant
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
@@ -15,6 +15,7 @@ from app.schemas.whatsapp_thread_link import (
     ThreadWhatsAppLinkRead,
     ThreadWhatsAppLinkResyncRead,
     ThreadWhatsAppResyncAllRead,
+    WhatsAppAccountLogsRead,
     WhatsAppAccountQrRead,
     WhatsAppAccountRead,
     WhatsAppAccountStatusRead,
@@ -24,6 +25,7 @@ from app.schemas.whatsapp_thread_link import (
 from app.services.whatsapp_auto_resync import claim_auto_resync_slot
 from app.services.whatsapp_chat_directory import (
     fetch_whatsapp_chats,
+    fetch_whatsapp_logs,
     fetch_whatsapp_qr,
     fetch_whatsapp_status,
     list_whatsapp_accounts,
@@ -207,6 +209,8 @@ async def get_whatsapp_accounts_status(
                 last_disconnect=payload.get("last_disconnect"),
                 last_auth_failure_at=payload.get("last_auth_failure_at"),
                 has_qr=bool(payload.get("has_qr")),
+                consecutive_logouts=int(payload.get("consecutive_logouts") or 0),
+                auto_reconnect_paused=bool(payload.get("auto_reconnect_paused")),
             )
         )
     return results
@@ -228,6 +232,34 @@ async def get_whatsapp_account_qr(
         external_account_id=external_account_id,
         ready=bool(result.get("ready")),
         qr_data_url=result.get("qr_data_url"),
+        message=result.get("message"),
+    )
+
+
+@router.get("/whatsapp/accounts/{external_account_id}/logs", response_model=WhatsAppAccountLogsRead)
+async def get_whatsapp_account_logs(
+    external_account_id: str,
+    lines: int = 200,
+    current_user: User = Depends(get_current_admin_user),
+) -> WhatsAppAccountLogsRead:
+    """Recent service logs for one account, for diagnosing logout/crash loops from the admin panel.
+
+    Admin-only: journal output necessarily contains chat ids and phone numbers, which is a wider
+    exposure than the connection status every authenticated user can already see.
+    """
+    external_account_id = external_account_id.strip()
+    lines = max(1, min(lines, 1000))
+    try:
+        result = await fetch_whatsapp_logs(external_account_id, lines=lines)
+    except WhatsAppBridgeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.args[0] if exc.args else "Failed to fetch WhatsApp logs") from exc
+
+    raw_lines = result.get("lines")
+    return WhatsAppAccountLogsRead(
+        external_account_id=external_account_id,
+        available=bool(result.get("available")),
+        unit=result.get("unit"),
+        lines=[str(line) for line in raw_lines] if isinstance(raw_lines, list) else [],
         message=result.get("message"),
     )
 
