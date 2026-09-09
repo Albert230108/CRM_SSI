@@ -138,6 +138,7 @@ const emptyNewUser = {
 export default function AdminSettings() {
   useDocumentTitle('CRM - Admin Settings')
   const token = useAuthStore((state) => state.token)
+  const currentUser = useAuthStore((state) => state.user)
   const { toast, showSuccess, showError, dismiss } = useToast()
   const [activeTab, setActiveTab] = useState('users')
 
@@ -487,6 +488,22 @@ export default function AdminSettings() {
       showSuccess('WhatsApp alert setting updated')
     } else {
       showError('Failed to update WhatsApp alert setting')
+    }
+  }
+
+  const toggleAdmin = async (user: UserRow) => {
+    const nextIsAdmin = !user.is_admin
+    const response = await fetch(`${API_BASE_URL}/api/users/${user.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ is_admin: nextIsAdmin }),
+    })
+    if (response.ok) {
+      await refresh()
+      showSuccess(nextIsAdmin ? 'User promoted to admin' : 'Admin access removed')
+    } else {
+      const data = await response.json().catch(() => ({}))
+      showError(typeof data.detail === 'string' ? data.detail : 'Failed to update user role')
     }
   }
 
@@ -934,6 +951,15 @@ export default function AdminSettings() {
                             <td>{new Date(user.created_at).toLocaleString()}</td>
                             <td className="space-x-2 py-2">
                               <Button variant="secondary" size="sm" onClick={() => toggleActive(user.id)}>Toggle active</Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                disabled={user.id === currentUser?.id && user.is_admin}
+                                title={user.id === currentUser?.id && user.is_admin ? 'You cannot remove your own admin access' : undefined}
+                                onClick={() => toggleAdmin(user)}
+                              >
+                                {user.is_admin ? 'Remove admin' : 'Make admin'}
+                              </Button>
                               <Button variant="secondary" size="sm" onClick={() => toggleWhatsappNotifications(user.id)}>Toggle WA alerts</Button>
                               <Button variant="secondary" size="sm" onClick={() => sendReset(user.id)}>Send password reset</Button>
                               <Button
