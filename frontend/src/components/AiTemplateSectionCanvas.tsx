@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AiTemplateNote, AiTemplateSection, BrainSectionOption } from '../types/aiReplyTemplate'
 import { MAX_ZOOM, MIN_ZOOM, useCanvasViewport } from '../hooks/useCanvasViewport'
 import {
@@ -24,9 +24,10 @@ import {
   tidyLayout,
   type Rect,
 } from '../lib/aiTemplateCanvas'
+import type { InsertTokenGroup } from '../lib/insertToken'
 import AiTemplateCanvasCard from './AiTemplateCanvasCard'
 import AiTemplateCanvasNote from './AiTemplateCanvasNote'
-import { AiTemplateNoteModal, AiTemplateSectionModal } from './AiTemplateSectionModal'
+import { AiTemplateNoteModal, AiTemplateSectionModal, sectionTokenGroups as defaultSectionTokenGroups } from './AiTemplateSectionModal'
 
 const DRAG_THRESHOLD = 4
 const HISTORY_LIMIT = 50
@@ -50,15 +51,33 @@ type DragState = {
   frame: number | null
 }
 
+const DEFAULT_HELP_TEXT = (
+  <>
+    Click a card to edit it in a popup; drag it anywhere to organize. The numbered badge (not position) is the order
+    sent to the AI. Cards snap to the grid &mdash; hold <kbd className="rounded border border-gray-300 px-1">Alt</kbd> to
+    move freely. Ctrl+scroll zooms, dragging the background pans. Post-it notes are never sent to the AI.
+  </>
+)
+
 type Props = {
   sections: AiTemplateSection[]
   notes: AiTemplateNote[]
   onSectionsChange: (sections: AiTemplateSection[]) => void
   onNotesChange: (notes: AiTemplateNote[]) => void
   contentPlaceholderHint: string
-  brainSections: BrainSectionOption[]
-  /** Scopes the persisted zoom/pan to one template. */
+  // Reply templates attach Brain sections as their own block; other consumers (e.g. agent
+  // instructions) have no such concept, so this defaults to empty rather than being required.
+  brainSections?: BrainSectionOption[]
+  /** Scopes the persisted zoom/pan to one template/profile. */
   viewportKey: string
+  headerLabel?: string
+  helpText?: ReactNode
+  emptyStateText?: string
+  // Builds the per-card Insert-token menu groups. Defaults to the AI Templates set (tenant
+  // placeholders + date/time + attached Brain sections); a consumer whose text is never resolved
+  // against a tenant (e.g. agent instructions) can override this to omit tokens that would just
+  // sit there unresolved.
+  sectionTokenGroups?: (brainSections: BrainSectionOption[]) => InsertTokenGroup[]
 }
 
 export default function AiTemplateSectionCanvas({
@@ -67,8 +86,12 @@ export default function AiTemplateSectionCanvas({
   onSectionsChange,
   onNotesChange,
   contentPlaceholderHint,
-  brainSections,
+  brainSections = [],
   viewportKey,
+  headerLabel = '1. Template text (subprompts)',
+  helpText = DEFAULT_HELP_TEXT,
+  emptyStateText = 'No sections yet — add one to start building the prompt.',
+  sectionTokenGroups = defaultSectionTokenGroups,
 }: Props) {
   const { containerRef, viewport, viewportRef, hasRestoredViewport, zoomBy, resetZoom, panBy, fitTo, toCanvas } =
     useCanvasViewport(viewportKey)
@@ -618,7 +641,7 @@ export default function AiTemplateSectionCanvas({
   return (
     <div className={fullscreen ? 'fixed inset-0 z-50 flex flex-col gap-2 bg-white p-4' : 'space-y-2'}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">1. Template text (subprompts)</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">{headerLabel}</p>
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
@@ -687,11 +710,7 @@ export default function AiTemplateSectionCanvas({
           </button>
         </div>
       </div>
-      <p className="text-xs text-gray-500">
-        Click a card to edit it in a popup; drag it anywhere to organize. The numbered badge (not position) is the order
-        sent to the AI. Cards snap to the grid &mdash; hold <kbd className="rounded border border-gray-300 px-1">Alt</kbd> to
-        move freely. Ctrl+scroll zooms, dragging the background pans. Post-it notes are never sent to the AI.
-      </p>
+      <p className="text-xs text-gray-500">{helpText}</p>
 
       <div
         ref={containerRef}
@@ -755,7 +774,7 @@ export default function AiTemplateSectionCanvas({
 
         {sections.length === 0 && notes.length === 0 ? (
           <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-            No sections yet &mdash; add one to start building the prompt.
+            {emptyStateText}
           </p>
         ) : null}
       </div>
@@ -765,7 +784,7 @@ export default function AiTemplateSectionCanvas({
           section={openSection}
           orderIndex={orderIndexById.get(openSection.id as string) ?? 0}
           orderTotal={orderedSections.length}
-          brainSections={brainSections}
+          tokenGroups={sectionTokenGroups(brainSections)}
           contentPlaceholderHint={contentPlaceholderHint}
           onChange={updateSection}
           onMoveOrder={moveOrder}

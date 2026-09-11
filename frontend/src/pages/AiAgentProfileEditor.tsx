@@ -2,7 +2,9 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { InsertTokenMenu, insertAtCaret, type InsertTokenGroup, type InsertTokenItem } from '../lib/insertToken'
-import { DATETIME_PLACEHOLDERS } from '../types/aiReplyTemplate'
+import AiTemplateSectionCanvas from '../components/AiTemplateSectionCanvas'
+import { backfillNotes, backfillSections, CARD_HEIGHT, CARD_WIDTH, nextSectionPosition } from '../lib/aiTemplateCanvas'
+import { DATETIME_PLACEHOLDERS, type AiTemplateNote, type AiTemplateSection } from '../types/aiReplyTemplate'
 import { type AgentRole, type AiAgentProfile, type PromptBlockDefinition } from '../types/aiAgentProfile'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import Button from '../components/ui/Button'
@@ -10,12 +12,17 @@ import InlineSpinner from '../components/InlineSpinner'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-type ProfileForm = Omit<AiAgentProfile, 'id' | 'escalate_keywords' | 'instructions' | 'model' | 'redo_model'> & {
+type ProfileForm = Omit<
+  AiAgentProfile,
+  'id' | 'escalate_keywords' | 'instructions' | 'model' | 'redo_model' | 'instruction_sections' | 'instruction_canvas_notes'
+> & {
   id: number | null
   escalate_keywords: string
   instructions: string
   model: string
   redo_model: string
+  instruction_sections: AiTemplateSection[]
+  instruction_canvas_notes: AiTemplateNote[]
 }
 
 type FieldRelevance = {
@@ -348,6 +355,10 @@ function emptyForm(role: AgentRole): ProfileForm {
     is_default: false,
     is_active: true,
     instructions: '',
+    instruction_sections: [
+      { id: crypto.randomUUID(), label: '', content: '', order: 0, w: CARD_WIDTH, h: CARD_HEIGHT, z: 0, ...nextSectionPosition(0) },
+    ],
+    instruction_canvas_notes: [],
     model: '',
     redo_model: '',
     temperature: role === 'checker' ? 0 : 0.2,
@@ -376,15 +387,25 @@ function emptyForm(role: AgentRole): ProfileForm {
 }
 
 function toFormState(profile: AiAgentProfile): ProfileForm {
+  const instructions = profile.instructions ?? ''
+  const sections = profile.instruction_sections ?? []
   return {
     ...profile,
     id: profile.id,
-    instructions: profile.instructions ?? '',
+    instructions,
     model: profile.model ?? '',
     redo_model: profile.redo_model ?? '',
     escalate_keywords: profile.escalate_keywords.join(', '),
     always_include_brain_sections: profile.always_include_brain_sections ?? [],
     prompt_blocks: profile.prompt_blocks ?? {},
+    // Every migrated profile already has a card from the 0093 data migration, but a brand-new
+    // profile created before ever hitting the grid (or one saved from Classic mode) may not -
+    // fall back to mirroring the plain text into one card, exactly like the backend's own
+    // classic-mode save path, so the grid is never surprising the first time it's opened.
+    instruction_sections: backfillSections(
+      sections.length ? sections : instructions.trim() ? [{ label: '', content: instructions }] : [],
+    ),
+    instruction_canvas_notes: backfillNotes(profile.instruction_canvas_notes ?? []),
   }
 }
 
@@ -408,6 +429,9 @@ export default function AiAgentProfileEditor() {
   const initialRole = (searchParams.get('role') as AgentRole | null) ?? 'planner'
 
   const [form, setForm] = useState<ProfileForm>(() => emptyForm(isNew ? initialRole : 'planner'))
+  // Grid is the primary authoring experience; Classic is a plain-textarea fallback kept until
+  // sign-off. Whichever is active when Save runs is authoritative - see saveProfile.
+  const [instructionsMode, setInstructionsMode] = useState<'grid' | 'classic'>('grid')
   const instructionsRef = useRef<HTMLTextAreaElement | null>(null)
   const promptBlockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   useDocumentTitle(isNew ? 'CRM - New AI Agent' : `CRM - ${form.name || 'Edit AI Agent'}`)
@@ -576,14 +600,20 @@ export default function AiAgentProfileEditor() {
     setMessage('')
     try {
       const isEditing = form.id !== null
-      const { id, escalate_keywords, model, redo_model, instructions, ...rest } = form
+      const { id, escalate_keywords, model, redo_model, instructions, instruction_sections, instruction_canvas_notes, ...rest } =
+        form
       const response = await fetch(`${API_BASE_URL}/api/ai-agent-profiles${isEditing ? `/${id}` : ''}`, {
         method: isEditing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           ...rest,
           name: form.name.trim(),
+          // Whichever editor is active wins: Grid sends the cards (and the backend derives
+          // `instructions` from them); Classic sends null so the backend mirrors the plain text
+          // it's given into a single card instead.
           instructions: instructions.trim() || null,
+          instruction_sections: instructionsMode === 'grid' ? instruction_sections : null,
+          instruction_canvas_notes: instructionsMode === 'grid' ? instruction_canvas_notes : null,
           model: model.trim() || null,
           redo_model: redo_model.trim() || null,
           escalate_keywords: escalate_keywords
@@ -677,28 +707,67 @@ export default function AiAgentProfileEditor() {
 
         <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between gap-3">
-            <label className={LABEL} htmlFor="profile-instructions">
-              Instructions
-            </label>
-            <InsertTokenMenu
-              groups={dateTimeGroups}
-              onInsert={(token) =>
-                insertAtCaret(instructionsRef.current, form.instructions, token, (next) =>
-                  set('instructions', next),
-                )
-              }
-            />
+            <label className={LABEL}>Instructions</label>
+            <div className="flex items-center gap-1 rounded-lg border border-gray-300 p-0.5 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setInstructionsMode('grid')}
+                className={`rounded-md px-2.5 py-1 ${instructionsMode === 'grid' ? 'bg-brand-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setInstructionsMode('classic')}
+                className={`rounded-md px-2.5 py-1 ${instructionsMode === 'classic' ? 'bg-brand-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                Classic
+              </button>
+            </div>
           </div>
-          <textarea
-            ref={instructionsRef}
-            id="profile-instructions"
-            rows={8}
-            value={form.instructions}
-            onChange={(event) => set('instructions', event.target.value)}
-            placeholder={instructionsPlaceholder}
-            className={INPUT}
-          />
-          <p className="mt-1 text-xs text-gray-500">Supports placeholders: {datetimePlaceholderText}</p>
+          {instructionsMode === 'grid' ? (
+            <div className="mt-2">
+              <AiTemplateSectionCanvas
+                sections={form.instruction_sections}
+                notes={form.instruction_canvas_notes}
+                onSectionsChange={(instruction_sections) => set('instruction_sections', instruction_sections)}
+                onNotesChange={(instruction_canvas_notes) => set('instruction_canvas_notes', instruction_canvas_notes)}
+                contentPlaceholderHint={instructionsPlaceholder}
+                viewportKey={`agent-instructions:${form.id ?? 'new'}`}
+                headerLabel="Instructions (subprompts)"
+                emptyStateText="No instructions yet — add a section to start building this agent's prompt."
+                sectionTokenGroups={() => dateTimeGroups}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Numbered order is what's sent to the AI. Supports placeholders: {datetimePlaceholderText}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="mt-2 flex items-center justify-end gap-3">
+                <InsertTokenMenu
+                  groups={dateTimeGroups}
+                  onInsert={(token) =>
+                    insertAtCaret(instructionsRef.current, form.instructions, token, (next) =>
+                      set('instructions', next),
+                    )
+                  }
+                />
+              </div>
+              <textarea
+                ref={instructionsRef}
+                id="profile-instructions"
+                rows={8}
+                value={form.instructions}
+                onChange={(event) => set('instructions', event.target.value)}
+                placeholder={instructionsPlaceholder}
+                className={INPUT}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Classic mode - plain text, kept as a fallback. Supports placeholders: {datetimePlaceholderText}
+              </p>
+            </>
+          )}
         </div>
 
         {showModelSampling ? (

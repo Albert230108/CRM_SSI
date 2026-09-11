@@ -1,7 +1,7 @@
 import base64
 import pathlib
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -29,6 +29,7 @@ from app.services import discount_engine
 from app.services import payment_plan as payment_plan_service
 from app.services import pdf_service
 from app.services import tenant_files
+from app.services import vat
 
 router = APIRouter(prefix="/quotation", tags=["quotation"])
 
@@ -47,6 +48,15 @@ def calculate_discount(
         base_price_per_night=0.0,
         pricing_data=pricing_data,
     )
+    # Settings/the discount engine stay ex-VAT; add incl.-VAT figures purely for
+    # the quotation form's display, same rate the generated charge lines use.
+    rate = vat.vat_rate_for_date(request.checkin_date or date.today())
+    result = {
+        **result,
+        "vat_rate": rate,
+        "original_price_incl_vat": vat.gross_amount(result["original_price"], rate),
+        "discounted_price_incl_vat": vat.gross_amount(result["discounted_price"], rate),
+    }
     return DiscountResponse(**result)
 
 
@@ -137,12 +147,88 @@ def _generate_pdf_local(request: GeneratePdfRequest) -> GeneratePdfResponse:
     )
 
 
+def _peek_local_next_number(request: GeneratePdfRequest) -> int:
+    """Best-effort quotation-number guess for a download: counts whatever's
+    already in the local tenant folder, WITHOUT creating it or writing
+    anything - used as the download fallback when OneDrive/Graph can't be
+    reached, and for a New-Quotation draft, which has no real booking (or
+    folder) yet and so always comes back 1."""
+    try:
+        folder = tenant_files.resolve_booking_folder_path(
+            booking_id=request.booking_id,
+            first_name=request.first_name,
+            last_name=request.last_name,
+            arrival_date_str=request.check_in,
+        )
+        return tenant_files.next_quotation_output_path(
+            folder=folder,
+            booking_id=request.booking_id,
+            room_label=request.room_name,
+            tenant_name=f"{request.first_name} {request.last_name}",
+            checkin_date_str=request.check_in,
+            checkout_date_str=request.check_out,
+        ).quotation_number
+    except tenant_files.TenantFolderError:
+        return 1
+
+
+async def _generate_pdf_download(request: GeneratePdfRequest, token: str) -> GeneratePdfResponse:
+    """delivery="download": render the PDF and hand the bytes straight back -
+    nothing is written to OneDrive or the local tenant folder. A "Draft"
+    booking_id (New Quotation's PDF preview, before any booking exists) always
+    skips the OneDrive lookup outright, since there is no real folder to ask about."""
+    quotation_number = 1
+    if request.booking_id != "Draft":
+        try:
+            year = datetime.strptime(request.check_in, "%Y-%m-%d").year
+        except ValueError:
+            year = datetime.now().year
+        identity = {
+            "booking_id": request.booking_id,
+            "first_name": request.first_name,
+            "last_name": request.last_name,
+            "year": year,
+        }
+        try:
+            number_info = await crm_client.onedrive_next_number(token, identity)
+            quotation_number = int(number_info["next_number"])
+        except HTTPException:
+            quotation_number = _peek_local_next_number(request)
+    else:
+        quotation_number = _peek_local_next_number(request)
+
+    filename = tenant_files.build_quotation_filename(
+        booking_id=request.booking_id,
+        quotation_number=quotation_number,
+        room_label=request.room_name,
+        tenant_name=f"{request.first_name} {request.last_name}",
+        checkin_date_str=request.check_in,
+        checkout_date_str=request.check_out,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        temp_path = pathlib.Path(tmp) / filename
+        _render_pdf(request, temp_path, quotation_number)
+        content = temp_path.read_bytes()
+
+    return GeneratePdfResponse(
+        file_path=filename,
+        quotation_number=quotation_number,
+        location="download",
+        name=filename,
+        content_base64=base64.b64encode(content).decode("ascii"),
+    )
+
+
 @router.post("/generate-pdf", response_model=GeneratePdfResponse)
 async def generate_pdf(
     request: GeneratePdfRequest,
     _payload=Depends(verify_quotation_token),
     token: str = Depends(get_raw_token),
 ) -> GeneratePdfResponse:
+    if request.delivery == "download":
+        return await _generate_pdf_download(request, token)
+
     try:
         year = datetime.strptime(request.check_in, "%Y-%m-%d").year
     except ValueError:
@@ -226,6 +312,12 @@ def build_payment_plan(
         payment_plan_service.ChargeLine(description=c.description, qty=c.qty, amount=c.amount)
         for c in request.charges
     ]
+    existing_payments = [
+        payment_plan_service.PaymentRow(
+            description=p.description, qty=p.qty, amount=p.amount, status=p.status, vat_rate=p.vat_rate
+        )
+        for p in request.existing_payments
+    ]
     try:
         result = payment_plan_service.build_payment_plan(
             charges=charge_lines,
@@ -233,6 +325,7 @@ def build_payment_plan(
             check_out=request.check_out,
             installments=request.installments,
             security_deposit=request.security_deposit,
+            existing_payments=existing_payments,
         )
     except payment_plan_service.PaymentPlanError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

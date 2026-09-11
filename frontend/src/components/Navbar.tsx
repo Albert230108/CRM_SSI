@@ -57,6 +57,8 @@ export default function Navbar() {
 
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [quotationsLoading, setQuotationsLoading] = useState(false)
+  const [quotationsError, setQuotationsError] = useState('')
   const openSearch = useCallback(() => setSearchOpen(true), [])
   // Cmd/Ctrl+K opens the global search from anywhere in the app.
   useGlobalShortcut('k', openSearch)
@@ -105,6 +107,29 @@ export default function Navbar() {
   }, [token])
 
   const formatBadgeCount = (count: number) => (count > 9 ? '9+' : String(count))
+
+  // Opens the Quotation Manager's own home page (search/new quotation) with a
+  // tenant-less token - distinct from FinanceBox's "Quote" button, which deep-links
+  // straight into one tenant's editor.
+  const handleOpenQuotations = async () => {
+    if (quotationsLoading) return
+    setQuotationsLoading(true)
+    setQuotationsError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/quotation/token`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) throw new Error('Failed to open Quotation Manager')
+      const data: { quotation_url: string } = await response.json()
+      window.open(data.quotation_url, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      setQuotationsError(error instanceof Error ? error.message : 'Failed to open Quotation Manager')
+      window.setTimeout(() => setQuotationsError(''), 3000)
+    } finally {
+      setQuotationsLoading(false)
+    }
+  }
 
   // Intercepts in-app link clicks so leaving with unsaved notes prompts the
   // unsaved-notes modal instead of silently discarding the edit.
@@ -315,6 +340,22 @@ export default function Navbar() {
             >
               <span>Settings</span>
             </Link>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={handleOpenQuotations}
+                disabled={quotationsLoading}
+                title="Open the Quotation Manager"
+                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 transition hover:border-gray-400 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {quotationsLoading ? 'Opening...' : 'Quotations'}
+              </button>
+              {quotationsError ? (
+                <div className="absolute right-0 z-10 mt-1 whitespace-nowrap rounded-lg border border-gray-200 bg-gray-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg">
+                  {quotationsError}
+                </div>
+              ) : null}
+            </div>
             <button
               type="button"
               onClick={handleSyncAll}

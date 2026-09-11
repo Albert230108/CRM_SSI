@@ -19,7 +19,7 @@ function brainTokenItems(brainSections: BrainSectionOption[]): InsertTokenItem[]
   }))
 }
 
-function sectionTokenGroups(brainSections: BrainSectionOption[]): InsertTokenGroup[] {
+export function sectionTokenGroups(brainSections: BrainSectionOption[]): InsertTokenGroup[] {
   return [
     { label: 'Tenant', tokens: literalTokenItems(EMAIL_TEMPLATE_PLACEHOLDERS) },
     { label: 'Date & time', tokens: literalTokenItems(DATETIME_PLACEHOLDERS) },
@@ -35,7 +35,10 @@ type SectionModalProps = {
   section: AiTemplateSection
   orderIndex: number
   orderTotal: number
-  brainSections: BrainSectionOption[]
+  // Pre-built by the caller (see AiTemplateSectionCanvas's `sectionTokenGroups` prop) so a
+  // consumer with no Brain/tenant-placeholder concept - e.g. agent instructions, which are never
+  // resolved against a tenant - can offer only the tokens that actually mean something to it.
+  tokenGroups: InsertTokenGroup[]
   contentPlaceholderHint: string
   onChange: (id: string, field: 'label' | 'content', value: string) => void
   onMoveOrder: (id: string, direction: -1 | 1) => void
@@ -49,7 +52,7 @@ export function AiTemplateSectionModal({
   section,
   orderIndex,
   orderTotal,
-  brainSections,
+  tokenGroups,
   contentPlaceholderHint,
   onChange,
   onMoveOrder,
@@ -92,7 +95,7 @@ export function AiTemplateSectionModal({
             className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-500"
           />
           <InsertTokenMenu
-            groups={sectionTokenGroups(brainSections)}
+            groups={tokenGroups}
             onInsert={(token) => insertAtCaret(textareaRef.current, section.content, token, (next) => onChange(id, 'content', next))}
           />
         </div>

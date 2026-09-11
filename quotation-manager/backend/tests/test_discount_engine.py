@@ -167,3 +167,28 @@ def test_calculate_discount_endpoint_with_valid_token(client, auth_headers):
     assert response.status_code == 200
     body = response.json()
     assert body["discounted_price"] == 58.67769
+
+
+def test_calculate_discount_endpoint_includes_vat_inclusive_display_fields(client, auth_headers):
+    # Settings/the discount engine stay ex-VAT; the endpoint additionally surfaces
+    # incl.-VAT figures purely for the quotation form to display (see app.services.vat).
+    response = client.post(
+        "/api/quotation/discount",
+        json={"room_name": "Studio 1", "property_name": "Central-Day Inn", "nights": 7, "checkin_date": "2026-03-01"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["vat_rate"] == 21
+    assert body["original_price_incl_vat"] == round(body["original_price"] * 1.21, 2)
+    assert body["discounted_price_incl_vat"] == round(body["discounted_price"] * 1.21, 2)
+
+
+def test_calculate_discount_endpoint_uses_9_percent_vat_before_2026(client, auth_headers):
+    response = client.post(
+        "/api/quotation/discount",
+        json={"room_name": "Studio 1", "property_name": "Central-Day Inn", "nights": 7, "checkin_date": "2025-06-01"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["vat_rate"] == 9

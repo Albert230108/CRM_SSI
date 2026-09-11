@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.ai_reply_template import AiReplyTemplateNote, AiReplyTemplateSection
+
 AgentRole = Literal["planner", "checker", "drafter", "brain_writer", "action_writer", "formatter", "sales_manager", "memory_redo", "memory_qa"]
 HistoryChannels = Literal["both", "inbound", "email", "whatsapp"]
 NoMatchBehaviour = Literal["escalate", "skip"]
@@ -14,6 +16,13 @@ class AiAgentProfileBase(BaseModel):
     is_default: bool = False
     is_active: bool = True
     instructions: str | None = None
+    # Card-grid authoring UI for `instructions` (the Agent Instructions board). None means the
+    # caller is using the classic textarea, so `instructions` above is authoritative as given.
+    # A list (including empty) means the grid is authoritative: the API derives `instructions`
+    # from these cards server-side and a submitted `instructions` value is ignored. Post-it notes
+    # (instruction_canvas_notes) are organizational only, never read by the derivation.
+    instruction_sections: list[AiReplyTemplateSection] | None = None
+    instruction_canvas_notes: list[AiReplyTemplateNote] | None = None
     # Overrides for the fixed prompt scaffolding, keyed by block key. Keys absent from the
     # dict use the built-in default; a key mapped to "" removes that block from the prompt.
     prompt_blocks: dict[str, str] = {}

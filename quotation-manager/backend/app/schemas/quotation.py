@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,11 @@ class DiscountResponse(BaseModel):
     base_price_source: str
     tier_price: float
     using_tier_price: bool
+    # Display-only VAT-inclusive figures for the quotation form (original_price/
+    # discounted_price above stay ex-VAT, matching Settings/the pricing config).
+    vat_rate: float = 0.0
+    original_price_incl_vat: float = 0.0
+    discounted_price_incl_vat: float = 0.0
 
 
 class AdminCostsRequest(BaseModel):
@@ -72,6 +78,10 @@ class GeneratePdfRequest(BaseModel):
     # server-to-server caller (the CRM's sales-manager agent) can attach the quotation to the
     # outgoing message without a second round-trip to fetch it back from OneDrive.
     include_content: bool = False
+    # "save" (default): write to OneDrive/the tenant folder, as today. "download": render
+    # the PDF and hand the bytes straight back - nothing is written anywhere - used by the
+    # editor's "Download PDF" button and New Quotation's draft PDF.
+    delivery: Literal["save", "download"] = "save"
 
 
 class SendToBeds24Request(BaseModel):
@@ -113,10 +123,11 @@ class VatSplitSegment(BaseModel):
 class GeneratePdfResponse(BaseModel):
     file_path: str
     quotation_number: int
-    location: str = "local"  # "onedrive" or "local"
+    location: str = "local"  # "onedrive", "local", or "download" (delivery="download": nothing written)
     web_url: str | None = None
     name: str | None = None
-    # Populated only when the request set include_content=True (base64-encoded PDF bytes).
+    # Populated when the request set include_content=True, or unconditionally for
+    # delivery="download" (base64-encoded PDF bytes).
     content_base64: str | None = None
 
 
@@ -134,7 +145,8 @@ class GeneratedCharge(BaseModel):
     kind: str
     description: str
     qty: float
-    amount: float
+    amount: float  # VAT-inclusive (gross) - what actually lands on the quotation/Beds24.
+    amount_excl_vat: float = 0.0  # The underlying ex-VAT config value, for reference/debugging.
     vat_rate: float
     detail: str | None = None
 
@@ -152,12 +164,26 @@ class PaymentPlanChargeLine(BaseModel):
     amount: float = 0
 
 
+class PaymentPlanExistingRow(BaseModel):
+    """A payment row already on the quotation, sent back so a regenerated plan
+    can tell which installments were already paid and must not be replaced."""
+
+    description: str
+    qty: float = 1
+    amount: float = 0
+    status: str = "not paid"
+    vat_rate: float = 0
+
+
 class PaymentPlanRequest(BaseModel):
     check_in: date
     check_out: date
     installments: int = Field(1, ge=1, le=24)
     security_deposit: float = 0.0
     charges: list[PaymentPlanChargeLine] = []
+    # Current payment rows on the quotation. Any row whose status is a date (i.e. not
+    # "not paid") is kept as-is and excluded from regeneration - see payment_plan.build_payment_plan.
+    existing_payments: list[PaymentPlanExistingRow] = []
 
 
 class GeneratedPayment(BaseModel):
@@ -173,3 +199,7 @@ class PaymentPlanResponse(BaseModel):
     installments: int
     total_charges: float
     payments: list[GeneratedPayment]
+    # How much of total_charges is already covered by kept (paid) rows, and what's left.
+    kept_count: int = 0
+    paid_total: float = 0.0
+    remaining: float = 0.0

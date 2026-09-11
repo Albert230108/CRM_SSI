@@ -5,10 +5,15 @@ import pytest
 from app.services import admin_costs as admin_costs_service
 from app.services import charge_builder
 from app.services import discount_engine
+from app.services import vat
 
 
 def _sum_line_total(charges, kind=None):
     return round(sum(c["qty"] * c["amount"] for c in charges if kind is None or c["kind"] == kind), 2)
+
+
+def _sum_line_total_net(charges, kind=None):
+    return round(sum(c["qty"] * c["amount_excl_vat"] for c in charges if kind is None or c["kind"] == kind), 2)
 
 
 def test_build_charges_entirely_in_2025():
@@ -32,7 +37,8 @@ def test_build_charges_entirely_in_2025():
     assert len(accommodation) == 1
     assert accommodation[0]["vat_rate"] == 9
     assert accommodation[0]["qty"] == 7
-    assert accommodation[0]["amount"] == round(tiers["7"], 2)
+    assert accommodation[0]["amount"] == vat.gross_amount(tiers["7"], 9)
+    assert accommodation[0]["amount_excl_vat"] == round(tiers["7"], 2)
 
     city_tax = [c for c in result["charges"] if c["kind"] == "city_tax"]
     assert len(city_tax) == 1
@@ -42,7 +48,9 @@ def test_build_charges_entirely_in_2025():
 
     end_cleaning = [c for c in result["charges"] if c["kind"] == "end_cleaning"]
     assert len(end_cleaning) == 1
-    assert end_cleaning[0]["amount"] == round(pricing_data["2025"]["Central-Day Inn"]["Studio 1"]["end_cleaning"], 2)
+    assert end_cleaning[0]["amount"] == vat.gross_amount(
+        pricing_data["2025"]["Central-Day Inn"]["Studio 1"]["end_cleaning"], 9
+    )
     assert end_cleaning[0]["vat_rate"] == 9
 
     admin = [c for c in result["charges"] if c["kind"] == "admin_costs"]
@@ -99,10 +107,14 @@ def test_build_charges_spans_2026_vat_boundary():
     pre_2026, from_2026 = accommodation
     assert pre_2026["vat_rate"] == 9
     assert pre_2026["qty"] == 4
-    assert pre_2026["amount"] == round(pricing_data["2025"]["Central-Day Inn"]["Studio 1"]["price_tiers"]["7"], 2)
+    assert pre_2026["amount"] == vat.gross_amount(
+        pricing_data["2025"]["Central-Day Inn"]["Studio 1"]["price_tiers"]["7"], 9
+    )
     assert from_2026["vat_rate"] == 21
     assert from_2026["qty"] == 4
-    assert from_2026["amount"] == round(pricing_data["2026"]["Central-Day Inn"]["Studio 1"]["price_tiers"]["7"], 2)
+    assert from_2026["amount"] == vat.gross_amount(
+        pricing_data["2026"]["Central-Day Inn"]["Studio 1"]["price_tiers"]["7"], 21
+    )
 
     city_tax = [c for c in result["charges"] if c["kind"] == "city_tax"]
     assert len(city_tax) == 1
@@ -135,8 +147,9 @@ def test_build_charges_long_stay_adds_discount_row():
 
     accommodation = [c for c in result["charges"] if c["kind"] == "accommodation"][0]
     effective_price = accommodation["amount"] + discount_rows[0]["amount"]
-    # Two rows are each independently rounded to cents, so allow a small tolerance.
-    assert effective_price == pytest.approx(tiers["30"], abs=0.02)
+    # Two rows (each grossed up independently and rounded to cents) should sum to
+    # the gross 30-night tier price, with a small tolerance for compounded rounding.
+    assert effective_price == pytest.approx(vat.gross_amount(tiers["30"], 21), abs=0.03)
 
 
 def test_build_charges_short_stay_has_no_discount_row():
@@ -230,7 +243,8 @@ def test_build_charges_adds_extra_person_row_for_multiple_guests():
     extra_person = [c for c in result["charges"] if c["kind"] == "extra_person"]
     assert len(extra_person) == 1
     assert extra_person[0]["qty"] == 7 * 2  # nights x (total_guests - 1)
-    assert extra_person[0]["amount"] == round(extra_person_cost, 2)
+    assert extra_person[0]["amount"] == vat.gross_amount(extra_person_cost, 21)
+    assert extra_person[0]["amount_excl_vat"] == round(extra_person_cost, 2)
 
 
 def test_build_charges_skips_extra_person_row_when_rate_is_zero():
@@ -265,13 +279,16 @@ def test_build_charges_admin_row_matches_admin_costs_service():
     non_admin_charges = [c for c in result["charges"] if c["kind"] != "admin_costs"]
     admin_row = next(c for c in result["charges"] if c["kind"] == "admin_costs")
 
+    # Admin % is applied to the NET running total (Settings stays ex-VAT) - use
+    # amount_excl_vat, not the gross amount, to match charge_builder's own math.
     expected = admin_costs_service.calculate_admin_costs(
         property_name="Central-Day Inn",
-        total_charges=_sum_line_total(non_admin_charges),
+        total_charges=_sum_line_total_net(non_admin_charges),
         deposit_amount=0.0,
-        city_tax_amount=_sum_line_total(non_admin_charges, kind="city_tax"),
+        city_tax_amount=_sum_line_total_net(non_admin_charges, kind="city_tax"),
     )
-    assert admin_row["amount"] == expected["admin_cost"]
+    assert admin_row["amount_excl_vat"] == expected["admin_cost"]
+    assert admin_row["amount"] == vat.gross_amount(expected["admin_cost"], admin_row["vat_rate"])
 
 
 def test_build_charges_rejects_inverted_dates():

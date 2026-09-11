@@ -2,8 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import ChargesTable from '../components/ChargesTable'
 import PaymentsTable from '../components/PaymentsTable'
-import { ApiError, apiGet, apiPost } from '../lib/apiClient'
-import { LONG_STAY_DEPOSIT_DEFAULT, LONG_STAY_DEPOSIT_NIGHT_THRESHOLD, ROOM_CAPACITY } from '../lib/constants'
+import PropertyRoomFields from '../components/PropertyRoomFields'
+import { ApiError, apiGet, apiPost, decodeTokenClaims, getToken } from '../lib/apiClient'
+import { isPaymentPaid } from '../lib/payments'
+import { downloadBase64Pdf } from '../lib/download'
+import {
+  LONG_STAY_DEPOSIT_DEFAULT,
+  LONG_STAY_DEPOSIT_NIGHT_THRESHOLD,
+  ROOM_CAPACITY,
+  propertyForRoom,
+  roomNameForId,
+} from '../lib/constants'
 import type {
   Beds24Booking,
   Beds24InvoiceItem,
@@ -12,6 +21,7 @@ import type {
   DiscountResult,
   EditableInvoiceItem,
   PaymentPlanResult,
+  TenantContext,
 } from '../lib/types'
 
 function bookingNights(booking: Beds24Booking): number {
@@ -80,6 +90,7 @@ export default function QuotationEditorPage() {
   const [discountResult, setDiscountResult] = useState<DiscountResult | null>(null)
   const [checkingDiscount, setCheckingDiscount] = useState(false)
   const [generatingPdf, setGeneratingPdf] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [sending, setSending] = useState(false)
   const [buildingCharges, setBuildingCharges] = useState(false)
   const [installments, setInstallments] = useState(1)
@@ -92,11 +103,32 @@ export default function QuotationEditorPage() {
     setLoading(true)
     setError(null)
     apiGet<Beds24Booking>(`/api/booking/${encodeURIComponent(bookingId)}`)
-      .then((booking) => {
+      .then(async (booking) => {
         setFirstName(firstString(booking.firstName, (booking as Record<string, unknown>).guestFirstName))
         setLastName(firstString(booking.lastName, (booking as Record<string, unknown>).guestLastName))
-        setRoomName(firstString(booking.roomName, booking.unitName))
-        setPropertyName(firstString(booking.propertyName))
+
+        // Beds24 v2 only ever returns roomId/propertyId on the raw booking, not names -
+        // fall back through the known room<->id mapping, then the room->property map,
+        // before finally asking the CRM for the tenant record this booking belongs to.
+        let room = firstString(booking.roomName, booking.unitName) || roomNameForId(booking.roomId)
+        let property = firstString(booking.propertyName) || propertyForRoom(room)
+
+        if (!room && !property) {
+          const token = getToken()
+          const claims = token ? decodeTokenClaims(token) : null
+          if (claims?.tenant_id && claims.booking_id === bookingId) {
+            try {
+              const context = await apiGet<TenantContext>(`/api/booking/tenant-context/${claims.tenant_id}`)
+              room = context.room_name ?? room
+              property = context.property_name ?? property
+            } catch {
+              // Best effort only - the fields just stay blank and the user picks them.
+            }
+          }
+        }
+
+        setRoomName(room)
+        setPropertyName(property)
         setCheckIn(firstString((booking as Record<string, unknown>).arrival))
         setCheckOut(firstString((booking as Record<string, unknown>).departure))
         setAdults(Number(booking.numAdult ?? 1) || 1)
@@ -194,7 +226,15 @@ export default function QuotationEditorPage() {
       setError('Valid check-in and check-out dates are needed to build a payment plan.')
       return
     }
-    if (payments.length > 0 && !window.confirm('Replace the current payment rows with the generated plan?')) {
+    const hasPaidRows = payments.some((p) => isPaymentPaid(p.status))
+    if (
+      payments.length > 0 &&
+      !window.confirm(
+        hasPaidRows
+          ? 'Regenerate the plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced.'
+          : 'Replace the current payment rows with the generated plan?',
+      )
+    ) {
       return
     }
     setBuildingPlan(true)
@@ -207,6 +247,13 @@ export default function QuotationEditorPage() {
         installments,
         security_deposit: securityDeposit,
         charges: charges.map((c) => ({ description: c.description, qty: c.qty, amount: c.amount })),
+        existing_payments: payments.map((p) => ({
+          description: p.description,
+          qty: p.qty,
+          amount: p.amount,
+          status: p.status ?? 'not paid',
+          vat_rate: p.vat_rate,
+        })),
       })
       setPayments(
         result.payments.map((p) => ({
@@ -220,7 +267,11 @@ export default function QuotationEditorPage() {
           status: p.status,
         })),
       )
-      setNotice(`Generated ${result.payments.length} payment rows across ${result.installments} installment(s).`)
+      setNotice(
+        result.kept_count > 0
+          ? `Kept ${result.kept_count} paid row(s); ${result.payments.length - result.kept_count} row(s) regenerated for the remaining €${result.remaining.toFixed(2)}.`
+          : `Generated ${result.payments.length} payment rows across ${result.installments} installment(s).`,
+      )
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to build payment plan')
     } finally {
@@ -290,14 +341,22 @@ export default function QuotationEditorPage() {
     }
   }
 
-  const handleGeneratePdf = async () => {
+  const handleGeneratePdf = async (delivery: 'save' | 'download') => {
     if (!bookingId) return
-    setGeneratingPdf(true)
+    const setLoading = delivery === 'download' ? setDownloadingPdf : setGeneratingPdf
+    setLoading(true)
     setError(null)
     setNotice(null)
     setPdfLink(null)
     try {
-      const result = await apiPost<{ file_path: string; quotation_number: number; location: string; web_url?: string | null; name?: string | null }>('/api/quotation/generate-pdf', {
+      const result = await apiPost<{
+        file_path: string
+        quotation_number: number
+        location: string
+        web_url?: string | null
+        name?: string | null
+        content_base64?: string | null
+      }>('/api/quotation/generate-pdf', {
         booking_id: bookingId,
         first_name: firstName,
         last_name: lastName,
@@ -306,7 +365,9 @@ export default function QuotationEditorPage() {
         check_in: checkIn,
         check_out: checkOut,
         security_deposit: securityDeposit,
-        invoice_items: charges.map((item) => ({
+        // Both charges AND payments, so the PDF's "Proposed payment schedule" reflects the
+        // real installment plan/paid status instead of always coming out empty.
+        invoice_items: [...charges, ...payments].map((item) => ({
           id: item.id,
           type: item.type,
           description: item.description,
@@ -314,16 +375,26 @@ export default function QuotationEditorPage() {
           amount: item.amount,
           vat_rate: item.vat_rate,
           currency: item.currency,
+          status: item.status,
         })),
         quotation_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        delivery,
+        include_content: delivery === 'download',
       })
-      const where = result.location === 'onedrive' ? 'OneDrive' : 'the tenant folder'
-      setNotice(`Quotation Q${String(result.quotation_number).padStart(3, '0')} saved to ${where}.`)
-      if (result.web_url) setPdfLink({ url: result.web_url, name: result.name ?? 'Open in OneDrive' })
+      if (delivery === 'download') {
+        if (result.content_base64) {
+          downloadBase64Pdf(result.content_base64, result.name || `Quotation_${bookingId}_${String(result.quotation_number).padStart(3, '0')}.pdf`)
+        }
+        setNotice(`Downloaded quotation Q${String(result.quotation_number).padStart(3, '0')}.`)
+      } else {
+        const where = result.location === 'onedrive' ? 'OneDrive' : 'the tenant folder'
+        setNotice(`Quotation Q${String(result.quotation_number).padStart(3, '0')} saved to ${where}.`)
+        if (result.web_url) setPdfLink({ url: result.web_url, name: result.name ?? 'Open in OneDrive' })
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to generate PDF')
     } finally {
-      setGeneratingPdf(false)
+      setLoading(false)
     }
   }
 
@@ -409,6 +480,7 @@ export default function QuotationEditorPage() {
           amount: item.amount,
           vat_rate: item.vat_rate,
           currency: item.currency,
+          status: item.status,
         })),
       })
       setNotice('Invoice items sent to Beds24. Finance will update shortly in the CRM.')
@@ -455,14 +527,12 @@ export default function QuotationEditorPage() {
             Last name
             <input value={lastName} onChange={(e) => setLastName(e.target.value)} className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm" />
           </label>
-          <label className="text-xs text-gray-500">
-            Property
-            <input value={propertyName} onChange={(e) => setPropertyName(e.target.value)} className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm" />
-          </label>
-          <label className="text-xs text-gray-500">
-            Room
-            <input value={roomName} onChange={(e) => setRoomName(e.target.value)} className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm" />
-          </label>
+          <PropertyRoomFields
+            propertyName={propertyName}
+            roomName={roomName}
+            onPropertyChange={setPropertyName}
+            onRoomChange={setRoomName}
+          />
           <label className="text-xs text-gray-500">
             Check in
             <input type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm" />
@@ -547,8 +617,14 @@ export default function QuotationEditorPage() {
         </div>
         {discountResult ? (
           <div className="mt-2 text-sm text-gray-700">
-            <p>Base price: €{discountResult.original_price.toFixed(2)}/night</p>
-            <p>Suggested price: €{discountResult.discounted_price.toFixed(2)}/night</p>
+            <p>
+              Base price: €{discountResult.original_price_incl_vat.toFixed(2)}/night incl. {discountResult.vat_rate}% VAT
+              <span className="text-gray-400"> (€{discountResult.original_price.toFixed(2)} excl.)</span>
+            </p>
+            <p>
+              Suggested price: €{discountResult.discounted_price_incl_vat.toFixed(2)}/night incl. {discountResult.vat_rate}% VAT
+              <span className="text-gray-400"> (€{discountResult.discounted_price.toFixed(2)} excl.)</span>
+            </p>
             <p className="text-xs text-gray-500">{discountResult.discount_description}</p>
           </div>
         ) : null}
@@ -585,11 +661,19 @@ export default function QuotationEditorPage() {
       <div className="flex gap-3">
         <button
           type="button"
-          onClick={handleGeneratePdf}
+          onClick={() => handleGeneratePdf('save')}
           disabled={generatingPdf}
           className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50"
         >
-          {generatingPdf ? 'Generating...' : 'Generate PDF'}
+          {generatingPdf ? 'Saving...' : 'Save PDF to tenant folder'}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleGeneratePdf('download')}
+          disabled={downloadingPdf}
+          className="rounded-lg border border-cyan-600 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+        >
+          {downloadingPdf ? 'Downloading...' : 'Download PDF'}
         </button>
         <button
           type="button"

@@ -55,3 +55,39 @@ def test_send_invoice_items_endpoint_requires_token(client):
         json={"all_original_invoice_item_ids": [], "invoice_items": []},
     )
     assert response.status_code == 401
+
+
+def test_send_invoice_items_forwards_payment_status_to_beds24(client, db_session, monkeypatch):
+    captured = {}
+
+    async def capturing_update(booking_id, original_invoice_item_ids, final_invoice_items):
+        captured["final_invoice_items"] = final_invoice_items
+
+    import app.api.quotation as quotation_module
+
+    monkeypatch.setattr(quotation_module, "update_booking_invoice_items", capturing_update)
+    monkeypatch.setattr(quotation_module, "sync_tenant_from_beds24_booking", fake_sync)
+
+    tenant = Tenant(booking_id="INV-3", name="Existing Tenant")
+    db_session.add(tenant)
+    db_session.commit()
+
+    headers = _auth_headers_for(tenant.id, "INV-3")
+    response = client.post(
+        "/api/quotation/beds24-booking/INV-3/invoice-items",
+        json={
+            "all_original_invoice_item_ids": [],
+            "invoice_items": [
+                {"type": "charge", "description": "Rent", "qty": 7, "amount": 65.0, "vat_rate": 9},
+                {"type": "payment", "description": "Installment 1", "qty": 1, "amount": 100.0, "status": "12-Sep-2026"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    items = captured["final_invoice_items"]
+    charge_item, payment_item = items
+    # Charges have no meaningful Beds24 payment status - key stays absent, not null.
+    assert "status" not in charge_item
+    assert payment_item["status"] == "12-Sep-2026"

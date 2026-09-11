@@ -55,3 +55,20 @@ export const ROOM_ID_MAPPING: Record<string, number> = {
 // Nights above which the long-stay deposit / 0% VAT rules kick in.
 export const LONG_STAY_DEPOSIT_NIGHT_THRESHOLD = 183
 export const LONG_STAY_DEPOSIT_DEFAULT = 1500
+
+// Beds24 booking payloads carry roomId, not a room name - the editor needs the
+// reverse of ROOM_ID_MAPPING to prefill the room dropdown from an existing booking.
+export function roomNameForId(roomId: number | string | null | undefined): string {
+  if (roomId === null || roomId === undefined || roomId === '') return ''
+  const numericId = typeof roomId === 'string' ? Number(roomId) : roomId
+  const entry = Object.entries(ROOM_ID_MAPPING).find(([, id]) => id === numericId)
+  return entry ? entry[0] : ''
+}
+
+// The property a given room belongs to, per PROPERTY_ROOMS - used to prefill the
+// property dropdown once the room is known but the booking's own propertyName is blank.
+export function propertyForRoom(roomName: string): string {
+  if (!roomName) return ''
+  const entry = Object.entries(PROPERTY_ROOMS).find(([, rooms]) => rooms.includes(roomName))
+  return entry ? entry[0] : ''
+}

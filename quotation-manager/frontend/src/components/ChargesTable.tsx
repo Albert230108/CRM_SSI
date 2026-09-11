@@ -8,7 +8,14 @@ interface ChargesTableProps {
 }
 
 export default function ChargesTable({ items, onChange, onRemove, onAdd }: ChargesTableProps) {
+  // Charge amounts on the quotation form are VAT-inclusive (see app.services.vat on the
+  // backend) - Settings/the pricing config stay VAT-exclusive, this total is form-only.
   const total = items.reduce((sum, item) => sum + item.qty * item.amount, 0)
+  const totalVat = items.reduce((sum, item) => {
+    const lineTotal = item.qty * item.amount
+    const netLineTotal = item.vat_rate ? lineTotal / (1 + item.vat_rate / 100) : lineTotal
+    return sum + (lineTotal - netLineTotal)
+  }, 0)
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -29,7 +36,7 @@ export default function ChargesTable({ items, onChange, onRemove, onAdd }: Charg
             <tr className="text-left text-xs uppercase tracking-wide text-gray-400">
               <th className="pb-2">Description</th>
               <th className="w-20 pb-2">Qty</th>
-              <th className="w-24 pb-2">Amount</th>
+              <th className="w-24 pb-2">Amount (incl. VAT)</th>
               <th className="w-20 pb-2">VAT %</th>
               <th className="w-10 pb-2"></th>
             </tr>
@@ -93,7 +100,8 @@ export default function ChargesTable({ items, onChange, onRemove, onAdd }: Charg
       </div>
 
       <div className="mt-2 flex justify-end text-sm font-semibold text-gray-900">
-        Total: €{total.toFixed(2)}
+        Total (incl. VAT): €{total.toFixed(2)}
+        <span className="ml-2 font-normal text-gray-400">(of which VAT €{totalVat.toFixed(2)})</span>
       </div>
     </div>
   )

@@ -11,9 +11,8 @@ import { getAiSettingsReturnHref } from '../lib/aiSettingsNavigation'
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
-  NOTE_HEIGHT,
-  NOTE_WIDTH,
-  NOTE_Z_BASE,
+  backfillNotes,
+  backfillSections,
   nextSectionPosition,
 } from '../lib/aiTemplateCanvas'
 import {
@@ -69,34 +68,6 @@ function createEmptyForm(): FormState {
     include_payments: false,
     include_notes: false,
   }
-}
-
-/** Gives pre-canvas sections an id, a grid slot, and a size/stacking order. */
-function backfillSections(sections: AiTemplateSection[]): AiTemplateSection[] {
-  return sections.map((section, index) => {
-    const position =
-      section.x != null && section.y != null ? { x: section.x, y: section.y } : nextSectionPosition(index)
-    return {
-      ...section,
-      id: section.id ?? crypto.randomUUID(),
-      order: section.order ?? index,
-      x: position.x,
-      y: position.y,
-      w: section.w ?? CARD_WIDTH,
-      h: section.h ?? CARD_HEIGHT,
-      z: section.z ?? section.order ?? index,
-    }
-  })
-}
-
-/** Notes default above sections, matching how the canvas looked before z existed. */
-function backfillNotes(notes: AiTemplateNote[]): AiTemplateNote[] {
-  return notes.map((note, index) => ({
-    ...note,
-    w: note.w ?? NOTE_WIDTH,
-    h: note.h ?? NOTE_HEIGHT,
-    z: note.z ?? NOTE_Z_BASE + index,
-  }))
 }
 
 function toFormState(template: AiReplyTemplate): FormState {

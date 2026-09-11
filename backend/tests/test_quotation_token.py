@@ -22,7 +22,7 @@ def test_mint_quotation_token_returns_url_and_valid_token(non_admin_client, db_s
     body = response.json()
     assert "token" in body
     assert "expires_at" in body
-    assert body["quotation_url"] == f"https://quotations.example.com?token={body['token']}"
+    assert body["quotation_url"] == f"https://quotations.example.com/QUOTE-1?token={body['token']}"
 
     payload = decode_quotation_token(body["token"])
     assert payload.tenant_id == tenant.id
@@ -60,3 +60,62 @@ def test_mint_quotation_token_without_configured_url_returns_503(non_admin_clien
     response = non_admin_client.post(f"/api/tenants/{tenant.id}/quotation-token")
 
     assert response.status_code == 503
+
+
+def test_mint_quotation_token_without_booking_id_omits_deep_link(non_admin_client, db_session, monkeypatch):
+    import app.api.quotation as quotation_module
+    monkeypatch.setattr(quotation_module, "QUOTATION_MANAGER_URL", "https://quotations.example.com")
+
+    # booking_id is NOT NULL on Tenant - "" is the closest thing to "no booking" the
+    # schema allows, and is equally falsy for the deep-link check under test.
+    tenant = create_tenant(db_session, name="No Booking Tenant", booking_id="")
+
+    response = non_admin_client.post(f"/api/tenants/{tenant.id}/quotation-token")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quotation_url"] == f"https://quotations.example.com?token={body['token']}"
+
+
+def test_mint_tenant_less_quotation_token_returns_home_url(non_admin_client, monkeypatch):
+    import app.api.quotation as quotation_module
+    monkeypatch.setattr(quotation_module, "QUOTATION_MANAGER_URL", "https://quotations.example.com")
+
+    response = non_admin_client.post("/api/quotation/token")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quotation_url"] == f"https://quotations.example.com?token={body['token']}"
+
+    payload = decode_quotation_token(body["token"])
+    assert payload.tenant_id is None
+    assert payload.booking_id is None
+    assert payload.scope == "quotation"
+
+
+def test_mint_tenant_less_quotation_token_requires_login():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as unauthenticated_client:
+        response = unauthenticated_client.post("/api/quotation/token")
+
+    assert response.status_code == 401
+
+
+def test_mint_tenant_less_quotation_token_without_configured_url_returns_503(non_admin_client, monkeypatch):
+    import app.api.quotation as quotation_module
+    monkeypatch.setattr(quotation_module, "QUOTATION_MANAGER_URL", "")
+
+    response = non_admin_client.post("/api/quotation/token")
+
+    assert response.status_code == 503
+
+
+def test_decode_quotation_token_accepts_tenant_less_token():
+    from app.core.quotation_token import create_quotation_token
+
+    token = create_quotation_token(tenant_id=None, booking_id=None, issued_by_user_id=7)
+    payload = decode_quotation_token(token)
+    assert payload.tenant_id is None
+    assert payload.issued_by_user_id == 7

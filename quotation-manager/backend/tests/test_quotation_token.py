@@ -49,3 +49,14 @@ def test_decode_rejects_wrong_secret():
     with pytest.raises(HTTPException) as exc_info:
         decode_quotation_token(token)
     assert exc_info.value.status_code == 401
+
+
+def test_decode_accepts_tenant_less_token():
+    # The nav-bar "Quotations" button mints a token scoped to no particular tenant
+    # (see the CRM's POST /api/quotation/token) - it should still decode fine.
+    token = make_quotation_token(tenant_id=None, booking_id=None, issued_by_user_id=7)
+    payload = decode_quotation_token(token)
+    assert payload.tenant_id is None
+    assert payload.booking_id is None
+    assert payload.issued_by_user_id == 7
+    assert payload.scope == "quotation"

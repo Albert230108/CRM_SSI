@@ -27,6 +27,37 @@ def _safe_name_component(value: str) -> str:
     return "".join(c for c in value if c.isalnum() or c in (' ', '-', '_')).rstrip()
 
 
+def resolve_booking_folder_path(booking_id: str, first_name: str, last_name: str, arrival_date_str: str) -> pathlib.Path:
+    """
+    The per-booking folder path: Tenants/{year}/{booking_id}_{first}_{last}/ -
+    computed but NOT created. Used both by create_booking_folder (which then
+    creates it) and by a PDF "download" request, which must never write
+    anything to disk but still wants the same folder the numbering glob in
+    next_quotation_output_path would look in.
+
+    Args:
+        booking_id: Beds24 booking id
+        first_name: Guest first name
+        last_name: Guest last name
+        arrival_date_str: Check-in date, "YYYY-MM-DD"
+
+    Raises:
+        TenantFolderError: if arrival_date_str isn't a valid date.
+    """
+    try:
+        arrival_dt = datetime.strptime(arrival_date_str, "%Y-%m-%d")
+    except ValueError as exc:
+        raise TenantFolderError(f"Invalid arrival date '{arrival_date_str}': {exc}") from exc
+
+    year = str(arrival_dt.year)
+    year_folder_path = TENANT_FILES_ROOT_PATH / year
+
+    safe_first = _safe_name_component(first_name or "")
+    safe_last = _safe_name_component(last_name or "")
+    folder_name = f"{booking_id}_{safe_first}_{safe_last}"
+    return year_folder_path / folder_name
+
+
 def create_booking_folder(booking_id: str, first_name: str, last_name: str, arrival_date_str: str) -> pathlib.Path:
     """
     Create (if needed) and return the per-booking folder: Tenants/{year}/{booking_id}_{first}_{last}/
@@ -40,18 +71,7 @@ def create_booking_folder(booking_id: str, first_name: str, last_name: str, arri
     Returns:
         Path to the (now-existing) booking folder.
     """
-    try:
-        arrival_dt = datetime.strptime(arrival_date_str, "%Y-%m-%d")
-    except ValueError as exc:
-        raise TenantFolderError(f"Invalid arrival date '{arrival_date_str}': {exc}") from exc
-
-    year = str(arrival_dt.year)
-    year_folder_path = TENANT_FILES_ROOT_PATH / year
-
-    safe_first = _safe_name_component(first_name or "")
-    safe_last = _safe_name_component(last_name or "")
-    folder_name = f"{booking_id}_{safe_first}_{safe_last}"
-    booking_folder_path = year_folder_path / folder_name
+    booking_folder_path = resolve_booking_folder_path(booking_id, first_name, last_name, arrival_date_str)
 
     try:
         booking_folder_path.mkdir(parents=True, exist_ok=True)

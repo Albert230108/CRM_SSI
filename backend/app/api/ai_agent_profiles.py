@@ -7,14 +7,16 @@ from app.models.ai_agent_profile import AiAgentProfile
 from app.models.user import User
 from app.schemas.ai_agent_profile import AiAgentProfileCreate, AiAgentProfileRead, AiAgentProfileUpdate
 from app.services import ai_prompt_blocks
+from app.services.ai_agent_instructions import build_instructions_text
 
 router = APIRouter(prefix="/ai-agent-profiles", tags=["ai-agent-profiles"])
 
+# instructions / instruction_sections / instruction_canvas_notes are handled separately by
+# _apply_instructions - they need conditional derivation, not a blind copy.
 _ASSIGNABLE_FIELDS = (
     "name",
     "role",
     "is_active",
-    "instructions",
     "prompt_blocks",
     "model",
     "temperature",
@@ -47,6 +49,31 @@ def _get_profile(db: Session, profile_id: int) -> AiAgentProfile:
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent profile not found")
     return profile
+
+
+def _apply_instructions(profile: AiAgentProfile, payload: AiAgentProfileCreate | AiAgentProfileUpdate) -> None:
+    """Whichever editing mode is active on this save writes both representations.
+
+    Grid mode (instruction_sections is a list, even empty): the cards are authoritative -
+    `instructions` is derived from them server-side, keeping every existing reader of that column
+    unchanged. Classic mode (instruction_sections omitted/None): the submitted `instructions` is
+    authoritative and gets mirrored into a single card, so switching back to the grid later shows
+    the full text on one card rather than losing it.
+    """
+    if payload.instruction_sections is not None:
+        sections = [section.model_dump() for section in payload.instruction_sections]
+        profile.instruction_sections = sections
+        profile.instruction_canvas_notes = (
+            [note.model_dump() for note in payload.instruction_canvas_notes]
+            if payload.instruction_canvas_notes is not None
+            else []
+        )
+        profile.instructions = build_instructions_text(sections)
+    else:
+        text = (payload.instructions or "").strip()
+        profile.instructions = payload.instructions
+        profile.instruction_sections = [{"id": None, "label": "", "content": text, "order": 0}] if text else []
+        profile.instruction_canvas_notes = []
 
 
 def _apply_default_flag(db: Session, profile: AiAgentProfile, is_default: bool) -> None:
@@ -249,6 +276,7 @@ def create_agent_profile(
         created_by_user_id=current_user.id,
     )
     profile.name = profile.name.strip()
+    _apply_instructions(profile, payload)
     db.add(profile)
     db.flush()
     _apply_default_flag(db, profile, payload.is_default)
@@ -268,6 +296,7 @@ def update_agent_profile(
     for field in _ASSIGNABLE_FIELDS:
         setattr(profile, field, getattr(payload, field))
     profile.name = profile.name.strip()
+    _apply_instructions(profile, payload)
     _apply_default_flag(db, profile, payload.is_default)
     db.commit()
     db.refresh(profile)

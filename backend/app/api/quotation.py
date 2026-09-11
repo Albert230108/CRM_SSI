@@ -1,6 +1,7 @@
 import base64
 import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -44,6 +45,39 @@ def mint_quotation_token(
     token = create_quotation_token(
         tenant_id=tenant.id,
         booking_id=tenant.booking_id,
+        issued_by_user_id=current_user.id,
+    )
+
+    if not QUOTATION_MANAGER_URL:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Quotation Manager URL is not configured",
+        )
+
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=QUOTATION_TOKEN_EXPIRE_MINUTES)
+
+    # Deep-link straight to this tenant's booking when it has one, so the Quotation
+    # Manager opens directly on that quotation instead of its search/home page.
+    base_url = f"{QUOTATION_MANAGER_URL}/{quote(tenant.booking_id, safe='')}" if tenant.booking_id else QUOTATION_MANAGER_URL
+
+    return {
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "quotation_url": f"{base_url}?token={token}",
+    }
+
+
+@router.post("/quotation/token")
+def mint_tenant_less_quotation_token(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Mints a token scoped to no particular tenant/booking - used by the nav bar's
+    "Quotations" button to open the Quotation Manager's home page (search/new
+    quotation), as opposed to the tenant-scoped token above which deep-links
+    straight into one tenant's editor."""
+    token = create_quotation_token(
+        tenant_id=None,
+        booking_id=None,
         issued_by_user_id=current_user.id,
     )
 
@@ -211,6 +245,10 @@ async def create_quotation_beds24_booking(
             "qty": item.qty,
             "amount": item.amount,
             "vatRate": item.vat_rate,
+            # Payment status ("not paid" or the date actually paid) - omitted for charge
+            # rows, which have no meaningful status. Without this, a status typed in the
+            # Quotation Manager never reached Beds24 and was lost on the next reload.
+            **({"status": item.status} if item.status else {}),
         }
         for item in request.invoice_items
     ]
@@ -278,6 +316,8 @@ async def send_quotation_invoice_items_to_beds24(
             "qty": item.qty,
             "amount": item.amount,
             "vatRate": item.vat_rate,
+            # See create_quotation_beds24_booking above - same reasoning for pushing status.
+            **({"status": item.status} if item.status else {}),
         }
         for item in request.invoice_items
     ]

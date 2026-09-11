@@ -1,3 +1,5 @@
+import type { AiTemplateNote, AiTemplateSection } from './aiReplyTemplate'
+
 export type AgentRole = 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'sales_manager' | 'memory_redo' | 'memory_qa' | 'run_qa'
 
 export type AiAgentProfile = {
@@ -7,6 +9,11 @@ export type AiAgentProfile = {
   is_default: boolean
   is_active: boolean
   instructions: string | null
+  // Card-grid authoring UI for `instructions` (the Agent Instructions board). null means the
+  // classic textarea was last used to save; `instructions` above is always kept in sync either
+  // way and is what every prompt-building consumer reads.
+  instruction_sections: AiTemplateSection[] | null
+  instruction_canvas_notes: AiTemplateNote[] | null
   model: string | null
   temperature: number | null
   max_output_tokens: number | null

@@ -50,7 +50,16 @@ class AiAgentProfile(Base):
     is_default = Column(Boolean, nullable=False, default=False, server_default="false")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     # The operator-written rules that define this agent's job. Sent as the first prompt block.
+    # This is always kept in sync with instruction_sections (derived via
+    # ai_agent_instructions.build_instructions_text on every save) so all of the 11+ existing
+    # read sites of this column keep working unchanged - it is the source of truth for consumers,
+    # the grid below is only the authoring UI.
     instructions = Column(Text, nullable=True)
+    # Card-grid representation of `instructions` (the Agent Instructions board), in the same shape
+    # as AiReplyTemplate.sections/canvas_notes. Post-it notes (instruction_canvas_notes) are never
+    # read by build_instructions_text - organizational only, like the templates board.
+    instruction_sections = Column(JSON, nullable=False, default=list, server_default="[]")
+    instruction_canvas_notes = Column(JSON, nullable=False, default=list, server_default="[]")
     # Overrides for the fixed prompt scaffolding defined in services/ai_prompt_blocks.py,
     # keyed by block key. A key present here wins even when its value is an empty string -
     # that is how an operator removes a block. A key absent falls back to the built-in text.

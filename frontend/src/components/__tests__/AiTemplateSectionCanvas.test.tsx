@@ -27,10 +27,18 @@ function Harness({
   latest,
   initialSections,
   initialNotes = [],
+  headerLabel,
+  helpText,
+  emptyStateText,
+  withBrainSections = true,
 }: {
   latest: Latest
   initialSections: AiTemplateSection[]
   initialNotes?: AiTemplateNote[]
+  headerLabel?: string
+  helpText?: string
+  emptyStateText?: string
+  withBrainSections?: boolean
 }) {
   const [sections, setSections] = useState(initialSections)
   const [notes, setNotes] = useState(initialNotes)
@@ -43,15 +51,24 @@ function Harness({
       onSectionsChange={setSections}
       onNotesChange={setNotes}
       contentPlaceholderHint="Section content"
-      brainSections={[{ id: 1, path: 'policies.cancellation', title: 'Cancellation', is_active: true }]}
+      brainSections={
+        withBrainSections ? [{ id: 1, path: 'policies.cancellation', title: 'Cancellation', is_active: true }] : undefined
+      }
       viewportKey="test"
+      headerLabel={headerLabel}
+      helpText={helpText}
+      emptyStateText={emptyStateText}
     />
   )
 }
 
-function setup(initialSections: AiTemplateSection[], initialNotes: AiTemplateNote[] = []) {
+function setup(
+  initialSections: AiTemplateSection[],
+  initialNotes: AiTemplateNote[] = [],
+  overrides: Partial<Pick<Parameters<typeof Harness>[0], 'headerLabel' | 'helpText' | 'emptyStateText' | 'withBrainSections'>> = {},
+) {
   const latest: Latest = { sections: initialSections, notes: initialNotes }
-  render(<Harness latest={latest} initialSections={initialSections} initialNotes={initialNotes} />)
+  render(<Harness latest={latest} initialSections={initialSections} initialNotes={initialNotes} {...overrides} />)
   return latest
 }
 
@@ -307,5 +324,25 @@ describe('AiTemplateSectionCanvas', () => {
     expect(latest.sections).toHaveLength(1)
     expect(latest.sections[0].id).toBe('section-a')
     expect(latest.sections[0].order).toBe(0)
+  })
+
+  it('supports a non-template consumer: custom header/help/empty-state text and no brain sections', () => {
+    setup([], [], {
+      headerLabel: 'Instructions (subprompts)',
+      helpText: 'Custom help text for the instructions grid.',
+      emptyStateText: 'No instructions yet.',
+      withBrainSections: false,
+    })
+
+    expect(screen.getByText('Instructions (subprompts)')).toBeInTheDocument()
+    expect(screen.getByText('Custom help text for the instructions grid.')).toBeInTheDocument()
+    expect(screen.getByText('No instructions yet.')).toBeInTheDocument()
+  })
+
+  it('falls back to the AI Templates defaults when the new label props are omitted', () => {
+    setup([])
+
+    expect(screen.getByText('1. Template text (subprompts)')).toBeInTheDocument()
+    expect(screen.getByText(/Post-it notes are never sent to the AI\./)).toBeInTheDocument()
   })
 })

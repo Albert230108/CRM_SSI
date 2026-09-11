@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ChargesTable from '../components/ChargesTable'
+import PropertyRoomFields from '../components/PropertyRoomFields'
 import PaymentsTable from '../components/PaymentsTable'
 import { ApiError, apiPost } from '../lib/apiClient'
+import { isPaymentPaid } from '../lib/payments'
+import { downloadBase64Pdf } from '../lib/download'
 import {
   LONG_STAY_DEPOSIT_DEFAULT,
   LONG_STAY_DEPOSIT_NIGHT_THRESHOLD,
@@ -48,8 +51,7 @@ export default function NewQuotationPage() {
   const [buildingCharges, setBuildingCharges] = useState(false)
   const [buildingPlan, setBuildingPlan] = useState(false)
   const [creating, setCreating] = useState(false)
-
-  const rooms = PROPERTY_ROOMS[propertyName] ?? []
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   const nights = useMemo(() => {
     if (!checkIn || !checkOut) return null
@@ -76,12 +78,6 @@ export default function NewQuotationPage() {
     [payments],
   )
   const balanceDiff = Math.round((chargesTotal - paymentsTotal) * 100) / 100
-
-  const handlePropertyChange = (value: string) => {
-    setPropertyName(value)
-    const firstRoom = (PROPERTY_ROOMS[value] ?? [])[0] ?? ''
-    setRoomName(firstRoom)
-  }
 
   const handleChargeChange = (localId: string, patch: Partial<EditableInvoiceItem>) =>
     setCharges((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)))
@@ -144,7 +140,16 @@ export default function NewQuotationPage() {
       setError('Valid check-in and check-out dates are needed to build a payment plan.')
       return
     }
-    if (payments.length > 0 && !window.confirm('Replace the current payment rows with the generated plan?')) return
+    const hasPaidRows = payments.some((p) => isPaymentPaid(p.status))
+    if (
+      payments.length > 0 &&
+      !window.confirm(
+        hasPaidRows
+          ? 'Regenerate the plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced.'
+          : 'Replace the current payment rows with the generated plan?',
+      )
+    )
+      return
     setBuildingPlan(true)
     setError(null)
     try {
@@ -154,6 +159,13 @@ export default function NewQuotationPage() {
         installments,
         security_deposit: securityDeposit,
         charges: charges.map((c) => ({ description: c.description, qty: c.qty, amount: c.amount })),
+        existing_payments: payments.map((p) => ({
+          description: p.description,
+          qty: p.qty,
+          amount: p.amount,
+          status: p.status ?? 'not paid',
+          vat_rate: p.vat_rate,
+        })),
       })
       setPayments(
         result.payments.map((p) => ({
@@ -167,11 +179,61 @@ export default function NewQuotationPage() {
           status: p.status,
         })),
       )
-      setNotice(`Generated ${result.payments.length} payment rows.`)
+      setNotice(
+        result.kept_count > 0
+          ? `Kept ${result.kept_count} paid row(s); ${result.payments.length - result.kept_count} row(s) regenerated for the remaining €${result.remaining.toFixed(2)}.`
+          : `Generated ${result.payments.length} payment rows.`,
+      )
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to build payment plan')
     } finally {
       setBuildingPlan(false)
+    }
+  }
+
+  const handleDownloadPdf = async () => {
+    if (!checkIn || !checkOut) {
+      setError('Valid check-in and check-out dates are needed to download a PDF.')
+      return
+    }
+    setDownloadingPdf(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await apiPost<{ quotation_number: number; name?: string | null; content_base64?: string | null }>(
+        '/api/quotation/generate-pdf',
+        {
+          booking_id: 'Draft',
+          first_name: firstName,
+          last_name: lastName,
+          room_name: roomName,
+          property_name: propertyName,
+          check_in: checkIn,
+          check_out: checkOut,
+          security_deposit: securityDeposit,
+          invoice_items: [...charges, ...payments].map((item) => ({
+            id: item.id,
+            type: item.type,
+            description: item.description,
+            qty: item.qty,
+            amount: item.amount,
+            vat_rate: item.vat_rate,
+            currency: item.currency,
+            status: item.status,
+          })),
+          quotation_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          delivery: 'download',
+          include_content: true,
+        },
+      )
+      if (result.content_base64) {
+        downloadBase64Pdf(result.content_base64, result.name || `Quotation_Draft_${String(result.quotation_number).padStart(3, '0')}.pdf`)
+      }
+      setNotice('Downloaded a draft PDF. Nothing was written to Beds24.')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to download PDF')
+    } finally {
+      setDownloadingPdf(false)
     }
   }
 
@@ -239,26 +301,7 @@ export default function NewQuotationPage() {
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-gray-500">Booking</h2>
         <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
-          <label className="text-xs text-gray-500">
-            Property
-            <select value={propertyName} onChange={(e) => handlePropertyChange(e.target.value)} className={inputClass}>
-              {PROPERTIES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs text-gray-500">
-            Room
-            <select value={roomName} onChange={(e) => setRoomName(e.target.value)} className={inputClass}>
-              {rooms.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </label>
+          <PropertyRoomFields propertyName={propertyName} roomName={roomName} onPropertyChange={setPropertyName} onRoomChange={setRoomName} />
           <label className="text-xs text-gray-500">
             Status
             <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
@@ -364,14 +407,25 @@ export default function NewQuotationPage() {
         {Math.abs(balanceDiff) <= 0.01 ? '(balanced)' : `(off by €${Math.abs(balanceDiff).toFixed(2)})`}
       </div>
 
-      <button
-        type="button"
-        onClick={handleCreate}
-        disabled={creating}
-        className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50"
-      >
-        {creating ? 'Creating booking...' : 'Create booking in Beds24'}
-      </button>
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={handleCreate}
+          disabled={creating}
+          className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50"
+        >
+          {creating ? 'Creating booking...' : 'Create booking in Beds24'}
+        </button>
+        <button
+          type="button"
+          onClick={handleDownloadPdf}
+          disabled={downloadingPdf}
+          title="Renders and downloads a PDF from this form. Nothing is written to Beds24."
+          className="rounded-lg border border-cyan-600 px-4 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+        >
+          {downloadingPdf ? 'Downloading...' : 'Download PDF (draft)'}
+        </button>
+      </div>
     </div>
   )
 }

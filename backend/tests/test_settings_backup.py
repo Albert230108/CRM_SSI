@@ -256,6 +256,120 @@ def test_scoped_dataset_skips_row_with_missing_owner_tenant(client, db_session):
     assert db_session.query(TenantAiSettings).count() == 1
 
 
+def test_replace_import_from_older_export_does_not_blank_out_newer_columns(client, db_session):
+    """An export taken before a later migration added a column (e.g. the Agent Instructions grid's
+    instruction_sections) must not wipe that column back to its default when re-imported - the
+    whole point of this backup is to undo a migration safely, not to erase it by re-importing an
+    earlier snapshot."""
+    existing = AiAgentProfile(
+        id=300,
+        name="Planner with grid",
+        role="planner",
+        instructions="Be concise.",
+        instruction_sections=[{"id": "a", "label": "", "content": "Be concise.", "order": 0}],
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    old_shaped_export = {
+        "schemaVersion": settings_backup_service.SCHEMA_VERSION,
+        "exportedAt": "2026-01-01T00:00:00+00:00",
+        "appVersion": None,
+        "excludedFields": {},
+        "data": {
+            "ai_agent_profiles": [
+                {
+                    # No instruction_sections / instruction_canvas_notes keys at all - simulates a
+                    # file exported before those columns existed.
+                    "id": 300,
+                    "name": "Planner with grid (edited elsewhere)",
+                    "role": "planner",
+                    "is_default": False,
+                    "is_active": True,
+                    "instructions": "Be concise.",
+                    "prompt_blocks": {},
+                    "model": None,
+                    "temperature": None,
+                    "max_output_tokens": None,
+                    "redo_model": None,
+                    "redo_temperature": None,
+                    "redo_max_output_tokens": None,
+                    "history_limit": 40,
+                    "history_channels": "both",
+                    "history_lookback_days": None,
+                    "include_beds24": True,
+                    "include_payments": False,
+                    "include_notes": True,
+                    "include_availability": False,
+                    "include_tenant_brain": False,
+                    "include_brain_index": True,
+                    "always_include_brain_sections": [],
+                    "match_inbound_language": True,
+                    "escalate_keywords": [],
+                    "on_no_template_match": "escalate",
+                    "min_confidence": 0.5,
+                    "max_redraft_attempts": 2,
+                    "block_auto_send_on_fail": True,
+                    "daily_token_cap": None,
+                    "created_by_user_id": None,
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                },
+                {
+                    # A brand-new row (also old-shaped) - since it doesn't exist yet, the missing
+                    # columns should fall back to the model default ([]), not error.
+                    "id": 301,
+                    "name": "New old-shaped profile",
+                    "role": "checker",
+                    "is_default": False,
+                    "is_active": True,
+                    "instructions": "Proof-read.",
+                    "prompt_blocks": {},
+                    "model": None,
+                    "temperature": None,
+                    "max_output_tokens": None,
+                    "redo_model": None,
+                    "redo_temperature": None,
+                    "redo_max_output_tokens": None,
+                    "history_limit": 40,
+                    "history_channels": "both",
+                    "history_lookback_days": None,
+                    "include_beds24": True,
+                    "include_payments": False,
+                    "include_notes": True,
+                    "include_availability": False,
+                    "include_tenant_brain": False,
+                    "include_brain_index": True,
+                    "always_include_brain_sections": [],
+                    "match_inbound_language": True,
+                    "escalate_keywords": [],
+                    "on_no_template_match": "escalate",
+                    "min_confidence": 0.5,
+                    "max_redraft_attempts": 2,
+                    "block_auto_send_on_fail": True,
+                    "daily_token_cap": None,
+                    "created_by_user_id": None,
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                },
+            ]
+        },
+    }
+
+    response = _upload(client, "replace", old_shaped_export)
+    assert response.status_code == 200, response.text
+
+    db_session.expire_all()
+    updated = db_session.query(AiAgentProfile).filter(AiAgentProfile.id == 300).one()
+    assert updated.name == "Planner with grid (edited elsewhere)"
+    # The column the old export never captured is left exactly as it was, not blanked to [].
+    assert updated.instruction_sections == [{"id": "a", "label": "", "content": "Be concise.", "order": 0}]
+
+    created = db_session.query(AiAgentProfile).filter(AiAgentProfile.id == 301).one()
+    assert created.instruction_sections == []
+    assert created.instruction_canvas_notes == []
+
+
 def test_brain_sections_parent_child_replace_survives_fk_ordering(client, db_session):
     export_payload = {
         "schemaVersion": settings_backup_service.SCHEMA_VERSION,

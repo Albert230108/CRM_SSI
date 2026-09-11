@@ -26,13 +26,15 @@ _bearer_scheme = HTTPBearer(auto_error=True)
 
 class QuotationTokenPayload(BaseModel):
     scope: str
-    tenant_id: int
+    # None for a tenant-less token (e.g. the nav-bar "Quotations" button, which opens
+    # the Quotation Manager home page rather than a specific tenant's editor).
+    tenant_id: int | None
     booking_id: str | None
     issued_by_user_id: int
 
 
 def create_quotation_token(
-    tenant_id: int,
+    tenant_id: int | None,
     booking_id: str | None,
     issued_by_user_id: int,
     expires_minutes: int | None = None,
@@ -68,12 +70,12 @@ def decode_quotation_token(token: str) -> QuotationTokenPayload:
 
     tenant_id = payload.get("tenant_id")
     issued_by_user_id = payload.get("sub")
-    if tenant_id is None or issued_by_user_id is None:
+    if issued_by_user_id is None:
         raise invalid_token_exception
 
     return QuotationTokenPayload(
         scope=payload["scope"],
-        tenant_id=int(tenant_id),
+        tenant_id=int(tenant_id) if tenant_id is not None else None,
         booking_id=payload.get("booking_id"),
         issued_by_user_id=int(issued_by_user_id),
     )

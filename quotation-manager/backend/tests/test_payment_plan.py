@@ -181,3 +181,170 @@ def test_build_payment_plan_endpoint_bad_dates(client, auth_headers):
         json={"check_in": "2025-06-08", "check_out": "2025-06-01", "installments": 1, "charges": []},
     )
     assert response.status_code == 400
+
+
+# --- regenerating a plan without disturbing already-paid rows ---
+
+
+def _paid_row(description: str, amount: float, status: str = "12-Sep-2026") -> "payment_plan.PaymentRow":
+    from app.services.payment_plan import PaymentRow
+
+    return PaymentRow(description=description, qty=1, amount=amount, status=status)
+
+
+def _unpaid_row(description: str, amount: float) -> "payment_plan.PaymentRow":
+    from app.services.payment_plan import PaymentRow
+
+    return PaymentRow(description=description, qty=1, amount=amount, status="not paid")
+
+
+def test_regenerate_keeps_paid_first_installment_and_splits_remainder():
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=3,
+        security_deposit=0.0,
+        existing_payments=[_paid_row("Installment 1 - Confirms booking (End cleaning + Administration costs)", 150.0)],
+        today=date(2025, 5, 1),
+    )
+    assert result["kept_count"] == 1
+    assert result["paid_total"] == 150.0
+    assert result["remaining"] == pytest.approx(871.0 - 150.0, abs=0.01)
+
+    kept = [p for p in result["payments"] if p["kind"] == "kept"]
+    assert len(kept) == 1
+    assert kept[0]["amount"] == 150.0
+    assert kept[0]["status"] == "12-Sep-2026"
+
+    new_installments = [p for p in result["payments"] if p["kind"] == "installment"]
+    assert len(new_installments) == 2
+    assert new_installments[0]["description"].startswith("Installment 2 - 1st Rental Period")
+    assert new_installments[1]["description"].startswith("Installment 3 - 2nd Rental Period")
+    assert round(sum(p["amount"] for p in new_installments), 2) == pytest.approx(result["remaining"], abs=0.02)
+    # New rows never fall due before the original today+4 anchor.
+    for p in new_installments:
+        due_str = p["description"].split("due: ")[1]
+        assert datetime.strptime(due_str, "%d-%b-%Y").date() >= date(2025, 5, 1) + timedelta(days=4)
+
+
+def test_regenerate_with_fewer_new_installments_than_paid_makes_one_remainder_row():
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=1,  # total requested is now lower than what's already paid installments
+        security_deposit=200.0,
+        existing_payments=[_paid_row("Installment 1 - Confirms booking", 150.0)],
+        today=date(2025, 5, 1),
+    )
+    new_installments = [p for p in result["payments"] if p["kind"] == "installment"]
+    assert len(new_installments) == 1
+    assert new_installments[0]["amount"] == pytest.approx(result["remaining"], abs=0.01)
+    assert result["remaining"] > 0
+
+
+def test_regenerate_refunds_overpayment_instead_of_new_installments():
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=3,
+        security_deposit=0.0,
+        existing_payments=[_paid_row("Installment 1 - Confirms booking", 1000.0)],
+        today=date(2025, 5, 1),
+    )
+    assert result["remaining"] < 0
+    assert not [p for p in result["payments"] if p["kind"] == "installment"]
+    refunds = [p for p in result["payments"] if p["kind"] == "overpayment_refund"]
+    assert len(refunds) == 1
+    assert refunds[0]["amount"] == result["remaining"]
+    assert refunds[0]["amount"] < 0
+    assert "due:" in refunds[0]["description"]
+
+
+def test_regenerate_balanced_adds_no_new_installment_but_keeps_deposit_refund():
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=1,
+        security_deposit=200.0,
+        existing_payments=[_paid_row("Installment 1 - Confirms booking", 871.0 + 200.0)],
+        today=date(2025, 5, 1),
+    )
+    assert result["remaining"] == pytest.approx(0.0, abs=0.01)
+    assert not [p for p in result["payments"] if p["kind"] in ("installment", "overpayment_refund")]
+    deposit_refunds = [p for p in result["payments"] if p["kind"] == "deposit_refund"]
+    assert len(deposit_refunds) == 1
+    assert deposit_refunds[0]["amount"] == -200.0
+
+
+def test_regenerate_does_not_duplicate_an_already_kept_deposit_refund():
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=1,
+        security_deposit=200.0,
+        existing_payments=[
+            _paid_row("Installment 1 - Confirms booking", 871.0 + 200.0),
+            _paid_row("Refund of Deposit (Provided No Damages Are Present); due: 08-Sep-2025", -200.0),
+        ],
+        today=date(2025, 5, 1),
+    )
+    deposit_refunds = [p for p in result["payments"] if "refund of deposit" in p["description"].lower()]
+    # Only the kept one - no fresh deposit_refund row appended on top of it.
+    assert len(deposit_refunds) == 1
+    assert deposit_refunds[0]["kind"] == "kept"
+
+
+def test_regenerate_with_no_paid_rows_matches_fresh_plan():
+    fresh = payment_plan.build_payment_plan(
+        charges=_charges(), check_in=date(2025, 6, 1), check_out=date(2025, 9, 1),
+        installments=3, security_deposit=0.0, today=date(2025, 5, 1),
+    )
+    regenerated = payment_plan.build_payment_plan(
+        charges=_charges(), check_in=date(2025, 6, 1), check_out=date(2025, 9, 1),
+        installments=3, security_deposit=0.0,
+        existing_payments=[_unpaid_row("Installment 1 - Confirms booking", 150.0)],
+        today=date(2025, 5, 1),
+    )
+    assert regenerated["kept_count"] == 0
+    assert [p["amount"] for p in regenerated["payments"]] == [p["amount"] for p in fresh["payments"]]
+
+
+def test_is_paid_treats_not_paid_and_blank_as_unpaid():
+    assert payment_plan.is_paid("not paid") is False
+    assert payment_plan.is_paid("Not Paid") is False
+    assert payment_plan.is_paid("") is False
+    assert payment_plan.is_paid(None) is False
+    assert payment_plan.is_paid("12-Sep-2026") is True
+
+
+def test_build_payment_plan_endpoint_with_existing_payments(client, auth_headers):
+    response = client.post(
+        "/api/quotation/build-payment-plan",
+        headers=auth_headers,
+        json={
+            "check_in": "2025-06-01",
+            "check_out": "2025-09-01",
+            "installments": 3,
+            "security_deposit": 0.0,
+            "charges": [
+                {"description": "Studio 1 - stay", "qty": 7, "amount": 100.0},
+                {"description": "Citytax for 1 person(s)", "qty": 7, "amount": 3.0},
+                {"description": "End cleaning", "qty": 1, "amount": 100.0},
+                {"description": "Administration costs", "qty": 1, "amount": 50.0},
+            ],
+            "existing_payments": [
+                {"description": "Installment 1 - Confirms booking", "qty": 1, "amount": 150.0, "status": "12-Sep-2026"}
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kept_count"] == 1
+    kept = [p for p in body["payments"] if p["kind"] == "kept"]
+    assert kept[0]["status"] == "12-Sep-2026"
+    assert any(p["kind"] == "installment" for p in body["payments"])

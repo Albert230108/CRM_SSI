@@ -26,6 +26,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.services import vat as vat_service
+
 logger = logging.getLogger(__name__)
 
 ASSETS_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets"
@@ -376,7 +378,10 @@ def create_invoice_pdf(
 
         qty_display = str(int(qty)) if qty == int(qty) else str(qty)
         line_total = round(price * qty, 2)
-        vat_amount = round(line_total * (vat_rate / 100), 2)
+        # invoice_items reach here already VAT-inclusive (see charge_builder /
+        # app.services.vat), so the "Vat" column is the VAT portion already
+        # included in the line, not VAT added on top of it.
+        vat_amount = vat_service.included_vat(line_total, vat_rate)
 
         invoice_data.append([description, qty_display, f"€{price:.2f}", f"{vat_rate}%", f"€{vat_amount:.2f}", f"€{line_total:.2f}"])
 

@@ -178,6 +178,37 @@ def _serialize_row(row: Any, columns: list[str]) -> dict[str, Any]:
     return {name: _serialize_value(getattr(row, name)) for name in columns}
 
 
+def _column_default(column: Column) -> Any:
+    """The model-level default for a column absent from an older export (a column added by a
+    later migration than the one the file was taken under). Only used when the key is missing
+    entirely - a key explicitly present as null is passed through as null."""
+    if column.default is None:
+        return None
+    arg = column.default.arg
+    if not callable(arg):
+        return arg
+    # SQLAlchemy wraps a plain callable default (e.g. `default=list`) to accept an execution
+    # context, which the caller here has none of.
+    return arg(None)
+
+
+def _apply_row_columns(obj: Any, spec: DatasetSpec, row: dict[str, Any], columns: list[str], *, is_new: bool) -> None:
+    """Writes one row's columns onto `obj`.
+
+    A column absent from the row (an older export, taken before a later migration added it) uses
+    the model default for a brand-new row, or is left untouched on a row that already exists -
+    re-importing a pre-migration backup must not blank out a column that backup never captured.
+    """
+    for name in columns:
+        if name == "id":
+            continue
+        column = spec.model.__table__.columns[name]
+        if name in row:
+            setattr(obj, name, _deserialize_value(column, row[name]))
+        elif is_new:
+            setattr(obj, name, _column_default(column))
+
+
 def _get_app_version() -> str | None:
     try:
         result = subprocess.run(
@@ -285,17 +316,14 @@ def _apply_global(db: Session, spec: DatasetSpec, rows: list[dict[str, Any]]) ->
     result = DatasetResult(key=spec.key)
     for row in rows:
         obj = db.get(spec.model, row["id"])
-        if obj is None:
+        is_new = obj is None
+        if is_new:
             obj = spec.model(id=row["id"])
             db.add(obj)
             result.added += 1
         else:
             result.replaced += 1
-        for name in columns:
-            if name == "id":
-                continue
-            column = spec.model.__table__.columns[name]
-            setattr(obj, name, _deserialize_value(column, row.get(name)))
+        _apply_row_columns(obj, spec, row, columns, is_new=is_new)
     db.flush()
     return result
 
@@ -317,17 +345,14 @@ def _apply_scoped(db: Session, spec: DatasetSpec, rows: list[dict[str, Any]]) ->
                     )
                 continue
         obj = _find_by_natural_key(db, spec, row)
-        if obj is None:
+        is_new = obj is None
+        if is_new:
             obj = spec.model()
             db.add(obj)
             result.added += 1
         else:
             result.replaced += 1
-        for name in columns:
-            if name == "id":
-                continue
-            column = spec.model.__table__.columns[name]
-            setattr(obj, name, _deserialize_value(column, row.get(name)))
+        _apply_row_columns(obj, spec, row, columns, is_new=is_new)
     db.flush()
     return result
 

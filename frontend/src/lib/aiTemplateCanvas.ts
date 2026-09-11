@@ -66,6 +66,34 @@ export function snapToGrid(value: number) {
   return Math.round(value / GRID) * GRID
 }
 
+/** Gives pre-canvas sections an id, a grid slot, and a size/stacking order. */
+export function backfillSections(sections: AiTemplateSection[]): AiTemplateSection[] {
+  return sections.map((section, index) => {
+    const position =
+      section.x != null && section.y != null ? { x: section.x, y: section.y } : nextSectionPosition(index)
+    return {
+      ...section,
+      id: section.id ?? crypto.randomUUID(),
+      order: section.order ?? index,
+      x: position.x,
+      y: position.y,
+      w: section.w ?? CARD_WIDTH,
+      h: section.h ?? CARD_HEIGHT,
+      z: section.z ?? section.order ?? index,
+    }
+  })
+}
+
+/** Notes default above sections, matching how the canvas looked before z existed. */
+export function backfillNotes(notes: AiTemplateNote[]): AiTemplateNote[] {
+  return notes.map((note, index) => ({
+    ...note,
+    w: note.w ?? NOTE_WIDTH,
+    h: note.h ?? NOTE_HEIGHT,
+    z: note.z ?? NOTE_Z_BASE + index,
+  }))
+}
+
 /** Bounding box of every item on the canvas, or null when the canvas is empty. */
 export function contentBounds(sections: AiTemplateSection[], notes: AiTemplateNote[]) {
   const rects = [...sections.map(sectionRect), ...notes.map(noteRect)]

@@ -17,6 +17,13 @@ Builds, in order:
 5. End cleaning.
 6. Administration costs, via the already-ported admin_costs service, based
    on the running total of the rows above.
+
+Every internal price lookup and calculation above runs on the VAT-EXCLUSIVE
+config values (Settings/base_prices/NewCombinedPrices/admin_costs stay
+ex-VAT). Only the final charge amounts handed back to the quotation form are
+grossed up per-row (see app.services.vat) to match Beds24's VAT-inclusive
+invoice-item amounts - that's the one place the incl.-VAT figures the tenant
+actually sees come from.
 """
 
 from datetime import date, timedelta
@@ -25,18 +32,15 @@ from typing import Any, Optional
 from app.services import admin_costs as admin_costs_service
 from app.services import discount_engine
 from app.services import pdf_service
+from app.services import vat
+from app.services.vat import VAT_2026_START, vat_rate_for_date  # re-exported for existing callers
 
-VAT_2026_START = date(2026, 1, 1)
 SSI_QUOTATION_FLAG = "(SSI)"
 _DISCOUNT_ROW_EPSILON = 0.005
 
 
 class ChargeBuilderError(Exception):
     """Raised when a booking can't be priced (bad dates, unknown property/room)."""
-
-
-def vat_rate_for_date(d: date) -> float:
-    return 21.0 if d >= VAT_2026_START else 9.0
 
 
 def _year_keys(pricing_data: dict) -> list[str]:
@@ -259,6 +263,15 @@ def build_standard_charges(
         "vat_rate": checkin_vat,
         "detail": admin_result["description"],
     })
+
+    # Everything above priced off the ex-VAT config values (Settings stays
+    # ex-VAT). Gross up each row now, once, so what lands on the quotation form
+    # matches Beds24's VAT-inclusive invoice-item amounts - e.g. a 58.68 net
+    # 7-night tier at 21% becomes the 71.00 that live bookings actually hold.
+    for charge in charges:
+        net = charge["amount"]
+        charge["amount_excl_vat"] = net
+        charge["amount"] = vat.gross_amount(net, charge["vat_rate"])
 
     return {
         "nights": nights,

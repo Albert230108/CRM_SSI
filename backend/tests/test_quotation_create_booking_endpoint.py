@@ -62,3 +62,39 @@ def test_create_booking_endpoint_requires_token(client):
         json={"room_id": 1, "arrival": "2025-06-01", "departure": "2025-06-08", "first_name": "Jane"},
     )
     assert response.status_code == 401
+
+
+def test_create_booking_endpoint_forwards_payment_status_to_beds24(client, db_session, monkeypatch):
+    captured = {}
+
+    async def capturing_create_booking(booking_payload):
+        captured["booking_payload"] = booking_payload
+        return "NEW-456"
+
+    import app.api.quotation as quotation_module
+
+    monkeypatch.setattr(quotation_module, "create_booking", capturing_create_booking)
+    monkeypatch.setattr(quotation_module, "sync_tenant_from_beds24_booking", fake_sync)
+
+    headers = _auth_headers_for(1, None)
+    response = client.post(
+        "/api/quotation/beds24-booking",
+        json={
+            "room_id": 262377,
+            "arrival": "2025-06-01",
+            "departure": "2025-06-08",
+            "status": "inquiry",
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "invoice_items": [
+                {"type": "charge", "description": "Rent", "qty": 7, "amount": 65.0, "vat_rate": 9},
+                {"type": "payment", "description": "Installment 1", "qty": 1, "amount": 100.0, "status": "not paid"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    charge_item, payment_item = captured["booking_payload"]["invoiceItems"]
+    assert "status" not in charge_item
+    assert payment_item["status"] == "not paid"

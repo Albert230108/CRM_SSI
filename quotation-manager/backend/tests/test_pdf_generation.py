@@ -1,6 +1,7 @@
 from datetime import date
 
 from app.services import pdf_service
+from app.services import vat as vat_service
 
 
 def test_split_booking_by_vat_splits_at_2026_boundary():
@@ -59,3 +60,38 @@ def test_create_invoice_pdf_writes_real_pdf_file(tmp_path):
     with open(output_path, "rb") as f:
         header = f.read(5)
     assert header == b"%PDF-"
+
+
+def test_pdf_vat_column_shows_vat_included_in_a_gross_line_not_added_on_top():
+    # invoice_items reach create_invoice_pdf already VAT-inclusive (charge_builder
+    # grosses charges up before they ever land on the form) - the PDF's "Vat"
+    # column must show the VAT portion already inside that line, not VAT added
+    # on top of it. Studio 6, 5 nights @ 71.00 gross, 21% VAT -> line_total 355.00.
+    line_total = 5 * 71.00
+    included = vat_service.included_vat(line_total, 21)
+    added_on_top = round(line_total * 0.21, 2)
+    assert included != added_on_top
+    assert included == round(line_total - vat_service.net_amount(line_total, 21), 2)
+
+
+def test_create_invoice_pdf_accepts_vat_inclusive_amounts(tmp_path):
+    # Regression for the VAT-inclusive charge_builder output: the PDF must render
+    # without error when invoice_items amounts already include VAT (e.g. 71.00 at
+    # vatRate=21, matching what Beds24/charge_builder actually hand it).
+    output_path = tmp_path / "Quotation_12345_002.pdf"
+    result_path = pdf_service.create_invoice_pdf(
+        output_path=output_path,
+        tenant_name="Jane Doe",
+        booking_number="12345",
+        invoice_items=[
+            {"type": "charge", "description": "Studio 6 - stay", "qty": 5, "amount": 71.00, "lineTotal": 355.00, "vatRate": 21},
+            {"type": "payment", "description": "Installment 1", "qty": 1, "amount": 355.00, "lineTotal": 355.00, "status": "not paid"},
+        ],
+        quotation_date="01 Sep 2026",
+        quotation_number=2,
+        room_name="Studio 6",
+        first_night="2026-09-05",
+        leaving_day="2026-09-10",
+        security_deposit=0.0,
+    )
+    assert result_path.exists()

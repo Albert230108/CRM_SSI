@@ -497,7 +497,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
               type="button"
               onClick={handleQuoteClick}
               disabled={!tenantId || quoteLoading}
-              title={tenantId ? 'Open Quotation Manager' : 'Select a tenant first'}
+              title={tenantId ? "Open this tenant's quotation" : 'Select a tenant first'}
               className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-cyan-700">
