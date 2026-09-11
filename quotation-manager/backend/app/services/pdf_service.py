@@ -61,7 +61,7 @@ def _apply_payment_links(payments: list[dict], booking_number: str | None) -> li
         if "##NOLINK##" in description:
             payment["description"] = description.replace("##NOLINK##", "").strip()
             continue
-        if "<a href" in description.lower():
+        if "<a href" in description.lower() or "[paylink:" in description.lower():
             continue
         line_total = payment.get("line_total", 0) or 0
         if line_total <= 0 or "refund of deposit" in description.lower():

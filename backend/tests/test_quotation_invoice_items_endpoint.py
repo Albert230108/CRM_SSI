@@ -2,7 +2,7 @@ from app.models.tenant import Tenant
 from tests.conftest import ADMIN_USER
 
 
-async def fake_update_booking_invoice_items(booking_id, original_invoice_item_ids, final_invoice_items):
+async def fake_update_booking_invoice_items(booking_id, original_invoice_item_ids, final_invoice_items, booking_fields=None):
     return None
 
 
@@ -60,8 +60,9 @@ def test_send_invoice_items_endpoint_requires_token(client):
 def test_send_invoice_items_forwards_payment_status_to_beds24(client, db_session, monkeypatch):
     captured = {}
 
-    async def capturing_update(booking_id, original_invoice_item_ids, final_invoice_items):
+    async def capturing_update(booking_id, original_invoice_item_ids, final_invoice_items, booking_fields=None):
         captured["final_invoice_items"] = final_invoice_items
+        captured["booking_fields"] = booking_fields
 
     import app.api.quotation as quotation_module
 
@@ -91,3 +92,7 @@ def test_send_invoice_items_forwards_payment_status_to_beds24(client, db_session
     # Charges have no meaningful Beds24 payment status - key stays absent, not null.
     assert "status" not in charge_item
     assert payment_item["status"] == "12-Sep-2026"
+    # C2: positive payments get Beds24's pay-link tag appended on send.
+    assert payment_item["description"] == "Installment 1 [PAYLINK: 100.00]"
+    # D1: booking_fields are forwarded (all None here since no status/sub-status/flag was sent).
+    assert captured["booking_fields"] == {"status": None, "subStatus": None, "flagText": None}

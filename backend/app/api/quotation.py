@@ -1,6 +1,7 @@
 import base64
 import mimetypes
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -278,6 +279,39 @@ class CreateBookingRequest(BaseModel):
     invoice_items: list[QuotationInvoiceItem] = []
 
 
+# Strip any previously-embedded pay link (HTML anchor or a prior [PAYLINK: ...] tag) so re-sending
+# a booking never stacks duplicate links.
+_PAYLINK_ANCHOR_RE = re.compile(r"\s*<a\s+href=['\"]?[^>]*bookpay\.php[^>]*>.*?</a>", re.IGNORECASE | re.DOTALL)
+_PAYLINK_TAG_RE = re.compile(r"\s*\[PAYLINK:\s*\[?[-+]?\d+(?:[.,]\d+)?\]?\s*\]", re.IGNORECASE)
+
+
+def _apply_beds24_paylinks(invoice_items: list[dict]) -> list[dict]:
+    """Append Beds24's `[PAYLINK: amount]` tag to each positive payment, so Beds24 renders a real
+    pay link on its own guest-facing invoice/emails (it expands the tag server-side using the
+    booking's own id - no placeholder round-trip needed). Ported from the desktop's
+    _prepare_api_payload_for_beds24: honours the ##NOLINK## marker (preserved on the item so the
+    suppression sticks on re-send) and is idempotent - any existing anchor/tag is stripped first.
+    """
+    for item in invoice_items:
+        if item.get("type") != "payment":
+            continue
+        description = str(item.get("description", "") or "").strip()
+        link_disabled = "##NOLINK##" in description
+        working = _PAYLINK_TAG_RE.sub("", _PAYLINK_ANCHOR_RE.sub("", description.replace("##NOLINK##", ""))).strip()
+        try:
+            qty = float(item.get("qty", 1) or 1)
+        except (TypeError, ValueError):
+            qty = 1.0
+        try:
+            amount = float(item.get("amount", 0) or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        if qty * amount > 0 and not link_disabled:
+            working = f"{working} [PAYLINK: {qty * amount:.2f}]".strip()
+        item["description"] = f"{working}##NOLINK##" if link_disabled else working
+    return invoice_items
+
+
 @router.post("/quotation/beds24-booking")
 async def create_quotation_beds24_booking(
     request: CreateBookingRequest,
@@ -300,6 +334,7 @@ async def create_quotation_beds24_booking(
         }
         for item in request.invoice_items
     ]
+    _apply_beds24_paylinks(invoice_items)
     payload: dict = {
         "roomId": request.room_id,
         "arrival": request.arrival,
@@ -371,6 +406,7 @@ async def send_quotation_invoice_items_to_beds24(
         }
         for item in request.invoice_items
     ]
+    _apply_beds24_paylinks(final_invoice_items)
 
     booking_fields = {
         "status": request.status,

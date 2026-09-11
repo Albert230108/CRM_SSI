@@ -77,6 +77,8 @@ def _strip_description(value: Any) -> str:
     text = html.unescape(str(value or ''))
     text = re.sub(r'<a\b[^>]*>(.*?)</a>', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r'##NOLINK##', '', text, flags=re.IGNORECASE)
+    # Beds24's own pay-link tag isn't meaningful in the CRM's plain-text display.
+    text = re.sub(r'\s*\[PAYLINK:\s*\[?[-+]?\d+(?:[.,]\d+)?\]?\s*\]', '', text, flags=re.IGNORECASE)
     return re.sub(r'<[^>]+>', '', text).strip()
 
 
