@@ -24,8 +24,14 @@ type AiAutoDraftItem = {
   status: string
   scheduled_send_at: string | null
   has_pending_beds24_update: boolean
+  pending_beds24_update: {
+    booking_id?: string
+    invoice_items?: Array<{ type?: string; description?: string; qty?: number; amount?: number; vat_rate?: number }>
+  } | null
   created_at: string
 }
+
+type FinanceLine = { type: string; description: string | null; amount: string }
 
 export default function AiPendingDrafts() {
   useDocumentTitle('CRM - AI Drafts')
@@ -39,6 +45,33 @@ export default function AiPendingDrafts() {
   const [redoWhy, setRedoWhy] = useState('')
   const [redoSubmitting, setRedoSubmitting] = useState(false)
   const [reasons, setReasons] = useState<Record<number, string>>({})
+  const [diffOpenId, setDiffOpenId] = useState<number | null>(null)
+  const [beforeItems, setBeforeItems] = useState<Record<number, FinanceLine[]>>({})
+
+  const toggleQuoteDiff = useCallback(
+    async (draft: AiAutoDraftItem) => {
+      if (diffOpenId === draft.id) {
+        setDiffOpenId(null)
+        return
+      }
+      setDiffOpenId(draft.id)
+      // Fetch the tenant's current finance rows once, as the "before" side of the diff.
+      if (!beforeItems[draft.id]) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/tenants/${draft.tenant_id}/finance`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          })
+          if (response.ok) {
+            const data: { charges: FinanceLine[]; payments: FinanceLine[] } = await response.json()
+            setBeforeItems((prev) => ({ ...prev, [draft.id]: [...data.charges, ...data.payments] }))
+          }
+        } catch {
+          // Best-effort: the "after" side still renders on its own if this fails.
+        }
+      }
+    },
+    [diffOpenId, beforeItems, token],
+  )
 
   const loadDrafts = useCallback(async () => {
     if (!token) return
@@ -189,9 +222,46 @@ export default function AiPendingDrafts() {
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
                 {draft.has_pending_beds24_update ? (
-                  <p className="mt-1 text-xs font-medium text-amber-700">
-                    Sending this will also push an updated quote to Beds24 for this booking.
-                  </p>
+                  <div className="mt-1">
+                    <p className="text-xs font-medium text-amber-700">
+                      Sending this will also push an updated quote to Beds24 for this booking.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void toggleQuoteDiff(draft)}
+                      className="mt-1 text-xs font-medium text-indigo-600 underline hover:text-indigo-800"
+                    >
+                      {diffOpenId === draft.id ? 'Hide quote changes' : 'Show quote changes'}
+                    </button>
+                    {diffOpenId === draft.id ? (
+                      <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 text-xs">
+                        <div>
+                          <p className="font-semibold uppercase tracking-wide text-gray-500">Current in CRM</p>
+                          {(beforeItems[draft.id] ?? []).length === 0 ? (
+                            <p className="mt-1 text-gray-400">No current finance rows.</p>
+                          ) : (
+                            <ul className="mt-1 space-y-0.5">
+                              {(beforeItems[draft.id] ?? []).map((item, i) => (
+                                <li key={i} className={item.type === 'payment' ? 'text-emerald-700' : 'text-gray-700'}>
+                                  {item.description || item.type} — €{Number(item.amount).toFixed(2)}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-semibold uppercase tracking-wide text-gray-500">Will be sent to Beds24</p>
+                          <ul className="mt-1 space-y-0.5">
+                            {(draft.pending_beds24_update?.invoice_items ?? []).map((item, i) => (
+                              <li key={i} className={item.type === 'payment' ? 'text-emerald-700' : 'text-gray-700'}>
+                                {item.description || item.type} — €{((item.qty ?? 1) * (item.amount ?? 0)).toFixed(2)}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
                 <div className="relative">
                   {renderDraftPreview(draft)}

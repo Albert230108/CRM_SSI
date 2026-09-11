@@ -55,6 +55,7 @@ def _to_read(db: Session, draft: AiAutoDraft) -> AiAutoDraftRead:
         status=draft.status,
         scheduled_send_at=draft.scheduled_send_at,
         has_pending_beds24_update=bool(draft.pending_beds24_update),
+        pending_beds24_update=draft.pending_beds24_update if isinstance(draft.pending_beds24_update, dict) else None,
         created_at=draft.created_at,
     )
 

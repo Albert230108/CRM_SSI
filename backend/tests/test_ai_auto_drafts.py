@@ -334,6 +334,11 @@ def test_list_reports_has_pending_beds24_update(non_admin_client, db_session):
     items = {item["id"]: item for item in response.json()}
     assert items[with_update.id]["has_pending_beds24_update"] is True
     assert items[without_update.id]["has_pending_beds24_update"] is False
+    # D4: the staged update content is exposed so the approval UI can render a before/after diff.
+    staged = items[with_update.id]["pending_beds24_update"]
+    assert staged is not None and staged["booking_id"] == tenant.booking_id
+    assert [i["description"] for i in staged["invoice_items"]] == ["Studio 1"]
+    assert items[without_update.id]["pending_beds24_update"] is None
 
 
 def test_cancel_auto_send_downgrades_to_pending(non_admin_client, db_session):

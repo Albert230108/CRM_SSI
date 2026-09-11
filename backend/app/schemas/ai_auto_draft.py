@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -23,4 +24,8 @@ class AiAutoDraftRead(BaseModel):
     # True when the sales-manager agent staged a Beds24 invoice-item update for this draft
     # (action="update"): approving/sending this draft pushes that update to Beds24 first.
     has_pending_beds24_update: bool = False
+    # The staged Beds24 invoice-item update itself (booking_id, all_original_invoice_item_ids,
+    # invoice_items), so the approval UI can show a before/after diff of what will be pushed.
+    # None when nothing is staged.
+    pending_beds24_update: dict[str, Any] | None = None
     created_at: datetime
