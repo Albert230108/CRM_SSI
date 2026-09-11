@@ -44,10 +44,19 @@ class FileEntry:
     relative_path: str
 
 
-def booking_folder_relative_path(booking_id: str, first_name: str | None, last_name: str | None, year: int) -> pathlib.PurePosixPath:
+def tenant_booking_folder_name(booking_id: str, first_name: str | None, last_name: str | None) -> str:
+    """The canonical `{booking_id}_{first}_{last}` folder name for a tenant. This is the single
+    source of truth for tenant folder naming: the server-tree storage here, the OneDrive path
+    builders (onedrive_service / tenants._build_one_drive_folder_path), and the QM tenant_files
+    service all go through it so a tenant always maps to the same folder in every store. Name
+    components keep spaces and hyphens and strip other punctuation (see _safe_name_component)."""
     safe_first = _safe_name_component(first_name or "")
     safe_last = _safe_name_component(last_name or "")
-    return pathlib.PurePosixPath(str(year)) / f"{booking_id}_{safe_first}_{safe_last}"
+    return f"{booking_id}_{safe_first}_{safe_last}"
+
+
+def booking_folder_relative_path(booking_id: str, first_name: str | None, last_name: str | None, year: int) -> pathlib.PurePosixPath:
+    return pathlib.PurePosixPath(str(year)) / tenant_booking_folder_name(booking_id, first_name, last_name)
 
 
 def _year_from_check_in(check_in: str | None) -> int:
@@ -81,6 +90,63 @@ def list_tenant_folder(*, booking_id: str, first_name: str | None, last_name: st
                 )
             )
     return {"folder_path": str(relative), "items": items}
+
+
+def save_tenant_file(
+    *,
+    booking_id: str,
+    first_name: str | None,
+    last_name: str | None,
+    check_in: str | None,
+    filename: str,
+    content: bytes,
+) -> FileEntry:
+    """Writes an uploaded file into a tenant's booking folder under TENANT_FILES_ROOT, creating
+    the folder on first upload. The stored name is sanitized with the same rules as the folder
+    components, and a collision is de-duplicated ("name.pdf" -> "name (1).pdf") so an upload never
+    silently overwrites an existing file. Returns the created FileEntry."""
+    if not booking_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant has no booking id")
+
+    safe_name = _safe_upload_filename(filename)
+    if not safe_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file name")
+
+    root = _root()
+    relative = booking_folder_relative_path(booking_id, first_name, last_name, _year_from_check_in(check_in))
+    folder = (root / relative)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    target = _dedupe_path(folder / safe_name)
+    target.write_bytes(content)
+    return FileEntry(
+        name=target.name,
+        kind="file",
+        size=target.stat().st_size,
+        relative_path=str(relative / target.name),
+    )
+
+
+def _safe_upload_filename(filename: str) -> str:
+    """Sanitize an uploaded file name: keep the extension, apply the same character allow-list as
+    the folder components to the stem, and never let path separators through."""
+    raw = pathlib.PurePosixPath((filename or "").replace("\\", "/")).name
+    stem = pathlib.PurePosixPath(raw).stem
+    suffix = pathlib.PurePosixPath(raw).suffix
+    safe_stem = _safe_name_component(stem).strip() or "file"
+    safe_suffix = "".join(c for c in suffix if c.isalnum() or c == ".")
+    return f"{safe_stem}{safe_suffix}"
+
+
+def _dedupe_path(path: pathlib.Path) -> pathlib.Path:
+    if not path.exists():
+        return path
+    stem, suffix = path.stem, path.suffix
+    for n in range(1, 1000):
+        candidate = path.with_name(f"{stem} ({n}){suffix}")
+        if not candidate.exists():
+            return candidate
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Too many files with the same name")
 
 
 def resolve_download_path(relative_path: str) -> pathlib.Path:

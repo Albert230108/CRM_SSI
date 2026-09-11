@@ -37,6 +37,7 @@ from app.services.tenant_notes_history import SOURCE_BEDS24_IMPORT, SOURCE_MANUA
 from app.models.tenant_notes_history import TenantNotesHistory
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 from app.services import onedrive_service
+from app.services import tenant_files_storage
 from app.models.tenant_brain_entry import SOURCE_SCANNER, TenantBrainEntry
 from app.models.tenant_brain_entry_history import TenantBrainEntryHistory
 from app.services.action_writer_trigger_service import register_manual_trigger
@@ -421,7 +422,7 @@ def _extract_guest_fields(item: dict) -> dict:
 def _build_one_drive_folder_path(tenant: Tenant) -> str:
     if not tenant.booking_id or not tenant.first_name or not tenant.last_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant booking details are incomplete")
-    folder_name = f"{tenant.booking_id}_{tenant.first_name}_{tenant.last_name}".replace(" ", "_")
+    folder_name = tenant_files_storage.tenant_booking_folder_name(tenant.booking_id, tenant.first_name, tenant.last_name)
     return f"/01. Rentals/02. Short-Stay Inn/Tenants/2026/{folder_name}"
 
 
@@ -949,6 +950,7 @@ def get_tenant_finance(tenant_id: int, db: Session = Depends(get_db), current_us
             "amount": str(item.amount),
             "currency": item.currency,
             "description": item.description,
+            "status": item.status,
             "created_at": item.created_at,
         }
 
@@ -1308,6 +1310,7 @@ async def _import_tenant(
                     amount=Decimal(str(line_total)),
                     currency=str(item.get("currency") or "EUR"),
                     description=cleaned,
+                    status=(str(item.get("status")) if item.get("status") else None),
                 )
             )
 

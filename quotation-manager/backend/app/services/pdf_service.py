@@ -33,6 +33,45 @@ logger = logging.getLogger(__name__)
 ASSETS_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets"
 DEFAULT_LOGO_PATH = ASSETS_DIR / "logo.jpg"
 
+# Single display format for dates on the PDF, matching payment_plan._DATE_FMT so every
+# date the tenant sees (check-in/out, payment due dates) reads the same way.
+DISPLAY_DATE_FMT = "%d-%b-%Y"
+
+
+def format_display_date(value: str | None) -> str:
+    """Format an ISO (YYYY-MM-DD) date for display as %d-%b-%Y. Returns 'N/A' for a missing
+    value and leaves an unparseable string untouched rather than raising."""
+    if not value:
+        return "N/A"
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime(DISPLAY_DATE_FMT)
+    except ValueError:
+        return value
+
+
+def _apply_payment_links(payments: list[dict], booking_number: str | None) -> list[dict]:
+    """Append a Beds24 bookpay link to each positive, unpaid payment so the PDF renders a
+    clickable "Pay" link (ported from the desktop's payment-link generation). Skips refunds and
+    zero/negative rows, honours the ##NOLINK## marker (which suppresses the link and is stripped
+    from the visible text), and never double-links a row that already carries an anchor."""
+    if not booking_number:
+        return payments
+    for payment in payments:
+        description = str(payment.get("description", "") or "")
+        if "##NOLINK##" in description:
+            payment["description"] = description.replace("##NOLINK##", "").strip()
+            continue
+        if "<a href" in description.lower():
+            continue
+        line_total = payment.get("line_total", 0) or 0
+        if line_total <= 0 or "refund of deposit" in description.lower():
+            continue
+        pay_amount = f"{abs(line_total):.2f}"
+        link = f'https://beds24.com/bookpay.php?bookid={booking_number}&amp;pay={pay_amount}'
+        payment["description"] = f'{description} <a href="{link}">Pay</a>'
+    return payments
+
+
 # Room ID -> studio/room picture link, ported from functions.py's STUDIO_LINK_MAPPING.
 STUDIO_LINK_MAPPING = {
     262377: "https://beds24.com/booking2.php?roomid=262377&layout=2",  # Studio 1
@@ -328,8 +367,8 @@ def create_invoice_pdf(
         ["Tenant name:", tenant_name],
     ]
     tenant_details_right = [
-        ["Check in:", first_night if first_night else "N/A"],
-        ["Check out:", leaving_day if leaving_day else "N/A"],
+        ["Check in:", format_display_date(first_night)],
+        ["Check out:", format_display_date(leaving_day)],
         ["Nights:", str(nights)],
     ]
     company_info_column = ["", "", "", ""]
@@ -502,6 +541,8 @@ def create_invoice_pdf(
     payment_desc_style.fontSize = 8
     payment_desc_style.alignment = 0
     payment_desc_style.textColor = colors.black
+
+    payments = _apply_payment_links(payments, booking_number)
 
     for payment in payments:
         description = payment.get('description', 'N/A')

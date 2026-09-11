@@ -41,6 +41,7 @@ type FinanceItem = {
   amount: string
   currency: string
   description: string | null
+  status: string | null
   created_at: string
 }
 
@@ -592,18 +593,19 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                   <th className="px-3 py-2">Date</th>
                   <th className="px-3 py-2">Description</th>
                   <th className="px-3 py-2">Amount</th>
+                  <th className="px-3 py-2">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {charges.length === 0 && payments.length === 0 && !loading ? (
                   <tr>
-                    <td className="px-3 py-4 text-gray-500" colSpan={3}>No finance entries found.</td>
+                    <td className="px-3 py-4 text-gray-500" colSpan={4}>No finance entries found.</td>
                   </tr>
                 ) : null}
                 {charges.length > 0 ? (
                   <>
                     <tr className="bg-rose-50">
-                      <td colSpan={3} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-rose-500">
+                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-rose-500">
                         Charges
                       </td>
                     </tr>
@@ -616,6 +618,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                         <td className="px-3 py-2 font-medium text-rose-600">
                           {item.currency} {Number(item.amount).toFixed(2)}
                         </td>
+                        <td className="px-3 py-2 text-gray-500">{item.status || '—'}</td>
                       </tr>
                     ))}
                   </>
@@ -623,7 +626,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                 {payments.length > 0 ? (
                   <>
                     <tr className="bg-emerald-50">
-                      <td colSpan={3} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-emerald-600">
+                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-emerald-600">
                         Payments
                       </td>
                     </tr>
@@ -636,6 +639,7 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                         <td className="px-3 py-2 font-medium text-emerald-600">
                           {item.currency} {Number(item.amount).toFixed(2)}
                         </td>
+                        <td className="px-3 py-2 text-gray-500">{item.status || '—'}</td>
                       </tr>
                     ))}
                   </>

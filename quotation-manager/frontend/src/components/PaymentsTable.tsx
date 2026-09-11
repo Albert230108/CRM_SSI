@@ -12,6 +12,8 @@ interface PaymentsTableProps {
   onInstallmentsChange: (n: number) => void
   onAddPaymentPlan: () => void
   buildingPlan: boolean
+  // Optional: sets the installment count to the desktop's suggestion (nights // 30 + 1).
+  onAutoCountInstallments?: () => void
 }
 
 export default function PaymentsTable({
@@ -23,6 +25,7 @@ export default function PaymentsTable({
   onInstallmentsChange,
   onAddPaymentPlan,
   buildingPlan,
+  onAutoCountInstallments,
 }: PaymentsTableProps) {
   // The deposit-refund row (negative) is excluded from the "total paid" figure,
   // matching the desktop app's calculate_and_display_total_payments.
@@ -52,6 +55,16 @@ export default function PaymentsTable({
               )}
             </select>
           </label>
+          {onAutoCountInstallments ? (
+            <button
+              type="button"
+              onClick={onAutoCountInstallments}
+              title="Set installments to nights ÷ 30 + 1"
+              className="rounded-lg border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Auto
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onAddPaymentPlan}

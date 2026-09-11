@@ -213,3 +213,38 @@ def test_generate_pdf_endpoint_accepts_mixed_charge_and_payment_items(client, au
     assert response.status_code == 200
     decoded = base64.b64decode(response.json()["content_base64"])
     assert decoded[:5] == b"%PDF-"
+
+
+def test_generate_pdf_threads_room_id_to_pdf_service(client, auth_headers, tenant_root, monkeypatch):
+    """C1 regression: room_id must reach create_invoice_pdf so STUDIO_LINK_MAPPING can render
+    the clickable studio/room link. Before the fix room_id was never threaded (always None)."""
+    from app.api import quotation as quotation_api
+
+    captured = {}
+
+    def fake_create_invoice_pdf(**kwargs):
+        captured.update(kwargs)
+        kwargs["output_path"].write_bytes(b"%PDF-1.4 fake")
+        return kwargs["output_path"]
+
+    monkeypatch.setattr(quotation_api.pdf_service, "create_invoice_pdf", fake_create_invoice_pdf)
+
+    response = client.post(
+        "/api/quotation/generate-pdf",
+        json={
+            "booking_id": "12345",
+            "first_name": "John",
+            "last_name": "Doe",
+            "room_name": "Studio 1",
+            "room_id": 262377,
+            "property_name": "Central-Day Inn",
+            "check_in": "2026-07-01",
+            "check_out": "2026-07-08",
+            "security_deposit": 400.0,
+            "invoice_items": [{"type": "charge", "description": "Rent", "qty": 7, "amount": 65.0, "vat_rate": 9}],
+            "quotation_date": "01-Jan-2026",
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert captured.get("room_id") == 262377

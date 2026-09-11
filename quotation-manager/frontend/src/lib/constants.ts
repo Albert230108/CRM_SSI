@@ -65,6 +65,14 @@ export function roomNameForId(roomId: number | string | null | undefined): strin
   return entry ? entry[0] : ''
 }
 
+// The Beds24 room id for a room name, per ROOM_ID_MAPPING - used to send room_id to the
+// PDF generator so the studio/room "pictures & information" link renders as a clickable link.
+export function roomIdForName(roomName: string): number | null {
+  if (!roomName) return null
+  const id = ROOM_ID_MAPPING[roomName]
+  return typeof id === 'number' ? id : null
+}
+
 // The property a given room belongs to, per PROPERTY_ROOMS - used to prefill the
 // property dropdown once the room is known but the booking's own propertyName is blank.
 export function propertyForRoom(roomName: string): string {

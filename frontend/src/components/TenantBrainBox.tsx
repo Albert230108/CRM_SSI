@@ -97,14 +97,19 @@ export default function TenantBrainBox({ tenantId, isActive = true, onActionsCha
     }
   }
 
+  // Grow each field box to fit its (multi-line) content. scrollHeight collapses to a single
+  // line while the panel is hidden (isActive=false -> display:none) or before a fullscreen
+  // relayout changes wrapping width, so re-measure on those too - otherwise multi-line values
+  // stay clipped at one line until an unrelated re-render (e.g. switching tabs) happens to refire.
   useLayoutEffect(() => {
+    if (!isActive) return
     for (const field of fields) {
       const textarea = fieldTextareaRefs.current[field.field_definition_id]
       if (!textarea) continue
       textarea.style.height = 'auto'
       textarea.style.height = `${textarea.scrollHeight}px`
     }
-  }, [fields, fieldDrafts])
+  }, [fields, fieldDrafts, isActive, fullscreen])
 
   const loadQaHistory = async () => {
     if (!tenantId) return

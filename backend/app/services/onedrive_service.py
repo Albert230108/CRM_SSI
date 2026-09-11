@@ -29,6 +29,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.admin_settings import AdminSettings
+from app.services import tenant_files_storage
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +116,9 @@ async def get_access_token_and_drive_id(db: Session) -> tuple[str, str]:
 
 
 def tenant_folder_path(booking_id: str, first_name: str, last_name: str, year: int) -> str:
-    # Same naming as tenants.py _build_one_drive_folder_path so both point at the
-    # identical folder: booking_first_last with spaces -> underscores.
-    folder_name = f"{booking_id}_{first_name}_{last_name}".replace(" ", "_")
+    # One shared folder-name convention across OneDrive and the server tree, so both stores point
+    # at the identical folder for a tenant (see tenant_files_storage.tenant_booking_folder_name).
+    folder_name = tenant_files_storage.tenant_booking_folder_name(booking_id, first_name, last_name)
     return f"{TENANTS_ROOT}/{year}/{folder_name}"
 
 

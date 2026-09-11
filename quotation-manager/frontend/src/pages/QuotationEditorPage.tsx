@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import ChargesTable from '../components/ChargesTable'
 import PaymentsTable from '../components/PaymentsTable'
 import PropertyRoomFields from '../components/PropertyRoomFields'
@@ -11,6 +11,7 @@ import {
   LONG_STAY_DEPOSIT_NIGHT_THRESHOLD,
   ROOM_CAPACITY,
   propertyForRoom,
+  roomIdForName,
   roomNameForId,
 } from '../lib/constants'
 import type {
@@ -30,6 +31,22 @@ function bookingNights(booking: Beds24Booking): number {
   if (typeof arrival !== 'string' || typeof departure !== 'string') return 0
   const diff = (new Date(departure).getTime() - new Date(arrival).getTime()) / (1000 * 60 * 60 * 24)
   return Number.isFinite(diff) && diff > 0 ? Math.round(diff) : 0
+}
+
+// Shape of the /api/config/prices document we read for the deposit: years -> property ->
+// extra_services. Only the deposit fields are typed; everything else on the config is ignored here.
+type PropertyExtraServices = { deposit?: number; long_stay_deposit?: number }
+type PricingConfig = Record<string, Record<string, { extra_services?: PropertyExtraServices } | undefined>>
+
+// Today's date as DD-Mon-YYYY (e.g. 11-Sep-2026), matching the PDF's DISPLAY_DATE_FMT
+// (%d-%b-%Y) so the quotation date reads the same as every other date on the document.
+function todayQuotationDate(): string {
+  return new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
+}
+
+// The auto-managed Administration costs charge line, matched by description (as the desktop does).
+function isAdminCharge(item: { description: string }): boolean {
+  return item.description.trim().toLowerCase().includes('administration costs')
 }
 
 let nextLocalId = 1
@@ -68,6 +85,7 @@ function firstString(...values: unknown[]): string {
 
 export default function QuotationEditorPage() {
   const { bookingId } = useParams<{ bookingId: string }>()
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -79,6 +97,13 @@ export default function QuotationEditorPage() {
   const [checkIn, setCheckIn] = useState('')
   const [checkOut, setCheckOut] = useState('')
   const [securityDeposit, setSecurityDeposit] = useState(0)
+  // Once the operator edits the deposit by hand we stop auto-prefilling it from config,
+  // so switching property/dates or re-deriving charges never clobbers a deliberate value.
+  const depositManuallyEdited = useRef(false)
+  // Fallback only: a deposit amount carried on the loaded booking, used when the per-property
+  // config can't resolve a deposit for the selected property/year.
+  const carriedDepositRef = useRef<number | null>(null)
+  const [pricesConfig, setPricesConfig] = useState<PricingConfig | null>(null)
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
   const [ssiFlag, setSsiFlag] = useState(false)
@@ -139,8 +164,12 @@ export default function QuotationEditorPage() {
         setCharges(items.filter((item) => item.type === 'charge').map((item) => toEditableItem(item, 'charge')))
         setPayments(items.filter((item) => item.type === 'payment').map((item) => toEditableItem(item, 'payment')))
 
+        // Deprecated prefill source: a "deposit" invoice item carried over from Beds24 was
+        // often a stale/grossed-up value (the ~782 bug). The deposit is now prefilled from the
+        // per-property pricing config (see the configuredDeposit effect) instead. We only adopt
+        // a carried value as a last resort when the config lookup can't resolve one.
         const depositItem = items.find((item) => (item.description ?? '').toLowerCase().includes('deposit'))
-        if (depositItem) setSecurityDeposit(depositItem.amount ?? 0)
+        if (depositItem && depositItem.amount) carriedDepositRef.current = depositItem.amount
       })
       .catch((err: unknown) => {
         setError(err instanceof ApiError ? err.message : 'Failed to load booking')
@@ -156,14 +185,36 @@ export default function QuotationEditorPage() {
 
   const isLongStay = nights !== null && nights > LONG_STAY_DEPOSIT_NIGHT_THRESHOLD
 
-  // Long-stay bookings (>183 nights) carry a fixed refundable deposit. Only
-  // auto-fill when no deposit was carried over from the booking, so we never
-  // clobber a real value the user (or Beds24) already set.
+  // Load the per-property pricing config once so the deposit can be prefilled from it.
   useEffect(() => {
-    if (isLongStay && securityDeposit === 0) {
-      setSecurityDeposit(LONG_STAY_DEPOSIT_DEFAULT)
-    }
-  }, [isLongStay, securityDeposit])
+    apiGet<PricingConfig>('/api/config/prices')
+      .then(setPricesConfig)
+      .catch(() => setPricesConfig(null)) // best-effort; falls back to the carried/1500 defaults
+  }, [])
+
+  // The deposit for the selected property, per the desktop rule: a normal stay uses the
+  // property's configured `deposit`; a long stay (>183 nights) uses its settings-configured
+  // `long_stay_deposit` (falling back to LONG_STAY_DEPOSIT_DEFAULT only when unset). Returns
+  // null when the config can't resolve the selected property/year.
+  const configuredDeposit = useMemo<number | null>(() => {
+    if (!pricesConfig || !propertyName) return null
+    const year = (checkIn || '').slice(0, 4)
+    const years = Object.keys(pricesConfig).sort()
+    const yearData = pricesConfig[year] ?? (years.length ? pricesConfig[years[years.length - 1]] : undefined)
+    const extra = yearData?.[propertyName]?.extra_services
+    if (!extra) return null
+    if (isLongStay) return extra.long_stay_deposit ?? LONG_STAY_DEPOSIT_DEFAULT
+    return extra.deposit ?? null
+  }, [pricesConfig, propertyName, checkIn, isLongStay])
+
+  // Prefill the deposit from config whenever the resolved value changes (property/dates/long-stay),
+  // unless the operator has edited it by hand. Falls back to a carried booking deposit, then the
+  // long-stay default, so a config-less environment still behaves sensibly.
+  useEffect(() => {
+    if (depositManuallyEdited.current) return
+    const next = configuredDeposit ?? carriedDepositRef.current ?? (isLongStay ? LONG_STAY_DEPOSIT_DEFAULT : null)
+    if (next !== null) setSecurityDeposit(next)
+  }, [configuredDeposit, isLongStay])
 
   const occupancy = useMemo(() => {
     const totalGuests = adults + children
@@ -205,6 +256,65 @@ export default function QuotationEditorPage() {
   const handleRemoveCharge = (localId: string) => {
     setCharges((prev) => prev.filter((item) => item.localId !== localId))
   }
+
+  // Admin costs must stay in sync as other charges change. Unlike the desktop (which only
+  // auto-refreshed while status was "Inquiry"), the port recomputes it regardless of status;
+  // the backend mirrors charge_builder's admin math so a refresh matches the generated value.
+  const chargesRef = useRef<EditableInvoiceItem[]>([])
+  chargesRef.current = charges
+  const [refreshingAdmin, setRefreshingAdmin] = useState(false)
+
+  const runAdminRecompute = useCallback(async () => {
+    const current = chargesRef.current
+    const adminLine = current.find(isAdminCharge)
+    if (!adminLine || !propertyName || !checkIn) return
+    setRefreshingAdmin(true)
+    try {
+      const result = await apiPost<{ admin_cost_incl: number; vat_rate: number; description: string }>(
+        '/api/quotation/recompute-admin',
+        {
+          property_name: propertyName,
+          check_in: checkIn,
+          invoice_items: current.map((item) => ({
+            type: item.type,
+            description: item.description,
+            qty: item.qty,
+            amount: item.amount,
+            vat_rate: item.vat_rate,
+            currency: item.currency,
+            status: item.status,
+          })),
+        },
+      )
+      const newAmount = Math.round(result.admin_cost_incl * 100) / 100
+      setCharges((prev) =>
+        prev.map((item) =>
+          isAdminCharge(item) && (Math.round(item.amount * 100) / 100 !== newAmount || item.vat_rate !== result.vat_rate)
+            ? { ...item, qty: 1, amount: newAmount, vat_rate: result.vat_rate }
+            : item,
+        ),
+      )
+    } catch {
+      // Best-effort: leave the admin line untouched if the recompute call fails.
+    } finally {
+      setRefreshingAdmin(false)
+    }
+  }, [propertyName, checkIn])
+
+  // Signature of everything the admin base depends on (all non-admin charges); the admin line
+  // itself is excluded so updating it never re-triggers the recompute.
+  const nonAdminChargeSignature = useMemo(
+    () => JSON.stringify(charges.filter((c) => !isAdminCharge(c)).map((c) => [c.description, c.qty, c.amount, c.vat_rate])),
+    [charges],
+  )
+
+  useEffect(() => {
+    if (!charges.some(isAdminCharge) || !propertyName || !checkIn) return
+    const handle = window.setTimeout(() => void runAdminRecompute(), 600)
+    return () => window.clearTimeout(handle)
+    // Keyed on the non-admin charge signature (not runAdminRecompute, which changes with charges).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nonAdminChargeSignature, propertyName, checkIn])
 
   const handlePaymentChange = (localId: string, patch: Partial<EditableInvoiceItem>) => {
     setPayments((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)))
@@ -361,6 +471,7 @@ export default function QuotationEditorPage() {
         first_name: firstName,
         last_name: lastName,
         room_name: roomName,
+        room_id: roomIdForName(roomName),
         property_name: propertyName,
         check_in: checkIn,
         check_out: checkOut,
@@ -377,7 +488,7 @@ export default function QuotationEditorPage() {
           currency: item.currency,
           status: item.status,
         })),
-        quotation_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        quotation_date: todayQuotationDate(),
         delivery,
         include_content: delivery === 'download',
       })
@@ -451,7 +562,7 @@ export default function QuotationEditorPage() {
           currency: 'EUR',
           status: item.status,
         })),
-        quotation_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        quotation_date: todayQuotationDate(),
       })
       setNotice(
         `Combined quotation Q${String(result.quotation_number).padStart(3, '0')} for ${group.bookings.length} bookings saved to ${result.location === 'onedrive' ? 'OneDrive' : 'the tenant folder'}.`,
@@ -497,7 +608,12 @@ export default function QuotationEditorPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-6">
-      <h1 className="text-xl font-semibold text-gray-900">Quotation for booking {bookingId}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-gray-900">Quotation for booking {bookingId}</h1>
+        <button type="button" onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:text-gray-700">
+          ← Back
+        </button>
+      </div>
 
       {error ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>
@@ -547,13 +663,20 @@ export default function QuotationEditorPage() {
               type="number"
               step="0.01"
               value={securityDeposit}
-              onChange={(e) => setSecurityDeposit(Number(e.target.value))}
+              onChange={(e) => {
+                depositManuallyEdited.current = true
+                setSecurityDeposit(Number(e.target.value))
+              }}
               className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
             />
           </label>
           <div className="text-xs text-gray-500">
             Nights
             <p className="mt-1 py-1 text-sm text-gray-900">{nights ?? '—'}</p>
+          </div>
+          <div className="text-xs text-gray-500">
+            People
+            <p className="mt-1 py-1 text-sm text-gray-900">{adults + children}</p>
           </div>
           <label className="text-xs text-gray-500">
             Adults
@@ -588,7 +711,7 @@ export default function QuotationEditorPage() {
         ) : null}
         {isLongStay ? (
           <p className="mt-1 text-xs font-medium text-amber-600">
-            Long stay ({nights} nights): a fixed €{LONG_STAY_DEPOSIT_DEFAULT} refundable deposit applies.
+            Long stay ({nights} nights): the property's long-stay refundable deposit (€{configuredDeposit ?? LONG_STAY_DEPOSIT_DEFAULT}) applies.
           </p>
         ) : null}
       </div>
@@ -612,6 +735,14 @@ export default function QuotationEditorPage() {
               className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
               {buildingCharges ? 'Generating...' : 'Generate standard charges'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAdminRecompute()}
+              disabled={refreshingAdmin || !charges.some(isAdminCharge)}
+              className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {refreshingAdmin ? 'Refreshing...' : 'Refresh admin'}
             </button>
           </div>
         </div>
@@ -640,6 +771,9 @@ export default function QuotationEditorPage() {
         onInstallmentsChange={setInstallments}
         onAddPaymentPlan={handleAddPaymentPlan}
         buildingPlan={buildingPlan}
+        onAutoCountInstallments={
+          nights !== null ? () => setInstallments(Math.max(1, Math.min(Math.floor(nights / 30) + 1, 24))) : undefined
+        }
       />
 
       <div

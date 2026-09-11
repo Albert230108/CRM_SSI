@@ -163,3 +163,22 @@ def test_template_access_is_scoped_to_owner(db_session):
     finally:
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_db, None)
+
+
+def test_resolve_template_text_warns_when_email_fallback_has_no_db(db_session, caplog):
+    """Without a db session the linked-address fallback can't run; {{email}} still renders
+    empty, but resolve_template_text must log a warning so the missing db= is diagnosable
+    rather than silently swallowed."""
+    import logging
+
+    from app.services.email_template_service import resolve_template_text
+
+    tenant = _create_tenant(db_session, email=None, booking_id="B-tmpl-nodb")
+    with caplog.at_level(logging.WARNING, logger="app.services.email_template_service"):
+        rendered = resolve_template_text("Contact: {{email}}", tenant)
+
+    assert rendered == "Contact: "
+    assert any(
+        "{{email}} placeholder could not resolve" in record.message and record.levelno == logging.WARNING
+        for record in caplog.records
+    )

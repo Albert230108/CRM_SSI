@@ -95,3 +95,44 @@ def test_create_invoice_pdf_accepts_vat_inclusive_amounts(tmp_path):
         security_deposit=0.0,
     )
     assert result_path.exists()
+
+
+def test_format_display_date_standardizes_iso_to_day_mon_year():
+    from app.services import pdf_service
+
+    assert pdf_service.format_display_date("2026-07-01") == "01-Jul-2026"
+    assert pdf_service.format_display_date(None) == "N/A"
+    # Unparseable input is passed through untouched rather than raising.
+    assert pdf_service.format_display_date("not-a-date") == "not-a-date"
+
+
+def test_apply_payment_links_adds_bookpay_link_to_positive_payments():
+    from app.services import pdf_service
+
+    payments = [
+        {"description": "Installment 1 - Confirms booking; due: 01-Jul-2026", "line_total": 500.0, "status": "not paid"},
+        {"description": "Refund of Deposit (Provided No Damages Are Present); due: 15-Jul-2026", "line_total": -400.0},
+        {"description": "Installment 2 ##NOLINK##", "line_total": 300.0},
+        {"description": "Already <a href=\"https://x\">linked</a>", "line_total": 100.0},
+        {"description": "Zero row", "line_total": 0.0},
+    ]
+    result = pdf_service._apply_payment_links(payments, "98765")
+
+    assert 'bookpay.php?bookid=98765&amp;pay=500.00' in result[0]["description"]
+    assert "Pay</a>" in result[0]["description"]
+    # Refunds, zero rows: no link.
+    assert "<a href" not in result[1]["description"]
+    assert "<a href" not in result[4]["description"]
+    # ##NOLINK## suppresses the link and is stripped from the visible text.
+    assert "##NOLINK##" not in result[2]["description"]
+    assert "<a href" not in result[2]["description"]
+    # An already-linked row is left untouched (not double-linked).
+    assert result[3]["description"].count("<a href") == 1
+
+
+def test_apply_payment_links_no_op_without_booking_number():
+    from app.services import pdf_service
+
+    payments = [{"description": "Installment 1", "line_total": 500.0}]
+    result = pdf_service._apply_payment_links(payments, None)
+    assert result[0]["description"] == "Installment 1"

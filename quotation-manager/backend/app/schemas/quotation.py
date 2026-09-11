@@ -59,11 +59,29 @@ class InvoiceItem(BaseModel):
     status: str | None = None
 
 
+class RecomputeAdminRequest(BaseModel):
+    property_name: str
+    # Check-in date (YYYY-MM-DD) selects the admin line's VAT rate, matching charge_builder.
+    check_in: str
+    # The current charge lines from the editor (VAT-inclusive amounts, as the form holds them).
+    invoice_items: list[InvoiceItem]
+
+
+class RecomputeAdminResponse(BaseModel):
+    admin_cost_incl: float  # grossed-up, to place on the VAT-inclusive admin charge line
+    admin_cost_excl: float
+    vat_rate: float
+    description: str
+
+
 class GeneratePdfRequest(BaseModel):
     booking_id: str
     first_name: str
     last_name: str
     room_name: str
+    # Beds24 room id, used to render the clickable studio/room pictures link in the PDF
+    # (STUDIO_LINK_MAPPING). Optional so a caller that only knows the room name still works.
+    room_id: int | None = None
     property_name: str | None = None
     check_in: str
     check_out: str

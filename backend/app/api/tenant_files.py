@@ -8,7 +8,7 @@ search this same storage layer (app.services.tenant_files_storage) also backs.
 
 import mimetypes
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
@@ -38,6 +38,34 @@ def list_tenant_files(
         check_in=tenant.check_in,
     )
     return {"folder_path": result["folder_path"], "items": [_entry_dict(item) for item in result["items"]]}
+
+
+@router.post("/tenant/{tenant_id}/upload", status_code=status.HTTP_201_CREATED)
+async def upload_tenant_file(
+    tenant_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Drag-and-drop upload into a tenant's server-side folder (TENANT_FILES_ROOT). OneDrive stays
+    the fallback store, so nothing is pushed there from here."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+
+    entry = tenant_files_storage.save_tenant_file(
+        booking_id=tenant.booking_id,
+        first_name=tenant.first_name,
+        last_name=tenant.last_name,
+        check_in=tenant.check_in,
+        filename=file.filename or "file",
+        content=content,
+    )
+    return _entry_dict(entry)
 
 
 @router.get("/download")

@@ -12,5 +12,8 @@ class Finance(Base):
     amount = Column(Numeric(12, 2), nullable=False)
     currency = Column(String(3), nullable=False, default="EUR")
     description = Column(Text, nullable=True)
+    # Per-line Beds24 invoice-item status (e.g. paid/unpaid); nullable for rows imported
+    # before this column existed and for non-Beds24 finance rows that carry no status.
+    status = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

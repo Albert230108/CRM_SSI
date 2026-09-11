@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type ComposerBodyFormat,
   hasComposerContent,
@@ -115,6 +115,18 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
     emitChange()
   }
 
+  // A contentEditable swallows link clicks to place the caret, so anchors carried over from an
+  // AI draft look dead. Honour the browser's usual "open link" gesture (Ctrl/Cmd-click) so links
+  // remain reachable while editing; a plain click still positions the cursor.
+  const handleEditorClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!(event.ctrlKey || event.metaKey)) return
+    const anchor = (event.target as HTMLElement | null)?.closest('a')
+    const href = anchor?.getAttribute('href')?.trim()
+    if (!href) return
+    event.preventDefault()
+    window.open(href, '_blank', 'noopener,noreferrer')
+  }
+
   const isEmpty = !hasComposerContent(value.body, value.bodyHtml)
 
   return (
@@ -149,6 +161,8 @@ export default function RichMessageComposer({ channel, value, placeholder, disab
           contentEditable={!disabled}
           suppressContentEditableWarning
           spellCheck
+          title="Ctrl/Cmd-click a link to open it"
+          onClick={handleEditorClick}
           onInput={emitChange}
           onBlur={() => {
             normalizeEditorMarkup()

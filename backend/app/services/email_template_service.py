@@ -1,3 +1,4 @@
+import logging
 import re
 from typing import Callable
 
@@ -6,6 +7,8 @@ from sqlalchemy.orm import Session
 from app.models.tenant import Tenant
 from app.models.tenant_email_address import TenantEmailAddress
 from app.services.datetime_placeholders import resolve_datetime_placeholders
+
+logger = logging.getLogger(__name__)
 
 # Curated set of Tenant fields exposed as {{placeholder}} tokens in email templates.
 # Financial fields (total_price, commission, deposit) are deliberately excluded since
@@ -61,8 +64,18 @@ def resolve_template_text(text: str, tenant: Tenant, db: Session | None = None) 
         if getter is None:
             return match.group(0)
         value = getter(tenant)
-        if key == "email" and not value and db is not None:
-            value = _primary_active_email(db, tenant.id)
+        if key == "email" and not value:
+            if db is not None:
+                value = _primary_active_email(db, tenant.id)
+            else:
+                # Tenant.email is rarely populated (Beds24 sync writes CRM_EMAIL links instead),
+                # so without a db session the linked-address fallback can't run and {{email}}
+                # silently renders empty. Warn so a caller that forgot db= is diagnosable.
+                logger.warning(
+                    "{{email}} placeholder could not resolve for tenant_id=%s: no db session "
+                    "passed to resolve_template_text, so the linked-address fallback was skipped",
+                    getattr(tenant, "id", None),
+                )
         return str(value) if value is not None else ""
 
     return _PLACEHOLDER_PATTERN.sub(_replace, text)

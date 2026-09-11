@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { getDirectoryHandleForUser } from '../lib/fileHandleStore'
 import { useLocalFolderRootPath } from '../lib/displayPreferences'
@@ -67,6 +67,8 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
   const [serverFolderPath, setServerFolderPath] = useState('')
   const [serverLoading, setServerLoading] = useState(false)
   const [serverError, setServerError] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
     setUnsupported(typeof window === 'undefined' || typeof window.showDirectoryPicker !== 'function')
@@ -244,16 +246,15 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
     }
   }
 
-  useEffect(() => {
-    if (activeTab !== 'server' || !tenantId) return
-    const controller = new AbortController()
-    const loadServerFolder = async () => {
+  const loadServerFolder = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!tenantId) return
       try {
         setServerLoading(true)
         setServerError('')
         const response = await fetch(`${API_BASE_URL}/api/tenant-files/tenant/${tenantId}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          signal: controller.signal,
+          signal,
         })
         if (!response.ok) throw new Error('Failed to load the server folder')
         const data: { folder_path: string; items: ServerFolderItem[] } = await response.json()
@@ -265,10 +266,46 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
       } finally {
         setServerLoading(false)
       }
-    }
-    loadServerFolder()
+    },
+    [tenantId, token],
+  )
+
+  useEffect(() => {
+    if (activeTab !== 'server' || !tenantId) return
+    const controller = new AbortController()
+    loadServerFolder(controller.signal)
     return () => controller.abort()
-  }, [activeTab, tenantId, token])
+  }, [activeTab, tenantId, loadServerFolder])
+
+  const handleUploadFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const list = Array.from(files)
+      if (!tenantId || list.length === 0) return
+      setUploading(true)
+      setServerError('')
+      try {
+        for (const file of list) {
+          const form = new FormData()
+          form.append('file', file)
+          const response = await fetch(`${API_BASE_URL}/api/tenant-files/tenant/${tenantId}/upload`, {
+            method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            body: form,
+          })
+          if (!response.ok) {
+            const detail = await response.json().catch(() => null)
+            throw new Error(detail?.detail || `Failed to upload ${file.name}`)
+          }
+        }
+        await loadServerFolder()
+      } catch (err) {
+        setServerError(err instanceof Error ? err.message : 'Upload failed')
+      } finally {
+        setUploading(false)
+      }
+    },
+    [tenantId, token, loadServerFolder],
+  )
 
   const handleOpenServerFile = async (item: ServerFolderItem) => {
     try {
@@ -393,6 +430,35 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
             <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
               {serverFolderPath ? `Folder: ${serverFolderPath}` : 'No files on the server yet for this booking.'}
             </p>
+          ) : null}
+          {tenantId ? (
+            <label
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDragging(true)
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setDragging(false)
+                if (e.dataTransfer.files.length) void handleUploadFiles(e.dataTransfer.files)
+              }}
+              className={`block cursor-pointer rounded-xl border-2 border-dashed p-3 text-center text-xs transition ${
+                dragging ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+              }`}
+            >
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                disabled={uploading}
+                onChange={(e) => {
+                  if (e.target.files?.length) void handleUploadFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+              {uploading ? 'Uploading…' : 'Drag files here or click to upload to this tenant’s server folder'}
+            </label>
           ) : null}
           {tenantId ? (
             <ul className="space-y-1">

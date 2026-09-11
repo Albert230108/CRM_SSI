@@ -106,3 +106,17 @@ def test_search_respects_limit(tenant_root):
     for i in range(5):
         _write(tenant_root, 2026, f"{i}_Guest_{i}", f"Quotation_{i}_001.pdf")
     assert len(tenant_files_storage.search_tenant_files(limit=2)) == 2
+
+
+def test_onedrive_and_server_tree_agree_on_folder_name():
+    """C8 regression: the OneDrive path builder and the server-tree path builder must derive the
+    identical `{booking}_{first}_{last}` folder name from one shared sanitizer, so a tenant maps to
+    the same folder in both stores (spaces kept within a name, other punctuation stripped)."""
+    from app.services import onedrive_service, tenant_files_storage
+
+    cases = [("12345", "John", "Van Damme"), ("77", "O'Brien", "Doe-Smith"), ("9", "Amélie", "  ")]
+    for booking_id, first, last in cases:
+        shared = tenant_files_storage.tenant_booking_folder_name(booking_id, first, last)
+        server_rel = tenant_files_storage.booking_folder_relative_path(booking_id, first, last, 2026)
+        assert server_rel.name == shared
+        assert onedrive_service.tenant_folder_path(booking_id, first, last, 2026).endswith(f"/2026/{shared}")

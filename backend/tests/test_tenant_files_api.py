@@ -76,3 +76,43 @@ def test_tenant_files_routes_require_auth(client, tenant_root):
     # `client` (see conftest) carries no Authorization header.
     assert client.get("/api/tenant-files/tenant/1").status_code == 401
     assert client.get("/api/tenant-files/download", params={"path": "x"}).status_code == 401
+
+
+def test_upload_tenant_file_writes_into_booking_folder(non_admin_client, db_session, tenant_root):
+    tenant = _create_tenant(db_session, booking_id="B-files-up")
+    response = non_admin_client.post(
+        f"/api/tenant-files/tenant/{tenant.id}/upload",
+        files={"file": ("contract.pdf", b"%PDF-upload", "application/pdf")},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == "contract.pdf"
+    assert body["relative_path"] == "2026/B-files-up_Sam_Jones/contract.pdf"
+    assert (tenant_root / "2026" / "B-files-up_Sam_Jones" / "contract.pdf").read_bytes() == b"%PDF-upload"
+
+
+def test_upload_tenant_file_dedupes_colliding_names(non_admin_client, db_session, tenant_root):
+    tenant = _create_tenant(db_session, booking_id="B-files-dup")
+    for _ in range(2):
+        response = non_admin_client.post(
+            f"/api/tenant-files/tenant/{tenant.id}/upload",
+            files={"file": ("note.txt", b"data", "text/plain")},
+        )
+        assert response.status_code == 201
+    names = sorted(p.name for p in (tenant_root / "2026" / "B-files-dup_Sam_Jones").iterdir())
+    assert names == ["note (1).txt", "note.txt"]
+
+
+def test_upload_tenant_file_404_for_missing_tenant(non_admin_client, tenant_root):
+    response = non_admin_client.post(
+        "/api/tenant-files/tenant/999999/upload",
+        files={"file": ("x.txt", b"data", "text/plain")},
+    )
+    assert response.status_code == 404
+
+
+def test_upload_tenant_file_requires_auth(client, tenant_root):
+    response = client.post(
+        "/api/tenant-files/tenant/1/upload", files={"file": ("x.txt", b"data", "text/plain")}
+    )
+    assert response.status_code == 401

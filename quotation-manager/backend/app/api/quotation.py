@@ -19,6 +19,8 @@ from app.schemas.quotation import (
     GeneratePdfResponse,
     PaymentPlanRequest,
     PaymentPlanResponse,
+    RecomputeAdminRequest,
+    RecomputeAdminResponse,
     SendToBeds24Request,
     VatSplitRequest,
     VatSplitSegment,
@@ -75,6 +77,55 @@ def calculate_admin_costs(
     return AdminCostsResponse(**result)
 
 
+@router.post("/recompute-admin", response_model=RecomputeAdminResponse)
+def recompute_admin(
+    request: RecomputeAdminRequest,
+    _token=Depends(verify_quotation_token),
+) -> RecomputeAdminResponse:
+    """Recompute the Administration costs line from the current charges, so it stays in sync as
+    other charges are edited (the editor calls this on change, status-independent - unlike the
+    desktop which only auto-refreshed while status was "Inquiry"). Mirrors charge_builder's admin
+    step exactly: the base is the ex-VAT (net) sum of every non-admin charge, with the pass-through
+    city tax and any explicit security-deposit line subtracted; the result is grossed up by the
+    check-in VAT rate to match the VAT-inclusive amounts the form holds."""
+    try:
+        checkin_date = datetime.strptime(request.check_in, "%Y-%m-%d").date()
+    except ValueError:
+        checkin_date = date.today()
+    admin_vat = vat.vat_rate_for_date(checkin_date)
+
+    total_net = 0.0
+    deposit_net = 0.0
+    city_tax_net = 0.0
+    for item in request.invoice_items:
+        if item.type != "charge":
+            continue
+        desc = item.description.strip().lower()
+        if "administration costs" in desc:
+            continue  # never let the admin line feed its own base
+        line_net = item.qty * vat.net_amount(item.amount, item.vat_rate)
+        if desc == "security deposit":
+            deposit_net += line_net  # deposit is excluded from the admin base (matches charge_builder)
+            continue
+        total_net += line_net
+        if ("city" in desc and "tax" in desc) or "municipality" in desc:
+            city_tax_net += line_net
+
+    result = admin_costs_service.calculate_admin_costs(
+        property_name=request.property_name,
+        total_charges=round(total_net, 2),
+        deposit_amount=round(deposit_net, 2),
+        city_tax_amount=round(city_tax_net, 2),
+    )
+    admin_excl = result["admin_cost"]
+    return RecomputeAdminResponse(
+        admin_cost_incl=vat.gross_amount(admin_excl, admin_vat),
+        admin_cost_excl=admin_excl,
+        vat_rate=admin_vat,
+        description=result["description"],
+    )
+
+
 @router.post("/vat-split", response_model=list[VatSplitSegment])
 def calculate_vat_split(
     request: VatSplitRequest,
@@ -109,6 +160,7 @@ def _render_pdf(request: GeneratePdfRequest, output_path: pathlib.Path, quotatio
         quotation_date=request.quotation_date,
         quotation_number=quotation_number,
         room_name=request.room_name,
+        room_id=request.room_id,
         first_night=request.check_in,
         leaving_day=request.check_out,
         security_deposit=request.security_deposit,

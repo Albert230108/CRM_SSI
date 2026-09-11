@@ -10,13 +10,22 @@ interface PropertyRoomFieldsProps {
 
 const inputClass = 'mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm'
 
+// A single select can't carry two values, so each option encodes property+room. The unit
+// separator (U+241F) can't appear in a property/room name, so it round-trips unambiguously.
+const SEP = '␟'
+const encode = (property: string, room: string) => `${property}${SEP}${room}`
+const decode = (value: string): [string, string] => {
+  const [property = '', room = ''] = value.split(SEP)
+  return [property, room]
+}
+
 /**
- * Property + room selects shared by the quotation editor and New Quotation.
- * Both a booking loaded from Beds24 and a stored tenant record can carry a
- * property/room name that isn't one of PROPERTY_ROOMS' known values (a typo,
- * a since-renamed room, ...) - rather than silently swapping it for something
- * else, an unrecognized value is kept as an extra option so nothing is lost
- * or changed out from under the user.
+ * Combined property+room picker shared by the quotation editor and New Quotation: one grouped
+ * dropdown with an optgroup per property and its rooms as options. Both a booking loaded from
+ * Beds24 and a stored tenant record can carry a property/room name that isn't one of
+ * PROPERTY_ROOMS' known values (a typo, a since-renamed room, ...) - rather than silently
+ * swapping it for something else, an unrecognized current selection is kept as an extra
+ * option so nothing is lost or changed out from under the user.
  */
 export default function PropertyRoomFields({
   propertyName,
@@ -25,46 +34,41 @@ export default function PropertyRoomFields({
   onRoomChange,
   className,
 }: PropertyRoomFieldsProps) {
-  const properties = Object.keys(PROPERTY_ROOMS)
-  const propertyOptions = propertyName && !properties.includes(propertyName) ? [propertyName, ...properties] : properties
+  const known = PROPERTY_ROOMS[propertyName]?.includes(roomName) ?? false
+  const hasSelection = Boolean(propertyName || roomName)
 
-  const rooms = PROPERTY_ROOMS[propertyName] ?? []
-  const roomOptions = roomName && !rooms.includes(roomName) ? [roomName, ...rooms] : rooms
-
-  const handlePropertyChange = (value: string) => {
-    onPropertyChange(value)
-    // Only reset the room when it doesn't belong to the newly picked property -
-    // switching property shouldn't silently clear a room the user just set.
-    const nextRooms = PROPERTY_ROOMS[value] ?? []
-    if (!nextRooms.includes(roomName)) {
-      onRoomChange(nextRooms[0] ?? '')
-    }
+  const handleChange = (value: string) => {
+    if (!value) return
+    const [property, room] = decode(value)
+    onPropertyChange(property)
+    onRoomChange(room)
   }
 
   return (
-    <>
-      <label className={`text-xs text-gray-500 ${className ?? ''}`}>
-        Property
-        <select value={propertyName} onChange={(e) => handlePropertyChange(e.target.value)} className={inputClass}>
-          {!propertyName ? <option value="">Select property…</option> : null}
-          {propertyOptions.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className={`text-xs text-gray-500 ${className ?? ''}`}>
-        Room
-        <select value={roomName} onChange={(e) => onRoomChange(e.target.value)} className={inputClass}>
-          {!roomName ? <option value="">Select room…</option> : null}
-          {roomOptions.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-      </label>
-    </>
+    <label className={`text-xs text-gray-500 ${className ?? ''}`}>
+      Property &amp; room
+      <select
+        value={hasSelection ? encode(propertyName, roomName) : ''}
+        onChange={(e) => handleChange(e.target.value)}
+        className={inputClass}
+      >
+        {!hasSelection ? <option value="">Select property &amp; room…</option> : null}
+        {/* Keep an out-of-list current selection visible instead of dropping it. */}
+        {hasSelection && !known ? (
+          <option value={encode(propertyName, roomName)}>
+            {propertyName || '(no property)'} — {roomName || '(no room)'}
+          </option>
+        ) : null}
+        {Object.entries(PROPERTY_ROOMS).map(([property, rooms]) => (
+          <optgroup key={property} label={property}>
+            {rooms.map((room) => (
+              <option key={`${property}${SEP}${room}`} value={encode(property, room)}>
+                {property} — {room}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+    </label>
   )
 }

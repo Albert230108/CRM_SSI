@@ -38,6 +38,7 @@ export default function ChargesTable({ items, onChange, onRemove, onAdd }: Charg
               <th className="w-20 pb-2">Qty</th>
               <th className="w-24 pb-2">Amount (incl. VAT)</th>
               <th className="w-20 pb-2">VAT %</th>
+              <th className="w-24 pb-2">Status</th>
               <th className="w-10 pb-2"></th>
             </tr>
           </thead>
@@ -77,6 +78,14 @@ export default function ChargesTable({ items, onChange, onRemove, onAdd }: Charg
                     className="w-full rounded border border-gray-200 px-2 py-1 text-sm"
                   />
                 </td>
+                <td className="py-1 pr-2">
+                  <input
+                    type="text"
+                    value={item.status ?? ''}
+                    onChange={(e) => onChange(item.localId, { status: e.target.value })}
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-sm"
+                  />
+                </td>
                 <td className="py-1 text-right">
                   <button
                     type="button"
@@ -90,7 +99,7 @@ export default function ChargesTable({ items, onChange, onRemove, onAdd }: Charg
             ))}
             {items.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-3 text-center text-xs text-gray-400">
+                <td colSpan={6} className="py-3 text-center text-xs text-gray-400">
                   No charges yet
                 </td>
               </tr>
