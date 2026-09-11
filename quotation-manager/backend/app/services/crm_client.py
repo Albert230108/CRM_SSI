@@ -82,6 +82,20 @@ async def onedrive_upload(token: str, payload: dict) -> dict:
     return await _post("/api/quotation/onedrive/upload", token, payload)
 
 
+async def list_local_quotes(token: str) -> dict:
+    return await _get("/api/quotation/local-quotes", token)
+
+
+async def save_local_quote(token: str, payload: dict) -> dict:
+    return await _post("/api/quotation/local-quotes", token, payload)
+
+
+async def get_local_quote(token: str, name: str) -> dict:
+    from urllib.parse import quote as _urlquote
+
+    return await _get(f"/api/quotation/local-quotes/{_urlquote(name)}", token)
+
+
 async def search_tenant_files(token: str, params: dict) -> dict:
     query = urlencode({key: value for key, value in params.items() if value not in (None, "")})
     path = "/api/quotation/tenant-files/search"

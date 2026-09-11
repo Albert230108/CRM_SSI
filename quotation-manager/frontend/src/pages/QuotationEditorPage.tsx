@@ -138,6 +138,10 @@ export default function QuotationEditorPage() {
   const [buildingPlan, setBuildingPlan] = useState(false)
   const [generatingCombined, setGeneratingCombined] = useState(false)
   const [pdfLink, setPdfLink] = useState<{ url: string; name: string } | null>(null)
+  // C10: named local quote drafts (server-side snapshots of the editor, no Beds24 push).
+  const [localQuotes, setLocalQuotes] = useState<Array<{ name: string; updated_at: string }>>([])
+  const [quoteName, setQuoteName] = useState('')
+  const [savingQuote, setSavingQuote] = useState(false)
 
   useEffect(() => {
     if (!bookingId) return
@@ -358,8 +362,8 @@ export default function QuotationEditorPage() {
       payments.length > 0 &&
       !window.confirm(
         hasPaidRows
-          ? 'Regenerate the plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced.'
-          : 'Replace the current payment rows with the generated plan?',
+          ? 'Regenerate the payment plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced. This cannot be undone.'
+          : 'Replace all current payment rows with a newly generated plan? This cannot be undone. (Tip: save a local quote first to keep this version.)',
       )
     ) {
       return
@@ -433,7 +437,7 @@ export default function QuotationEditorPage() {
       setError('Room, property, and valid check-in/check-out dates are needed to generate charges.')
       return
     }
-    if (charges.length > 0 && !window.confirm('Replace the current charge lines with the standard generated set?')) {
+    if (charges.length > 0 && !window.confirm('Replace all current charge lines with a freshly generated standard set? Any manual edits to the charges will be lost. (Tip: save a local quote first to keep this version.)')) {
       return
     }
     setBuildingCharges(true)
@@ -642,6 +646,79 @@ export default function QuotationEditorPage() {
       setError(err instanceof ApiError ? err.message : 'Failed to send to Beds24')
     } finally {
       setSending(false)
+    }
+  }
+
+  const refreshLocalQuotes = useCallback(async () => {
+    try {
+      const result = await apiGet<{ quotes: Array<{ name: string; updated_at: string }> }>('/api/quotation/local-quotes')
+      setLocalQuotes(result.quotes ?? [])
+    } catch {
+      // Non-fatal: the panel just shows no saved quotes.
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshLocalQuotes()
+  }, [refreshLocalQuotes])
+
+  const buildQuoteSnapshot = () => ({
+    firstName, lastName, roomName, propertyName, checkIn, checkOut,
+    securityDeposit, adults, children, ssiFlag, bookingStatus, subStatus, installments,
+    charges: charges.map(({ localId: _localId, ...rest }) => rest),
+    payments: payments.map(({ localId: _localId, ...rest }) => rest),
+  })
+
+  const handleSaveLocalQuote = async () => {
+    const name = quoteName.trim()
+    if (!name) {
+      setError('Enter a name for the local quote.')
+      return
+    }
+    setSavingQuote(true)
+    setError(null)
+    setNotice(null)
+    try {
+      await apiPost('/api/quotation/local-quotes', { name, snapshot: buildQuoteSnapshot() })
+      setNotice(`Saved local quote "${name}".`)
+      setQuoteName('')
+      await refreshLocalQuotes()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to save local quote')
+    } finally {
+      setSavingQuote(false)
+    }
+  }
+
+  const handleLoadLocalQuote = async (name: string) => {
+    if (!window.confirm(`Load local quote "${name}"? This replaces the current unsaved editor contents.`)) return
+    setError(null)
+    setNotice(null)
+    try {
+      const snap = await apiGet<Record<string, unknown>>(`/api/quotation/local-quotes/${encodeURIComponent(name)}`)
+      const asItems = (rows: unknown, type: 'charge' | 'payment'): EditableInvoiceItem[] =>
+        Array.isArray(rows)
+          ? rows.map((r) => ({ localId: makeLocalId(), type, currency: 'EUR', ...(r as Record<string, unknown>) } as EditableInvoiceItem))
+          : []
+      depositManuallyEdited.current = true // a loaded quote's deposit is authoritative
+      if (typeof snap.firstName === 'string') setFirstName(snap.firstName)
+      if (typeof snap.lastName === 'string') setLastName(snap.lastName)
+      if (typeof snap.roomName === 'string') setRoomName(snap.roomName)
+      if (typeof snap.propertyName === 'string') setPropertyName(snap.propertyName)
+      if (typeof snap.checkIn === 'string') setCheckIn(snap.checkIn)
+      if (typeof snap.checkOut === 'string') setCheckOut(snap.checkOut)
+      if (typeof snap.securityDeposit === 'number') setSecurityDeposit(snap.securityDeposit)
+      if (typeof snap.adults === 'number') setAdults(snap.adults)
+      if (typeof snap.children === 'number') setChildren(snap.children)
+      if (typeof snap.ssiFlag === 'boolean') setSsiFlag(snap.ssiFlag)
+      if (typeof snap.bookingStatus === 'string') setBookingStatus(snap.bookingStatus)
+      if (typeof snap.subStatus === 'string') setSubStatus(snap.subStatus)
+      if (typeof snap.installments === 'number') setInstallments(snap.installments)
+      setCharges(asItems(snap.charges, 'charge'))
+      setPayments(asItems(snap.payments, 'payment'))
+      setNotice(`Loaded local quote "${name}".`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load local quote')
     }
   }
 
@@ -894,6 +971,47 @@ export default function QuotationEditorPage() {
         >
           {sending ? 'Sending...' : 'Send to Beds24'}
         </button>
+      </div>
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-gray-500">Local quote drafts</h2>
+        <p className="mt-1 text-xs text-gray-500">
+          Save the current editor state as a named draft for this booking (server-side, nothing is sent to Beds24).
+        </p>
+        <div className="mt-2 flex gap-2">
+          <input
+            value={quoteName}
+            onChange={(e) => setQuoteName(e.target.value)}
+            placeholder="Quote name, e.g. Option A"
+            className="w-56 rounded border border-gray-200 px-2 py-1 text-sm"
+          />
+          <button
+            type="button"
+            onClick={handleSaveLocalQuote}
+            disabled={savingQuote}
+            className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {savingQuote ? 'Saving...' : 'Save local quote'}
+          </button>
+        </div>
+        {localQuotes.length > 0 ? (
+          <ul className="mt-3 space-y-1">
+            {localQuotes.map((quote) => (
+              <li key={quote.name} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50/60 px-2 py-1 text-sm">
+                <span className="text-gray-800">{quote.name}</span>
+                <button
+                  type="button"
+                  onClick={() => void handleLoadLocalQuote(quote.name)}
+                  className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+                >
+                  Load
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-xs text-gray-400">No saved local quotes for this booking yet.</p>
+        )}
       </div>
     </div>
   )

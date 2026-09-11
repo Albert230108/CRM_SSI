@@ -81,6 +81,8 @@ def list_tenant_folder(*, booking_id: str, first_name: str | None, last_name: st
     items: list[FileEntry] = []
     if folder.is_dir():
         for entry in sorted(folder.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+            if entry.is_dir() and entry.name.startswith("_"):
+                continue  # hide internal subfolders (e.g. _local_quotes) from the files list
             items.append(
                 FileEntry(
                     name=entry.name,
@@ -147,6 +149,57 @@ def _dedupe_path(path: pathlib.Path) -> pathlib.Path:
         if not candidate.exists():
             return candidate
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Too many files with the same name")
+
+
+import json
+
+# Local quote drafts (Quotation Manager) live in a hidden subfolder of the tenant booking folder,
+# separate from the generated PDFs, so listing PDFs never surfaces them.
+_QUOTES_SUBDIR = "_local_quotes"
+
+
+def _quotes_dir(booking_id: str, first_name: str | None, last_name: str | None, check_in: str | None) -> pathlib.Path:
+    if not booking_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant has no booking id")
+    relative = booking_folder_relative_path(booking_id, first_name, last_name, _year_from_check_in(check_in))
+    return _root() / relative / _QUOTES_SUBDIR
+
+
+def save_local_quote(
+    *, booking_id: str, first_name: str | None, last_name: str | None, check_in: str | None, name: str, snapshot: dict
+) -> str:
+    """Save a named local quote draft (a JSON snapshot of the editor state) under the tenant's
+    booking folder, without touching Beds24. Overwrites a same-named quote. Returns the stored name."""
+    safe_name = _safe_name_component(name).strip()
+    if not safe_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A quote name is required")
+    folder = _quotes_dir(booking_id, first_name, last_name, check_in)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{safe_name}.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    return safe_name
+
+
+def list_local_quotes(*, booking_id: str, first_name: str | None, last_name: str | None, check_in: str | None) -> list[dict]:
+    """List saved local quotes (name + last-modified) for a booking, newest first."""
+    folder = _quotes_dir(booking_id, first_name, last_name, check_in)
+    if not folder.is_dir():
+        return []
+    quotes = [
+        {"name": f.stem, "updated_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat()}
+        for f in folder.glob("*.json")
+        if f.is_file()
+    ]
+    return sorted(quotes, key=lambda q: q["updated_at"], reverse=True)
+
+
+def load_local_quote(*, booking_id: str, first_name: str | None, last_name: str | None, check_in: str | None, name: str) -> dict:
+    """Load a named local quote snapshot. 404s if it doesn't exist."""
+    safe_name = _safe_name_component(name).strip()
+    folder = _quotes_dir(booking_id, first_name, last_name, check_in)
+    path = folder / f"{safe_name}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Local quote not found")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def resolve_download_path(relative_path: str) -> pathlib.Path:

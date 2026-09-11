@@ -120,3 +120,34 @@ def test_onedrive_and_server_tree_agree_on_folder_name():
         server_rel = tenant_files_storage.booking_folder_relative_path(booking_id, first, last, 2026)
         assert server_rel.name == shared
         assert onedrive_service.tenant_folder_path(booking_id, first, last, 2026).endswith(f"/2026/{shared}")
+
+
+def test_local_quotes_save_list_load_roundtrip(tmp_path, monkeypatch):
+    """C10: named local quote drafts save/list/load under the tenant folder without Beds24."""
+    monkeypatch.setenv("TENANT_FILES_ROOT", str(tmp_path))
+    from app.services import tenant_files_storage as t
+
+    kw = dict(booking_id="B-lq", first_name="Jo", last_name="Lo", check_in="2026-07-01")
+    t.save_local_quote(name="Version A", snapshot={"deposit": 400}, **kw)
+    t.save_local_quote(name="Version B", snapshot={"deposit": 1000}, **kw)
+
+    names = [q["name"] for q in t.list_local_quotes(**kw)]
+    assert set(names) == {"Version A", "Version B"}
+    assert t.load_local_quote(name="Version A", **kw) == {"deposit": 400}
+
+    # The quotes subfolder is hidden from the tenant's file listing.
+    listing = t.list_tenant_folder(**kw)
+    assert all(item.name != "_local_quotes" for item in listing["items"])
+
+
+def test_load_missing_local_quote_404s(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENANT_FILES_ROOT", str(tmp_path))
+    from fastapi import HTTPException
+
+    from app.services import tenant_files_storage as t
+
+    import pytest
+
+    with pytest.raises(HTTPException) as exc:
+        t.load_local_quote(booking_id="B-x", first_name="A", last_name="B", check_in="2026-01-01", name="nope")
+    assert exc.value.status_code == 404

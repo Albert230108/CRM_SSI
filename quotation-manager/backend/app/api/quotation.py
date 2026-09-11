@@ -4,6 +4,7 @@ import tempfile
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel
 
 from app.config import ONEDRIVE_STORAGE_ENABLED
 from app.core.quotation_token import get_raw_token, verify_quotation_token
@@ -399,6 +400,37 @@ async def create_booking(
 ) -> dict:
     payload = request.model_dump()
     return await crm_client.create_booking(token, payload)
+
+
+class SaveLocalQuoteRequest(BaseModel):
+    name: str
+    snapshot: dict
+
+
+@router.get("/local-quotes")
+async def local_quotes_list(
+    _payload=Depends(verify_quotation_token),
+    token: str = Depends(get_raw_token),
+) -> dict:
+    return await crm_client.list_local_quotes(token)
+
+
+@router.post("/local-quotes")
+async def local_quotes_save(
+    request: SaveLocalQuoteRequest,
+    _payload=Depends(verify_quotation_token),
+    token: str = Depends(get_raw_token),
+) -> dict:
+    return await crm_client.save_local_quote(token, request.model_dump())
+
+
+@router.get("/local-quotes/{name}")
+async def local_quotes_get(
+    name: str,
+    _payload=Depends(verify_quotation_token),
+    token: str = Depends(get_raw_token),
+) -> dict:
+    return await crm_client.get_local_quote(token, name)
 
 
 @router.get("/tenant-files/search")

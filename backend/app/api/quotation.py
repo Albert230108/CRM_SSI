@@ -242,6 +242,59 @@ def quotation_tenant_files_download(
     )
 
 
+class SaveLocalQuoteRequest(BaseModel):
+    name: str
+    snapshot: dict
+
+
+def _token_tenant(db: Session, token: QuotationTokenPayload) -> Tenant:
+    tenant = db.query(Tenant).filter(Tenant.id == token.tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return tenant
+
+
+@router.get("/quotation/local-quotes")
+def list_local_quotes(
+    db: Session = Depends(get_db),
+    token: QuotationTokenPayload = Depends(verify_quotation_token),
+) -> dict:
+    """List the saved local quote drafts for the token's booking (server-side, no Beds24)."""
+    tenant = _token_tenant(db, token)
+    return {
+        "quotes": tenant_files_storage.list_local_quotes(
+            booking_id=tenant.booking_id, first_name=tenant.first_name, last_name=tenant.last_name, check_in=tenant.check_in,
+        )
+    }
+
+
+@router.post("/quotation/local-quotes")
+def save_local_quote(
+    request: SaveLocalQuoteRequest,
+    db: Session = Depends(get_db),
+    token: QuotationTokenPayload = Depends(verify_quotation_token),
+) -> dict:
+    tenant = _token_tenant(db, token)
+    name = tenant_files_storage.save_local_quote(
+        booking_id=tenant.booking_id, first_name=tenant.first_name, last_name=tenant.last_name, check_in=tenant.check_in,
+        name=request.name, snapshot=request.snapshot,
+    )
+    return {"name": name}
+
+
+@router.get("/quotation/local-quotes/{name}")
+def get_local_quote(
+    name: str,
+    db: Session = Depends(get_db),
+    token: QuotationTokenPayload = Depends(verify_quotation_token),
+) -> dict:
+    tenant = _token_tenant(db, token)
+    return tenant_files_storage.load_local_quote(
+        booking_id=tenant.booking_id, first_name=tenant.first_name, last_name=tenant.last_name, check_in=tenant.check_in,
+        name=name,
+    )
+
+
 class QuotationInvoiceItem(BaseModel):
     type: str
     description: str
