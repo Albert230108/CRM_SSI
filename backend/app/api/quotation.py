@@ -137,11 +137,12 @@ class OneDriveUploadRequest(OneDriveNextNumberRequest):
 @router.post("/quotation/onedrive/next-number")
 async def quotation_onedrive_next_number(
     request: OneDriveNextNumberRequest,
+    db: Session = Depends(get_db),
     _token: QuotationTokenPayload = Depends(verify_quotation_token),
 ) -> dict:
-    access_token = await onedrive_service.get_graph_access_token()
+    access_token, drive_id = await onedrive_service.get_access_token_and_drive_id(db)
     folder = onedrive_service.tenant_folder_path(request.booking_id, request.first_name, request.last_name, request.year)
-    names = await onedrive_service.list_child_names(access_token, folder)
+    names = await onedrive_service.list_child_names(access_token, drive_id, folder)
     prefix = f"Quotation_{request.booking_id}_"
     count = sum(1 for name in names if name.startswith(prefix) and name.endswith(".pdf"))
     return {"next_number": count + 1, "folder_path": folder}
@@ -150,6 +151,7 @@ async def quotation_onedrive_next_number(
 @router.post("/quotation/onedrive/upload")
 async def quotation_onedrive_upload(
     request: OneDriveUploadRequest,
+    db: Session = Depends(get_db),
     _token: QuotationTokenPayload = Depends(verify_quotation_token),
 ) -> dict:
     try:
@@ -157,9 +159,9 @@ async def quotation_onedrive_upload(
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid base64 PDF content") from exc
 
-    access_token = await onedrive_service.get_graph_access_token()
+    access_token, drive_id = await onedrive_service.get_access_token_and_drive_id(db)
     folder = onedrive_service.tenant_folder_path(request.booking_id, request.first_name, request.last_name, request.year)
-    result = await onedrive_service.upload_pdf(access_token, folder, request.filename, content)
+    result = await onedrive_service.upload_pdf(access_token, drive_id, folder, request.filename, content)
     return {"name": result["name"], "web_url": result["web_url"], "folder_path": folder}
 
 

@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, Text, func
 
 from app.database import Base
 
@@ -38,4 +38,14 @@ class AdminSettings(Base):
     # Ceiling on tokens the planner/checker loop may spend per calendar day (UTC) across all
     # tenants. NULL means unlimited. BigInteger because a busy day can exceed a 32-bit count.
     ai_daily_token_cap = Column(BigInteger, nullable=True)
+    # Delegated (sign-in) Microsoft Graph auth for the single OneDrive account quotation PDFs
+    # upload to. There is exactly one such account for this whole deployment, so it lives here
+    # as singleton settings rather than a per-account table. NULL until the one-time device-code
+    # bootstrap script (backend/scripts/onedrive_device_auth.py) has been run and confirmed
+    # against the intended personal OneDrive drive id.
+    onedrive_refresh_token_encrypted = Column(Text, nullable=True)
+    onedrive_drive_id = Column(String(255), nullable=True)
+    # Display-only label (e.g. the signed-in account's email) shown in admin UI; never used for auth.
+    onedrive_account_label = Column(String(255), nullable=True)
+    onedrive_token_updated_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

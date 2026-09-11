@@ -3,7 +3,6 @@ from decimal import Decimal
 import logging
 import traceback
 import re
-import os
 from urllib.parse import quote
 from typing import Annotated, Optional
 
@@ -37,6 +36,7 @@ from app.services.tenant_channel_endpoint_lifecycle import delete_tenant_channel
 from app.services.tenant_notes_history import SOURCE_BEDS24_IMPORT, SOURCE_MANUAL, set_tenant_notes
 from app.models.tenant_notes_history import TenantNotesHistory
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
+from app.services import onedrive_service
 from app.models.tenant_brain_entry import SOURCE_SCANNER, TenantBrainEntry
 from app.models.tenant_brain_entry_history import TenantBrainEntryHistory
 from app.services.action_writer_trigger_service import register_manual_trigger
@@ -416,31 +416,6 @@ def _extract_guest_fields(item: dict) -> dict:
         "booking_time": booking_time,
         "modified_time": modified_time,
     }
-async def _get_graph_access_token() -> str:
-    tenant_id = os.getenv("MS_GRAPH_TENANT_ID")
-    client_id = os.getenv("MS_GRAPH_CLIENT_ID")
-    client_secret = os.getenv("MS_GRAPH_CLIENT_SECRET")
-    if not tenant_id or not client_id or not client_secret:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Microsoft Graph is not configured")
-
-    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            token_url,
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "grant_type": "client_credentials",
-                "scope": "https://graph.microsoft.com/.default",
-            },
-        )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to authenticate with Microsoft Graph")
-    payload = response.json()
-    token = payload.get("access_token")
-    if not token:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Microsoft Graph access token missing")
-    return str(token)
 
 
 def _build_one_drive_folder_path(tenant: Tenant) -> str:
@@ -995,12 +970,9 @@ async def get_tenant_onedrive_files(
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
-    drive_id = os.getenv("MS_GRAPH_DRIVE_ID")
-    if not drive_id:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Microsoft Graph drive is not configured")
+    access_token, drive_id = await onedrive_service.get_access_token_and_drive_id(db)
 
     folder_path = _build_one_drive_folder_path(tenant)
-    access_token = await _get_graph_access_token()
     url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{quote(folder_path, safe='/')}:/children"
     headers = {"Authorization": f"Bearer {access_token}"}
 

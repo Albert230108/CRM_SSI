@@ -13,17 +13,17 @@ def _auth_headers_for(tenant_id=1, booking_id="12345"):
 def test_next_number_counts_existing_quotations(client, monkeypatch):
     import app.api.quotation as quotation_module
 
-    async def fake_token():
-        return "graph-token"
+    async def fake_token_and_drive(db):
+        return "graph-token", "drive-1"
 
-    async def fake_list(access_token, folder):
+    async def fake_list(access_token, drive_id, folder):
         return [
             "Quotation_12345_001 - Studio 1 - John - (a~b).pdf",
             "Quotation_12345_002 - Studio 1 - John - (a~b).pdf",
             "notes.txt",
         ]
 
-    monkeypatch.setattr(quotation_module.onedrive_service, "get_graph_access_token", fake_token)
+    monkeypatch.setattr(quotation_module.onedrive_service, "get_access_token_and_drive_id", fake_token_and_drive)
     monkeypatch.setattr(quotation_module.onedrive_service, "list_child_names", fake_list)
 
     response = client.post(
@@ -40,16 +40,16 @@ def test_upload_decodes_and_calls_graph(client, monkeypatch):
 
     captured = {}
 
-    async def fake_token():
-        return "graph-token"
+    async def fake_token_and_drive(db):
+        return "graph-token", "drive-1"
 
-    async def fake_upload(access_token, folder, filename, content):
+    async def fake_upload(access_token, drive_id, folder, filename, content):
         captured["folder"] = folder
         captured["filename"] = filename
         captured["content"] = content
         return {"name": filename, "web_url": "https://onedrive.example/x.pdf", "id": "1"}
 
-    monkeypatch.setattr(quotation_module.onedrive_service, "get_graph_access_token", fake_token)
+    monkeypatch.setattr(quotation_module.onedrive_service, "get_access_token_and_drive_id", fake_token_and_drive)
     monkeypatch.setattr(quotation_module.onedrive_service, "upload_pdf", fake_upload)
 
     response = client.post(
@@ -73,10 +73,10 @@ def test_upload_decodes_and_calls_graph(client, monkeypatch):
 def test_upload_rejects_bad_base64(client, monkeypatch):
     import app.api.quotation as quotation_module
 
-    async def fake_token():
-        return "graph-token"
+    async def fake_token_and_drive(db):
+        return "graph-token", "drive-1"
 
-    monkeypatch.setattr(quotation_module.onedrive_service, "get_graph_access_token", fake_token)
+    monkeypatch.setattr(quotation_module.onedrive_service, "get_access_token_and_drive_id", fake_token_and_drive)
 
     response = client.post(
         "/api/quotation/onedrive/upload",
