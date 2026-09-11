@@ -38,6 +38,12 @@ class AiAutoDraft(Base):
     # Set when the draft came out of the planner loop, linking it to its full execution log.
     agent_run_id = Column(Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True)
     checker_feedback = Column(Text, nullable=True)
+    # Set when the sales-manager agent generated a quotation PDF for this reply; the PDF is stored
+    # as a CommunicationAttachment and attached to the outgoing email/WhatsApp at send time (so a
+    # delayed auto-send still has it).
+    quotation_attachment_id = Column(
+        Integer, ForeignKey("communication_attachments.id", ondelete="SET NULL"), nullable=True
+    )
     # Why this draft ended up sent or dismissed, and who/what decided - set at every path that
     # reaches a final send/dismiss outcome (CRM UI buttons, a WhatsApp YES/NO reply, or the
     # automatic auto-send timer). Read by memory_redo_service as extra context for the redo

@@ -152,6 +152,7 @@ def _process_due_item(db: Session, item: ActionItem, now: datetime) -> bool:
         operator_note=operator_note,
         attachment_ids=[],
         user_id=None,
+        respect_planner_channel=True,
     )
     logger.info("Action planner trigger fired item_id=%s tenant_id=%s channel=%s draft_id=%s", item.id, tenant_id, channel, draft.id)
     return True

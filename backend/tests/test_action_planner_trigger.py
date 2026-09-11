@@ -38,7 +38,7 @@ def capture_planner(monkeypatch):
     """Stub out the LLM planner run and the conversation-channel lookup so the sweep is deterministic."""
     calls = []
 
-    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id):
+    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id, **kwargs):
         calls.append({"draft_id": draft_id, "tenant_id": tenant_id, "channel": channel, "operator_note": operator_note})
 
     monkeypatch.setattr(action_planner_trigger_service, "run_ai_plan_for_draft", fake_run)

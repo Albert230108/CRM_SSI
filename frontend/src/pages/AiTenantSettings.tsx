@@ -40,12 +40,13 @@ type TenantAiSettings = {
   action_writer_profile_id: number | null
   formatter_enabled: boolean
   formatter_profile_id: number | null
+  sales_manager_profile_id: number | null
 }
 
 type AgentProfileOption = {
   id: number
   name: string
-  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'memory_redo'
+  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'sales_manager' | 'memory_redo'
   is_default: boolean
 }
 
@@ -70,6 +71,7 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
   action_writer_profile_id: null,
   formatter_enabled: false,
   formatter_profile_id: null,
+  sales_manager_profile_id: null,
 })
 
 export default function AiTenantSettings() {
@@ -706,6 +708,36 @@ export default function AiTenantSettings() {
                   >
                     <option value="">Use the default</option>
                     {agentProfiles.filter((profile) => profile.role === 'drafter').map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-2.5">
+                <p className="text-sm font-semibold text-gray-900">Sales Manager</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  Runs between the planner and the drafter, but only when the planner asks for a quote. It
+                  prices the stay and, when asked, renders a PDF quotation via the quotation manager, files it
+                  in the tenant folder, and attaches it to the reply. Configure it on the{' '}
+                  <Link to="/settings/ai-agents" className="text-brand-700 hover:underline">profiles page</Link>.
+                </p>
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="sales-manager-profile">
+                    Sales manager profile
+                  </label>
+                  <select
+                    id="sales-manager-profile"
+                    value={settings.sales_manager_profile_id ?? ''}
+                    onChange={(event) =>
+                      setSettings((current) =>
+                        current ? { ...current, sales_manager_profile_id: event.target.value ? Number(event.target.value) : null } : current,
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
+                  >
+                    <option value="">Use the default</option>
+                    {agentProfiles.filter((profile) => profile.role === 'sales_manager').map((profile) => (
                       <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
                     ))}
                   </select>

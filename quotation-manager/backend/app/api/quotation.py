@@ -126,10 +126,14 @@ def _generate_pdf_local(request: GeneratePdfRequest) -> GeneratePdfResponse:
         checkout_date_str=request.check_out,
     )
     _render_pdf(request, next_output.path, next_output.quotation_number)
+    content_base64 = None
+    if request.include_content:
+        content_base64 = base64.b64encode(next_output.path.read_bytes()).decode("ascii")
     return GeneratePdfResponse(
         file_path=str(next_output.path),
         quotation_number=next_output.quotation_number,
         location="local",
+        content_base64=content_base64,
     )
 
 
@@ -176,9 +180,10 @@ async def generate_pdf(
         _render_pdf(request, temp_path, quotation_number)
         content = temp_path.read_bytes()
 
+    content_base64 = base64.b64encode(content).decode("ascii")
     upload = await crm_client.onedrive_upload(
         token,
-        {**identity, "filename": filename, "content_base64": base64.b64encode(content).decode("ascii")},
+        {**identity, "filename": filename, "content_base64": content_base64},
     )
     return GeneratePdfResponse(
         file_path=upload.get("web_url") or upload.get("folder_path") or filename,
@@ -186,6 +191,7 @@ async def generate_pdf(
         location="onedrive",
         web_url=upload.get("web_url"),
         name=upload.get("name") or filename,
+        content_base64=content_base64 if request.include_content else None,
     )
 
 

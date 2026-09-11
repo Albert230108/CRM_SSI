@@ -20,7 +20,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.admin_settings import AdminSettings
-from app.models.ai_agent_profile import CHECKER_ROLE, DRAFTER_ROLE, FORMATTER_ROLE, PLANNER_ROLE, AiAgentProfile
+from app.models.ai_agent_profile import (
+    CHECKER_ROLE,
+    DRAFTER_ROLE,
+    FORMATTER_ROLE,
+    PLANNER_ROLE,
+    SALES_MANAGER_ROLE,
+    AiAgentProfile,
+)
 from app.models.ai_agent_run import (
     STATUS_COMPLETED,
     STATUS_ESCALATED,
@@ -38,6 +45,7 @@ from app.models.tenant_ai_settings import TenantAiSettings
 from app.services import ai_prompt_blocks, ai_reply_service, attachment_service, brain_service, gemini_client
 from app.services.datetime_placeholders import resolve_datetime_placeholders
 from app.services.thread_timeline_service import load_tenant_whatsapp_messages
+from app.services import outbound_target_resolver, sales_manager_service
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +55,32 @@ PLANNER_SCHEMA = {
     "type": "object",
     "properties": {
         "should_reply": {"type": "boolean"},
+        # Which channel the reply should go out on. Optional: when omitted or unrecognised the
+        # reply follows the channel the conversation arrived on (the historical behaviour). When
+        # the planner names one, automated paths honour it and re-target the send accordingly.
+        "channel": {"type": ["string", "null"]},
         "template_id": {"type": ["integer", "null"]},
         "extra_brain_sections": {"type": "array", "items": {"type": "string"}},
         "extra_instructions": {"type": "string"},
+        # Optional. Set needed=true to have the sales-manager agent price and/or render a PDF
+        # quotation before the reply is drafted. `scope` is "price" (numbers for the reply only),
+        # "pdf" (also render+file+attach the PDF), or "both". The remaining fields are the exact
+        # booking parameters to quote; leave any unknown and the tenant's booking is used.
+        "sales_request": {
+            "type": "object",
+            "properties": {
+                "needed": {"type": "boolean"},
+                "scope": {"type": "string"},
+                "property_name": {"type": ["string", "null"]},
+                "room_name": {"type": ["string", "null"]},
+                "check_in": {"type": ["string", "null"]},
+                "check_out": {"type": ["string", "null"]},
+                "adults": {"type": ["integer", "null"]},
+                "children": {"type": ["integer", "null"]},
+                "security_deposit": {"type": ["number", "null"]},
+                "notes": {"type": ["string", "null"]},
+            },
+        },
         "confidence": {"type": "number"},
         "reasoning": {"type": "string"},
         "alternatives": {
@@ -86,6 +117,19 @@ FORMATTER_SCHEMA = {
     "required": ["formatted_text"],
 }
 
+SALES_MANAGER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        # A short, factual price summary written for the guest, grounded on the charge lines the
+        # pricing engine already computed. The drafter weaves this into the reply.
+        "price_summary": {"type": "string"},
+        # The security deposit to state on the quotation/PDF. Null keeps the planner's value (or 0).
+        "security_deposit": {"type": ["number", "null"]},
+        "notes": {"type": "string"},
+    },
+    "required": ["price_summary"],
+}
+
 
 @dataclass
 class PlannerRunResult:
@@ -100,6 +144,17 @@ class PlannerRunResult:
     attempts: int = 0
     # True only when the checker approved the draft; the auto pipeline refuses to send otherwise.
     auto_send_allowed: bool = False
+    # Set only when the planner instructed a channel different from the one it was invoked with
+    # (and the run was allowed to honour it). None means "keep the caller's channel/target". The
+    # target ids are the concrete email thread / WhatsApp endpoint resolved for the new channel.
+    chosen_channel: str | None = None
+    chosen_email_thread_id: int | None = None
+    chosen_whatsapp_endpoint_id: int | None = None
+    # Set when the sales-manager agent produced a PDF quotation for this reply. The caller persists
+    # the bytes as a CommunicationAttachment and attaches it to the outgoing message.
+    quotation_pdf_bytes: bytes | None = None
+    quotation_pdf_filename: str | None = None
+    quotation_web_url: str | None = None
 
 
 @dataclass
@@ -598,6 +653,145 @@ def formatter_output_looks_like_html(value: str | None) -> bool:
     return bool(value and _HTML_TAG_RE.search(value))
 
 
+@dataclass
+class SalesManagerResult:
+    # The factual price summary the drafter should weave into the reply (already grounded on the
+    # pricing engine's numbers), plus a note the drafter should include and, when a PDF was made,
+    # its bytes/filename/link so the caller can attach it and reference it.
+    ok: bool
+    drafter_note: str = ""
+    escalation_reason: str | None = None
+    pdf_bytes: bytes | None = None
+    pdf_filename: str | None = None
+    pdf_web_url: str | None = None
+
+
+_SALES_SCOPES = {"price", "pdf", "both"}
+
+
+def _normalize_sales_scope(value: object) -> str:
+    scope = str(value or "").strip().lower()
+    return scope if scope in _SALES_SCOPES else "price"
+
+
+def _build_sales_manager_prompt(
+    profile: AiAgentProfile,
+    *,
+    params: dict,
+    charges_text: str,
+    inbound_text: str | None,
+) -> str:
+    text = ai_prompt_blocks.resolve_blocks(profile, SALES_MANAGER_ROLE)
+    parts: list[str] = []
+
+    preamble = (text["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
+
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
+    if instructions:
+        parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
+
+    request_lines = "\n".join(
+        f"- {key}: {value}" for key, value in params.items() if value not in (None, "")
+    )
+    parts.append(ai_prompt_blocks.join(text["request"], request_lines))
+    parts.append(ai_prompt_blocks.join(text["charges"], charges_text))
+    if inbound_text:
+        parts.append(ai_prompt_blocks.join(text["inbound"], inbound_text.strip()))
+
+    output = (text["output"] or "").strip()
+    if output:
+        parts.append(output)
+    return "\n\n".join(part for part in parts if part.strip())
+
+
+def _run_sales_manager(
+    db: Session,
+    *,
+    recorder,
+    tenant: Tenant,
+    sales_profile: AiAgentProfile,
+    sales_request: dict,
+    inbound_text: str | None,
+    user_id: int | None,
+    is_redo: bool,
+) -> SalesManagerResult:
+    """Price and, when asked, render a PDF quotation, returning what the drafter needs.
+
+    The pricing figures come from the quotation engine (never the model); the model only turns
+    them into a guest-facing summary. Any failure escalates rather than sending a reply with a
+    made-up or missing quote.
+    """
+    scope = _normalize_sales_scope(sales_request.get("scope"))
+    params = sales_manager_service.resolve_quote_params(tenant, sales_request)
+
+    try:
+        quote = sales_manager_service.compute_charges(tenant, params, issued_by_user_id=user_id)
+    except sales_manager_service.SalesManagerError as exc:
+        recorder.record("sales_manager", prompt=f"build-charges {params}", error=str(exc))
+        logger.warning("Sales manager pricing failed tenant_id=%s: %s", tenant.id, exc)
+        return SalesManagerResult(ok=False, escalation_reason="sales_manager_pricing_failed")
+
+    charges_text = sales_manager_service.render_charges_text(quote)
+    prompt = _build_sales_manager_prompt(
+        sales_profile, params=params, charges_text=charges_text, inbound_text=inbound_text
+    )
+    try:
+        result = gemini_client.generate(
+            prompt,
+            **_generation_kwargs(sales_profile, is_redo=is_redo),
+            response_schema=SALES_MANAGER_SCHEMA,
+        )
+    except gemini_client.GeminiClientError as exc:
+        recorder.record("sales_manager", prompt=prompt, error=str(exc), model=_generation_kwargs(sales_profile, is_redo=is_redo)["model"])
+        logger.warning("Sales manager model call failed tenant_id=%s: %s", tenant.id, exc)
+        return SalesManagerResult(ok=False, escalation_reason="sales_manager_model_failed")
+
+    recorder.record("sales_manager", prompt=prompt, result=result)
+    parsed = result.parsed or {}
+    price_summary = str(parsed.get("price_summary") or "").strip() or charges_text
+    requested_deposit = sales_request.get("security_deposit")
+    deposit = parsed.get("security_deposit")
+    if deposit is None:
+        deposit = requested_deposit if requested_deposit is not None else 0
+    notes = str(parsed.get("notes") or "").strip()
+
+    drafter_note_parts = [
+        "The sales manager priced this stay. Use these exact figures in the reply:",
+        price_summary,
+    ]
+    if notes:
+        drafter_note_parts.append(f"Notes: {notes}")
+
+    sales_result = SalesManagerResult(ok=True)
+    if scope in ("pdf", "both"):
+        invoice_items = sales_manager_service.charges_to_invoice_items(quote.charges)
+        try:
+            pdf = sales_manager_service.generate_quotation_pdf(
+                tenant,
+                params,
+                invoice_items,
+                security_deposit=float(deposit or 0),
+                issued_by_user_id=user_id,
+            )
+        except sales_manager_service.SalesManagerError as exc:
+            recorder.record("sales_manager", prompt="generate-pdf", error=str(exc))
+            logger.warning("Sales manager PDF generation failed tenant_id=%s: %s", tenant.id, exc)
+            return SalesManagerResult(ok=False, escalation_reason="sales_manager_pdf_failed")
+        sales_result.pdf_bytes = pdf.content
+        sales_result.pdf_filename = pdf.filename
+        sales_result.pdf_web_url = pdf.web_url
+        drafter_note_parts.append(
+            "A PDF quotation is attached to this message"
+            + (f" (also filed at {pdf.web_url})" if pdf.web_url else "")
+            + "; refer to it in the reply."
+        )
+
+    sales_result.drafter_note = "\n".join(drafter_note_parts)
+    return sales_result
+
+
 def run_planner_loop(
     db: Session,
     *,
@@ -609,6 +803,9 @@ def run_planner_loop(
     attachments: list[attachment_service.OutboundAttachment] | None = None,
     user_id: int | None = None,
     is_redo: bool = False,
+    respect_planner_channel: bool = False,
+    outbound_email_thread_id: int | None = None,
+    outbound_whatsapp_endpoint_id: int | None = None,
 ) -> PlannerRunResult:
     """Plan, draft and review a reply. Adds an AiAgentRun to the session but does not commit."""
     ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
@@ -709,6 +906,35 @@ def run_planner_loop(
         recorder.finish(STATUS_SKIPPED, escalation_reason="planner_declined")
         return PlannerRunResult(status=STATUS_SKIPPED, run_id=run.id, escalation_reason="planner_declined")
 
+    # Honour the planner's channel choice on automated paths only. Manual/redo runs pass
+    # respect_planner_channel=False, so a person's explicit channel pick is never overridden.
+    # A choice the tenant can't receive on (no linked WhatsApp chat, no email thread, ambiguous
+    # WhatsApp) parks the reply for a human instead of silently switching channels. Everything
+    # downstream (drafter/checker/formatter) then styles the reply for the chosen channel.
+    chosen_channel: str | None = None
+    chosen_email_thread_id: int | None = None
+    chosen_whatsapp_endpoint_id: int | None = None
+    if respect_planner_channel:
+        requested = outbound_target_resolver.normalize_channel(plan.get("channel"))
+        if requested and requested != channel:
+            target = outbound_target_resolver.resolve_outbound_target(
+                db,
+                tenant,
+                requested,
+                known_email_thread_id=outbound_email_thread_id,
+                known_whatsapp_endpoint_id=outbound_whatsapp_endpoint_id,
+            )
+            if not target.reachable:
+                recorder.finish(STATUS_ESCALATED, escalation_reason="channel_unavailable")
+                return PlannerRunResult(
+                    status=STATUS_ESCALATED, run_id=run.id, escalation_reason="channel_unavailable"
+                )
+            channel = requested
+            run.channel = requested
+            chosen_channel = requested
+            chosen_email_thread_id = target.email_thread_id
+            chosen_whatsapp_endpoint_id = target.whatsapp_endpoint_id
+
     template_id = plan.get("template_id")
     confidence = float(plan.get("confidence") or 0.0)
     no_match = template_id is None or template_id not in allowed_template_ids
@@ -728,6 +954,45 @@ def run_planner_loop(
     plan_instructions = str(plan.get("extra_instructions") or "").strip()
     # The operator's own words lead, so a manual run never has its intent overwritten by the plan.
     drafter_instruction = "\n\n".join(part for part in [(operator_note or "").strip(), plan_instructions] if part)
+
+    # Sales manager: runs between planner and drafter, but only when the planner asked for a quote.
+    # It prices the stay (and optionally renders+files a PDF) and hands the drafter the exact
+    # figures. A failure escalates rather than drafting a reply with a missing/made-up quote.
+    quotation_pdf_bytes: bytes | None = None
+    quotation_pdf_filename: str | None = None
+    quotation_web_url: str | None = None
+    sales_request = plan.get("sales_request") or {}
+    if isinstance(sales_request, dict) and sales_request.get("needed"):
+        sales_profile = resolve_profile(
+            db, SALES_MANAGER_ROLE, ai_settings.sales_manager_profile_id if ai_settings else None
+        )
+        if sales_profile is None:
+            recorder.finish(STATUS_ESCALATED, escalation_reason="sales_manager_unavailable", final_template_id=template.id)
+            return PlannerRunResult(
+                status=STATUS_ESCALATED, run_id=run.id, template_id=template.id,
+                escalation_reason="sales_manager_unavailable",
+            )
+        sales_result = _run_sales_manager(
+            db,
+            recorder=recorder,
+            tenant=tenant,
+            sales_profile=sales_profile,
+            sales_request=sales_request,
+            inbound_text=inbound_text,
+            user_id=user_id,
+            is_redo=is_redo,
+        )
+        if not sales_result.ok:
+            recorder.finish(STATUS_ESCALATED, escalation_reason=sales_result.escalation_reason, final_template_id=template.id)
+            return PlannerRunResult(
+                status=STATUS_ESCALATED, run_id=run.id, template_id=template.id,
+                escalation_reason=sales_result.escalation_reason,
+            )
+        # The sales manager's factual figures lead the drafter's instruction.
+        drafter_instruction = "\n\n".join(part for part in [drafter_instruction, sales_result.drafter_note] if part)
+        quotation_pdf_bytes = sales_result.pdf_bytes
+        quotation_pdf_filename = sales_result.pdf_filename
+        quotation_web_url = sales_result.pdf_web_url
 
     # Titles/paths only, no section bodies - cheap enough to give the checker every run so it
     # can name a missing section instead of guessing. Computed once; doesn't change mid-run.
@@ -878,6 +1143,12 @@ def run_planner_loop(
             checker_passed=True,
             attempts=run.attempts,
             auto_send_allowed=True,
+            chosen_channel=chosen_channel,
+            chosen_email_thread_id=chosen_email_thread_id,
+            chosen_whatsapp_endpoint_id=chosen_whatsapp_endpoint_id,
+            quotation_pdf_bytes=quotation_pdf_bytes,
+            quotation_pdf_filename=quotation_pdf_filename,
+            quotation_web_url=quotation_web_url,
         )
 
     # Attempts exhausted (or no checker configured): keep the last draft and park it for a human.
@@ -899,4 +1170,10 @@ def run_planner_loop(
         checker_feedback=feedback,
         attempts=run.attempts,
         auto_send_allowed=not block_auto_send,
+        chosen_channel=chosen_channel,
+        chosen_email_thread_id=chosen_email_thread_id,
+        chosen_whatsapp_endpoint_id=chosen_whatsapp_endpoint_id,
+        quotation_pdf_bytes=quotation_pdf_bytes,
+        quotation_pdf_filename=quotation_pdf_filename,
+        quotation_web_url=quotation_web_url,
     )

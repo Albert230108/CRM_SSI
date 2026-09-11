@@ -56,6 +56,7 @@ def test_get_creates_default_settings_row(non_admin_client, db_session):
         "action_writer_profile_id": None,
         "formatter_enabled": False,
         "formatter_profile_id": None,
+        "sales_manager_profile_id": None,
     }
 
 

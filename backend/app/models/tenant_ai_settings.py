@@ -36,4 +36,7 @@ class TenantAiSettings(Base):
     # should turn an approved plain-text reply into channel-specific output.
     formatter_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     formatter_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
+    # The sales-manager profile this tenant uses when the planner asks for a quotation. NULL falls
+    # back to the role's active default profile, like the other pins.
+    sales_manager_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

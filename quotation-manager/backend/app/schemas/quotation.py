@@ -68,6 +68,10 @@ class GeneratePdfRequest(BaseModel):
     # across all bookings, so the PDF's derived figures reflect the whole group.
     override_price_per_night: float | None = None
     override_total_nights: int | None = None
+    # When true the rendered PDF bytes are also returned (base64) in the response, so a
+    # server-to-server caller (the CRM's sales-manager agent) can attach the quotation to the
+    # outgoing message without a second round-trip to fetch it back from OneDrive.
+    include_content: bool = False
 
 
 class SendToBeds24Request(BaseModel):
@@ -112,6 +116,8 @@ class GeneratePdfResponse(BaseModel):
     location: str = "local"  # "onedrive" or "local"
     web_url: str | None = None
     name: str | None = None
+    # Populated only when the request set include_content=True (base64-encoded PDF bytes).
+    content_base64: str | None = None
 
 
 class BuildChargesRequest(BaseModel):

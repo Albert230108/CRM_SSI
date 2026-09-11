@@ -14,6 +14,7 @@ const AiTemplatesOverview = lazy(() => import('./pages/AiTemplatesOverview'))
 const AiTemplateEditor = lazy(() => import('./pages/AiTemplateEditor'))
 const AiTenantSettings = lazy(() => import('./pages/AiTenantSettings'))
 const AiAgentProfiles = lazy(() => import('./pages/AiAgentProfiles'))
+const AiAgentOverview = lazy(() => import('./pages/AiAgentOverview'))
 const AiAgentProfileEditor = lazy(() => import('./pages/AiAgentProfileEditor'))
 const AiAgentRuns = lazy(() => import('./pages/AiAgentRuns'))
 const AiAgentRunDetail = lazy(() => import('./pages/AiAgentRunDetail'))
@@ -135,6 +136,7 @@ export default function App() {
                     <Route path="/settings/planner-schedules" element={<ScheduledPlannerRuns />} />
                     <Route path="/settings/brain" element={<BrainSections />} />
                     <Route path="/settings/ai-agents" element={<AiAgentProfiles />} />
+                    <Route path="/settings/ai-agents/overview" element={<AiAgentOverview />} />
                     <Route path="/settings/ai-agents/:profileId" element={<AiAgentProfileEditor />} />
                     <Route path="/ai-runs" element={<ProtectedRoute><AiAgentRuns /></ProtectedRoute>} />
                     <Route path="/ai-drafts" element={<AiPendingDrafts />} />

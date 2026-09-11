@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 
 from app.services import tenant_files
@@ -35,6 +37,47 @@ def test_generate_pdf_endpoint_writes_file_to_tenant_folder(client, auth_headers
     generated_path = tenant_root / "2026" / "12345_John_Doe"
     pdfs = list(generated_path.glob("Quotation_12345_*.pdf"))
     assert len(pdfs) == 1
+
+
+def test_generate_pdf_include_content_returns_base64(client, auth_headers, tenant_root):
+    """The sales-manager agent asks for the PDF bytes back so it can attach the quotation."""
+    payload = {
+        "booking_id": "12345",
+        "first_name": "John",
+        "last_name": "Doe",
+        "room_name": "Studio 1",
+        "property_name": "Central-Day Inn",
+        "check_in": "2026-07-01",
+        "check_out": "2026-07-08",
+        "security_deposit": 400.0,
+        "invoice_items": [
+            {"type": "charge", "description": "Rent", "qty": 7, "amount": 65.0, "vat_rate": 9},
+        ],
+        "quotation_date": "01 Jan 2026",
+        "include_content": True,
+    }
+    response = client.post("/api/quotation/generate-pdf", json=payload, headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content_base64"]
+    decoded = base64.b64decode(body["content_base64"])
+    assert decoded[:5] == b"%PDF-"
+
+
+def test_generate_pdf_omits_content_by_default(client, auth_headers, tenant_root):
+    payload = {
+        "booking_id": "12345",
+        "first_name": "John",
+        "last_name": "Doe",
+        "room_name": "Studio 1",
+        "check_in": "2026-07-01",
+        "check_out": "2026-07-08",
+        "invoice_items": [{"type": "charge", "description": "Rent", "qty": 7, "amount": 65.0, "vat_rate": 9}],
+        "quotation_date": "01 Jan 2026",
+    }
+    response = client.post("/api/quotation/generate-pdf", json=payload, headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["content_base64"] is None
 
 
 def test_vat_split_endpoint(client, auth_headers):

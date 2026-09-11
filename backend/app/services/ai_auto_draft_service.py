@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -16,6 +17,7 @@ from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services import ai_agent_orchestrator, ai_reply_service
+from app.services.attachment_service import load_outbound_attachments, store_upload
 from app.services.email_outbound_persistence import is_own_mailbox_address, persist_gmail_outbound_message
 from app.services.gmail_client import build_gmail_credentials, send_gmail_reply
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
@@ -105,9 +107,13 @@ def apply_planner_result_to_draft(
     inbound_text: str | None,
 ) -> AiAutoDraft:
     planner_mode = ai_settings.planner_mode or "off"
+    # The planner may have re-targeted the reply to a different channel (automated paths only);
+    # the draft's status/schedule and send target must follow that new channel, not the one the
+    # trigger arrived on.
+    effective_channel = getattr(result, "chosen_channel", None) or channel
     status_value, scheduled_send_at = _planner_draft_status_and_schedule(
         db,
-        channel=channel,
+        channel=effective_channel,
         planner_mode=planner_mode,
         ai_settings=ai_settings,
         result=result,
@@ -120,6 +126,24 @@ def apply_planner_result_to_draft(
     draft.scheduled_send_at = scheduled_send_at
     draft.agent_run_id = result.run_id
     draft.checker_feedback = result.checker_feedback
+    if getattr(result, "chosen_channel", None):
+        draft.channel = result.chosen_channel
+        draft.email_thread_id = result.chosen_email_thread_id
+        draft.whatsapp_endpoint_id = result.chosen_whatsapp_endpoint_id
+    # Persist any sales-manager PDF as an attachment so it can be attached to the outgoing message
+    # (including a delayed auto-send, which reloads it by id at send time).
+    pdf_bytes = getattr(result, "quotation_pdf_bytes", None)
+    if pdf_bytes:
+        attachment = store_upload(
+            db,
+            tenant_id=tenant.id,
+            filename=result.quotation_pdf_filename or "quotation.pdf",
+            mime_type="application/pdf",
+            data=pdf_bytes,
+            user_id=None,
+            origin="ai_quote",
+        )
+        draft.quotation_attachment_id = attachment.id
     return draft
 
 
@@ -138,6 +162,9 @@ def _generate_draft_via_planner(
         channel=trigger.channel,
         mode=planner_mode,
         inbound_text=inbound_text,
+        respect_planner_channel=True,
+        outbound_email_thread_id=trigger.email_thread_id,
+        outbound_whatsapp_endpoint_id=trigger.whatsapp_endpoint_id,
     )
     if not result.generated_text:
         logger.info(
@@ -344,6 +371,23 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
     return draft
 
 
+def _draft_quotation_attachments(db: Session, draft: AiAutoDraft):
+    """Load the sales-manager PDF (if any) linked to this draft, for attaching at send time."""
+    if not draft.quotation_attachment_id:
+        return []
+    try:
+        return load_outbound_attachments(
+            db,
+            tenant_id=draft.tenant_id,
+            attachment_ids=[draft.quotation_attachment_id],
+            channel=draft.channel,
+        )
+    except Exception:
+        # A missing/oversized quotation must not block the reply itself - log and send without it.
+        logger.exception("Could not load quotation attachment for draft_id=%s", draft.id)
+        return []
+
+
 def _send_email_draft(db: Session, draft: AiAutoDraft) -> tuple[bool, str | None]:
     if draft.email_thread_id is None:
         logger.warning("Cannot auto-send email draft without an email_thread_id draft_id=%s", draft.id)
@@ -402,6 +446,7 @@ def _send_email_draft(db: Session, draft: AiAutoDraft) -> tuple[bool, str | None
             from_email=account.email_address,
             in_reply_to_message_id=in_reply_to_message_id,
             references=references,
+            attachments=_draft_quotation_attachments(db, draft),
         )
     except Exception:
         logger.exception("AI auto-send failed to send Gmail reply draft_id=%s", draft.id)
@@ -473,6 +518,14 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> tuple[bool, str | N
             )
         else:
             message = draft.formatted_text
+    quotation_attachments = [
+        {
+            "filename": item.filename,
+            "mime_type": item.mime_type,
+            "data_base64": base64.b64encode(item.content).decode("ascii"),
+        }
+        for item in _draft_quotation_attachments(db, draft)
+    ]
     try:
         whatsapp_result = asyncio.run(
             send_whatsapp_message(
@@ -482,6 +535,7 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> tuple[bool, str | N
                     "tenant_id": draft.tenant_id,
                     "whatsapp_endpoint_id": endpoint.id,
                     "external_account_id": endpoint.external_account_id,
+                    "attachments": quotation_attachments,
                 }
             )
         )

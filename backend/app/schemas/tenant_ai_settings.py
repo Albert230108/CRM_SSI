@@ -29,6 +29,8 @@ class TenantAiSettingsRead(BaseModel):
     # create channel-specific rich output for approved drafts.
     formatter_enabled: bool = False
     formatter_profile_id: int | None = None
+    # The sales-manager profile the planner uses when it requests a quotation.
+    sales_manager_profile_id: int | None = None
 
 
 class TenantAiSettingsUpdate(BaseModel):
@@ -49,6 +51,7 @@ class TenantAiSettingsUpdate(BaseModel):
     action_writer_profile_id: int | None = None
     formatter_enabled: bool = False
     formatter_profile_id: int | None = None
+    sales_manager_profile_id: int | None = None
 
 
 class BulkTenantAiTemplateAssignment(BaseModel):

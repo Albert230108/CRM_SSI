@@ -25,6 +25,7 @@ def run_ai_plan_for_draft(
     operator_note: str | None,
     attachment_ids: list[int],
     user_id: int | None,
+    respect_planner_channel: bool = False,
 ) -> None:
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()
@@ -61,6 +62,9 @@ def run_ai_plan_for_draft(
             operator_note=operator_note,
             attachments=outbound_attachments,
             user_id=user_id,
+            respect_planner_channel=respect_planner_channel,
+            outbound_email_thread_id=draft.email_thread_id,
+            outbound_whatsapp_endpoint_id=draft.whatsapp_endpoint_id,
         )
     except GeminiClientError as exc:
         draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).first()

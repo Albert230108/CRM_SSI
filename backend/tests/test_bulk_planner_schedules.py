@@ -412,7 +412,7 @@ def test_execute_due_schedule_records_success_and_skips(db_session, monkeypatch)
 
     planned: list[tuple[int, str]] = []
 
-    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id):
+    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id, **kwargs):
         planned.append((tenant_id, channel))
         draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).one()
         draft.generated_text = f"Draft for {tenant_id}-{channel}"
@@ -503,7 +503,7 @@ def test_execute_due_schedule_picks_most_recent_channel_and_records_losers(db_se
 
     planned: list[tuple[int, str]] = []
 
-    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id):
+    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id, **kwargs):
         planned.append((tenant_id, channel))
         draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).one()
         draft.generated_text = f"Draft for {tenant_id}-{channel}"
@@ -584,7 +584,7 @@ def test_execute_due_schedule_isolates_planner_exceptions(monkeypatch):
             )
         db.commit()
 
-        def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id):
+        def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id, **kwargs):
             if tenant_id == tenant_fail.id and channel == "whatsapp":
                 raise RuntimeError("boom")
             draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).one()
@@ -698,7 +698,7 @@ def test_due_polling_respects_enabled_flag_and_catch_up_runs_once(monkeypatch):
     frozen_now = datetime.now(timezone.utc).replace(microsecond=0)
     monkeypatch.setattr(bulk_planner_schedule_service, "_utc_now", lambda: frozen_now)
 
-    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id):
+    def fake_run(db, *, draft_id, tenant_id, channel, operator_note, attachment_ids, user_id, **kwargs):
         draft = db.query(AiAutoDraft).filter(AiAutoDraft.id == draft_id).one()
         draft.generated_text = "scheduled"
         db.commit()

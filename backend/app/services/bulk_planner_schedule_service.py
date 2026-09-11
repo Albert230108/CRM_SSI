@@ -219,6 +219,7 @@ def execute_due_schedule(
                     operator_note=schedule.extra_instructions,
                     attachment_ids=[],
                     user_id=None,
+                    respect_planner_channel=True,
                 )
             except Exception as exc:
                 db.rollback()

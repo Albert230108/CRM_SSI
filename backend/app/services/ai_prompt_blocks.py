@@ -22,6 +22,7 @@ PLANNER_ROLE = "planner"
 CHECKER_ROLE = "checker"
 DRAFTER_ROLE = "drafter"
 FORMATTER_ROLE = "formatter"
+SALES_MANAGER_ROLE = "sales_manager"
 MEMORY_REDO_ROLE = "memory_redo"
 MEMORY_QA_ROLE = "memory_qa"
 RUN_QA_ROLE = "run_qa"
@@ -196,15 +197,25 @@ PLANNER_BLOCKS: tuple[PromptBlock, ...] = (
         key="output",
         label="Output instruction",
         help=(
-            "Emitted last. Reword freely, but keep the field names - should_reply, template_id, "
-            "extra_brain_sections, extra_instructions, confidence, reasoning, alternatives - because "
-            "the response schema in code enforces them."
+            "Emitted last. Reword freely, but keep the field names - should_reply, channel, "
+            "template_id, extra_brain_sections, extra_instructions, sales_request, confidence, "
+            "reasoning, alternatives - because the response schema in code enforces them."
         ),
         default=(
             "## Output\n"
             "Return JSON only. `confidence` is 0-1 for how well the chosen template fits. `reasoning` "
             "explains why you chose it. `alternatives` lists the other templates you seriously "
-            "considered and why you rejected each. Set `should_reply` to false if no reply is warranted."
+            "considered and why you rejected each. Set `should_reply` to false if no reply is "
+            "warranted.\n"
+            "`channel` is the channel the reply should be sent on - `\"email\"` or `\"whatsapp\"`. "
+            "Set it only when the conversation clearly calls for a specific channel (for example the "
+            "guest asked to be contacted there); otherwise leave it null to reply on whichever "
+            "channel the guest last used.\n"
+            "`sales_request` asks the sales manager to price a stay when the guest wants a quote. Set "
+            "`needed` true and `scope` to `\"price\"` (numbers only), `\"pdf\"` (also produce and "
+            "attach a PDF quotation), or `\"both\"`, and fill in the booking parameters you want "
+            "quoted (room, dates, guests); leave any unknown to use the tenant's booking. Leave "
+            "`sales_request` out or `needed` false when no quote is called for."
         ),
     ),
 ) + _context_blocks(include_inbound=True, include_actions=True)
@@ -460,6 +471,62 @@ FORMATTER_BLOCKS: tuple[PromptBlock, ...] = (
     ),
 )
 
+
+SALES_MANAGER_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        key="preamble",
+        label="Role preamble",
+        help="The opening line that tells the model what job it is doing. Emitted first.",
+        default=(
+            "You are the sales manager for a short-stay rental CRM. The planner has asked you to "
+            "price a stay for a guest. Turn the computed charge lines into a clear, factual price "
+            "summary the drafter can use in the reply. Never invent or alter prices - use the "
+            "figures given."
+        ),
+    ),
+    PromptBlock(
+        key="instructions_header",
+        label="Instructions heading",
+        help="Sits above the Instructions you wrote for this profile. Omitted when Instructions is blank.",
+        default=_INSTRUCTIONS_HEADER_DEFAULT,
+    ),
+    PromptBlock(
+        key="request",
+        label="Quote request framing",
+        help="Sits above the booking parameters the planner asked to quote.",
+        default="## Quote Request\nThese are the booking parameters to quote.",
+    ),
+    PromptBlock(
+        key="charges",
+        label="Computed charges framing",
+        help="Sits above the charge lines the pricing engine already calculated.",
+        default=(
+            "## Computed Charges\n"
+            "These charge lines were calculated by the pricing engine. Use these exact figures."
+        ),
+    ),
+    PromptBlock(
+        key="output",
+        label="Output instruction",
+        help=(
+            "Emitted last. Keep the field names - price_summary, security_deposit, notes - because "
+            "the response schema in code enforces them."
+        ),
+        default=(
+            "## Output\n"
+            "Return JSON only. `price_summary` is a short, guest-facing summary of what the stay "
+            "costs, grounded on the charge lines above. `security_deposit` is the deposit to state "
+            "(a number, or null to keep the requested value). `notes` is any extra caveat the guest "
+            "should know."
+        ),
+    ),
+    PromptBlock(
+        key="inbound",
+        label="Guest message framing",
+        help="Sits above the guest's latest message, so the summary matches what they asked.",
+        default="## Guest Message",
+    ),
+)
 
 
 MEMORY_QA_BLOCKS: tuple[PromptBlock, ...] = (
@@ -769,6 +836,7 @@ BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     CHECKER_ROLE: CHECKER_BLOCKS,
     DRAFTER_ROLE: DRAFTER_BLOCKS,
     FORMATTER_ROLE: FORMATTER_BLOCKS,
+    SALES_MANAGER_ROLE: SALES_MANAGER_BLOCKS,
     MEMORY_QA_ROLE: MEMORY_QA_BLOCKS,
     MEMORY_REDO_ROLE: MEMORY_REDO_BLOCKS,
     RUN_QA_ROLE: RUN_QA_BLOCKS,

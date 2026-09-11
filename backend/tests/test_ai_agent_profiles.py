@@ -297,3 +297,33 @@ def test_memory_qa_role_is_listed_and_filterable(client):
     assert response.status_code == 200
     roles = {profile["role"] for profile in response.json()}
     assert roles == {"memory_qa"}
+
+
+def test_sales_manager_role_is_accepted(client):
+    response = client.post("/api/ai-agent-profiles", json=_payload(name="Sales", role="sales_manager"))
+    assert response.status_code == 201
+    assert response.json()["role"] == "sales_manager"
+
+
+def test_agent_graph_reflects_live_config(client, db_session):
+    # An active planner reading Beds24 should show up as a beds24 context edge.
+    client.post("/api/ai-agent-profiles", json=_payload(name="Planner", role="planner", include_beds24=True))
+    client.post("/api/ai-agent-profiles", json=_payload(name="Sales", role="sales_manager"))
+
+    response = client.get("/api/ai-agent-profiles/graph")
+    assert response.status_code == 200
+    body = response.json()
+
+    roles = {agent["role"] for agent in body["agents"]}
+    assert {"planner", "sales_manager", "drafter", "checker", "formatter"} <= roles
+
+    planner = next(agent for agent in body["agents"] if agent["role"] == "planner")
+    assert planner["active_profiles"] == 1
+    assert planner["has_default"] is True
+    assert "beds24" in planner["reads"]
+
+    # The planner -> sales_manager and sales_manager -> quotation_manager edges must exist.
+    edge_pairs = {(edge["from"], edge["to"]) for edge in body["edges"]}
+    assert ("planner", "sales_manager") in edge_pairs
+    assert ("sales_manager", "quotation_manager") in edge_pairs
+    assert ("planner", "beds24") in edge_pairs
