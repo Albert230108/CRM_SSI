@@ -44,6 +44,17 @@ function todayQuotationDate(): string {
   return new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
 }
 
+// A stable, order-independent fingerprint of a set of Beds24 invoice items, for detecting whether
+// the booking changed in Beds24 since the editor loaded it (a pre-submit drift check).
+function beds24ItemsSignature(
+  items: Array<{ type?: string | null; description?: string | null; qty?: number | null; amount?: number | null }>,
+): string {
+  return items
+    .map((i) => `${i.type ?? ''}|${(i.description ?? '').trim()}|${i.qty ?? 1}|${Math.round((i.amount ?? 0) * 100) / 100}`)
+    .sort()
+    .join('~~')
+}
+
 // The auto-managed Administration costs charge line, matched by description (as the desktop does).
 function isAdminCharge(item: { description: string }): boolean {
   return item.description.trim().toLowerCase().includes('administration costs')
@@ -103,6 +114,8 @@ export default function QuotationEditorPage() {
   // Fallback only: a deposit amount carried on the loaded booking, used when the per-property
   // config can't resolve a deposit for the selected property/year.
   const carriedDepositRef = useRef<number | null>(null)
+  // Fingerprint of the Beds24 invoice items as first loaded, for the pre-submit drift check.
+  const originalBeds24SnapshotRef = useRef<string>('')
   const [pricesConfig, setPricesConfig] = useState<PricingConfig | null>(null)
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
@@ -163,6 +176,7 @@ export default function QuotationEditorPage() {
         setChildren(Number(booking.numChild ?? 0) || 0)
 
         const items = booking.invoiceItems ?? []
+        originalBeds24SnapshotRef.current = beds24ItemsSignature(items)
         setOriginalItemIds(items.map((item) => normalizeItemId(item.id)).filter((id): id is string => Boolean(id)))
         setCharges(items.filter((item) => item.type === 'charge').map((item) => toEditableItem(item, 'charge')))
         setPayments(items.filter((item) => item.type === 'payment').map((item) => toEditableItem(item, 'payment')))
@@ -584,6 +598,26 @@ export default function QuotationEditorPage() {
     setError(null)
     setNotice(null)
     try {
+      // Pre-submit drift check: if Beds24 changed since we loaded (someone else edited it), warn
+      // before overwriting. A failed fetch here must not block sending.
+      try {
+        const fresh = await apiGet<Beds24Booking>(`/api/booking/${encodeURIComponent(bookingId)}`)
+        const freshSignature = beds24ItemsSignature(fresh.invoiceItems ?? [])
+        if (freshSignature !== originalBeds24SnapshotRef.current) {
+          const proceed = window.confirm(
+            'This booking has changed in Beds24 since you opened it (someone may have edited it). ' +
+              'Sending will overwrite those changes with your version. Continue?',
+          )
+          if (!proceed) {
+            setSending(false)
+            return
+          }
+          // Adopt the fresh state as the new baseline so a second send does not re-warn.
+          originalBeds24SnapshotRef.current = freshSignature
+        }
+      } catch {
+        // Drift check is best-effort; fall through to the send.
+      }
       await apiPost(`/api/quotation/${encodeURIComponent(bookingId)}/send-to-beds24`, {
         all_original_invoice_item_ids: originalItemIds,
         invoice_items: [...charges, ...payments].map((item) => ({
@@ -601,6 +635,8 @@ export default function QuotationEditorPage() {
         sub_status: subStatus || null,
         flag_text: ssiFlag ? '(SSI)' : null,
       })
+      // What we just sent is now Beds24's state, so re-baseline the drift snapshot.
+      originalBeds24SnapshotRef.current = beds24ItemsSignature([...charges, ...payments])
       setNotice('Invoice items sent to Beds24. Finance will update shortly in the CRM.')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to send to Beds24')
