@@ -41,7 +41,7 @@ export default function BookingSearchPage() {
     setError(null)
     try {
       const booking = await apiGet<Beds24Booking>(`/api/booking/${encodeURIComponent(searchValue.trim())}`)
-      navigate(`/quotation/${encodeURIComponent(booking.id)}`)
+      navigate(`/${encodeURIComponent(booking.id)}`)
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Booking not found'
       setError(message)
@@ -88,7 +88,7 @@ export default function BookingSearchPage() {
           </p>
           <button
             type="button"
-            onClick={() => navigate(`/quotation/${encodeURIComponent(tenantContext.booking_id)}`)}
+            onClick={() => navigate(`/${encodeURIComponent(tenantContext.booking_id)}`)}
             className="mt-3 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700"
           >
             Open quotation for booking {tenantContext.booking_id}
@@ -98,7 +98,7 @@ export default function BookingSearchPage() {
         <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <button
             type="button"
-            onClick={() => navigate(`/quotation/${encodeURIComponent(sessionBookingId)}`)}
+            onClick={() => navigate(`/${encodeURIComponent(sessionBookingId)}`)}
             className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700"
           >
             Open quotation for booking {sessionBookingId}

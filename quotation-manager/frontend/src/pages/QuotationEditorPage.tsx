@@ -28,10 +28,17 @@ function makeLocalId(): string {
   return `local-${nextLocalId}`
 }
 
+// Beds24 sends invoice item ids as numbers even though the CRM/quotation API
+// schemas type them as strings; coerce here so every id we hold onto (and
+// later send back to generate-pdf / send-to-beds24) is a real string.
+function normalizeItemId(id: Beds24InvoiceItem['id']): string | undefined {
+  return id === undefined || id === null || id === '' ? undefined : String(id)
+}
+
 function toEditableItem(item: Beds24InvoiceItem, type: 'charge' | 'payment'): EditableInvoiceItem {
   return {
     localId: makeLocalId(),
-    id: item.id,
+    id: normalizeItemId(item.id),
     type,
     description: item.description ?? '',
     qty: item.qty ?? 1,
@@ -96,7 +103,7 @@ export default function QuotationEditorPage() {
         setChildren(Number(booking.numChild ?? 0) || 0)
 
         const items = booking.invoiceItems ?? []
-        setOriginalItemIds(items.map((item) => item.id).filter((id): id is string => Boolean(id)))
+        setOriginalItemIds(items.map((item) => normalizeItemId(item.id)).filter((id): id is string => Boolean(id)))
         setCharges(items.filter((item) => item.type === 'charge').map((item) => toEditableItem(item, 'charge')))
         setPayments(items.filter((item) => item.type === 'payment').map((item) => toEditableItem(item, 'payment')))
 

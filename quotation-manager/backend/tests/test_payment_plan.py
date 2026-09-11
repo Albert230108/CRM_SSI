@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -116,6 +116,23 @@ def test_checkout_before_checkin_raises():
             check_in=date(2025, 6, 8),
             check_out=date(2025, 6, 1),
         )
+
+
+def test_due_dates_never_go_backwards_when_checkin_is_in_the_past():
+    # Regression: a booking quoted after its check-in date (e.g. a past/near
+    # -term stay) used to produce Installment 2 due at check-in, earlier than
+    # Installment 1's today-anchored due date.
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2026, 7, 3),
+        check_out=date(2026, 7, 31),
+        installments=3,
+        security_deposit=0.0,
+        today=date(2026, 9, 11),
+    )
+    due_dates = [p["description"].split("due: ")[1] for p in result["payments"] if p["kind"] == "installment"]
+    parsed = [datetime.strptime(d, "%d-%b-%Y").date() for d in due_dates]
+    assert parsed == sorted(parsed)
 
 
 def test_add_months_clamps_day():

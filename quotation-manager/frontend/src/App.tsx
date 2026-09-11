@@ -11,7 +11,7 @@ export default function App() {
         <Route path="/" element={<BookingSearchPage />} />
         <Route path="/new" element={<NewQuotationPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/quotation/:bookingId" element={<QuotationEditorPage />} />
+        <Route path="/:bookingId" element={<QuotationEditorPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

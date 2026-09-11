@@ -214,7 +214,7 @@ export default function NewQuotationPage() {
           status: item.status,
         })),
       })
-      navigate(`/quotation/${encodeURIComponent(result.booking_id)}`)
+      navigate(`/${encodeURIComponent(result.booking_id)}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create booking')
     } finally {

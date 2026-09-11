@@ -90,12 +90,17 @@ def _due_dates(check_in: date, check_out: date, n_installments: int, today: date
     if n_installments == 1:
         return [today + timedelta(days=2)]
 
-    dates = [today + timedelta(days=4), check_in]
+    # Each due date is clamped forward to never precede the previous one: for
+    # a booking whose check-in has already passed (or is very close) by the
+    # time the quote is issued, check_in-anchored installments would
+    # otherwise fall due before the today-anchored first installment.
+    dates = [today + timedelta(days=4)]
+    dates.append(max(check_in, dates[-1]))
     for i in range(2, n_installments):
         due = _add_months(check_in, i - 1)
         if due > check_out:
             due = check_out
-        dates.append(due)
+        dates.append(max(due, dates[-1]))
     return dates
 
 
