@@ -23,9 +23,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://crm_user:crm_password@db:5432/crm
       ATTACHMENTS_ROOT: /app/attachments
+      # Same host folder the quotation-backend service mounts below, read-only here: the CRM
+      # backend only lists/serves these files (dashboard Files tile + Quotation Manager search),
+      # it never writes into this tree - PDF generation/writing stays on quotation-backend.
+      TENANT_FILES_ROOT: /app/tenant_files
     volumes:
       # Defaulted so an unset var can't turn into an invalid ":/app/attachments" bind.
       - ${ATTACHMENTS_HOST_PATH:-./attachments_data}:/app/attachments
+      - ${TENANT_FILES_HOST_PATH}:/app/tenant_files:ro
     depends_on:
       db:
         condition: service_healthy

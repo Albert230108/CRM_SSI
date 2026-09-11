@@ -20,4 +20,7 @@ class AiAutoDraftRead(BaseModel):
     quoted_context: str | None = None
     status: str
     scheduled_send_at: datetime | None = None
+    # True when the sales-manager agent staged a Beds24 invoice-item update for this draft
+    # (action="update"): approving/sending this draft pushes that update to Beds24 first.
+    has_pending_beds24_update: bool = False
     created_at: datetime

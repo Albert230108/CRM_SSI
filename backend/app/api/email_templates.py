@@ -88,6 +88,6 @@ def preview_email_template(
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
-    resolved_subject = resolve_template_text(template.subject, tenant) if template.subject else None
-    resolved_body = resolve_template_text(template.body, tenant)
+    resolved_subject = resolve_template_text(template.subject, tenant, db=db) if template.subject else None
+    resolved_body = resolve_template_text(template.body, tenant, db=db)
     return EmailTemplatePreviewResponse(subject=resolved_subject, body=resolved_body)

@@ -2,6 +2,8 @@ import base64
 
 
 def test_generate_pdf_uploads_to_onedrive_when_configured(client, auth_headers, monkeypatch):
+    """OneDrive storage is opt-in (ONEDRIVE_STORAGE_ENABLED=true) - local is the default path,
+    covered by test_generate_pdf_endpoint.py. This covers the branch for whoever re-enables it."""
     captured = {}
 
     async def fake_next_number(token, payload):
@@ -14,6 +16,7 @@ def test_generate_pdf_uploads_to_onedrive_when_configured(client, auth_headers, 
 
     import app.api.quotation as quotation_module
 
+    monkeypatch.setattr(quotation_module, "ONEDRIVE_STORAGE_ENABLED", True)
     monkeypatch.setattr(quotation_module.crm_client, "onedrive_next_number", fake_next_number)
     monkeypatch.setattr(quotation_module.crm_client, "onedrive_upload", fake_upload)
 

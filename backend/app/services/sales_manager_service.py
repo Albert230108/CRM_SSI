@@ -13,6 +13,7 @@ returns plain data. Persisting the returned PDF as an attachment happens in the 
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
@@ -20,9 +21,11 @@ from dataclasses import dataclass, field
 from datetime import date
 
 import httpx
+from fastapi import HTTPException
 
 from app.core.quotation_token import create_quotation_token
 from app.models.tenant import Tenant
+from app.services import beds24_service
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +137,38 @@ def charges_to_invoice_items(charges: list[dict]) -> list[dict]:
         }
         for charge in charges
     ]
+
+
+def fetch_original_invoice_item_ids(tenant: Tenant) -> list[str]:
+    """Fetch the ids of every invoice item currently on the tenant's Beds24 booking.
+
+    Beds24 has no "replace invoice items" call (see beds24_service.update_booking_invoice_items):
+    the full existing set must be deleted by id before the recomputed set is pushed. This runs
+    the async Beds24 fetch via asyncio.run - the same pattern ai_auto_draft_service already uses
+    to call send_whatsapp_message from this sync planner-loop call chain, since nothing in that
+    chain is itself inside a running event loop.
+    """
+    if not tenant.booking_id:
+        raise SalesManagerError("This tenant has no Beds24 booking to update")
+    try:
+        booking = asyncio.run(beds24_service.fetch_booking_with_invoice(tenant.booking_id))
+    except HTTPException as exc:
+        raise SalesManagerError(f"Could not fetch the existing booking from Beds24: {exc.detail}") from exc
+    items = booking.get("invoiceItems") or []
+    return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
+
+
+def build_pending_invoice_update(
+    tenant: Tenant, charges: list[dict], original_item_ids: list[str]
+) -> dict:
+    """The Beds24 invoice-item update payload for this booking, staged on the draft rather than
+    pushed here - see ai_agent_orchestrator._run_sales_manager and
+    ai_auto_draft_service.send_scheduled_draft, which is the only place this is ever sent."""
+    return {
+        "booking_id": tenant.booking_id,
+        "all_original_invoice_item_ids": original_item_ids,
+        "invoice_items": charges_to_invoice_items(charges),
+    }
 
 
 def render_charges_text(quote: SalesQuote) -> str:

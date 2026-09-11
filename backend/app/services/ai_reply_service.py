@@ -68,7 +68,7 @@ def _resolve_text(db: Session, text: str, tenant: Tenant) -> str:
     to be inlined before the tenant pass runs, otherwise those placeholders stay literal.
     """
     expanded = brain_service.resolve_brain_tokens(db, text).text
-    return resolve_template_text(expanded, tenant)
+    return resolve_template_text(expanded, tenant, db=db)
 
 
 def _build_guidelines_content(db: Session, template: AiReplyTemplate, tenant: Tenant) -> str:
@@ -103,7 +103,7 @@ def _build_knowledge_base(
     if not paths:
         return ""
     rendered = brain_service.render_paths(db, paths).text
-    return resolve_template_text(rendered, tenant).strip()
+    return resolve_template_text(rendered, tenant, db=db).strip()
 
 
 def _build_beds24_context(tenant: Tenant, blocks: dict[str, str] | None = None) -> str:

@@ -206,6 +206,116 @@ def test_no_sales_request_skips_sales_manager(db_session, fake_gemini, monkeypat
     assert stages == ["planner", "drafter", "checker"]
 
 
+def test_sales_request_update_stages_beds24_update_no_push(db_session, fake_gemini, monkeypatch):
+    """action="update" stages a Beds24 invoice-item update on the result but never pushes it -
+    only a human-approved draft send (ai_auto_draft_service.send_scheduled_draft) does that."""
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _profile(db_session, "sales_manager")
+    _settings(db_session, tenant)
+    _stub_charges(monkeypatch)
+    monkeypatch.setattr(
+        sales_manager_service, "fetch_original_invoice_item_ids", lambda tenant_arg: ["item-1", "item-2"]
+    )
+    monkeypatch.setattr(
+        "app.services.beds24_service.update_booking_invoice_items",
+        lambda *a, **k: pytest.fail("The sales manager must never push to Beds24 itself"),
+    )
+    fake_gemini([
+        _plan(template.id, {"needed": True, "scope": "price", "action": "update"}),
+        {"price_summary": "Updated stay: EUR 400.", "security_deposit": 200, "notes": ""},
+        "Dear Sam, here is your updated price.",
+        {"passed": True, "feedback": ""},
+    ])
+
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual",
+        inbound_text="Please update my booking to 4 nights.",
+    )
+    db_session.commit()
+
+    assert result.status == "completed"
+    assert result.pending_beds24_update == {
+        "booking_id": tenant.booking_id,
+        "all_original_invoice_item_ids": ["item-1", "item-2"],
+        "invoice_items": [
+            {"type": "charge", "description": "Studio A x 4 nights", "qty": 4, "amount": 100, "vat_rate": 9},
+        ],
+    }
+
+
+def test_sales_request_update_escalates_when_fetch_fails(db_session, fake_gemini, monkeypatch):
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    _profile(db_session, "planner")
+    _profile(db_session, "checker")
+    _profile(db_session, "sales_manager")
+    _settings(db_session, tenant)
+    _stub_charges(monkeypatch)
+
+    def _boom(tenant_arg):
+        raise sales_manager_service.SalesManagerError("Beds24 unreachable")
+
+    monkeypatch.setattr(sales_manager_service, "fetch_original_invoice_item_ids", _boom)
+    fake_gemini([_plan(template.id, {"needed": True, "scope": "price", "action": "update"})])
+
+    result = ai_agent_orchestrator.run_planner_loop(
+        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Update my booking."
+    )
+    db_session.commit()
+
+    assert result.status == ai_agent_orchestrator.STATUS_ESCALATED
+    assert result.escalation_reason == "sales_manager_update_fetch_failed"
+
+
+def test_apply_result_with_pending_beds24_update_never_auto_sends(db_session, monkeypatch):
+    """Even with auto-send enabled and an approved draft, a staged Beds24 update forces `pending`,
+    never `pending_auto_send` - the write only ever happens once a human approves it."""
+    from app.models.ai_auto_draft import AiAutoDraft
+
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    ai_settings = _settings(db_session, tenant, planner_mode="auto-send", auto_send_email=True)
+
+    pending_update = {
+        "booking_id": tenant.booking_id,
+        "all_original_invoice_item_ids": ["item-1"],
+        "invoice_items": [{"type": "charge", "description": "Studio A", "qty": 1, "amount": 100, "vat_rate": 9}],
+    }
+
+    class _Result:
+        status = "completed"
+        auto_send_allowed = True
+        generated_text = "Dear Sam, updated price attached."
+        formatted_text = None
+        template_id = template.id
+        run_id = None
+        checker_feedback = None
+        chosen_channel = None
+        chosen_email_thread_id = None
+        chosen_whatsapp_endpoint_id = None
+        quotation_pdf_bytes = None
+        quotation_pdf_filename = None
+        quotation_web_url = None
+        pending_beds24_update = pending_update
+
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    ai_auto_draft_service.apply_planner_result_to_draft(
+        db_session, draft, tenant=tenant, ai_settings=ai_settings, channel="email",
+        result=_Result(), inbound_text="Please update my booking.",
+    )
+    db_session.commit()
+
+    assert draft.status == "pending"
+    assert draft.scheduled_send_at is None
+    assert draft.pending_beds24_update == pending_update
+
+
 def test_missing_sales_manager_profile_escalates(db_session, fake_gemini, monkeypatch):
     tenant = _tenant(db_session)
     template = _template(db_session)

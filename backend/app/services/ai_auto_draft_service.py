@@ -18,6 +18,8 @@ from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
 from app.services import ai_agent_orchestrator, ai_reply_service
 from app.services.attachment_service import load_outbound_attachments, store_upload
+from app.services.beds24_service import update_booking_invoice_items
+from app.services.beds24_sync import sync_tenant_from_beds24_booking
 from app.services.email_outbound_persistence import is_own_mailbox_address, persist_gmail_outbound_message
 from app.services.gmail_client import build_gmail_credentials, send_gmail_reply
 from app.services.tenant_phone_aliases import get_tenant_primary_phone_raw
@@ -77,10 +79,18 @@ def _planner_draft_status_and_schedule(
     A draft the checker never approved is stored as `needs_review` so staff still see it, but it
     is deliberately kept out of the auto-send path regardless of the tenant's auto_send setting.
     Same for any draft generated under "auto-draft" mode: even an approved one never auto-sends.
+    A draft carrying a staged Beds24 update (sales-manager action="update") never auto-sends
+    either, regardless of the tenant's auto_send setting - that write only ever happens once a
+    human approves it (see send_scheduled_draft).
     """
-    auto_send_enabled = planner_mode == "auto-send" and (
-        (ai_settings.auto_send_email if channel == "email" else ai_settings.auto_send_whatsapp)
-        and result.auto_send_allowed
+    has_pending_beds24_update = bool(getattr(result, "pending_beds24_update", None))
+    auto_send_enabled = (
+        planner_mode == "auto-send"
+        and not has_pending_beds24_update
+        and (
+            (ai_settings.auto_send_email if channel == "email" else ai_settings.auto_send_whatsapp)
+            and result.auto_send_allowed
+        )
     )
 
     if result.status == STATUS_NEEDS_REVIEW and not result.auto_send_allowed:
@@ -126,6 +136,9 @@ def apply_planner_result_to_draft(
     draft.scheduled_send_at = scheduled_send_at
     draft.agent_run_id = result.run_id
     draft.checker_feedback = result.checker_feedback
+    # Staged by the sales-manager agent (action="update"); pushed to Beds24 only once a human
+    # approves this draft - see send_scheduled_draft.
+    draft.pending_beds24_update = getattr(result, "pending_beds24_update", None)
     if getattr(result, "chosen_channel", None):
         draft.channel = result.chosen_channel
         draft.email_thread_id = result.chosen_email_thread_id
@@ -569,6 +582,49 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> tuple[bool, str | N
     return True, None
 
 
+def _push_pending_beds24_update(db: Session, draft: AiAutoDraft) -> str | None:
+    """Pushes a sales-manager-staged Beds24 invoice-item update (see
+    sales_manager_service.build_pending_invoice_update) before the draft itself is sent, so the
+    reply is never sent describing a quote that wasn't actually applied. Returns a failure reason
+    on error, or None on success (also clearing draft.pending_beds24_update).
+    """
+    pending = draft.pending_beds24_update
+    if not pending:
+        return None
+    booking_id = pending.get("booking_id")
+    if not booking_id:
+        return "Staged Beds24 update is missing a booking id"
+    try:
+        asyncio.run(
+            update_booking_invoice_items(
+                booking_id=booking_id,
+                original_invoice_item_ids=pending.get("all_original_invoice_item_ids") or [],
+                final_invoice_items=[
+                    {
+                        "type": item.get("type"),
+                        "description": item.get("description") or "",
+                        "qty": item.get("qty") or 1,
+                        "amount": item.get("amount") or 0,
+                        "vatRate": item.get("vat_rate") or 0,
+                    }
+                    for item in (pending.get("invoice_items") or [])
+                ],
+            )
+        )
+        # Re-fetch and rewrite Tenant/Finance deterministically, the same as the Quotation
+        # Manager's own invoice-items push does (app.api.quotation.send_quotation_invoice_items_to_beds24).
+        tenant = asyncio.run(sync_tenant_from_beds24_booking(db, booking_id))
+    except Exception as exc:  # noqa: BLE001 - surfaced to the approver, not swallowed
+        logger.exception("Beds24 update push failed draft_id=%s booking_id=%s", draft.id, booking_id)
+        detail = getattr(exc, "detail", None)
+        return str(detail or exc)
+    if tenant is None:
+        logger.warning("Beds24 accepted the staged update but re-sync failed draft_id=%s booking_id=%s", draft.id, booking_id)
+        return "Beds24 accepted the update but the booking could not be re-synced"
+    draft.pending_beds24_update = None
+    return None
+
+
 def send_scheduled_draft(
     db: Session, draft: AiAutoDraft, *, resolution_source: str = "human_ui", reason: str | None = None
 ) -> tuple[bool, str | None]:
@@ -583,7 +639,20 @@ def send_scheduled_draft(
     "human_whatsapp" (a YES-{id} reply), or "auto_timer" (the scheduler, no human involved).
     The auto-timer path has no explicit reason of its own, so it falls back to the checker's
     feedback - the reason a draft was allowed to auto-send in the first place.
+
+    A draft carrying a staged Beds24 update (sales-manager action="update") only pushes it here,
+    on a human-approved send (never "auto_timer" - such a draft never reaches pending_auto_send
+    in the first place, see _planner_draft_status_and_schedule, but this is checked again as a
+    defensive second gate). The update is pushed before the reply is sent, and a failure blocks
+    the send entirely rather than telling the guest about a quote that was never applied.
     """
+    if draft.pending_beds24_update:
+        if resolution_source == "auto_timer":
+            return False, "This draft has a Beds24 update staged and needs human approval before it can send"
+        beds24_failure = _push_pending_beds24_update(db, draft)
+        if beds24_failure:
+            return False, beds24_failure
+
     sent, failure_reason = _send_email_draft(db, draft) if draft.channel == "email" else _send_whatsapp_draft(db, draft)
     if not sent:
         return False, failure_reason

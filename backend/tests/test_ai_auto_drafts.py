@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.models.ai_auto_draft import AiAutoDraft
 from app.models.communication import Communication
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
@@ -192,6 +194,146 @@ def test_send_scheduled_draft_human_ui_uses_explicit_reason(db_session, monkeypa
     assert failure_reason is None
     assert draft.resolution_source == "human_ui"
     assert draft.resolution_reason == "Confirmed by phone"
+
+
+def _pending_update(tenant, **overrides):
+    payload = {
+        "booking_id": tenant.booking_id,
+        "all_original_invoice_item_ids": ["item-1", "item-2"],
+        "invoice_items": [{"type": "charge", "description": "Studio 1", "qty": 4, "amount": 100, "vat_rate": 9}],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_send_scheduled_draft_pushes_pending_beds24_update_before_sending(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(
+        tenant_id=tenant.id, channel="whatsapp", generated_text="Updated price: EUR 400",
+        status="pending", pending_beds24_update=_pending_update(tenant),
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    calls = {}
+
+    async def fake_update(*, booking_id, original_invoice_item_ids, final_invoice_items):
+        calls["update"] = (booking_id, original_invoice_item_ids, final_invoice_items)
+
+    async def fake_sync(db_arg, booking_id_arg):
+        calls["sync"] = booking_id_arg
+        return tenant
+
+    monkeypatch.setattr(ai_auto_draft_service, "update_booking_invoice_items", fake_update)
+    monkeypatch.setattr(ai_auto_draft_service, "sync_tenant_from_beds24_booking", fake_sync)
+    monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: (True, None))
+
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui")
+
+    assert sent is True
+    assert failure_reason is None
+    assert draft.status == "sent"
+    assert draft.pending_beds24_update is None
+    assert calls["update"] == (
+        tenant.booking_id,
+        ["item-1", "item-2"],
+        [{"type": "charge", "description": "Studio 1", "qty": 4, "amount": 100, "vatRate": 9}],
+    )
+    assert calls["sync"] == tenant.booking_id
+
+
+def test_send_scheduled_draft_refuses_auto_timer_with_pending_beds24_update(db_session, monkeypatch):
+    # The scheduler never sees such a draft in practice (it forces status="pending", never
+    # "pending_auto_send" - see _planner_draft_status_and_schedule), but this is a defensive
+    # second gate: a staged Beds24 update must never be pushed unattended, however it got here.
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(
+        tenant_id=tenant.id, channel="whatsapp", generated_text="Updated price",
+        status="pending_auto_send", pending_beds24_update=_pending_update(tenant),
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ai_auto_draft_service, "_send_whatsapp_draft",
+        lambda db, draft_arg: pytest.fail("Auto-timer must never send a draft with a pending Beds24 update"),
+    )
+
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="auto_timer")
+
+    assert sent is False
+    assert "human approval" in failure_reason
+    assert draft.pending_beds24_update is not None
+    assert draft.status == "pending_auto_send"
+
+
+def test_send_scheduled_draft_beds24_push_failure_blocks_send(db_session, monkeypatch):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(
+        tenant_id=tenant.id, channel="whatsapp", generated_text="Updated price",
+        status="pending", pending_beds24_update=_pending_update(tenant),
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    async def failing_update(**kwargs):
+        raise RuntimeError("Beds24 rejected the update")
+
+    monkeypatch.setattr(ai_auto_draft_service, "update_booking_invoice_items", failing_update)
+    monkeypatch.setattr(
+        ai_auto_draft_service, "_send_whatsapp_draft",
+        lambda db, draft_arg: pytest.fail("Must not send when the Beds24 push failed"),
+    )
+
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui")
+
+    assert sent is False
+    assert "Beds24 rejected the update" in failure_reason
+    assert draft.pending_beds24_update is not None
+    assert draft.status == "pending"
+
+
+def test_dismiss_and_mark_used_clear_pending_beds24_update(non_admin_client, db_session):
+    tenant = _create_tenant(db_session)
+    draft = AiAutoDraft(
+        tenant_id=tenant.id, channel="email", generated_text="draft",
+        status="pending", pending_beds24_update=_pending_update(tenant),
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/dismiss")
+    assert response.status_code == 200
+    db_session.refresh(draft)
+    assert draft.pending_beds24_update is None
+
+    draft2 = AiAutoDraft(
+        tenant_id=tenant.id, channel="email", generated_text="draft 2",
+        status="pending", pending_beds24_update=_pending_update(tenant),
+    )
+    db_session.add(draft2)
+    db_session.commit()
+
+    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft2.id}/mark-used")
+    assert response.status_code == 200
+    db_session.refresh(draft2)
+    assert draft2.pending_beds24_update is None
+
+
+def test_list_reports_has_pending_beds24_update(non_admin_client, db_session):
+    tenant = _create_tenant(db_session)
+    with_update = AiAutoDraft(
+        tenant_id=tenant.id, channel="email", generated_text="draft",
+        status="pending", pending_beds24_update=_pending_update(tenant),
+    )
+    without_update = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft 2", status="pending")
+    db_session.add_all([with_update, without_update])
+    db_session.commit()
+
+    response = non_admin_client.get(f"/api/ai-auto-drafts?tenant_id={tenant.id}")
+    items = {item["id"]: item for item in response.json()}
+    assert items[with_update.id]["has_pending_beds24_update"] is True
+    assert items[without_update.id]["has_pending_beds24_update"] is False
 
 
 def test_cancel_auto_send_downgrades_to_pending(non_admin_client, db_session):

@@ -21,10 +21,19 @@ type LocalFolderItem = {
   handle: FileSystemFileHandle | FileSystemDirectoryHandle
 }
 
+type ServerFolderItem = {
+  name: string
+  kind: 'file' | 'directory'
+  size: number | null
+  relative_path: string
+}
+
 type OneDriveBoxProps = {
   tenantId?: number
   onReady?: (tenantId: number) => void
 }
+
+type FilesTab = 'browser' | 'server'
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -53,6 +62,11 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
   const [error, setError] = useState('')
   const [emptyMessage, setEmptyMessage] = useState('')
   const [unsupported, setUnsupported] = useState(false)
+  const [activeTab, setActiveTab] = useState<FilesTab>('browser')
+  const [serverItems, setServerItems] = useState<ServerFolderItem[]>([])
+  const [serverFolderPath, setServerFolderPath] = useState('')
+  const [serverLoading, setServerLoading] = useState(false)
+  const [serverError, setServerError] = useState('')
 
   useEffect(() => {
     setUnsupported(typeof window === 'undefined' || typeof window.showDirectoryPicker !== 'function')
@@ -68,6 +82,9 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
       setError('')
       setEmptyMessage('')
       setLoading(false)
+      setServerItems([])
+      setServerFolderPath('')
+      setServerError('')
       return
     }
 
@@ -227,15 +244,59 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
     }
   }
 
+  useEffect(() => {
+    if (activeTab !== 'server' || !tenantId) return
+    const controller = new AbortController()
+    const loadServerFolder = async () => {
+      try {
+        setServerLoading(true)
+        setServerError('')
+        const response = await fetch(`${API_BASE_URL}/api/tenant-files/tenant/${tenantId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('Failed to load the server folder')
+        const data: { folder_path: string; items: ServerFolderItem[] } = await response.json()
+        setServerFolderPath(data.folder_path)
+        setServerItems(data.items)
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setServerError(err instanceof Error ? err.message : 'Failed to load the server folder')
+      } finally {
+        setServerLoading(false)
+      }
+    }
+    loadServerFolder()
+    return () => controller.abort()
+  }, [activeTab, tenantId, token])
+
+  const handleOpenServerFile = async (item: ServerFolderItem) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/tenant-files/download?path=${encodeURIComponent(item.relative_path)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+      )
+      if (!response.ok) throw new Error('Failed to download file')
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : 'Failed to open file')
+    }
+  }
+
   const subtitleMessage = !tenantId
     ? 'No tenant selected'
-    : unsupported
-      ? 'Local folder access is not supported in this browser.'
-      : !rootHandle
-        ? 'No folder configured - go to Settings to connect a local folder.'
-        : tenantBookingId
-          ? ''
-          : 'Loading tenant...'
+    : activeTab === 'server'
+      ? ''
+      : unsupported
+        ? 'Local folder access is not supported in this browser.'
+        : !rootHandle
+          ? 'No folder configured - go to Settings to connect a local folder.'
+          : tenantBookingId
+            ? ''
+            : 'Loading tenant...'
 
   return (
     <div className="min-w-0 space-y-1.5">
@@ -257,48 +318,114 @@ export default function OneDriveBox({ tenantId, onReady }: OneDriveBoxProps) {
         ) : null}
       </div>
 
-      {loading ? <SkeletonText lines={2} className="py-1" /> : null}
-      {error ? <p className="text-sm text-rose-400">{error}</p> : null}
-      {rootHandle ? (
-        <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
-          {[
-            `Root: ${rootHandle.name}`,
-            yearHandle ? `Year: ${yearHandle.name}` : null,
-            tenantHandle ? `Folder: ${tenantHandle.name}` : null,
-          ]
-            .filter(Boolean)
-            .join(' | ')}
-        </p>
+      {tenantId ? (
+        <div className="flex gap-1 border-b border-gray-200">
+          <button
+            type="button"
+            onClick={() => setActiveTab('browser')}
+            className={`px-2.5 py-1 text-xs font-medium ${activeTab === 'browser' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            My folder
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('server')}
+            className={`px-2.5 py-1 text-xs font-medium ${activeTab === 'server' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            Server folder
+          </button>
+        </div>
       ) : null}
 
-      {tenantId ? (
-        <ul className="space-y-1">
-          {emptyMessage && !loading ? <li className="text-sm text-gray-500">{emptyMessage}</li> : null}
-          {items.map((item) => (
-            <li key={item.name} className="rounded-xl border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="break-words text-sm font-medium text-gray-900">{item.name}</p>
-                  <p className="mt-0.5 text-[11px] uppercase tracking-[0.15em] text-gray-500">
-                    {item.kind}
-                    {item.size !== undefined ? ` - ${formatBytes(item.size)}` : ''}
-                  </p>
-                </div>
-                {item.kind === 'file' ? (
-                  <button
-                    type="button"
-                    onClick={() => handleOpenFile(item.handle as FileSystemFileHandle)}
-                    className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
-                  >
-                    Open
-                  </button>
-                ) : (
-                  <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">Folder</span>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+      {activeTab === 'browser' ? (
+        <>
+          {loading ? <SkeletonText lines={2} className="py-1" /> : null}
+          {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+          {rootHandle ? (
+            <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
+              {[
+                `Root: ${rootHandle.name}`,
+                yearHandle ? `Year: ${yearHandle.name}` : null,
+                tenantHandle ? `Folder: ${tenantHandle.name}` : null,
+              ]
+                .filter(Boolean)
+                .join(' | ')}
+            </p>
+          ) : null}
+
+          {tenantId ? (
+            <ul className="space-y-1">
+              {emptyMessage && !loading ? <li className="text-sm text-gray-500">{emptyMessage}</li> : null}
+              {items.map((item) => (
+                <li key={item.name} className="rounded-xl border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="break-words text-sm font-medium text-gray-900">{item.name}</p>
+                      <p className="mt-0.5 text-[11px] uppercase tracking-[0.15em] text-gray-500">
+                        {item.kind}
+                        {item.size !== undefined ? ` - ${formatBytes(item.size)}` : ''}
+                      </p>
+                    </div>
+                    {item.kind === 'file' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenFile(item.handle as FileSystemFileHandle)}
+                        className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+                      >
+                        Open
+                      </button>
+                    ) : (
+                      <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">Folder</span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+
+      {activeTab === 'server' ? (
+        <>
+          {serverLoading ? <SkeletonText lines={2} className="py-1" /> : null}
+          {serverError ? <p className="text-sm text-rose-400">{serverError}</p> : null}
+          {!serverLoading && !serverError && tenantId ? (
+            <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
+              {serverFolderPath ? `Folder: ${serverFolderPath}` : 'No files on the server yet for this booking.'}
+            </p>
+          ) : null}
+          {tenantId ? (
+            <ul className="space-y-1">
+              {!serverLoading && !serverError && serverItems.length === 0 ? (
+                <li className="text-sm text-gray-500">No files in this tenant's server folder.</li>
+              ) : null}
+              {serverItems.map((item) => (
+                <li key={item.relative_path} className="rounded-xl border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="break-words text-sm font-medium text-gray-900">{item.name}</p>
+                      <p className="mt-0.5 text-[11px] uppercase tracking-[0.15em] text-gray-500">
+                        {item.kind}
+                        {item.size != null ? ` - ${formatBytes(item.size)}` : ''}
+                      </p>
+                    </div>
+                    {item.kind === 'file' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenServerFile(item)}
+                        className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+                      >
+                        Open
+                      </button>
+                    ) : (
+                      <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">Folder</span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
       ) : null}
     </div>
   )

@@ -21,6 +21,13 @@ CRM_BACKEND_URL = _require_env("CRM_BACKEND_URL").rstrip("/")
 # app already uses.
 TENANT_FILES_ROOT = _require_env("TENANT_FILES_ROOT")
 
+# Whether generated quotation PDFs are filed into the tenant's OneDrive folder via the CRM's
+# Microsoft Graph integration. Default false: quotations are filed straight to the local
+# TENANT_FILES_ROOT folder (generate_pdf's existing 503 fallback becomes the normal path).
+# The OneDrive/Graph code itself is left in place, untouched, for whoever flips this back on -
+# see app/api/quotation.py's generate_pdf and app/services/onedrive_service.py on the CRM side.
+ONEDRIVE_STORAGE_ENABLED = os.getenv("ONEDRIVE_STORAGE_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
 # Comma-separated list of allowed CORS origins for local/dev use. In production,
 # the frontend and backend are served same-origin behind nginx, so this is
 # typically empty/unused.

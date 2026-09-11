@@ -1,9 +1,10 @@
 import base64
+import mimetypes
 import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,7 @@ from app.services.beds24_service import (
 )
 from app.services.beds24_sync import sync_tenant_from_beds24_booking
 from app.services import onedrive_service
+from app.services import tenant_files_storage
 
 router = APIRouter(tags=["quotation"])
 
@@ -197,6 +199,46 @@ async def quotation_onedrive_upload(
     folder = onedrive_service.tenant_folder_path(request.booking_id, request.first_name, request.last_name, request.year)
     result = await onedrive_service.upload_pdf(access_token, drive_id, folder, request.filename, content)
     return {"name": result["name"], "web_url": result["web_url"], "folder_path": folder}
+
+
+@router.get("/quotation/tenant-files/search")
+def quotation_tenant_files_search(
+    q: str | None = None,
+    booking_id: str | None = None,
+    year: int | None = None,
+    tenant_name: str | None = None,
+    room: str | None = None,
+    _token: QuotationTokenPayload = Depends(verify_quotation_token),
+) -> dict:
+    # Cross-tenant browse/search for the Quotation Manager's Files page - deliberately not
+    # pinned to the token's own tenant_id/booking_id claim, same rationale as the ad-hoc booking
+    # lookups above: any logged-in-CRM-user-issued token may search the whole tree.
+    entries = tenant_files_storage.search_tenant_files(
+        q=q, booking_id=booking_id, year=year, tenant_name=tenant_name, room=room,
+    )
+    return {
+        "items": [
+            {"name": e.name, "kind": e.kind, "size": e.size, "relative_path": e.relative_path}
+            for e in entries
+        ]
+    }
+
+
+@router.get("/quotation/tenant-files/download")
+def quotation_tenant_files_download(
+    path: str = Query(...),
+    _token: QuotationTokenPayload = Depends(verify_quotation_token),
+) -> Response:
+    resolved = tenant_files_storage.resolve_download_path(path)
+    mime_type, _ = mimetypes.guess_type(resolved.name)
+    return Response(
+        content=resolved.read_bytes(),
+        media_type=mime_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{resolved.name}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 class QuotationInvoiceItem(BaseModel):

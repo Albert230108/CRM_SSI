@@ -64,13 +64,17 @@ PLANNER_SCHEMA = {
         "extra_instructions": {"type": "string"},
         # Optional. Set needed=true to have the sales-manager agent price and/or render a PDF
         # quotation before the reply is drafted. `scope` is "price" (numbers for the reply only),
-        # "pdf" (also render+file+attach the PDF), or "both". The remaining fields are the exact
-        # booking parameters to quote; leave any unknown and the tenant's booking is used.
+        # "pdf" (also render+file+attach the PDF), or "both". `action` is "price" (just quote,
+        # the default) or "update" (also stage a Beds24 invoice-item update for this booking -
+        # it is only pushed once a human approves the resulting draft, never sent automatically).
+        # The remaining fields are the exact booking parameters to quote; leave any unknown and
+        # the tenant's booking is used.
         "sales_request": {
             "type": "object",
             "properties": {
                 "needed": {"type": "boolean"},
                 "scope": {"type": "string"},
+                "action": {"type": "string"},
                 "property_name": {"type": ["string", "null"]},
                 "room_name": {"type": ["string", "null"]},
                 "check_in": {"type": ["string", "null"]},
@@ -155,6 +159,10 @@ class PlannerRunResult:
     quotation_pdf_bytes: bytes | None = None
     quotation_pdf_filename: str | None = None
     quotation_web_url: str | None = None
+    # Set only when the sales-manager agent staged a Beds24 invoice-item update (action="update").
+    # The caller persists it on the draft and only pushes it to Beds24 once a human approves that
+    # draft - see ai_auto_draft_service.apply_planner_result_to_draft/send_scheduled_draft.
+    pending_beds24_update: dict | None = None
 
 
 @dataclass
@@ -664,14 +672,24 @@ class SalesManagerResult:
     pdf_bytes: bytes | None = None
     pdf_filename: str | None = None
     pdf_web_url: str | None = None
+    # Set only when action="update": the Beds24 invoice-item update the sales manager computed,
+    # staged for a human to approve rather than pushed here. Shape matches
+    # sales_manager_service.build_pending_invoice_update.
+    pending_beds24_update: dict | None = None
 
 
 _SALES_SCOPES = {"price", "pdf", "both"}
+_SALES_ACTIONS = {"price", "update"}
 
 
 def _normalize_sales_scope(value: object) -> str:
     scope = str(value or "").strip().lower()
     return scope if scope in _SALES_SCOPES else "price"
+
+
+def _normalize_sales_action(value: object) -> str:
+    action = str(value or "").strip().lower()
+    return action if action in _SALES_ACTIONS else "price"
 
 
 def _build_sales_manager_prompt(
@@ -717,13 +735,17 @@ def _run_sales_manager(
     user_id: int | None,
     is_redo: bool,
 ) -> SalesManagerResult:
-    """Price and, when asked, render a PDF quotation, returning what the drafter needs.
+    """Price and, when asked, render a PDF quotation and/or stage a Beds24 invoice-item update,
+    returning what the drafter needs.
 
     The pricing figures come from the quotation engine (never the model); the model only turns
     them into a guest-facing summary. Any failure escalates rather than sending a reply with a
-    made-up or missing quote.
+    made-up or missing quote. action="update" only stages the Beds24 write on the result - it is
+    never pushed from here. The caller (ai_auto_draft_service) persists it on the draft and only
+    pushes it once a human approves that draft (see send_scheduled_draft).
     """
     scope = _normalize_sales_scope(sales_request.get("scope"))
+    action = _normalize_sales_action(sales_request.get("action"))
     params = sales_manager_service.resolve_quote_params(tenant, sales_request)
 
     try:
@@ -732,6 +754,17 @@ def _run_sales_manager(
         recorder.record("sales_manager", prompt=f"build-charges {params}", error=str(exc))
         logger.warning("Sales manager pricing failed tenant_id=%s: %s", tenant.id, exc)
         return SalesManagerResult(ok=False, escalation_reason="sales_manager_pricing_failed")
+
+    # Fetched before the model call below so a Beds24 outage escalates immediately instead of
+    # spending a model call on a quote that can't be staged as an update anyway.
+    original_item_ids: list[str] | None = None
+    if action == "update":
+        try:
+            original_item_ids = sales_manager_service.fetch_original_invoice_item_ids(tenant)
+        except sales_manager_service.SalesManagerError as exc:
+            recorder.record("sales_manager", prompt="fetch-invoice-items", error=str(exc))
+            logger.warning("Sales manager could not fetch existing invoice items tenant_id=%s: %s", tenant.id, exc)
+            return SalesManagerResult(ok=False, escalation_reason="sales_manager_update_fetch_failed")
 
     charges_text = sales_manager_service.render_charges_text(quote)
     prompt = _build_sales_manager_prompt(
@@ -765,6 +798,17 @@ def _run_sales_manager(
         drafter_note_parts.append(f"Notes: {notes}")
 
     sales_result = SalesManagerResult(ok=True)
+
+    if action == "update":
+        sales_result.pending_beds24_update = sales_manager_service.build_pending_invoice_update(
+            tenant, quote.charges, original_item_ids or []
+        )
+        drafter_note_parts.append(
+            "An updated quote is staged for this booking's Beds24 invoice items; it will be "
+            "pushed to Beds24 only once a human approves this reply - do not tell the guest the "
+            "booking has been updated yet, only that this is the updated price."
+        )
+
     if scope in ("pdf", "both"):
         invoice_items = sales_manager_service.charges_to_invoice_items(quote.charges)
         try:
@@ -961,6 +1005,7 @@ def run_planner_loop(
     quotation_pdf_bytes: bytes | None = None
     quotation_pdf_filename: str | None = None
     quotation_web_url: str | None = None
+    pending_beds24_update: dict | None = None
     sales_request = plan.get("sales_request") or {}
     if isinstance(sales_request, dict) and sales_request.get("needed"):
         sales_profile = resolve_profile(
@@ -992,6 +1037,7 @@ def run_planner_loop(
         drafter_instruction = "\n\n".join(part for part in [drafter_instruction, sales_result.drafter_note] if part)
         quotation_pdf_bytes = sales_result.pdf_bytes
         quotation_pdf_filename = sales_result.pdf_filename
+        pending_beds24_update = sales_result.pending_beds24_update
         quotation_web_url = sales_result.pdf_web_url
 
     # Titles/paths only, no section bodies - cheap enough to give the checker every run so it
@@ -1149,6 +1195,7 @@ def run_planner_loop(
             quotation_pdf_bytes=quotation_pdf_bytes,
             quotation_pdf_filename=quotation_pdf_filename,
             quotation_web_url=quotation_web_url,
+            pending_beds24_update=pending_beds24_update,
         )
 
     # Attempts exhausted (or no checker configured): keep the last draft and park it for a human.
@@ -1176,4 +1223,5 @@ def run_planner_loop(
         quotation_pdf_bytes=quotation_pdf_bytes,
         quotation_pdf_filename=quotation_pdf_filename,
         quotation_web_url=quotation_web_url,
+        pending_beds24_update=pending_beds24_update,
     )

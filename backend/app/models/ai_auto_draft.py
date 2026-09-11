@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text, func
 
 from app.database import Base
 
@@ -44,6 +44,14 @@ class AiAutoDraft(Base):
     quotation_attachment_id = Column(
         Integer, ForeignKey("communication_attachments.id", ondelete="SET NULL"), nullable=True
     )
+    # Set when the sales-manager agent staged a Beds24 invoice-item update for this reply
+    # (sales_manager_service.build_pending_invoice_update's shape: booking_id,
+    # all_original_invoice_item_ids, invoice_items). It is never pushed to Beds24 until a human
+    # approves this draft (send_scheduled_draft, human_ui/human_whatsapp only - the auto-send
+    # timer refuses to send a draft that still carries one), then cleared. A draft carrying this
+    # is never auto-sent: _planner_draft_status_and_schedule keeps it in "pending", never
+    # "pending_auto_send", regardless of the tenant's auto-send setting.
+    pending_beds24_update = Column(JSON, nullable=True)
     # Why this draft ended up sent or dismissed, and who/what decided - set at every path that
     # reaches a final send/dismiss outcome (CRM UI buttons, a WhatsApp YES/NO reply, or the
     # automatic auto-send timer). Read by memory_redo_service as extra context for the redo

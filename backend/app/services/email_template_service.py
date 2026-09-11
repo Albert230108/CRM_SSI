@@ -1,7 +1,10 @@
 import re
 from typing import Callable
 
+from sqlalchemy.orm import Session
+
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 from app.services.datetime_placeholders import resolve_datetime_placeholders
 
 # Curated set of Tenant fields exposed as {{placeholder}} tokens in email templates.
@@ -32,8 +35,24 @@ PLACEHOLDER_FIELDS: dict[str, Callable[[Tenant], object]] = {
 _PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
-def resolve_template_text(text: str, tenant: Tenant) -> str:
-    """Replace {{placeholder}} tokens with tenant field values. Unknown tokens are left as-is."""
+def _primary_active_email(db: Session, tenant_id: int) -> str | None:
+    """The tenant's first active CRM_EMAIL link, mirroring gmail_integration._primary_linked_email."""
+    return (
+        db.query(TenantEmailAddress.email)
+        .filter(TenantEmailAddress.tenant_id == tenant_id, TenantEmailAddress.is_active.is_(True))
+        .order_by(TenantEmailAddress.id.asc())
+        .limit(1)
+        .scalar()
+    )
+
+
+def resolve_template_text(text: str, tenant: Tenant, db: Session | None = None) -> str:
+    """Replace {{placeholder}} tokens with tenant field values. Unknown tokens are left as-is.
+
+    Tenant.email is rarely populated by the Beds24 sync (which writes CRM_EMAIL links to
+    TenantEmailAddress instead), so {{email}} falls back to the tenant's primary active
+    linked address when a db session is available.
+    """
     text = resolve_datetime_placeholders(text)
 
     def _replace(match: re.Match[str]) -> str:
@@ -42,6 +61,8 @@ def resolve_template_text(text: str, tenant: Tenant) -> str:
         if getter is None:
             return match.group(0)
         value = getter(tenant)
+        if key == "email" and not value and db is not None:
+            value = _primary_active_email(db, tenant.id)
         return str(value) if value is not None else ""
 
     return _PLACEHOLDER_PATTERN.sub(_replace, text)

@@ -1,6 +1,7 @@
 from app.core.dependencies import get_current_user, get_db
 from app.main import app
 from app.models.tenant import Tenant
+from app.models.tenant_email_address import TenantEmailAddress
 from app.models.user import User
 from fastapi.testclient import TestClient
 
@@ -70,6 +71,66 @@ def test_preview_resolves_known_placeholders_and_leaves_unknown_untouched(non_ad
     data = preview_response.json()
     assert data["subject"] == "Hi Jane"
     assert data["body"] == "Hello Jane {{unknown_field}}, check-in 2026-08-01"
+
+
+def _link_email(db_session, tenant_id, email, **overrides):
+    defaults = dict(tenant_id=tenant_id, email=email, is_active=True)
+    defaults.update(overrides)
+    link = TenantEmailAddress(**defaults)
+    db_session.add(link)
+    db_session.commit()
+    db_session.refresh(link)
+    return link
+
+
+def test_preview_email_placeholder_falls_back_to_primary_crm_email_link(non_admin_client, db_session):
+    tenant = _create_tenant(db_session, email=None, booking_id="B-tmpl-fallback")
+    _link_email(db_session, tenant.id, "linked@example.com")
+    create_response = non_admin_client.post(
+        "/api/email-templates",
+        json={"name": "Fallback", "subject": None, "body": "Contact: {{email}}"},
+    )
+    template_id = create_response.json()["id"]
+
+    preview_response = non_admin_client.post(
+        f"/api/email-templates/{template_id}/preview",
+        json={"tenant_id": tenant.id},
+    )
+    assert preview_response.status_code == 200
+    assert preview_response.json()["body"] == "Contact: linked@example.com"
+
+
+def test_preview_email_placeholder_prefers_tenant_email_over_linked_address(non_admin_client, db_session):
+    tenant = _create_tenant(db_session, email="jane@example.com", booking_id="B-tmpl-precedence")
+    _link_email(db_session, tenant.id, "other@example.com")
+    create_response = non_admin_client.post(
+        "/api/email-templates",
+        json={"name": "Precedence", "subject": None, "body": "Contact: {{email}}"},
+    )
+    template_id = create_response.json()["id"]
+
+    preview_response = non_admin_client.post(
+        f"/api/email-templates/{template_id}/preview",
+        json={"tenant_id": tenant.id},
+    )
+    assert preview_response.status_code == 200
+    assert preview_response.json()["body"] == "Contact: jane@example.com"
+
+
+def test_preview_email_placeholder_blank_when_no_email_and_no_link(non_admin_client, db_session):
+    tenant = _create_tenant(db_session, email=None, booking_id="B-tmpl-unlinked")
+    create_response = non_admin_client.post(
+        "/api/email-templates",
+        json={"name": "Unlinked", "subject": None, "body": "Contact: {{email}}"},
+    )
+    template_id = create_response.json()["id"]
+
+    preview_response = non_admin_client.post(
+        f"/api/email-templates/{template_id}/preview",
+        json={"tenant_id": tenant.id},
+    )
+    assert preview_response.status_code == 200
+    assert preview_response.json()["body"] == "Contact: "
 
 
 def test_template_access_is_scoped_to_owner(db_session):

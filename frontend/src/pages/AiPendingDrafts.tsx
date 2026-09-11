@@ -23,6 +23,7 @@ type AiAutoDraftItem = {
   quoted_context: string | null
   status: string
   scheduled_send_at: string | null
+  has_pending_beds24_update: boolean
   created_at: string
 }
 
@@ -187,6 +188,11 @@ export default function AiPendingDrafts() {
                   {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
+                {draft.has_pending_beds24_update ? (
+                  <p className="mt-1 text-xs font-medium text-amber-700">
+                    Sending this will also push an updated quote to Beds24 for this booking.
+                  </p>
+                ) : null}
                 <div className="relative">
                   {renderDraftPreview(draft)}
                   <TileLoadingOverlay active={redoInProgress} />

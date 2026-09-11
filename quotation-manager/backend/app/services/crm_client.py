@@ -6,6 +6,7 @@ or a CRM login credential of its own.
 """
 
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException, status
@@ -79,3 +80,27 @@ async def onedrive_next_number(token: str, payload: dict) -> dict:
 
 async def onedrive_upload(token: str, payload: dict) -> dict:
     return await _post("/api/quotation/onedrive/upload", token, payload)
+
+
+async def search_tenant_files(token: str, params: dict) -> dict:
+    query = urlencode({key: value for key, value in params.items() if value not in (None, "")})
+    path = "/api/quotation/tenant-files/search"
+    return await _get(f"{path}?{query}" if query else path, token)
+
+
+async def download_tenant_file(relative_path: str, token: str) -> tuple[bytes, str]:
+    """Unlike the other calls here, this returns raw bytes (and the upstream content-type)
+    rather than parsed JSON - it streams a PDF, not a JSON payload."""
+    url = f"{CRM_BACKEND_URL}/api/quotation/tenant-files/download?{urlencode({'path': relative_path})}"
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        try:
+            response = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"CRM backend unavailable: {exc}",
+            ) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+    return response.content, response.headers.get("content-type", "application/octet-stream")

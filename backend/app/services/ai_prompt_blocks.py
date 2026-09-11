@@ -214,8 +214,13 @@ PLANNER_BLOCKS: tuple[PromptBlock, ...] = (
             "`sales_request` asks the sales manager to price a stay when the guest wants a quote. Set "
             "`needed` true and `scope` to `\"price\"` (numbers only), `\"pdf\"` (also produce and "
             "attach a PDF quotation), or `\"both\"`, and fill in the booking parameters you want "
-            "quoted (room, dates, guests); leave any unknown to use the tenant's booking. Leave "
-            "`sales_request` out or `needed` false when no quote is called for."
+            "quoted (room, dates, guests); leave any unknown to use the tenant's booking. Set "
+            "`action` to `\"update\"` only when the guest has an existing booking and has clearly "
+            "accepted a price/date/charge change that should be applied to it - this stages a "
+            "Beds24 update that a human must approve before it is pushed, so do not tell the guest "
+            "the booking is already updated. Leave `action` out (or `\"price\"`) for an ordinary "
+            "quote that changes nothing. Leave `sales_request` out or `needed` false when no quote "
+            "is called for."
         ),
     ),
 ) + _context_blocks(include_inbound=True, include_actions=True)

@@ -3,8 +3,9 @@ import pathlib
 import tempfile
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
+from app.config import ONEDRIVE_STORAGE_ENABLED
 from app.core.quotation_token import get_raw_token, verify_quotation_token
 from app.schemas.quotation import (
     AdminCostsRequest,
@@ -229,6 +230,12 @@ async def generate_pdf(
     if request.delivery == "download":
         return await _generate_pdf_download(request, token)
 
+    # Local storage is the active path by default (ONEDRIVE_STORAGE_ENABLED=false) - quotations
+    # are filed straight to the mounted TENANT_FILES_ROOT folder, the same as the 503 fallback
+    # below. The OneDrive/Graph branch is left in place, untouched, for whoever re-enables it.
+    if not ONEDRIVE_STORAGE_ENABLED:
+        return _generate_pdf_local(request)
+
     try:
         year = datetime.strptime(request.check_in, "%Y-%m-%d").year
     except ValueError:
@@ -340,6 +347,38 @@ async def create_booking(
 ) -> dict:
     payload = request.model_dump()
     return await crm_client.create_booking(token, payload)
+
+
+@router.get("/tenant-files/search")
+async def quotation_tenant_files_search(
+    q: str | None = None,
+    booking_id: str | None = None,
+    year: int | None = None,
+    tenant_name: str | None = None,
+    room: str | None = None,
+    _payload=Depends(verify_quotation_token),
+    token: str = Depends(get_raw_token),
+) -> dict:
+    """The Files page's cross-tenant browse/search - proxies straight to the CRM, which owns
+    the mounted TENANT_FILES_ROOT tree (app.services.tenant_files_storage on that side)."""
+    return await crm_client.search_tenant_files(
+        token, {"q": q, "booking_id": booking_id, "year": year, "tenant_name": tenant_name, "room": room}
+    )
+
+
+@router.get("/tenant-files/download")
+async def quotation_tenant_files_download(
+    path: str,
+    _payload=Depends(verify_quotation_token),
+    token: str = Depends(get_raw_token),
+) -> Response:
+    content, content_type = await crm_client.download_tenant_file(path, token)
+    filename = path.rsplit("/", 1)[-1]
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{booking_id}/send-to-beds24")

@@ -39,6 +39,7 @@ from app.api.redo_requests import router as redo_requests_router
 from app.api.search import router as search_router
 from app.api.settings_backup import router as settings_backup_router
 from app.api.tenants import router as tenants_router
+from app.api.tenant_files import router as tenant_files_router
 from app.api.tenant_ai_settings import router as tenant_ai_settings_router
 from app.api.tenant_channel_endpoints import router as tenant_channel_endpoints_router
 from app.api.users import router as users_router
@@ -456,6 +457,7 @@ app.include_router(notifications_router, prefix="/api")
 app.include_router(devices_router, prefix="/api")
 app.include_router(gmail_integration_router)
 app.include_router(tenants_router, prefix="/api")
+app.include_router(tenant_files_router, prefix="/api")
 app.include_router(quotation_router, prefix="/api")
 app.include_router(tenant_channel_endpoints_router, prefix="/api")
 app.include_router(whatsapp_thread_links_router, prefix="/api")
