@@ -189,6 +189,7 @@ async def update_booking_invoice_items(
     booking_id: str,
     original_invoice_item_ids: list[str],
     final_invoice_items: list[dict[str, Any]],
+    booking_fields: dict[str, Any] | None = None,
 ) -> None:
     """
     Replace all invoice items on a Beds24 booking with a new set, via the same
@@ -210,6 +211,10 @@ async def update_booking_invoice_items(
             await _post_booking_update(client, booking_id, delete_payload, step='delete_invoice_items')
 
         final_payload = {'id': booking_id, 'invoiceItems': final_invoice_items}
+        # Booking-level fields (status / subStatus / flagText) ride on the same update call so a
+        # status change is applied in the one round-trip that rewrites the invoice items.
+        if booking_fields:
+            final_payload.update({k: v for k, v in booking_fields.items() if v is not None})
         await _post_booking_update(client, booking_id, final_payload, step='update_booking')
 
 

@@ -78,3 +78,22 @@ def test_webhook_auto_run_still_gated_on_writer_enables(client, db_session, monk
 
     brain, action = _triggers(db_session, existing.id)
     assert brain == [] and action == []
+
+
+def test_webhook_persists_beds24_sub_status(client, db_session, monkeypatch):
+    """D1 read side: Beds24 subStatus is stored on tenant.sub_status."""
+    async def booking_with_substatus(booking_id):
+        return {
+            "id": booking_id, "roomName": "Studio 1", "firstName": "Sub", "lastName": "Status",
+            "arrival": "2026-08-01", "departure": "2026-08-05", "subStatus": "keys collected",
+            "invoiceItems": [],
+        }
+
+    monkeypatch.setattr("app.api.beds24_webhooks.fetch_booking_with_invoice", booking_with_substatus)
+    monkeypatch.setattr("app.api.beds24_webhooks.get_booking_info_items", _no_info_items())
+
+    assert client.get("/api/webhooks/beds24", params={"bookid": "WH-SUBSTATUS", "status": "new"}).status_code == 200
+
+    tenant = db_session.query(Tenant).filter(Tenant.booking_id == "WH-SUBSTATUS").first()
+    assert tenant is not None
+    assert tenant.sub_status == "keys collected"

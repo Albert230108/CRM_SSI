@@ -254,6 +254,11 @@ class QuotationInvoiceItem(BaseModel):
 class SendInvoiceItemsRequest(BaseModel):
     all_original_invoice_item_ids: list[str]
     invoice_items: list[QuotationInvoiceItem]
+    # Optional booking-level updates pushed alongside the invoice items. Each is only sent to
+    # Beds24 when provided, so an invoice-items-only push keeps today's behaviour unchanged.
+    status: str | None = None
+    sub_status: str | None = None
+    flag_text: str | None = None
 
 
 class CreateBookingRequest(BaseModel):
@@ -267,6 +272,7 @@ class CreateBookingRequest(BaseModel):
     phone: str = ""
     num_adults: int = 1
     num_children: int = 0
+    sub_status: str | None = None
     flag_text: str | None = None
     company_info: str | None = None
     invoice_items: list[QuotationInvoiceItem] = []
@@ -307,6 +313,8 @@ async def create_quotation_beds24_booking(
         "numChild": request.num_children,
         "invoiceItems": invoice_items,
     }
+    if request.sub_status:
+        payload["subStatus"] = request.sub_status
     if request.flag_text:
         payload["flagText"] = request.flag_text
     if request.company_info:
@@ -364,10 +372,16 @@ async def send_quotation_invoice_items_to_beds24(
         for item in request.invoice_items
     ]
 
+    booking_fields = {
+        "status": request.status,
+        "subStatus": request.sub_status,
+        "flagText": request.flag_text,
+    }
     await update_booking_invoice_items(
         booking_id=booking_id,
         original_invoice_item_ids=request.all_original_invoice_item_ids,
         final_invoice_items=final_invoice_items,
+        booking_fields=booking_fields,
     )
 
     # Re-fetch from Beds24 and rewrite Tenant/Finance deterministically, rather than relying

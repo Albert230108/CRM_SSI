@@ -107,6 +107,9 @@ export default function QuotationEditorPage() {
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
   const [ssiFlag, setSsiFlag] = useState(false)
+  // Booking status / sub-status to push to Beds24. Empty = leave the current Beds24 value alone.
+  const [bookingStatus, setBookingStatus] = useState('')
+  const [subStatus, setSubStatus] = useState('')
 
   const [charges, setCharges] = useState<EditableInvoiceItem[]>([])
   const [payments, setPayments] = useState<EditableInvoiceItem[]>([])
@@ -593,6 +596,10 @@ export default function QuotationEditorPage() {
           currency: item.currency,
           status: item.status,
         })),
+        // Booking-level updates: only sent when set, so an unchanged control leaves Beds24 as-is.
+        status: bookingStatus || null,
+        sub_status: subStatus || null,
+        flag_text: ssiFlag ? '(SSI)' : null,
       })
       setNotice('Invoice items sent to Beds24. Finance will update shortly in the CRM.')
     } catch (err) {
@@ -695,6 +702,31 @@ export default function QuotationEditorPage() {
               min={0}
               value={children}
               onChange={(e) => setChildren(Number(e.target.value))}
+              className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-gray-500">
+            Beds24 status
+            <select
+              value={bookingStatus}
+              onChange={(e) => setBookingStatus(e.target.value)}
+              className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
+            >
+              <option value="">Leave unchanged</option>
+              <option value="inquiry">Inquiry</option>
+              <option value="request">Request</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="new">New</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="black">Black</option>
+            </select>
+          </label>
+          <label className="text-xs text-gray-500">
+            Sub-status
+            <input
+              value={subStatus}
+              onChange={(e) => setSubStatus(e.target.value)}
+              placeholder="Leave blank to keep"
               className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
             />
           </label>

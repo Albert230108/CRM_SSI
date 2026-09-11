@@ -38,6 +38,9 @@ class Tenant(Base):
     notes = Column(Text, nullable=True)
     draft_notes = Column(Text, nullable=True)
     booking_status = Column(String(100), nullable=True)
+    # Beds24 sub-status (free-text secondary status alongside the primary booking status),
+    # read from and written back to Beds24; nullable since most bookings carry none.
+    sub_status = Column(String(100), nullable=True)
     name = Column(String(255), nullable=False, index=True)
     responsible_comm = Column(Text, nullable=True)
     auto_add_shared_email_threads = Column(Boolean, nullable=False, server_default=text("true"))

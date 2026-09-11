@@ -84,3 +84,30 @@ def test_update_booking_invoice_items_raises_on_beds24_rejection(monkeypatch):
             )
         )
     assert exc_info.value.status_code == 502
+
+
+def test_update_booking_invoice_items_sends_booking_fields_on_update(monkeypatch):
+    """D1: status / subStatus / flagText ride on the same update call as the invoice items, and
+    None values are omitted so an invoice-items-only push is unchanged."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=[{"success": True}])
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client_factory(handler))
+
+    asyncio.run(
+        beds24_service.update_booking_invoice_items(
+            booking_id="12345",
+            original_invoice_item_ids=[],
+            final_invoice_items=[{"type": "charge", "description": "Rent", "qty": 1, "amount": 10.0, "vatRate": 9}],
+            booking_fields={"status": "confirmed", "subStatus": "keys collected", "flagText": None},
+        )
+    )
+
+    assert len(calls) == 1
+    body = calls[0].content
+    assert b"confirmed" in body and b"keys collected" in body
+    # None-valued fields are dropped, not sent as null.
+    assert b"flagText" not in body

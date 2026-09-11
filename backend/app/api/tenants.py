@@ -373,6 +373,7 @@ def _extract_guest_fields(item: dict) -> dict:
         booking_status = status_map.get(int(raw_status), f"Status {raw_status}")
     except (TypeError, ValueError):
         booking_status = str(raw_status).strip() or None
+    sub_status = str(item.get("subStatus") or "").strip() or None
     if not first_name and not last_name and not name:
         logger.warning(
             "BEDS24 no guest name. item keys=%s | guestDetails keys=%s | guestDetails=%s",
@@ -410,6 +411,7 @@ def _extract_guest_fields(item: dict) -> dict:
         "deposit": deposit,
         "currency": currency,
         "booking_status": booking_status,
+        "sub_status": sub_status,
         "notes": notes,
         "responsible_comm": responsible_comm,
         "room_id": room_id,
@@ -1246,6 +1248,8 @@ async def _import_tenant(
         tenant.check_out = check_out
         set_tenant_notes(db, tenant, notes, source=SOURCE_BEDS24_IMPORT, changed_by_user_id=getattr(current_user, "id", None))
         tenant.booking_status = booking_status
+        if hasattr(tenant, "sub_status"):
+            tenant.sub_status = extracted.get("sub_status")
         tenant.name = name
         tenant.responsible_comm = responsible_comm
         tenant.room_id = room_id

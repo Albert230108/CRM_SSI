@@ -84,6 +84,8 @@ async def sync_tenant_from_beds24_booking(
     tenant.check_in = fields.get("check_in")
     tenant.check_out = fields.get("check_out")
     tenant.booking_status = fields.get("booking_status")
+    if hasattr(tenant, "sub_status"):
+        tenant.sub_status = fields.get("sub_status")
     set_tenant_notes(db, tenant, fields.get("notes"), source=SOURCE_BEDS24_SYNC_SERVICE)
     tenant.responsible_comm = fields.get("responsible_comm")
     tenant.room_id = room_id

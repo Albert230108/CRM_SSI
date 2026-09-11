@@ -443,5 +443,8 @@ async def send_to_beds24(
     payload = {
         "all_original_invoice_item_ids": request.all_original_invoice_item_ids,
         "invoice_items": [item.model_dump() for item in request.invoice_items],
+        "status": request.status,
+        "sub_status": request.sub_status,
+        "flag_text": request.flag_text,
     }
     return await crm_client.send_invoice_items_to_beds24(booking_id, token, payload)

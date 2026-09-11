@@ -105,6 +105,10 @@ class GeneratePdfRequest(BaseModel):
 class SendToBeds24Request(BaseModel):
     all_original_invoice_item_ids: list[str]
     invoice_items: list[InvoiceItem]
+    # Optional booking-level updates pushed to Beds24 alongside the invoice items.
+    status: str | None = None
+    sub_status: str | None = None
+    flag_text: str | None = None
 
 
 class CreateBookingRequest(BaseModel):
@@ -118,6 +122,7 @@ class CreateBookingRequest(BaseModel):
     phone: str = ""
     num_adults: int = Field(1, ge=0)
     num_children: int = Field(0, ge=0)
+    sub_status: str | None = None
     flag_text: str | None = None
     company_info: str | None = None
     invoice_items: list[InvoiceItem] = []
