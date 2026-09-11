@@ -37,6 +37,7 @@ from app.api.notifications import router as notifications_router
 from app.api.quotation import router as quotation_router
 from app.api.redo_requests import router as redo_requests_router
 from app.api.search import router as search_router
+from app.api.settings_backup import router as settings_backup_router
 from app.api.tenants import router as tenants_router
 from app.api.tenant_ai_settings import router as tenant_ai_settings_router
 from app.api.tenant_channel_endpoints import router as tenant_channel_endpoints_router
@@ -471,6 +472,7 @@ app.include_router(memory_suggestions_router, prefix="/api")
 app.include_router(memory_qa_router, prefix="/api")
 app.include_router(redo_requests_router, prefix="/api")
 app.include_router(search_router, prefix="/api")
+app.include_router(settings_backup_router, prefix="/api")
 app.include_router(whatsapp_webhook_router)
 app.include_router(gmail_webhook_router)
 

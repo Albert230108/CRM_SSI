@@ -1,9 +1,10 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useToast } from '../lib/useToast'
 import ToastHost from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
+import Modal from '../components/ui/Modal'
 import SettingsSidebarLayout, { SettingsTab } from '../components/settings/SettingsSidebarLayout'
 import Button from '../components/ui/Button'
 import InlineSpinner from '../components/InlineSpinner'
@@ -126,6 +127,19 @@ function statusClass(status: string) {
   }
 }
 
+type SettingsBackupDatasetResult = {
+  replaced: number
+  added: number
+  removed: number
+  skipped: number
+  skipReasons: string[]
+}
+
+type SettingsBackupPreview = {
+  mode: 'preview'
+  datasets: Record<string, SettingsBackupDatasetResult>
+}
+
 const emptyNewUser = {
   email: '',
   full_name: '',
@@ -170,6 +184,14 @@ export default function AdminSettings() {
   const [clearInvitesError, setClearInvitesError] = useState('')
 
   const [backfillingBodies, setBackfillingBodies] = useState(false)
+
+  const [exportingBackup, setExportingBackup] = useState(false)
+  const [previewingImport, setPreviewingImport] = useState(false)
+  const [applyingImport, setApplyingImport] = useState(false)
+  const [importError, setImportError] = useState('')
+  const [importPreview, setImportPreview] = useState<SettingsBackupPreview | null>(null)
+  const pendingImportFileRef = useRef<File | null>(null)
+  const importFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const [forwardToEmail, setForwardToEmail] = useState('')
   const [savingForwardToEmail, setSavingForwardToEmail] = useState(false)
@@ -597,6 +619,98 @@ export default function AdminSettings() {
       showError('Failed to backfill email bodies')
     } finally {
       setBackfillingBodies(false)
+    }
+  }
+
+  const exportSettingsBackup = async () => {
+    setExportingBackup(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/settings-backup/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!response.ok) {
+        showError('Failed to export settings')
+        return
+      }
+      const blob = await response.blob()
+      const disposition = response.headers.get('Content-Disposition') ?? ''
+      const filenameMatch = /filename="?([^"]+)"?/.exec(disposition)
+      const filename = filenameMatch?.[1] ?? `crm-settings-backup-${new Date().toISOString()}.json`
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = filename
+      link.click()
+      URL.revokeObjectURL(objectUrl)
+      showSuccess('Settings exported')
+    } catch {
+      showError('Failed to export settings')
+    } finally {
+      setExportingBackup(false)
+    }
+  }
+
+  const handleImportFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setImportError('')
+    pendingImportFileRef.current = file
+    setPreviewingImport(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch(`${API_BASE_URL}/api/settings-backup/import?mode=preview`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        pendingImportFileRef.current = null
+        showError(typeof data.detail === 'string' ? data.detail : 'Failed to read backup file')
+        return
+      }
+      setImportPreview(data)
+    } catch {
+      pendingImportFileRef.current = null
+      showError('Failed to read backup file')
+    } finally {
+      setPreviewingImport(false)
+    }
+  }
+
+  const closeImportPreview = () => {
+    setImportPreview(null)
+    setImportError('')
+    pendingImportFileRef.current = null
+  }
+
+  const applyImportBackup = async (mode: 'replace' | 'merge') => {
+    const file = pendingImportFileRef.current
+    if (!file) return
+    setImportError('')
+    setApplyingImport(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch(`${API_BASE_URL}/api/settings-backup/import?mode=${mode}`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setImportError(typeof data.detail === 'string' ? data.detail : 'Failed to import backup')
+        return
+      }
+      closeImportPreview()
+      showSuccess(mode === 'replace' ? 'Settings restored (replace)' : 'Settings merged')
+      await refresh()
+    } catch {
+      setImportError('Failed to import backup')
+    } finally {
+      setApplyingImport(false)
     }
   }
 
@@ -1465,6 +1579,36 @@ export default function AdminSettings() {
           </section>
         ) : null}
 
+        {activeTab === 'maintenance' ? (
+          <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
+            <h2 className="text-lg font-semibold text-gray-900">Settings Backup</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Export every hand-configured setting (AI agent profiles, reply templates, the Brain, admin defaults, and
+              more) as one JSON file, or restore from a previously exported file. Credentials such as the OneDrive
+              refresh token are never included. Importing always writes a safety snapshot of the current state first.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button loading={exportingBackup} onClick={exportSettingsBackup}>
+                {exportingBackup ? 'Exporting…' : 'Export all'}
+              </Button>
+              <Button
+                variant="secondary"
+                loading={previewingImport}
+                onClick={() => importFileInputRef.current?.click()}
+              >
+                {previewingImport ? 'Reading file…' : 'Import…'}
+              </Button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={handleImportFileSelected}
+              />
+            </div>
+          </section>
+        ) : null}
+
         {activeTab === 'whatsapp' ? (
           <section className="rounded-2xl border border-gray-200 bg-white p-3.5">
             <div className="flex items-center justify-between gap-3">
@@ -1718,6 +1862,68 @@ export default function AdminSettings() {
           onCancel={() => setShowClearInvitesModal(false)}
         />
       ) : null}
+
+      <Modal open={importPreview !== null} onClose={closeImportPreview} dismissable={!applyingImport} className="w-full max-w-2xl" ariaLabel="Import settings backup">
+        <div className="max-h-[80vh] overflow-y-auto rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 className="text-xl font-semibold text-gray-900">Import settings backup</h2>
+          <p className="mt-2 text-sm text-gray-600">
+            Review what this file will change before applying it. <span className="font-medium">Replace</span> makes
+            global config (agent profiles, templates, the Brain, admin defaults) match the file exactly, deleting
+            anything not in it; per-tenant/per-user data is always merged, never deleted.{' '}
+            <span className="font-medium">Merge</span> only adds/updates everywhere and never deletes.
+          </p>
+          {importPreview ? (
+            <div className="mt-4 overflow-x-auto rounded-2xl border border-gray-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left text-gray-500">
+                  <tr>
+                    <th className="px-3 py-2">Dataset</th>
+                    <th className="px-3 py-2">Replaced</th>
+                    <th className="px-3 py-2">Added</th>
+                    <th className="px-3 py-2">Removed*</th>
+                    <th className="px-3 py-2">Skipped</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(importPreview.datasets).map(([key, counts]) => (
+                    <tr key={key} className="border-t border-gray-100 align-top">
+                      <td className="px-3 py-2 font-medium text-gray-900">{key}</td>
+                      <td className="px-3 py-2">{counts.replaced}</td>
+                      <td className="px-3 py-2">{counts.added}</td>
+                      <td className="px-3 py-2">{counts.removed}</td>
+                      <td className="px-3 py-2">
+                        {counts.skipped}
+                        {counts.skipReasons.length > 0 ? (
+                          <ul className="mt-1 list-disc pl-4 text-xs text-gray-500">
+                            {counts.skipReasons.map((reason, index) => (
+                              <li key={index}>{reason}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="border-t border-gray-100 px-3 py-2 text-xs text-gray-500">
+                *"Removed" only applies with Replace; Merge never deletes anything.
+              </p>
+            </div>
+          ) : null}
+          {importError ? <p className="mt-3 text-sm text-rose-600">{importError}</p> : null}
+          <div className="mt-4 flex flex-wrap justify-end gap-3">
+            <Button variant="ghost" onClick={closeImportPreview} disabled={applyingImport}>
+              Cancel
+            </Button>
+            <Button variant="secondary" loading={applyingImport} onClick={() => applyImportBackup('merge')}>
+              {applyingImport ? 'Applying…' : 'Merge'}
+            </Button>
+            <Button variant="danger" loading={applyingImport} onClick={() => applyImportBackup('replace')}>
+              {applyingImport ? 'Applying…' : 'Replace'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <ToastHost toast={toast} onDismiss={dismiss} />
     </>
