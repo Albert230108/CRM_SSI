@@ -20,6 +20,8 @@ from app.core.dependencies import get_current_admin_user, get_db
 from app.models.beds24_webhook_log import Beds24WebhookLog
 from app.models.finance import Finance
 from app.models.tenant import Tenant
+from app.models.tenant_ai_settings import TenantAiSettings
+from app.services import action_writer_trigger_service, tenant_brain_trigger_service
 from app.schemas.beds24_webhook_log import Beds24WebhookLogRead
 from app.services.background_jobs import start_job
 from app.services.beds24_client import get_booking_info_items
@@ -271,6 +273,7 @@ async def _process_beds24_booking_event(
                         amount=line_total,
                         currency=str(item.get("currency") or "EUR"),
                         description=description,
+                        status=(str(item.get("status")) if item.get("status") else None),
                     )
                 )
 
@@ -284,6 +287,15 @@ async def _process_beds24_booking_event(
             logger.warning(
                 "Beds24 webhook info item sync failed booking_id=%s tenant_id=%s", booking_id, tenant.id, exc_info=True
             )
+
+        # Keep the brain/action writers current with booking changes (not just inbound messages),
+        # when this tenant opts in (webhook_auto_run_enabled, default true). These calls still
+        # self-gate on brain_writer_enabled / action_writer_enabled, so a default tenant with those
+        # off sees no AI activity here. Registered before commit so they share this transaction.
+        ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
+        if ai_settings is None or ai_settings.webhook_auto_run_enabled:
+            tenant_brain_trigger_service.register_message_trigger(db, tenant_id=tenant.id, channel="beds24", direction="inbound")
+            action_writer_trigger_service.register_message_trigger(db, tenant_id=tenant.id, channel="beds24", direction="inbound")
 
         db.commit()
         log.status = "processed"

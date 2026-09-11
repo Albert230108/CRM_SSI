@@ -25,6 +25,9 @@ class TenantAiSettingsRead(BaseModel):
     # agent runs for this tenant.
     action_writer_enabled: bool = False
     action_writer_profile_id: int | None = None
+    # When on (default), a Beds24 booking webhook registers brain/action-writer triggers for this
+    # tenant (still gated on the two enables above). Default true, unlike the other AI toggles.
+    webhook_auto_run_enabled: bool = True
     # Independent of the raw planner/checker draft pipeline - whether the formatter stage should
     # create channel-specific rich output for approved drafts.
     formatter_enabled: bool = False
@@ -49,6 +52,7 @@ class TenantAiSettingsUpdate(BaseModel):
     brain_writer_profile_id: int | None = None
     action_writer_enabled: bool = False
     action_writer_profile_id: int | None = None
+    webhook_auto_run_enabled: bool = True
     formatter_enabled: bool = False
     formatter_profile_id: int | None = None
     sales_manager_profile_id: int | None = None

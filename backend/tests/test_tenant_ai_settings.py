@@ -54,10 +54,28 @@ def test_get_creates_default_settings_row(non_admin_client, db_session):
         # Independent of planner_mode and brain_writer_enabled - also opt-in.
         "action_writer_enabled": False,
         "action_writer_profile_id": None,
+        # Beds24-webhook auto-run defaults ON (unlike the other opt-in AI toggles); it still only
+        # does anything when the brain/action writers above are separately enabled.
+        "webhook_auto_run_enabled": True,
         "formatter_enabled": False,
         "formatter_profile_id": None,
         "sales_manager_profile_id": None,
     }
+
+
+def test_put_persists_webhook_auto_run_toggle(non_admin_client, db_session):
+    """D3: the Beds24-webhook auto-run flag round-trips through the settings endpoint (default on,
+    can be turned off)."""
+    tenant = _create_tenant(db_session)
+    assert non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()["webhook_auto_run_enabled"] is True
+
+    response = non_admin_client.put(
+        f"/api/tenants/{tenant.id}/ai-settings",
+        json={"webhook_auto_run_enabled": False},
+    )
+    assert response.status_code == 200
+    assert response.json()["webhook_auto_run_enabled"] is False
+    assert non_admin_client.get(f"/api/tenants/{tenant.id}/ai-settings").json()["webhook_auto_run_enabled"] is False
 
 
 def test_put_updates_available_templates_and_defaults(non_admin_client, db_session):

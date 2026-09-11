@@ -30,6 +30,12 @@ class TenantAiSettings(Base):
     brain_writer_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     # Independent of planner_mode and brain_writer_enabled: whether the debounced action-writer
     # step runs for this tenant.
+    # When on (default), a Beds24 booking webhook registers brain/action-writer triggers for this
+    # tenant, so the brain/actions stay current with booking changes - not just inbound messages.
+    # It only gates WHETHER those triggers are registered; the triggers still self-gate on
+    # brain_writer_enabled / action_writer_enabled (both default off), so a default tenant sees no
+    # AI activity from this until those are separately enabled.
+    webhook_auto_run_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
     action_writer_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     action_writer_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
     # Independent of planner_mode and the raw draft/checker pipeline: whether the formatter stage

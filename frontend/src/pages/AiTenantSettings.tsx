@@ -38,6 +38,7 @@ type TenantAiSettings = {
   brain_writer_profile_id: number | null
   action_writer_enabled: boolean
   action_writer_profile_id: number | null
+  webhook_auto_run_enabled: boolean
   formatter_enabled: boolean
   formatter_profile_id: number | null
   sales_manager_profile_id: number | null
@@ -69,6 +70,7 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
   brain_writer_profile_id: null,
   action_writer_enabled: false,
   action_writer_profile_id: null,
+  webhook_auto_run_enabled: true,
   formatter_enabled: false,
   formatter_profile_id: null,
   sales_manager_profile_id: null,
@@ -824,6 +826,26 @@ export default function AiTenantSettings() {
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-2.5">
+                <p className="text-sm font-semibold text-gray-900">Booking-webhook auto-run</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  When on (default), a Beds24 booking update for this tenant kicks off the brain and
+                  action-writer runs above, so they stay current with booking changes and not only
+                  with inbound messages. It only has an effect if the Brain Writer and/or Action
+                  Writer toggles above are also enabled.
+                </p>
+                <label className="mt-2 flex items-center gap-2 text-sm text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={settings.webhook_auto_run_enabled}
+                    onChange={(event) =>
+                      setSettings((current) => (current ? { ...current, webhook_auto_run_enabled: event.target.checked } : current))
+                    }
+                  />
+                  Run the brain / action writers on Beds24 booking updates
+                </label>
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-2.5">
