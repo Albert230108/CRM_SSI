@@ -55,6 +55,25 @@ function beds24ItemsSignature(
     .join('~~')
 }
 
+// Beds24 returns the booking status as a numeric code; map it to the editor's status dropdown value.
+// (Mirrors the CRM's tenants._extract_guest_fields status_map.)
+const BEDS24_STATUS_BY_CODE: Record<number, string> = {
+  0: 'inquiry',
+  1: 'confirmed',
+  2: 'cancelled',
+  3: 'cancelled',
+  4: 'request',
+  5: 'black',
+  10: 'confirmed',
+}
+function beds24StatusToValue(raw: unknown): string {
+  if (typeof raw === 'string' && ['inquiry', 'request', 'confirmed', 'new', 'cancelled', 'black'].includes(raw.trim().toLowerCase())) {
+    return raw.trim().toLowerCase()
+  }
+  const code = Number(raw)
+  return Number.isFinite(code) ? (BEDS24_STATUS_BY_CODE[code] ?? 'inquiry') : 'inquiry'
+}
+
 // The auto-managed Administration costs charge line, matched by description (as the desktop does).
 function isAdminCharge(item: { description: string }): boolean {
   return item.description.trim().toLowerCase().includes('administration costs')
@@ -123,6 +142,9 @@ export default function QuotationEditorPage() {
   // Booking status / sub-status to push to Beds24. Empty = leave the current Beds24 value alone.
   const [bookingStatus, setBookingStatus] = useState('')
   const [subStatus, setSubStatus] = useState('')
+  // Fingerprint of the stay inputs (dates/people/property/room) as first loaded. The auto-regenerate
+  // effect only fires once these change *after* load, so it never clobbers the loaded booking.
+  const loadedInputsSigRef = useRef<string | null>(null)
 
   const [charges, setCharges] = useState<EditableInvoiceItem[]>([])
   const [payments, setPayments] = useState<EditableInvoiceItem[]>([])
@@ -174,10 +196,18 @@ export default function QuotationEditorPage() {
 
         setRoomName(room)
         setPropertyName(property)
-        setCheckIn(firstString((booking as Record<string, unknown>).arrival))
-        setCheckOut(firstString((booking as Record<string, unknown>).departure))
-        setAdults(Number(booking.numAdult ?? 1) || 1)
-        setChildren(Number(booking.numChild ?? 0) || 0)
+        const arrival = firstString((booking as Record<string, unknown>).arrival)
+        const departure = firstString((booking as Record<string, unknown>).departure)
+        const numAdults = Number(booking.numAdult ?? 1) || 1
+        const numChildren = Number(booking.numChild ?? 0) || 0
+        setCheckIn(arrival)
+        setCheckOut(departure)
+        setAdults(numAdults)
+        setChildren(numChildren)
+        // Preselect the booking's current Beds24 status (numeric code -> our dropdown value).
+        setBookingStatus(beds24StatusToValue((booking as Record<string, unknown>).status))
+        setSubStatus(firstString((booking as Record<string, unknown>).subStatus))
+        loadedInputsSigRef.current = `${arrival}|${departure}|${numAdults}|${numChildren}|${property}|${room}`
 
         const items = booking.invoiceItems ?? []
         originalBeds24SnapshotRef.current = beds24ItemsSignature(items)
@@ -330,12 +360,36 @@ export default function QuotationEditorPage() {
   )
 
   useEffect(() => {
+    // Admin auto-recomputes on charge changes only while the booking is an Inquiry. For
+    // Confirmed/Request the operator refreshes it explicitly via the "Refresh admin costs" button.
+    if (bookingStatus !== 'inquiry') return
     if (!charges.some(isAdminCharge) || !propertyName || !checkIn) return
     const handle = window.setTimeout(() => void runAdminRecompute(), 600)
     return () => window.clearTimeout(handle)
     // Keyed on the non-admin charge signature (not runAdminRecompute, which changes with charges).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nonAdminChargeSignature, propertyName, checkIn])
+  }, [nonAdminChargeSignature, propertyName, checkIn, bookingStatus])
+
+  // After load, changing the stay inputs (dates / people / property / room) auto-updates the
+  // standard charges (admin preserved - it follows its own Inquiry-auto / button rule), auto-selects
+  // the installment count (nights//30+1), and, when the booking is an Inquiry, rebuilds the plan.
+  useEffect(() => {
+    if (loadedInputsSigRef.current === null) return
+    const sig = `${checkIn}|${checkOut}|${adults}|${children}|${propertyName}|${roomName}`
+    if (sig === loadedInputsSigRef.current) return
+    if (!roomName || !propertyName || !checkIn || !checkOut) return
+    const handle = window.setTimeout(async () => {
+      const autoInstallments = nights !== null ? Math.max(1, Math.min(Math.floor(nights / 30) + 1, 24)) : installments
+      setInstallments(autoInstallments)
+      if (chargesRef.current.length === 0) return
+      const newCharges = await generateStandardCharges({ preserveAdmin: true })
+      if (bookingStatus === 'inquiry' && newCharges) {
+        await buildPaymentPlanFrom(newCharges, autoInstallments, { silent: true })
+      }
+    }, 700)
+    return () => window.clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkIn, checkOut, adults, children, propertyName, roomName])
 
   const handlePaymentChange = (localId: string, patch: Partial<EditableInvoiceItem>) => {
     setPayments((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)))
@@ -352,32 +406,26 @@ export default function QuotationEditorPage() {
     setPayments((prev) => prev.filter((item) => item.localId !== localId))
   }
 
-  const handleAddPaymentPlan = async () => {
+  // Core plan build. Takes the charges/installments explicitly so the auto path can pass freshly
+  // generated charges (React state updates aren't visible synchronously within the same effect).
+  const buildPaymentPlanFrom = async (
+    chargeItems: EditableInvoiceItem[],
+    installmentCount: number,
+    { silent = false }: { silent?: boolean } = {},
+  ) => {
     if (!checkIn || !checkOut) {
-      setError('Valid check-in and check-out dates are needed to build a payment plan.')
-      return
-    }
-    const hasPaidRows = payments.some((p) => isPaymentPaid(p.status))
-    if (
-      payments.length > 0 &&
-      !window.confirm(
-        hasPaidRows
-          ? 'Regenerate the payment plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced. This cannot be undone.'
-          : 'Replace all current payment rows with a newly generated plan? This cannot be undone. (Tip: save a local quote first to keep this version.)',
-      )
-    ) {
+      if (!silent) setError('Valid check-in and check-out dates are needed to build a payment plan.')
       return
     }
     setBuildingPlan(true)
-    setError(null)
-    setNotice(null)
+    if (!silent) setError(null)
     try {
       const result = await apiPost<PaymentPlanResult>('/api/quotation/build-payment-plan', {
         check_in: checkIn,
         check_out: checkOut,
-        installments,
+        installments: installmentCount,
         security_deposit: securityDeposit,
-        charges: charges.map((c) => ({ description: c.description, qty: c.qty, amount: c.amount })),
+        charges: chargeItems.map((c) => ({ description: c.description, qty: c.qty, amount: c.amount })),
         existing_payments: payments.map((p) => ({
           description: p.description,
           qty: p.qty,
@@ -398,16 +446,39 @@ export default function QuotationEditorPage() {
           status: p.status,
         })),
       )
-      setNotice(
-        result.kept_count > 0
-          ? `Kept ${result.kept_count} paid row(s); ${result.payments.length - result.kept_count} row(s) regenerated for the remaining €${result.remaining.toFixed(2)}.`
-          : `Generated ${result.payments.length} payment rows across ${result.installments} installment(s).`,
-      )
+      if (!silent) {
+        setNotice(
+          result.kept_count > 0
+            ? `Kept ${result.kept_count} paid row(s); ${result.payments.length - result.kept_count} row(s) regenerated for the remaining €${result.remaining.toFixed(2)}.`
+            : `Generated ${result.payments.length} payment rows across ${result.installments} installment(s).`,
+        )
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to build payment plan')
+      if (!silent) setError(err instanceof ApiError ? err.message : 'Failed to build payment plan')
     } finally {
       setBuildingPlan(false)
     }
+  }
+
+  const handleAddPaymentPlan = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!checkIn || !checkOut) {
+      if (!silent) setError('Valid check-in and check-out dates are needed to build a payment plan.')
+      return
+    }
+    const hasPaidRows = payments.some((p) => isPaymentPaid(p.status))
+    if (
+      !silent &&
+      payments.length > 0 &&
+      !window.confirm(
+        hasPaidRows
+          ? 'Regenerate the payment plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced. This cannot be undone.'
+          : 'Replace all current payment rows with a newly generated plan? This cannot be undone. (Tip: save a local quote first to keep this version.)',
+      )
+    ) {
+      return
+    }
+    setNotice(null)
+    await buildPaymentPlanFrom(charges, installments, { silent })
   }
 
   const handleCheckDiscount = async () => {
@@ -432,6 +503,52 @@ export default function QuotationEditorPage() {
     }
   }
 
+  // Core standard-charge generation. `preserveAdmin` keeps the current Administration costs line
+  // (used by the auto-regenerate-on-dates/people path, where admin is governed separately by the
+  // Inquiry-auto / manual-button rules); the manual button regenerates everything.
+  const generateStandardCharges = useCallback(
+    async ({ preserveAdmin }: { preserveAdmin: boolean }): Promise<EditableInvoiceItem[] | null> => {
+      if (!roomName || !propertyName || !checkIn || !checkOut) return null
+      setBuildingCharges(true)
+      setError(null)
+      try {
+        const result = await apiPost<BuildChargesResult>('/api/quotation/build-charges', {
+          property_name: propertyName,
+          room_name: roomName,
+          check_in: checkIn,
+          check_out: checkOut,
+          adults,
+          children,
+          quotation_flag: ssiFlag ? '(SSI)' : null,
+        })
+        const existingAdmin = preserveAdmin ? chargesRef.current.find(isAdminCharge) : undefined
+        const generated = result.charges
+          .filter((c) => !(existingAdmin && isAdminCharge(c)))
+          .map((c) => ({
+            localId: makeLocalId(),
+            type: 'charge' as const,
+            description: c.description,
+            qty: c.qty,
+            amount: c.amount,
+            vat_rate: c.vat_rate,
+            currency: 'EUR',
+          }))
+        const next = existingAdmin ? [...generated, existingAdmin] : generated
+        setCharges(next)
+        if (!preserveAdmin) {
+          setNotice(result.notes.length ? result.notes.join(' ') : `Generated ${result.charges.length} charge lines.`)
+        }
+        return next
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Failed to generate charges')
+        return null
+      } finally {
+        setBuildingCharges(false)
+      }
+    },
+    [roomName, propertyName, checkIn, checkOut, adults, children, ssiFlag],
+  )
+
   const handleGenerateCharges = async () => {
     if (!roomName || !propertyName || !checkIn || !checkOut) {
       setError('Room, property, and valid check-in/check-out dates are needed to generate charges.')
@@ -440,36 +557,8 @@ export default function QuotationEditorPage() {
     if (charges.length > 0 && !window.confirm('Replace all current charge lines with a freshly generated standard set? Any manual edits to the charges will be lost. (Tip: save a local quote first to keep this version.)')) {
       return
     }
-    setBuildingCharges(true)
-    setError(null)
     setNotice(null)
-    try {
-      const result = await apiPost<BuildChargesResult>('/api/quotation/build-charges', {
-        property_name: propertyName,
-        room_name: roomName,
-        check_in: checkIn,
-        check_out: checkOut,
-        adults,
-        children,
-        quotation_flag: ssiFlag ? '(SSI)' : null,
-      })
-      setCharges(
-        result.charges.map((c) => ({
-          localId: makeLocalId(),
-          type: 'charge' as const,
-          description: c.description,
-          qty: c.qty,
-          amount: c.amount,
-          vat_rate: c.vat_rate,
-          currency: 'EUR',
-        })),
-      )
-      setNotice(result.notes.length ? result.notes.join(' ') : `Generated ${result.charges.length} charge lines.`)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to generate charges')
-    } finally {
-      setBuildingCharges(false)
-    }
+    await generateStandardCharges({ preserveAdmin: false })
   }
 
   const handleGeneratePdf = async (delivery: 'save' | 'download') => {
@@ -825,7 +914,6 @@ export default function QuotationEditorPage() {
               onChange={(e) => setBookingStatus(e.target.value)}
               className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
             >
-              <option value="">Leave unchanged</option>
               <option value="inquiry">Inquiry</option>
               <option value="request">Request</option>
               <option value="confirmed">Confirmed</option>
@@ -881,14 +969,18 @@ export default function QuotationEditorPage() {
             >
               {buildingCharges ? 'Generating...' : 'Generate standard charges'}
             </button>
-            <button
-              type="button"
-              onClick={() => void runAdminRecompute()}
-              disabled={refreshingAdmin || !charges.some(isAdminCharge)}
-              className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              {refreshingAdmin ? 'Refreshing...' : 'Refresh admin'}
-            </button>
+            {/* Inquiry auto-refreshes admin; Confirmed/Request need the explicit button. */}
+            {bookingStatus !== 'inquiry' ? (
+              <button
+                type="button"
+                onClick={() => void runAdminRecompute()}
+                disabled={refreshingAdmin || !charges.some(isAdminCharge)}
+                className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                title="Recompute the Administration costs line from the current charges"
+              >
+                {refreshingAdmin ? 'Refreshing...' : 'Refresh admin costs'}
+              </button>
+            ) : null}
           </div>
         </div>
         {discountResult ? (
@@ -914,11 +1006,8 @@ export default function QuotationEditorPage() {
         onAdd={handleAddPayment}
         installments={installments}
         onInstallmentsChange={setInstallments}
-        onAddPaymentPlan={handleAddPaymentPlan}
+        onAddPaymentPlan={() => handleAddPaymentPlan()}
         buildingPlan={buildingPlan}
-        onAutoCountInstallments={
-          nights !== null ? () => setInstallments(Math.max(1, Math.min(Math.floor(nights / 30) + 1, 24))) : undefined
-        }
       />
 
       <div
