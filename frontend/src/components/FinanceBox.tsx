@@ -41,6 +41,9 @@ type FinanceItem = {
   amount: string
   currency: string
   description: string | null
+  qty: string | null
+  unit_price: string | null
+  vat_rate: string | null
   status: string | null
   created_at: string
 }
@@ -590,35 +593,37 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
             <table className="w-full border-collapse text-left text-sm">
               <thead className="bg-gray-50 text-xs uppercase tracking-[0.2em] text-gray-500">
                 <tr>
-                  <th className="px-3 py-2">Date</th>
-                  <th className="px-3 py-2">Description</th>
-                  <th className="px-3 py-2">Amount</th>
+                  <th className="px-3 py-2">Charge</th>
                   <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Qty</th>
+                  <th className="px-3 py-2">Price</th>
+                  <th className="px-3 py-2">VAT %</th>
+                  <th className="px-3 py-2">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {charges.length === 0 && payments.length === 0 && !loading ? (
                   <tr>
-                    <td className="px-3 py-4 text-gray-500" colSpan={4}>No finance entries found.</td>
+                    <td className="px-3 py-4 text-gray-500" colSpan={6}>No finance entries found.</td>
                   </tr>
                 ) : null}
                 {charges.length > 0 ? (
                   <>
                     <tr className="bg-rose-50">
-                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-rose-500">
+                      <td colSpan={6} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-rose-500">
                         Charges
                       </td>
                     </tr>
                     {charges.map((item) => (
                       <tr key={item.id} className="border-t border-gray-200">
-                        <td className="px-3 py-2 text-gray-500">
-                          {formatDisplayDate(item.created_at)}
-                        </td>
                         <td className="px-3 py-2 text-gray-900">{item.description || 'Charge'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.status || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.qty != null ? Number(item.qty) : '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.unit_price != null ? `${item.currency} ${Number(item.unit_price).toFixed(2)}` : '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.vat_rate != null ? `${Number(item.vat_rate)}%` : '—'}</td>
                         <td className="px-3 py-2 font-medium text-rose-600">
                           {item.currency} {Number(item.amount).toFixed(2)}
                         </td>
-                        <td className="px-3 py-2 text-gray-500">{item.status || '—'}</td>
                       </tr>
                     ))}
                   </>
@@ -626,20 +631,20 @@ export default function FinanceBox({ tenantId, onReady }: FinanceBoxProps) {
                 {payments.length > 0 ? (
                   <>
                     <tr className="bg-emerald-50">
-                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-emerald-600">
+                      <td colSpan={6} className="px-3 py-2 text-xs font-semibold uppercase tracking-widest text-emerald-600">
                         Payments
                       </td>
                     </tr>
                     {payments.map((item) => (
                       <tr key={item.id} className="border-t border-gray-200">
-                        <td className="px-3 py-2 text-gray-500">
-                          {formatDisplayDate(item.created_at)}
-                        </td>
                         <td className="px-3 py-2 text-gray-900">{item.description || 'Payment'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.status || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.qty != null ? Number(item.qty) : '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.unit_price != null ? `${item.currency} ${Number(item.unit_price).toFixed(2)}` : '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{item.vat_rate != null ? `${Number(item.vat_rate)}%` : '—'}</td>
                         <td className="px-3 py-2 font-medium text-emerald-600">
                           {item.currency} {Number(item.amount).toFixed(2)}
                         </td>
-                        <td className="px-3 py-2 text-gray-500">{item.status || '—'}</td>
                       </tr>
                     ))}
                   </>

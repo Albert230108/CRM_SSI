@@ -46,3 +46,20 @@ def test_finance_endpoint_status_is_null_when_absent(non_admin_client, db_sessio
     charges = response.json()["charges"]
     assert len(charges) == 1
     assert charges[0]["status"] is None
+
+
+def test_finance_endpoint_returns_line_breakdown(non_admin_client, db_session):
+    """A2 (round 2): qty / unit_price / vat_rate are persisted and returned so the charges table
+    can show Qty / Price / VAT% / Total columns."""
+    tenant = _create_tenant(db_session, booking_id="B-fin-breakdown")
+    _add_finance(
+        db_session, tenant.id, type="charge", description="Accommodation",
+        amount="455.00", qty="7", unit_price="65.00", vat_rate="9",
+    )
+    response = non_admin_client.get(f"/api/tenants/{tenant.id}/finance")
+    assert response.status_code == 200
+    charge = response.json()["charges"][0]
+    assert charge["qty"] == "7.00"
+    assert charge["unit_price"] == "65.00"
+    assert charge["vat_rate"] == "9.00"
+    assert charge["amount"] == "455.00"

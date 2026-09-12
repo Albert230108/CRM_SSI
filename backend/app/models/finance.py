@@ -10,6 +10,12 @@ class Finance(Base):
     tenant_id = Column(Integer, nullable=False, index=True)
     type = Column(String(10), nullable=False, default="charge")
     amount = Column(Numeric(12, 2), nullable=False)
+    # Per-line breakdown so the charges table can show qty / unit price / VAT% / total columns.
+    # `amount` stays the line total (qty * unit_price) for back-compat; these are nullable for rows
+    # imported before the columns existed.
+    qty = Column(Numeric(12, 2), nullable=True)
+    unit_price = Column(Numeric(12, 2), nullable=True)
+    vat_rate = Column(Numeric(5, 2), nullable=True)
     currency = Column(String(3), nullable=False, default="EUR")
     description = Column(Text, nullable=True)
     # Per-line Beds24 invoice-item status (e.g. paid/unpaid); nullable for rows imported
