@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPut } from '../lib/apiClient'
 
-type TabKey = 'admin-costs' | 'base-prices' | 'prices' | 'discount-rules'
+type TabKey = 'admin-costs' | 'prices'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'admin-costs', label: 'Admin costs' },
-  { key: 'base-prices', label: 'Base prices' },
   { key: 'prices', label: 'Price tiers' },
-  { key: 'discount-rules', label: 'Discounts (JSON)' },
 ]
 
 type AnyRecord = Record<string, any>
@@ -18,6 +16,7 @@ function clone<T>(value: T): T {
 }
 
 const inputClass = 'w-full rounded border border-gray-200 px-2 py-1 text-sm'
+const EXTRA_KEYS = ['deposit', 'city_tax', 'municipality_cost']
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -85,12 +84,8 @@ export default function SettingsPage() {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : tab === 'admin-costs' ? (
         <AdminCostsEditor data={data} saving={saving} onSave={save} />
-      ) : tab === 'base-prices' ? (
-        <BasePricesEditor data={data} saving={saving} onSave={save} />
-      ) : tab === 'prices' ? (
-        <PriceTiersEditor data={data} saving={saving} onSave={save} />
       ) : (
-        <JsonEditor data={data} saving={saving} onSave={save} />
+        <PriceTiersEditor data={data} saving={saving} onSave={save} />
       )}
     </div>
   )
@@ -165,218 +160,210 @@ function AdminCostsEditor({ data, saving, onSave }: { data: AnyRecord; saving: b
   )
 }
 
-function BasePricesEditor({ data, saving, onSave }: { data: AnyRecord; saving: boolean; onSave: (d: AnyRecord) => void }) {
-  const [draft, setDraft] = useState<AnyRecord>(() => clone(data))
-  useEffect(() => setDraft(clone(data)), [data])
-  const properties = Object.keys(draft.properties ?? {})
-
-  const patch = (prop: string, room: string, field: string, value: unknown) =>
-    setDraft((prev) => {
-      const next = clone(prev)
-      next.properties[prop][room][field] = value
-      return next
-    })
-
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-gray-500">Base per-night prices (excl. VAT) used as the foundation for discount calculations.</p>
-      {properties.map((prop) => (
-        <div key={prop} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-900">{prop}</h3>
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-gray-400">
-                  <th className="pb-2">Room</th>
-                  <th className="w-32 pb-2">Base price (€)</th>
-                  <th className="pb-2">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.keys(draft.properties[prop]).map((room) => {
-                  const r = draft.properties[prop][room]
-                  return (
-                    <tr key={room} className="border-t border-gray-100">
-                      <td className="py-1 pr-2 text-gray-700">{room}</td>
-                      <td className="py-1 pr-2">
-                        <input type="number" step="0.01" value={r.base_price ?? 0} onChange={(e) => patch(prop, room, 'base_price', Number(e.target.value))} className={inputClass} />
-                      </td>
-                      <td className="py-1 pr-2">
-                        <input value={r.notes ?? ''} onChange={(e) => patch(prop, room, 'notes', e.target.value)} className={inputClass} />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
-      <SaveBar saving={saving} onSave={() => onSave(draft)} />
-    </div>
-  )
-}
-
-const TIER_KEYS = ['7', '14', '30', '60', '90']
-
+// Prices are shaped: property -> { extra_services, rooms: { room -> { end_cleaning, extra_person_cost,
+// price_ranges: [{ start, end, price_tiers: {nights: price}, extra_services? }] } } }.
 function PriceTiersEditor({ data, saving, onSave }: { data: AnyRecord; saving: boolean; onSave: (d: AnyRecord) => void }) {
   const [draft, setDraft] = useState<AnyRecord>(() => clone(data))
   useEffect(() => setDraft(clone(data)), [data])
 
-  const years = useMemo(() => Object.keys(draft).filter((k) => /^\d{4}$/.test(k)).sort(), [draft])
-  const [year, setYear] = useState(years[0] ?? '')
-  useEffect(() => {
-    if (!years.includes(year)) setYear(years[0] ?? '')
-  }, [years, year])
-
-  const properties = year ? Object.keys(draft[year] ?? {}) : []
+  const properties = Object.keys(draft)
   const [prop, setProp] = useState(properties[0] ?? '')
   useEffect(() => {
     if (!properties.includes(prop)) setProp(properties[0] ?? '')
   }, [properties, prop])
 
-  if (!year || !prop) return <p className="text-sm text-gray-500">No pricing data.</p>
+  if (!prop) return <p className="text-sm text-gray-500">No pricing data.</p>
 
-  const propData = draft[year][prop] as AnyRecord
-  const rooms = Object.keys(propData).filter((k) => k !== 'extra_services')
-  const extras = (propData.extra_services ?? {}) as AnyRecord
+  const propData = draft[prop] as AnyRecord
+  const rooms = Object.keys(propData.rooms ?? {})
 
-  const patchTier = (room: string, tier: string, value: number) =>
+  const mutate = (fn: (next: AnyRecord) => void) =>
     setDraft((prev) => {
       const next = clone(prev)
-      if (!next[year][prop][room].price_tiers) next[year][prop][room].price_tiers = {}
-      next[year][prop][room].price_tiers[tier] = value
+      fn(next)
       return next
+    })
+
+  const rangesOf = (root: AnyRecord, room: string): AnyRecord[] => root[prop].rooms[room].price_ranges ?? []
+
+  const addRange = (room: string) =>
+    mutate((next) => {
+      const r = next[prop].rooms[room]
+      r.price_ranges = r.price_ranges ?? []
+      r.price_ranges.push({ start: '2026-01-01', end: '2026-12-31', price_tiers: { '7': 0 } })
+    })
+  const removeRange = (room: string, i: number) =>
+    mutate((next) => {
+      rangesOf(next, room).splice(i, 1)
+    })
+  const patchRangeDate = (room: string, i: number, field: 'start' | 'end', value: string) =>
+    mutate((next) => {
+      rangesOf(next, room)[i][field] = value
+    })
+  const patchTier = (room: string, i: number, nightsKey: string, price: number) =>
+    mutate((next) => {
+      rangesOf(next, room)[i].price_tiers[nightsKey] = price
+    })
+  const renameTier = (room: string, i: number, oldKey: string, newKey: string) =>
+    mutate((next) => {
+      const tiers = rangesOf(next, room)[i].price_tiers
+      if (!newKey || tiers[newKey] !== undefined) return
+      tiers[newKey] = tiers[oldKey]
+      delete tiers[oldKey]
+    })
+  const addTier = (room: string, i: number) =>
+    mutate((next) => {
+      const tiers = rangesOf(next, room)[i].price_tiers
+      let k = 1
+      while (tiers[String(k)] !== undefined) k += 1
+      tiers[String(k)] = 0
+    })
+  const removeTier = (room: string, i: number, key: string) =>
+    mutate((next) => {
+      delete rangesOf(next, room)[i].price_tiers[key]
+    })
+  const patchRangeExtra = (room: string, i: number, key: string, value: string) =>
+    mutate((next) => {
+      const rng = rangesOf(next, room)[i]
+      rng.extra_services = rng.extra_services ?? {}
+      if (value === '') delete rng.extra_services[key]
+      else rng.extra_services[key] = Number(value)
     })
   const patchRoomField = (room: string, field: string, value: number) =>
-    setDraft((prev) => {
-      const next = clone(prev)
-      next[year][prop][room][field] = value
-      return next
+    mutate((next) => {
+      next[prop].rooms[room][field] = value
     })
-  const patchExtra = (field: string, value: number) =>
-    setDraft((prev) => {
-      const next = clone(prev)
-      if (!next[year][prop].extra_services) next[year][prop].extra_services = {}
-      next[year][prop].extra_services[field] = value
-      return next
+  const patchPropertyExtra = (key: string, value: number) =>
+    mutate((next) => {
+      next[prop].extra_services = next[prop].extra_services ?? {}
+      next[prop].extra_services[key] = value
     })
+
+  const propExtras = (propData.extra_services ?? {}) as AnyRecord
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-3">
-        <label className="text-xs text-gray-500">
-          Year
-          <select value={year} onChange={(e) => setYear(e.target.value)} className={`${inputClass} mt-1`}>
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs text-gray-500">
-          Property
-          <select value={prop} onChange={(e) => setProp(e.target.value)} className={`${inputClass} mt-1`}>
-            {properties.map((pn) => (
-              <option key={pn} value={pn}>
-                {pn}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <label className="text-xs text-gray-500">
+        Property
+        <select value={prop} onChange={(e) => setProp(e.target.value)} className={`${inputClass} mt-1 max-w-xs`}>
+          {properties.map((pn) => (
+            <option key={pn} value={pn}>
+              {pn}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <p className="mb-2 text-xs text-gray-500">Prices exclude VAT (applied automatically per booking dates).</p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-gray-400">
-                <th className="pb-2">Room</th>
-                {TIER_KEYS.map((t) => (
-                  <th key={t} className="w-20 pb-2">
-                    {t}n
-                  </th>
-                ))}
-                <th className="w-24 pb-2">End clean</th>
-                <th className="w-24 pb-2">Extra pers.</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rooms.map((room) => {
-                const r = propData[room] as AnyRecord
-                const tiers = (r.price_tiers ?? {}) as AnyRecord
-                return (
-                  <tr key={room} className="border-t border-gray-100">
-                    <td className="py-1 pr-2 text-gray-700">{room}</td>
-                    {TIER_KEYS.map((t) => (
-                      <td key={t} className="py-1 pr-1">
-                        <input type="number" step="0.01" value={tiers[t] ?? 0} onChange={(e) => patchTier(room, t, Number(e.target.value))} className={inputClass} />
-                      </td>
-                    ))}
-                    <td className="py-1 pr-1">
-                      <input type="number" step="0.01" value={r.end_cleaning ?? 0} onChange={(e) => patchRoomField(room, 'end_cleaning', Number(e.target.value))} className={inputClass} />
-                    </td>
-                    <td className="py-1 pr-1">
-                      <input type="number" step="0.01" value={r.extra_person_cost ?? 0} onChange={(e) => patchRoomField(room, 'extra_person_cost', Number(e.target.value))} className={inputClass} />
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <h4 className="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Property services</h4>
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Property default services (excl. VAT)</h4>
         <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-3">
-          {Object.keys(extras).map((k) =>
-            typeof extras[k] === 'number' ? (
-              <label key={k} className="text-xs text-gray-500">
-                {k}
-                <input type="number" step="0.01" value={extras[k]} onChange={(e) => patchExtra(k, Number(e.target.value))} className={inputClass} />
-              </label>
-            ) : null,
-          )}
+          {EXTRA_KEYS.map((k) => (
+            <label key={k} className="text-xs text-gray-500">
+              {k}
+              <input type="number" step="0.01" value={propExtras[k] ?? 0} onChange={(e) => patchPropertyExtra(k, Number(e.target.value))} className={inputClass} />
+            </label>
+          ))}
         </div>
+        <p className="mt-1 text-[11px] text-gray-400">A date range can override any of these below; otherwise the property default applies.</p>
       </div>
 
+      {rooms.map((room) => {
+        const r = propData.rooms[room] as AnyRecord
+        const ranges = (r.price_ranges ?? []) as AnyRecord[]
+        return (
+          <div key={room} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900">{room}</h3>
+              <div className="flex gap-3">
+                <label className="text-xs text-gray-500">
+                  End clean
+                  <input type="number" step="0.01" value={r.end_cleaning ?? 0} onChange={(e) => patchRoomField(room, 'end_cleaning', Number(e.target.value))} className={`${inputClass} w-24`} />
+                </label>
+                <label className="text-xs text-gray-500">
+                  Extra pers.
+                  <input type="number" step="0.01" value={r.extra_person_cost ?? 0} onChange={(e) => patchRoomField(room, 'extra_person_cost', Number(e.target.value))} className={`${inputClass} w-24`} />
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {ranges.map((rng, i) => {
+                const tiers = (rng.price_tiers ?? {}) as AnyRecord
+                const extra = (rng.extra_services ?? {}) as AnyRecord
+                return (
+                  <div key={i} className="rounded-xl border border-gray-100 bg-gray-50/60 p-3">
+                    <div className="flex flex-wrap items-end gap-3">
+                      <label className="text-xs text-gray-500">
+                        From
+                        <input type="date" value={rng.start ?? ''} onChange={(e) => patchRangeDate(room, i, 'start', e.target.value)} className={`${inputClass} mt-1`} />
+                      </label>
+                      <label className="text-xs text-gray-500">
+                        To
+                        <input type="date" value={rng.end ?? ''} onChange={(e) => patchRangeDate(room, i, 'end', e.target.value)} className={`${inputClass} mt-1`} />
+                      </label>
+                      <button type="button" onClick={() => removeRange(room, i)} className="text-xs text-rose-500 hover:text-rose-700">
+                        Remove range
+                      </button>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {Object.keys(tiers)
+                        .sort((a, b) => Number(a) - Number(b))
+                        .map((key) => (
+                          <div key={key} className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1">
+                            <input
+                              type="number"
+                              value={key}
+                              onChange={(e) => renameTier(room, i, key, e.target.value)}
+                              className="w-12 rounded border border-gray-200 px-1 py-0.5 text-xs"
+                              title="Nights"
+                            />
+                            <span className="text-[11px] text-gray-400">n €</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={tiers[key] ?? 0}
+                              onChange={(e) => patchTier(room, i, key, Number(e.target.value))}
+                              className="w-20 rounded border border-gray-200 px-1 py-0.5 text-xs"
+                              title="Price/night"
+                            />
+                            <button type="button" onClick={() => removeTier(room, i, key)} className="text-xs text-rose-400 hover:text-rose-600" title="Remove tier">
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      <button type="button" onClick={() => addTier(room, i)} className="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100">
+                        + Tier
+                      </button>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-3">
+                      {EXTRA_KEYS.map((k) => (
+                        <label key={k} className="text-[11px] text-gray-400">
+                          {k} override
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={extra[k] ?? ''}
+                            placeholder="default"
+                            onChange={(e) => patchRangeExtra(room, i, k, e.target.value)}
+                            className={inputClass}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+              <button type="button" onClick={() => addRange(room)} className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                + Add date range
+              </button>
+            </div>
+          </div>
+        )
+      })}
+
       <SaveBar saving={saving} onSave={() => onSave(draft)} />
-    </div>
-  )
-}
-
-function JsonEditor({ data, saving, onSave }: { data: AnyRecord; saving: boolean; onSave: (d: AnyRecord) => void }) {
-  const [text, setText] = useState(() => JSON.stringify(data, null, 2))
-  const [parseError, setParseError] = useState<string | null>(null)
-  useEffect(() => setText(JSON.stringify(data, null, 2)), [data])
-
-  const handleSave = () => {
-    let parsed: AnyRecord
-    try {
-      parsed = JSON.parse(text)
-    } catch (err) {
-      setParseError(err instanceof Error ? err.message : 'Invalid JSON')
-      return
-    }
-    setParseError(null)
-    onSave(parsed)
-  }
-
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-gray-500">
-        Discount rules are edited as raw JSON (the full rule builder was not ported; discounts are currently disabled globally).
-        Keep the top-level <code>presets</code> and <code>global_settings</code> keys.
-      </p>
-      {parseError ? <p className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">{parseError}</p> : null}
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        spellCheck={false}
-        className="h-96 w-full rounded-lg border border-gray-200 p-3 font-mono text-xs"
-      />
-      <SaveBar saving={saving} onSave={handleSave} />
     </div>
   )
 }

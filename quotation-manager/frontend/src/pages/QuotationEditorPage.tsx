@@ -7,8 +7,6 @@ import { ApiError, apiGet, apiPost, decodeTokenClaims, getToken } from '../lib/a
 import { isPaymentPaid } from '../lib/payments'
 import { downloadBase64Pdf } from '../lib/download'
 import {
-  LONG_STAY_DEPOSIT_DEFAULT,
-  LONG_STAY_DEPOSIT_NIGHT_THRESHOLD,
   ROOM_CAPACITY,
   propertyForRoom,
   roomIdForName,
@@ -19,7 +17,6 @@ import type {
   Beds24InvoiceItem,
   BookingGroupResult,
   BuildChargesResult,
-  DiscountResult,
   EditableInvoiceItem,
   PaymentPlanResult,
   TenantContext,
@@ -33,10 +30,24 @@ function bookingNights(booking: Beds24Booking): number {
   return Number.isFinite(diff) && diff > 0 ? Math.round(diff) : 0
 }
 
-// Shape of the /api/config/prices document we read for the deposit: years -> property ->
-// extra_services. Only the deposit fields are typed; everything else on the config is ignored here.
-type PropertyExtraServices = { deposit?: number; long_stay_deposit?: number }
-type PricingConfig = Record<string, Record<string, { extra_services?: PropertyExtraServices } | undefined>>
+// Shape of the /api/config/prices document we read for the deposit: property -> rooms ->
+// date ranges. Only the fields the editor needs are typed.
+type ExtraServices = { deposit?: number; city_tax?: number; municipality_cost?: number }
+type PriceRange = { start: string; end: string; price_tiers?: Record<string, number>; extra_services?: ExtraServices }
+type PricingRoom = { price_ranges?: PriceRange[] }
+type PricingProperty = { extra_services?: ExtraServices; rooms?: Record<string, PricingRoom> }
+type PricingConfig = Record<string, PricingProperty | undefined>
+
+// The price range covering `iso` (YYYY-MM-DD), else the latest range starting on/before it, else
+// the earliest - mirrors pricing_config.resolve_range on the backend.
+function resolveRange(room: PricingRoom | undefined, iso: string): PriceRange | undefined {
+  const ranges = room?.price_ranges ?? []
+  if (ranges.length === 0) return undefined
+  const containing = ranges.find((r) => r.start <= iso && iso <= r.end)
+  if (containing) return containing
+  const earlier = ranges.filter((r) => r.start <= iso).sort((a, b) => a.start.localeCompare(b.start))
+  return earlier.length ? earlier[earlier.length - 1] : [...ranges].sort((a, b) => a.start.localeCompare(b.start))[0]
+}
 
 // Today's date as DD-Mon-YYYY (e.g. 11-Sep-2026), matching the PDF's DISPLAY_DATE_FMT
 // (%d-%b-%Y) so the quotation date reads the same as every other date on the document.
@@ -150,8 +161,6 @@ export default function QuotationEditorPage() {
   const [payments, setPayments] = useState<EditableInvoiceItem[]>([])
   const [originalItemIds, setOriginalItemIds] = useState<string[]>([])
 
-  const [discountResult, setDiscountResult] = useState<DiscountResult | null>(null)
-  const [checkingDiscount, setCheckingDiscount] = useState(false)
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [sending, setSending] = useState(false)
@@ -234,8 +243,6 @@ export default function QuotationEditorPage() {
     return Number.isFinite(diff) && diff > 0 ? Math.round(diff) : null
   }, [checkIn, checkOut])
 
-  const isLongStay = nights !== null && nights > LONG_STAY_DEPOSIT_NIGHT_THRESHOLD
-
   // Load the per-property pricing config once so the deposit can be prefilled from it.
   useEffect(() => {
     apiGet<PricingConfig>('/api/config/prices')
@@ -243,29 +250,26 @@ export default function QuotationEditorPage() {
       .catch(() => setPricesConfig(null)) // best-effort; falls back to the carried/1500 defaults
   }, [])
 
-  // The deposit for the selected property, per the desktop rule: a normal stay uses the
-  // property's configured `deposit`; a long stay (>183 nights) uses its settings-configured
-  // `long_stay_deposit` (falling back to LONG_STAY_DEPOSIT_DEFAULT only when unset). Returns
-  // null when the config can't resolve the selected property/year.
+  // The configured deposit for the check-in date: the covering date range's deposit override,
+  // else the property default. Resolves the property by name, falling back to the property the
+  // selected room belongs to (Beds24 sometimes sends a property name that isn't a config key -
+  // this was the "deposit shows 0" bug).
   const configuredDeposit = useMemo<number | null>(() => {
-    if (!pricesConfig || !propertyName) return null
-    const year = (checkIn || '').slice(0, 4)
-    const years = Object.keys(pricesConfig).sort()
-    const yearData = pricesConfig[year] ?? (years.length ? pricesConfig[years[years.length - 1]] : undefined)
-    const extra = yearData?.[propertyName]?.extra_services
-    if (!extra) return null
-    if (isLongStay) return extra.long_stay_deposit ?? LONG_STAY_DEPOSIT_DEFAULT
-    return extra.deposit ?? null
-  }, [pricesConfig, propertyName, checkIn, isLongStay])
+    if (!pricesConfig) return null
+    const prop = pricesConfig[propertyName] ?? pricesConfig[propertyForRoom(roomName)]
+    if (!prop) return null
+    const range = resolveRange(prop.rooms?.[roomName], checkIn || '')
+    const deposit = range?.extra_services?.deposit ?? prop.extra_services?.deposit
+    return typeof deposit === 'number' ? deposit : null
+  }, [pricesConfig, propertyName, roomName, checkIn])
 
-  // Prefill the deposit from config whenever the resolved value changes (property/dates/long-stay),
-  // unless the operator has edited it by hand. Falls back to a carried booking deposit, then the
-  // long-stay default, so a config-less environment still behaves sensibly.
+  // Prefill the deposit from config whenever the resolved value changes (property/room/dates),
+  // unless the operator has edited it by hand. Falls back to a carried booking deposit.
   useEffect(() => {
     if (depositManuallyEdited.current) return
-    const next = configuredDeposit ?? carriedDepositRef.current ?? (isLongStay ? LONG_STAY_DEPOSIT_DEFAULT : null)
+    const next = configuredDeposit ?? carriedDepositRef.current ?? null
     if (next !== null) setSecurityDeposit(next)
-  }, [configuredDeposit, isLongStay])
+  }, [configuredDeposit])
 
   const occupancy = useMemo(() => {
     const totalGuests = adults + children
@@ -479,28 +483,6 @@ export default function QuotationEditorPage() {
     }
     setNotice(null)
     await buildPaymentPlanFrom(charges, installments, { silent })
-  }
-
-  const handleCheckDiscount = async () => {
-    if (!roomName || !propertyName || !nights) {
-      setError('Room, property, and valid check-in/check-out dates are needed to check the discount.')
-      return
-    }
-    setCheckingDiscount(true)
-    setError(null)
-    try {
-      const result = await apiPost<DiscountResult>('/api/quotation/discount', {
-        room_name: roomName,
-        property_name: propertyName,
-        nights,
-        checkin_date: checkIn,
-      })
-      setDiscountResult(result)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to calculate discount')
-    } finally {
-      setCheckingDiscount(false)
-    }
   }
 
   // Core standard-charge generation. `preserveAdmin` keeps the current Administration costs line
@@ -942,25 +924,12 @@ export default function QuotationEditorPage() {
             {occupancy.exceeded ? ' — MAX OCCUPANCY EXCEEDED' : ''}
           </p>
         ) : null}
-        {isLongStay ? (
-          <p className="mt-1 text-xs font-medium text-amber-600">
-            Long stay ({nights} nights): the property's long-stay refundable deposit (€{configuredDeposit ?? LONG_STAY_DEPOSIT_DEFAULT}) applies.
-          </p>
-        ) : null}
       </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-gray-500">Discount check</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-gray-500">Standard charges</h2>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleCheckDiscount}
-              disabled={checkingDiscount}
-              className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              {checkingDiscount ? 'Checking...' : 'Check price/discount'}
-            </button>
             <button
               type="button"
               onClick={handleGenerateCharges}
@@ -983,19 +952,6 @@ export default function QuotationEditorPage() {
             ) : null}
           </div>
         </div>
-        {discountResult ? (
-          <div className="mt-2 text-sm text-gray-700">
-            <p>
-              Base price: €{discountResult.original_price_incl_vat.toFixed(2)}/night incl. {discountResult.vat_rate}% VAT
-              <span className="text-gray-400"> (€{discountResult.original_price.toFixed(2)} excl.)</span>
-            </p>
-            <p>
-              Suggested price: €{discountResult.discounted_price_incl_vat.toFixed(2)}/night incl. {discountResult.vat_rate}% VAT
-              <span className="text-gray-400"> (€{discountResult.discounted_price.toFixed(2)} excl.)</span>
-            </p>
-            <p className="text-xs text-gray-500">{discountResult.discount_description}</p>
-          </div>
-        ) : null}
       </div>
 
       <ChargesTable items={charges} onChange={handleChargeChange} onRemove={handleRemoveCharge} onAdd={handleAddCharge} />
