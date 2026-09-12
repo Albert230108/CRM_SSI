@@ -658,35 +658,18 @@ def test_redo_logs_failed_attempt_when_planner_produces_nothing(non_admin_client
     assert log_entry.previous_draft_text == "Hi there!"
 
 
-def test_send_scheduled_draft_refuses_canceled_booking(db_session, monkeypatch):
-    """A4 regression: a draft for a canceled booking must fail with the clean, guarded
-    canceled-booking message before any recipient/send attempt, rather than falling through
-    to an opaque downstream failure."""
+def test_canceled_booking_draft_sends_like_any_other(db_session, monkeypatch):
+    """A4 (round 2): canceled bookings are treated as normal - a draft for one is NOT
+    short-circuited; it goes through the usual send path like any other booking."""
     tenant = _create_tenant(db_session, booking_id="B-canceled", booking_status="Cancelled by guest")
     draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft", status="pending")
     db_session.add(draft)
     db_session.commit()
 
-    # Would raise if the guard didn't short-circuit before dispatch.
-    def _boom(db, draft_arg):
-        raise AssertionError("send should not be attempted for a canceled booking")
-
-    monkeypatch.setattr(ai_auto_draft_service, "_send_email_draft", _boom)
+    monkeypatch.setattr(ai_auto_draft_service, "_send_email_draft", lambda db, draft_arg: (True, None))
 
     sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui")
 
-    assert sent is False
-    assert failure_reason == ai_auto_draft_service.CANCELED_BOOKING_SEND_FAILURE
-    assert draft.status == "pending"
-
-
-def test_send_now_canceled_booking_returns_clean_400(non_admin_client, db_session):
-    """The canceled-booking failure maps to a 400 at the send-now boundary, not a 502."""
-    tenant = _create_tenant(db_session, booking_id="B-canceled-api", booking_status="Cancelled by property")
-    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="draft", status="pending")
-    db_session.add(draft)
-    db_session.commit()
-
-    response = non_admin_client.put(f"/api/ai-auto-drafts/{draft.id}/send-now", json={})
-    assert response.status_code == 400
-    assert response.json()["detail"] == ai_auto_draft_service.CANCELED_BOOKING_SEND_FAILURE
+    assert sent is True
+    assert failure_reason is None
+    assert draft.status == "sent"

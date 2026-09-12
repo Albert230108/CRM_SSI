@@ -28,6 +28,16 @@ def _root() -> pathlib.Path:
     return pathlib.Path(value)
 
 
+def _not_writable_error() -> HTTPException:
+    """A write into the tenant files tree failed at the OS level - almost always because the
+    volume is mounted read-only or the process lacks permission. Surface a clean 503 rather than a
+    raw 500 so the cause (a deploy/mount misconfig) is obvious."""
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Tenant files storage is not writable (check the TENANT_FILES_ROOT mount is read-write)",
+    )
+
+
 def _safe_name_component(value: str) -> str:
     # Matches quotation-manager/backend/app/services/tenant_files.py's _safe_name_component
     # exactly - both services must agree on the folder name a given tenant maps to.
@@ -117,10 +127,12 @@ def save_tenant_file(
     root = _root()
     relative = booking_folder_relative_path(booking_id, first_name, last_name, _year_from_check_in(check_in))
     folder = (root / relative)
-    folder.mkdir(parents=True, exist_ok=True)
-
-    target = _dedupe_path(folder / safe_name)
-    target.write_bytes(content)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        target = _dedupe_path(folder / safe_name)
+        target.write_bytes(content)
+    except OSError as exc:
+        raise _not_writable_error() from exc
     return FileEntry(
         name=target.name,
         kind="file",
@@ -174,8 +186,11 @@ def save_local_quote(
     if not safe_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A quote name is required")
     folder = _quotes_dir(booking_id, first_name, last_name, check_in)
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{safe_name}.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{safe_name}.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    except OSError as exc:
+        raise _not_writable_error() from exc
     return safe_name
 
 

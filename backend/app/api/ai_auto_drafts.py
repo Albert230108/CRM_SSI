@@ -194,7 +194,6 @@ SEND_NOW_CONFIGURATION_FAILURE_DETAILS = {
     "Email thread for this draft could not be found",
     "Gmail account for this thread is inactive",
     "Could not determine a recipient email for this thread (its email links may be inactive, e.g. after a cancellation)",
-    ai_auto_draft_service.CANCELED_BOOKING_SEND_FAILURE,
     "Gmail credentials are unavailable for this thread",
     "No WhatsApp chat is linked for this draft - link one first",
     "This tenant has multiple WhatsApp chats linked; link a specific one for this draft",

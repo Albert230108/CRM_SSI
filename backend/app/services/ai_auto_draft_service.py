@@ -28,18 +28,6 @@ from app.services.whatsapp_outbound_persistence import persist_whatsapp_outbound
 
 logger = logging.getLogger(__name__)
 
-# Message returned when a draft can't be sent because its booking is canceled. Kept as a module
-# constant so the API layer can map it to a clean 4xx (see ai_auto_drafts.SEND_NOW_CONFIGURATION_FAILURE_DETAILS)
-# instead of surfacing the downstream "no recipient" failure as an opaque 502.
-CANCELED_BOOKING_SEND_FAILURE = "This booking is canceled, so its draft can't be sent"
-
-
-def _is_canceled_booking_status(booking_status: str | None) -> bool:
-    """Beds24 maps status codes 2/3 to 'Cancelled by guest'/'Cancelled by property'
-    (see tenants._extract_guest_fields). Canceled bookings usually have their email links
-    deactivated, so a send would otherwise fail deep in recipient resolution."""
-    return "cancel" in (booking_status or "").strip().lower()
-
 
 def _auto_send_delay_seconds(db: Session) -> int:
     settings = db.query(AdminSettings).first()
@@ -658,15 +646,6 @@ def send_scheduled_draft(
     defensive second gate). The update is pushed before the reply is sent, and a failure blocks
     the send entirely rather than telling the guest about a quote that was never applied.
     """
-    tenant = db.query(Tenant).filter(Tenant.id == draft.tenant_id).first()
-    if tenant is not None and _is_canceled_booking_status(tenant.booking_status):
-        logger.info(
-            "Refusing to send draft_id=%s: booking is canceled (booking_status=%s)",
-            draft.id,
-            tenant.booking_status,
-        )
-        return False, CANCELED_BOOKING_SEND_FAILURE
-
     if draft.pending_beds24_update:
         if resolution_source == "auto_timer":
             return False, "This draft has a Beds24 update staged and needs human approval before it can send"
