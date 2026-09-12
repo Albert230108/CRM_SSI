@@ -5,9 +5,9 @@ Read/write access to the four pricing/config JSON files under app/data/
 The desktop Quotation Manager edited these through its Price Manager / Discount
 Manager / Admin Costs windows; the web port previously shipped them read-only.
 This restores editability: each save writes a timestamped-in-content copy with a
-`.backup` sibling first (mirroring the desktop's save_admin_costs /
-save_discount_rules), then busts the in-process caches in admin_costs.py and
-discount_engine.py so the next quotation build sees the new values.
+`.backup` sibling first (mirroring the desktop's save_admin_costs), then busts
+the in-process caches in admin_costs.py and pricing_config.py so the next
+quotation build sees the new values.
 
 NOTE (deployment): these files live inside the quotation-backend container image.
 For edits to survive a redeploy they must be on a mounted volume - see the
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.services import admin_costs as admin_costs_service
-from app.services import discount_engine
+from app.services import pricing_config
 
 
 class ConfigStoreError(Exception):
@@ -55,9 +55,7 @@ def _bust_admin_cache() -> None:
 
 
 def _bust_pricing_caches() -> None:
-    discount_engine._pricing_data_cache = None
-    discount_engine._base_prices_cache = None
-    discount_engine._discount_rules_cache = None
+    pricing_config.bust_cache()
 
 
 # name -> (path-getter, required_top_level_key or None, cache-buster).
@@ -66,9 +64,7 @@ def _bust_pricing_caches() -> None:
 # touching the real git-tracked data files.
 _CONFIGS: dict[str, tuple[Callable[[], Path], str | None, Callable[[], None]]] = {
     "admin-costs": (lambda: admin_costs_service.ADMIN_COSTS_FILE, "properties", _bust_admin_cache),
-    "base-prices": (lambda: discount_engine.BASE_PRICES_FILE, "properties", _bust_pricing_caches),
-    "prices": (lambda: discount_engine.PRICING_FILE, None, _bust_pricing_caches),
-    "discount-rules": (lambda: discount_engine.DISCOUNT_RULES_FILE, "presets", _bust_pricing_caches),
+    "prices": (lambda: pricing_config.PRICING_FILE, None, _bust_pricing_caches),
 }
 
 

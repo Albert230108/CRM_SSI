@@ -8,7 +8,7 @@ from app.services import config_store
 router = APIRouter(prefix="/config", tags=["config"])
 
 # The editable config files, exposed read/write to the Price/Discount/Admin editors.
-ALLOWED = {"admin-costs", "base-prices", "prices", "discount-rules"}
+ALLOWED = {"admin-costs", "prices"}
 
 
 @router.get("/{name}")

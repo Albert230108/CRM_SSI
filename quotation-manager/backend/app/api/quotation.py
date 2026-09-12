@@ -14,8 +14,6 @@ from app.schemas.quotation import (
     BuildChargesRequest,
     BuildChargesResponse,
     CreateBookingRequest,
-    DiscountRequest,
-    DiscountResponse,
     GeneratePdfRequest,
     GeneratePdfResponse,
     PaymentPlanRequest,
@@ -29,39 +27,13 @@ from app.schemas.quotation import (
 from app.services import admin_costs as admin_costs_service
 from app.services import charge_builder
 from app.services import crm_client
-from app.services import discount_engine
 from app.services import payment_plan as payment_plan_service
 from app.services import pdf_service
+from app.services import pricing_config
 from app.services import tenant_files
 from app.services import vat
 
 router = APIRouter(prefix="/quotation", tags=["quotation"])
-
-
-@router.post("/discount", response_model=DiscountResponse)
-def calculate_discount(
-    request: DiscountRequest,
-    _token=Depends(verify_quotation_token),
-) -> DiscountResponse:
-    pricing_data = discount_engine.load_pricing_data()
-    result = discount_engine.calculate_discount_for_booking(
-        room_name=request.room_name,
-        property_name=request.property_name,
-        nights=request.nights,
-        checkin_date=request.checkin_date,
-        base_price_per_night=0.0,
-        pricing_data=pricing_data,
-    )
-    # Settings/the discount engine stay ex-VAT; add incl.-VAT figures purely for
-    # the quotation form's display, same rate the generated charge lines use.
-    rate = vat.vat_rate_for_date(request.checkin_date or date.today())
-    result = {
-        **result,
-        "vat_rate": rate,
-        "original_price_incl_vat": vat.gross_amount(result["original_price"], rate),
-        "discounted_price_incl_vat": vat.gross_amount(result["discounted_price"], rate),
-    }
-    return DiscountResponse(**result)
 
 
 @router.post("/admin-costs", response_model=AdminCostsResponse)
@@ -346,7 +318,7 @@ def build_charges(
     request: BuildChargesRequest,
     _token=Depends(verify_quotation_token),
 ) -> BuildChargesResponse:
-    pricing_data = discount_engine.load_pricing_data()
+    pricing_data = pricing_config.load_pricing_data()
     try:
         result = charge_builder.build_standard_charges(
             property_name=request.property_name,
