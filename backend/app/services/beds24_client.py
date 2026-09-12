@@ -211,6 +211,9 @@ async def get_bookings() -> list[dict[str, Any]]:
     departure_from = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
     params: dict[str, Any] = {
         "includeInfoItems": "true",
+        # Charges/payments come back inline on the list endpoint, so sync-all can refresh a
+        # tenant's finance breakdown without a per-booking detail round-trip.
+        "includeInvoiceItems": "true",
         "bookingType": _booking_type_filters(),
         "departureFrom": departure_from,
     }

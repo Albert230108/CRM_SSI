@@ -82,6 +82,10 @@ def _strip_description(value: Any) -> str:
     return re.sub(r'<[^>]+>', '', text).strip()
 
 
+# Public alias: app.services.finance_sync shares this cleaner across every sync path.
+strip_description = _strip_description
+
+
 async def fetch_booking_with_invoice(booking_id: str) -> dict[str, Any]:
     headers = await _auth_headers()
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:

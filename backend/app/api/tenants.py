@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import logging
 import traceback
-import re
 from urllib.parse import quote
 from typing import Annotated, Optional
 
@@ -25,7 +24,8 @@ from app.models.notification import Notification, NotificationReadState
 from app.models.gmail_integration import Conversation, ConversationMessage
 from app.models.tenant_conversation_link import TenantConversationLink
 from app.services.beds24_client import get_booking_detail, get_bookings, update_booking_notes
-from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.beds24_service import fetch_booking_with_invoice, strip_description
+from app.services.finance_sync import replace_tenant_finance_from_booking, resolve_placeholders
 from app.services.tenant_ai_template_provisioning import (
     apply_default_ai_templates_if_enabled,
     apply_default_brain_action_writer_settings,
@@ -1141,39 +1141,6 @@ async def _import_tenant(
         )
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"error": "unexpected_backend_exception", "detail": "Beds24 import crashed", "booking_id": booking_id}) from exc
 
-    def resolve_placeholders(text: str, booking: dict) -> str:
-        """Replace Beds24 template tokens with actual booking values."""
-        room_name = str(
-            booking.get("roomName") or booking.get("unitName") or booking.get("propName") or ""
-        ).strip()
-        arrival = str(
-            booking.get("arrival") or booking.get("arrivalDate") or booking.get("checkIn") or ""
-        ).strip()
-        departure = str(
-            booking.get("departure") or booking.get("departureDate") or booking.get("checkOut") or ""
-        ).strip()
-
-        replacements = {
-            "[ROOMNAME1]": room_name,
-            "[ROOMNAME2]": room_name,
-            "[FIRSTNIGHT]": arrival,
-            "[LEAVINGDAY]": departure,
-            "[CHECKIN]": arrival,
-            "[CHECKOUT]": departure,
-            "[BOOKINGID]": str(booking.get("id") or booking_id),
-            "[NUMADULTS]": str(booking.get("numAdult") or booking.get("adults") or ""),
-            "[NUMCHILDREN]": str(booking.get("numChild") or booking.get("children") or ""),
-        }
-        for token, value in replacements.items():
-            if value:
-                text = text.replace(token, value)
-        return text
-
-    def clean_description(desc: str) -> str:
-        desc = re.sub(r"<a[^>]*>.*?</a>", "", str(desc or ""), flags=re.DOTALL)
-        desc = desc.replace("##NOLINK##", "").strip()
-        return desc
-
     first_name = (data.first_name or "").strip() or None
     last_name = (data.last_name or "").strip() or None
     name = (data.name or "").strip() or booking_id
@@ -1278,17 +1245,19 @@ async def _import_tenant(
 
     sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
 
-    db.query(FinanceRecord).filter(FinanceRecord.tenant_id == tenant.id).delete(synchronize_session=False)
+    # Shared mapper owns the persisted rows so every Beds24 sync path captures the same
+    # line breakdown; the FinanceItem lists below stay as the response's in-memory summary.
+    replace_tenant_finance_from_booking(db, tenant, booking)
 
     charges: list[FinanceItem] = []
     payments: list[FinanceItem] = []
     for item in booking.get("invoiceItems", []) or []:
         if not isinstance(item, dict):
             continue
-        cleaned = resolve_placeholders(
-            clean_description(item.get("description", "")),
-            booking
-        )
+        item_type = str(item.get("type") or "").lower()
+        if item_type not in {"charge", "payment"}:
+            continue
+        cleaned = resolve_placeholders(strip_description(item.get("description")), booking)
         line_qty = item.get("qty", 1) or 1
         line_amount = item.get("amount", 0) or 0
         line_total = Decimal(str(line_amount)) * Decimal(str(line_qty))
@@ -1304,25 +1273,10 @@ async def _import_tenant(
             "vat_amount": vat_amount,
             "status": item.get("status", ""),
         }
-        item_type = str(item.get("type") or "").lower()
         if item_type == "charge":
             charges.append(FinanceItem(**record, type=item_type))
-        elif item_type == "payment":
+        else:
             payments.append(FinanceItem(**record, type=item_type))
-        if item_type in {"charge", "payment"}:
-            db.add(
-                FinanceRecord(
-                    tenant_id=tenant.id,
-                    type=item_type,
-                    amount=Decimal(str(line_total)),
-                    qty=Decimal(str(line_qty)),
-                    unit_price=Decimal(str(line_amount)),
-                    vat_rate=vat_rate,
-                    currency=str(item.get("currency") or "EUR"),
-                    description=cleaned,
-                    status=(str(item.get("status")) if item.get("status") else None),
-                )
-            )
 
     try:
         db.commit()

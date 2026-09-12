@@ -22,6 +22,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.background_jobs import cancel_job, find_running_job, get_job, start_job, update_job_progress
 from app.services.beds24_client import get_bookings
+from app.services.finance_sync import replace_tenant_finance_from_booking
 from app.services.tenant_email_sync import sync_tenant_email_addresses_from_beds24
 from app.services.tenant_notes_history import SOURCE_BEDS24_SYNC_ALL, set_tenant_notes
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
@@ -83,6 +84,10 @@ def _update_tenant_from_beds24(db: Session, tenant: Tenant, booking: dict[str, A
     room_id = fields.get("room_id")
     tenant.room_id = room_id if room_id is not None else tenant.room_id
     sync_tenant_phone_aliases(db, tenant, primary_phone=tenant.phone, alias_phones=[tenant.mobile])
+    # get_bookings() requests includeInvoiceItems=true, so refresh the charges/payments
+    # breakdown here too. Previously sync-all never touched Finance at all, which is why
+    # tenants kept stale rows with no qty/unit price/VAT/status.
+    replace_tenant_finance_from_booking(db, tenant, booking)
     return newly_linked_emails
 
 

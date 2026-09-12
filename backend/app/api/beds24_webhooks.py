@@ -7,7 +7,6 @@ import os
 import traceback
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -18,7 +17,6 @@ from app.api.gmail_integration import sync_email_across_gmail_accounts
 from app.api.tenants import ROOM_ID_MAPPING, _extract_guest_fields
 from app.core.dependencies import get_current_admin_user, get_db
 from app.models.beds24_webhook_log import Beds24WebhookLog
-from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.services import action_writer_trigger_service, tenant_brain_trigger_service
@@ -26,6 +24,7 @@ from app.schemas.beds24_webhook_log import Beds24WebhookLogRead
 from app.services.background_jobs import start_job
 from app.services.beds24_client import get_booking_info_items
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.finance_sync import replace_tenant_finance_from_booking
 from app.services.tenant_ai_template_provisioning import (
     apply_default_brain_action_writer_settings,
     apply_default_formatter_settings,
@@ -255,32 +254,7 @@ async def _process_beds24_booking_event(
         log.room_id = str(room_id) if room_id is not None else None
         log.parsed_fields = _summarize_payload(raw_payload, booking_id, event or None, room_id, tenant.id)
 
-        invoice_items = booking.get("invoiceItems") or []
-        if invoice_items:
-            db.query(Finance).filter(Finance.tenant_id == tenant.id).delete(synchronize_session=False)
-            for item in invoice_items:
-                if not isinstance(item, dict):
-                    continue
-                item_type = str(item.get("type") or "").lower()
-                if item_type not in ("charge", "payment"):
-                    continue
-                qty = item.get("qty", 1) or 1
-                amount = item.get("amount", 0) or 0
-                line_total = Decimal(str(amount)) * Decimal(str(qty))
-                description = str(item.get("description") or item.get("type") or "").strip()
-                db.add(
-                    Finance(
-                        tenant_id=tenant.id,
-                        type=item_type,
-                        amount=line_total,
-                        qty=Decimal(str(qty)),
-                        unit_price=Decimal(str(amount)),
-                        vat_rate=Decimal(str(item.get("vatRate", 0) or 0)),
-                        currency=str(item.get("currency") or "EUR"),
-                        description=description,
-                        status=(str(item.get("status")) if item.get("status") else None),
-                    )
-                )
+        replace_tenant_finance_from_booking(db, tenant, booking)
 
         newly_linked_emails: list[str] = []
         try:

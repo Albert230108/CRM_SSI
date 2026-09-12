@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -10,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.api.tenants import ROOM_ID_MAPPING, _extract_guest_fields
 from app.core.dependencies import get_db
-from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.finance_sync import replace_tenant_finance_from_booking
 from app.services.tenant_phone_aliases import sync_tenant_phone_aliases
 
 router = APIRouter(prefix="/webhooks/beds24", tags=["beds24-webhooks"])
@@ -133,28 +132,7 @@ async def beds24_webhook(request: Request, db: Session = Depends(get_db)) -> dic
     db.flush()
     logger.info("Tenant upserted: tenant_id=%s booking_id=%s", tenant.id, booking_id)
 
-    invoice_items = booking.get("invoiceItems") or []
-    if invoice_items:
-        db.query(Finance).filter(Finance.tenant_id == tenant.id).delete(synchronize_session=False)
-        for item in invoice_items:
-            if not isinstance(item, dict):
-                continue
-            item_type = str(item.get("type") or "").lower()
-            if item_type not in ("charge", "payment"):
-                continue
-            qty = item.get("qty", 1) or 1
-            amount = item.get("amount", 0) or 0
-            line_total = Decimal(str(amount)) * Decimal(str(qty))
-            description = str(item.get("description") or item.get("type") or "").strip()
-            db.add(
-                Finance(
-                    tenant_id=tenant.id,
-                    type=item_type,
-                    amount=line_total,
-                    currency=str(item.get("currency") or "EUR"),
-                    description=description,
-                )
-            )
+    replace_tenant_finance_from_booking(db, tenant, booking)
 
     db.commit()
     return {"status": "ok", "booking_id": booking_id}

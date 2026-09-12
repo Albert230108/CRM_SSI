@@ -14,6 +14,7 @@ import pytest
 
 from app.api import admin_sync
 from app.api.admin_sync import _update_tenant_from_beds24
+from app.models.finance import Finance
 from app.models.tenant import Tenant
 
 
@@ -175,3 +176,89 @@ def test_sync_beds24_triggers_gmail_sync_for_newly_linked_crm_email(db_session, 
     updated = asyncio.run(admin_sync._sync_beds24(db_session, changed_by_user_id=None))
     assert updated == 1
     assert started_jobs == []
+
+
+def test_sync_all_refreshes_finance_breakdown(db_session):
+    """Regression: sync-all never wrote Finance rows at all, so a tenant's charges/payments
+    kept whatever an older import left behind - with no qty/unit price/VAT/status, which the
+    Tenant Info table rendered as an em dash in four of its six columns."""
+    tenant = create_populated_tenant(db_session, booking_id="B-syncall-finance")
+
+    booking = {
+        "id": tenant.booking_id,
+        "roomName": "Studio 2",
+        "invoiceItems": [
+            {
+                "type": "charge",
+                "description": "Rent",
+                "qty": 5,
+                "amount": 80,
+                "lineTotal": 400,
+                "vatRate": 9,
+                "status": "",
+                "currency": "EUR",
+            },
+            {
+                "type": "payment",
+                "description": "Card payment",
+                "qty": 1,
+                "amount": -200,
+                "lineTotal": -200,
+                "vatRate": 0,
+                "status": "17-Jul-2026",
+                "currency": "EUR",
+            },
+        ],
+    }
+
+    _update_tenant_from_beds24(db_session, tenant, booking)
+    db_session.commit()
+
+    rows = db_session.query(Finance).filter(Finance.tenant_id == tenant.id).order_by(Finance.id).all()
+    assert len(rows) == 2
+
+    charge, payment = rows
+    assert (charge.qty, charge.unit_price, charge.vat_rate, charge.amount) == (
+        Decimal("5"),
+        Decimal("80"),
+        Decimal("9"),
+        Decimal("400"),
+    )
+    assert charge.status is None  # Beds24 never sets a status on charges
+    assert payment.status == "17-Jul-2026"
+    assert payment.unit_price == Decimal("-200")
+
+
+def test_sync_all_without_invoice_items_keeps_existing_finance(db_session):
+    """A sparse bulk-list item with no invoiceItems must not clear a captured breakdown."""
+    tenant = create_populated_tenant(db_session, booking_id="B-syncall-keep")
+    db_session.add(
+        Finance(
+            tenant_id=tenant.id,
+            type="charge",
+            amount=Decimal("400"),
+            qty=Decimal("5"),
+            unit_price=Decimal("80"),
+            vat_rate=Decimal("9"),
+            currency="EUR",
+            description="Rent",
+        )
+    )
+    db_session.commit()
+
+    _update_tenant_from_beds24(db_session, tenant, {"id": tenant.booking_id, "firstName": "Jane"})
+    db_session.commit()
+
+    rows = db_session.query(Finance).filter(Finance.tenant_id == tenant.id).all()
+    assert len(rows) == 1
+    assert rows[0].qty == Decimal("5")
+
+
+def test_get_bookings_requests_invoice_items():
+    """sync-all can only refresh finance if the list endpoint is asked for invoice items."""
+    import inspect
+
+    from app.services import beds24_client
+
+    source = inspect.getsource(beds24_client.get_bookings)
+    assert '"includeInvoiceItems": "true"' in source

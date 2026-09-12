@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.api.tenants import ROOM_ID_MAPPING, _extract_guest_fields
-from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.services.beds24_service import fetch_booking_with_invoice
+from app.services.finance_sync import replace_tenant_finance_from_booking
 from app.services.tenant_ai_template_provisioning import (
     apply_default_brain_action_writer_settings,
     apply_default_formatter_settings,
@@ -138,28 +137,7 @@ async def sync_tenant_from_beds24_booking(
         # repeat webhook update to an already-existing tenant.
         scan_tenant_history(db, tenant)
 
-    invoice_items = booking.get("invoiceItems") or []
-    if invoice_items:
-        db.query(Finance).filter(Finance.tenant_id == tenant.id).delete(synchronize_session=False)
-        for item in invoice_items:
-            if not isinstance(item, dict):
-                continue
-            item_type = str(item.get("type") or "").lower()
-            if item_type not in ("charge", "payment"):
-                continue
-            qty = item.get("qty", 1) or 1
-            amount = item.get("amount", 0) or 0
-            line_total = Decimal(str(amount)) * Decimal(str(qty))
-            description = str(item.get("description") or item.get("type") or "").strip()
-            db.add(
-                Finance(
-                    tenant_id=tenant.id,
-                    type=item_type,
-                    amount=line_total,
-                    currency=str(item.get("currency") or "EUR"),
-                    description=description,
-                )
-            )
+    replace_tenant_finance_from_booking(db, tenant, booking)
 
     logger.info("Tenant synced from Beds24: tenant_id=%s booking_id=%s", tenant.id, booking_id)
     return tenant
