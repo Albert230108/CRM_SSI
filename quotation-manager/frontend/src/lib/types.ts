@@ -24,6 +24,7 @@ export interface Beds24Booking {
   departure?: string
   numAdult?: number
   numChild?: number
+  flagText?: string
   invoiceItems?: Beds24InvoiceItem[]
   [key: string]: unknown
 }

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ChargesTable from '../components/ChargesTable'
+import FlagField from '../components/FlagField'
 import PropertyRoomFields from '../components/PropertyRoomFields'
 import PaymentsTable from '../components/PaymentsTable'
 import { ApiError, apiPost } from '../lib/apiClient'
@@ -12,6 +13,7 @@ import {
   PROPERTY_ROOMS,
   ROOM_CAPACITY,
   ROOM_ID_MAPPING,
+  SSI_FLAG,
 } from '../lib/constants'
 import type { BuildChargesResult, EditableInvoiceItem, PaymentPlanResult } from '../lib/types'
 
@@ -39,7 +41,7 @@ export default function NewQuotationPage() {
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
   const [securityDeposit, setSecurityDeposit] = useState(0)
-  const [ssiFlag, setSsiFlag] = useState(false)
+  const [flagText, setFlagText] = useState('')
   const [companyInfo, setCompanyInfo] = useState('')
 
   const [charges, setCharges] = useState<EditableInvoiceItem[]>([])
@@ -114,7 +116,7 @@ export default function NewQuotationPage() {
         check_out: checkOut,
         adults,
         children,
-        quotation_flag: ssiFlag ? '(SSI)' : null,
+        quotation_flag: flagText === SSI_FLAG ? SSI_FLAG : null,
       })
       setCharges(
         result.charges.map((c) => ({
@@ -263,7 +265,7 @@ export default function NewQuotationPage() {
         phone,
         num_adults: adults,
         num_children: children,
-        flag_text: ssiFlag ? '(SSI)' : null,
+        flag_text: flagText || null,
         company_info: companyInfo.trim() || null,
         invoice_items: [...charges, ...payments].map((item) => ({
           id: item.id,
@@ -358,10 +360,7 @@ export default function NewQuotationPage() {
             Nights
             <p className="mt-1 py-1 text-sm text-gray-900">{nights ?? '—'}</p>
           </div>
-          <label className="flex items-center gap-2 text-xs text-gray-500">
-            <input type="checkbox" checked={ssiFlag} onChange={(e) => setSsiFlag(e.target.checked)} />
-            SSI registration (municipality cost)
-          </label>
+          <FlagField value={flagText} onChange={setFlagText} />
           <label className="col-span-2 text-xs text-gray-500 md:col-span-3">
             Company info (optional)
             <textarea value={companyInfo} onChange={(e) => setCompanyInfo(e.target.value)} className={inputClass} rows={2} />

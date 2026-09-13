@@ -52,6 +52,11 @@ export const ROOM_ID_MAPPING: Record<string, number> = {
   'Duplex Apartment': 286739,
 }
 
+// Beds24 booking flag values offered in the Flag dropdown (the desktop app's list). "" = no flag.
+// "(SSI)" also switches the city-tax line to "Municipality Cost (registration)".
+export const FLAG_OPTIONS = ['', '(EXS)', '(SSI)']
+export const SSI_FLAG = '(SSI)'
+
 // Nights above which the long-stay deposit / 0% VAT rules kick in.
 export const LONG_STAY_DEPOSIT_NIGHT_THRESHOLD = 183
 export const LONG_STAY_DEPOSIT_DEFAULT = 1500

@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -111,3 +112,30 @@ def test_update_booking_invoice_items_sends_booking_fields_on_update(monkeypatch
     assert b"confirmed" in body and b"keys collected" in body
     # None-valued fields are dropped, not sent as null.
     assert b"flagText" not in body
+
+
+def test_update_booking_invoice_items_sends_empty_flag_text_to_clear_flag(monkeypatch):
+    """An emptied Flag in the quotation editor arrives as flagText "" and must reach Beds24 (only
+    None is dropped), otherwise the booking's existing flag could never be cleared."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=[{"success": True}])
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client_factory(handler))
+
+    asyncio.run(
+        beds24_service.update_booking_invoice_items(
+            booking_id="12345",
+            original_invoice_item_ids=[],
+            final_invoice_items=[{"type": "charge", "description": "Rent", "qty": 1, "amount": 10.0, "vatRate": 9}],
+            booking_fields={"status": "inquiry", "subStatus": None, "flagText": ""},
+        )
+    )
+
+    assert len(calls) == 1
+    body = json.loads(calls[0].content)
+    payload = body[0] if isinstance(body, list) else body
+    assert payload["flagText"] == ""
+    assert "subStatus" not in payload

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ChargesTable from '../components/ChargesTable'
+import FlagField from '../components/FlagField'
 import PaymentsTable from '../components/PaymentsTable'
 import PropertyRoomFields from '../components/PropertyRoomFields'
 import { ApiError, apiGet, apiPost, decodeTokenClaims, getToken } from '../lib/apiClient'
@@ -8,6 +9,7 @@ import { isPaymentPaid } from '../lib/payments'
 import { downloadBase64Pdf } from '../lib/download'
 import {
   ROOM_CAPACITY,
+  SSI_FLAG,
   propertyForRoom,
   roomIdForName,
   roomNameForId,
@@ -124,6 +126,45 @@ function firstString(...values: unknown[]): string {
   return ''
 }
 
+// Unsaved editor state is auto-saved per booking in this browser so a page refresh restores the
+// operator's in-progress edits instead of reloading the booking fresh from Beds24.
+type EditorDraft = {
+  snapshot: Record<string, unknown>
+  depositManuallyEdited: boolean
+  // Beds24 items signature when the draft was started - the pre-send drift baseline.
+  beds24Signature: string
+  savedAt: string
+}
+
+const draftStorageKey = (bookingId: string) => `qm-editor-draft:${bookingId}`
+
+function readDraft(bookingId: string): EditorDraft | null {
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey(bookingId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as EditorDraft
+    return parsed && typeof parsed.snapshot === 'object' && parsed.snapshot !== null ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeDraft(bookingId: string, draft: EditorDraft): void {
+  try {
+    window.localStorage.setItem(draftStorageKey(bookingId), JSON.stringify(draft))
+  } catch {
+    // Storage full/blocked: auto-save is a convenience, the editor keeps working without it.
+  }
+}
+
+function clearDraft(bookingId: string): void {
+  try {
+    window.localStorage.removeItem(draftStorageKey(bookingId))
+  } catch {
+    // Ignore - nothing to clear if storage is unavailable.
+  }
+}
+
 export default function QuotationEditorPage() {
   const { bookingId } = useParams<{ bookingId: string }>()
   const navigate = useNavigate()
@@ -149,7 +190,8 @@ export default function QuotationEditorPage() {
   const [pricesConfig, setPricesConfig] = useState<PricingConfig | null>(null)
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
-  const [ssiFlag, setSsiFlag] = useState(false)
+  // Beds24 flagText, prefilled from the booking. "" is sent as-is so clearing it clears Beds24's flag.
+  const [flagText, setFlagText] = useState('')
   // Booking status / sub-status to push to Beds24. Empty = leave the current Beds24 value alone.
   const [bookingStatus, setBookingStatus] = useState('')
   const [subStatus, setSubStatus] = useState('')
@@ -173,11 +215,25 @@ export default function QuotationEditorPage() {
   const [localQuotes, setLocalQuotes] = useState<Array<{ name: string; updated_at: string }>>([])
   const [quoteName, setQuoteName] = useState('')
   const [savingQuote, setSavingQuote] = useState(false)
+  // Auto-save: only once the operator has actually changed something (so the untouched booking,
+  // including config-driven prefills, is never stored as a "draft").
+  const dirtyRef = useRef(false)
+  const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null)
+  const [draftBeds24Changed, setDraftBeds24Changed] = useState(false)
+  const markDirty = () => {
+    dirtyRef.current = true
+  }
 
-  useEffect(() => {
+  const loadBooking = useCallback(() => {
     if (!bookingId) return
     setLoading(true)
     setError(null)
+    setNotice(null)
+    setRestoredDraftAt(null)
+    setDraftBeds24Changed(false)
+    dirtyRef.current = false
+    depositManuallyEdited.current = false
+    carriedDepositRef.current = null
     apiGet<Beds24Booking>(`/api/booking/${encodeURIComponent(bookingId)}`)
       .then(async (booking) => {
         setFirstName(firstString(booking.firstName, (booking as Record<string, unknown>).guestFirstName))
@@ -216,6 +272,7 @@ export default function QuotationEditorPage() {
         // Preselect the booking's current Beds24 status (numeric code -> our dropdown value).
         setBookingStatus(beds24StatusToValue((booking as Record<string, unknown>).status))
         setSubStatus(firstString((booking as Record<string, unknown>).subStatus))
+        setFlagText(firstString(booking.flagText))
         loadedInputsSigRef.current = `${arrival}|${departure}|${numAdults}|${numChildren}|${property}|${room}`
 
         const items = booking.invoiceItems ?? []
@@ -230,12 +287,30 @@ export default function QuotationEditorPage() {
         // a carried value as a last resort when the config lookup can't resolve one.
         const depositItem = items.find((item) => (item.description ?? '').toLowerCase().includes('deposit'))
         if (depositItem && depositItem.amount) carriedDepositRef.current = depositItem.amount
+
+        // Restore unsaved edits from before a refresh. originalItemIds stay the freshly loaded ones:
+        // they name the items currently in Beds24, which is what a send must delete.
+        const draft = readDraft(bookingId)
+        if (draft) {
+          applySnapshotRef.current(draft.snapshot)
+          depositManuallyEdited.current = draft.depositManuallyEdited
+          dirtyRef.current = true
+          // Keep the draft's baseline so the pre-send drift confirm still catches Beds24 edits
+          // made after the draft was started.
+          originalBeds24SnapshotRef.current = draft.beds24Signature
+          setRestoredDraftAt(draft.savedAt)
+          setDraftBeds24Changed(draft.beds24Signature !== beds24ItemsSignature(items))
+        }
       })
       .catch((err: unknown) => {
         setError(err instanceof ApiError ? err.message : 'Failed to load booking')
       })
       .finally(() => setLoading(false))
   }, [bookingId])
+
+  useEffect(() => {
+    loadBooking()
+  }, [loadBooking])
 
   const nights = useMemo(() => {
     if (!checkIn || !checkOut) return null
@@ -302,6 +377,7 @@ export default function QuotationEditorPage() {
   }
 
   const handleAddCharge = () => {
+    markDirty()
     setCharges((prev) => [
       ...prev,
       { localId: makeLocalId(), type: 'charge', description: '', qty: 1, amount: 0, vat_rate: 0, currency: 'EUR' },
@@ -309,6 +385,7 @@ export default function QuotationEditorPage() {
   }
 
   const handleRemoveCharge = (localId: string) => {
+    markDirty()
     setCharges((prev) => prev.filter((item) => item.localId !== localId))
   }
 
@@ -400,6 +477,7 @@ export default function QuotationEditorPage() {
   }
 
   const handleAddPayment = () => {
+    markDirty()
     setPayments((prev) => [
       ...prev,
       { localId: makeLocalId(), type: 'payment', description: '', qty: 1, amount: 0, vat_rate: 0, currency: 'EUR', status: 'not paid' },
@@ -407,6 +485,7 @@ export default function QuotationEditorPage() {
   }
 
   const handleRemovePayment = (localId: string) => {
+    markDirty()
     setPayments((prev) => prev.filter((item) => item.localId !== localId))
   }
 
@@ -482,6 +561,7 @@ export default function QuotationEditorPage() {
       return
     }
     setNotice(null)
+    markDirty()
     await buildPaymentPlanFrom(charges, installments, { silent })
   }
 
@@ -501,7 +581,7 @@ export default function QuotationEditorPage() {
           check_out: checkOut,
           adults,
           children,
-          quotation_flag: ssiFlag ? '(SSI)' : null,
+          quotation_flag: flagText === SSI_FLAG ? SSI_FLAG : null,
         })
         const existingAdmin = preserveAdmin ? chargesRef.current.find(isAdminCharge) : undefined
         const generated = result.charges
@@ -528,7 +608,7 @@ export default function QuotationEditorPage() {
         setBuildingCharges(false)
       }
     },
-    [roomName, propertyName, checkIn, checkOut, adults, children, ssiFlag],
+    [roomName, propertyName, checkIn, checkOut, adults, children, flagText],
   )
 
   const handleGenerateCharges = async () => {
@@ -540,6 +620,7 @@ export default function QuotationEditorPage() {
       return
     }
     setNotice(null)
+    markDirty()
     await generateStandardCharges({ preserveAdmin: false })
   }
 
@@ -705,13 +786,19 @@ export default function QuotationEditorPage() {
           currency: item.currency,
           status: item.status,
         })),
-        // Booking-level updates: only sent when set, so an unchanged control leaves Beds24 as-is.
+        // Status/sub-status are only sent when set. The flag is always sent (prefilled from Beds24),
+        // so an empty Flag deliberately clears the booking's flag.
         status: bookingStatus || null,
         sub_status: subStatus || null,
-        flag_text: ssiFlag ? '(SSI)' : null,
+        flag_text: flagText,
       })
-      // What we just sent is now Beds24's state, so re-baseline the drift snapshot.
+      // What we just sent is now Beds24's state, so re-baseline the drift snapshot and drop the
+      // auto-saved draft - a refresh should now show Beds24's (identical) values.
       originalBeds24SnapshotRef.current = beds24ItemsSignature([...charges, ...payments])
+      clearDraft(bookingId)
+      dirtyRef.current = false
+      setRestoredDraftAt(null)
+      setDraftBeds24Changed(false)
       setNotice('Invoice items sent to Beds24. Finance will update shortly in the CRM.')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to send to Beds24')
@@ -735,7 +822,7 @@ export default function QuotationEditorPage() {
 
   const buildQuoteSnapshot = () => ({
     firstName, lastName, roomName, propertyName, checkIn, checkOut,
-    securityDeposit, adults, children, ssiFlag, bookingStatus, subStatus, installments,
+    securityDeposit, adults, children, flagText, bookingStatus, subStatus, installments,
     charges: charges.map(({ localId: _localId, ...rest }) => rest),
     payments: payments.map(({ localId: _localId, ...rest }) => rest),
   })
@@ -761,36 +848,70 @@ export default function QuotationEditorPage() {
     }
   }
 
+  // Applies a saved editor snapshot (a named local quote or the auto-saved draft) onto the editor.
+  const applySnapshot = (snap: Record<string, unknown>) => {
+    const asItems = (rows: unknown, type: 'charge' | 'payment'): EditableInvoiceItem[] =>
+      Array.isArray(rows)
+        ? rows.map((r) => ({ localId: makeLocalId(), type, currency: 'EUR', ...(r as Record<string, unknown>) } as EditableInvoiceItem))
+        : []
+    depositManuallyEdited.current = true // a loaded quote's deposit is authoritative
+    if (typeof snap.firstName === 'string') setFirstName(snap.firstName)
+    if (typeof snap.lastName === 'string') setLastName(snap.lastName)
+    if (typeof snap.roomName === 'string') setRoomName(snap.roomName)
+    if (typeof snap.propertyName === 'string') setPropertyName(snap.propertyName)
+    if (typeof snap.checkIn === 'string') setCheckIn(snap.checkIn)
+    if (typeof snap.checkOut === 'string') setCheckOut(snap.checkOut)
+    if (typeof snap.securityDeposit === 'number') setSecurityDeposit(snap.securityDeposit)
+    if (typeof snap.adults === 'number') setAdults(snap.adults)
+    if (typeof snap.children === 'number') setChildren(snap.children)
+    if (typeof snap.flagText === 'string') setFlagText(snap.flagText)
+    else if (typeof snap.ssiFlag === 'boolean') setFlagText(snap.ssiFlag ? SSI_FLAG : '') // pre-Flag-field snapshots
+    if (typeof snap.bookingStatus === 'string') setBookingStatus(snap.bookingStatus)
+    if (typeof snap.subStatus === 'string') setSubStatus(snap.subStatus)
+    if (typeof snap.installments === 'number') setInstallments(snap.installments)
+    setCharges(asItems(snap.charges, 'charge'))
+    setPayments(asItems(snap.payments, 'payment'))
+    // The restored stay inputs are the new baseline, so the auto-regenerate-on-stay-change effect
+    // doesn't immediately overwrite the restored charges/payments.
+    loadedInputsSigRef.current = [snap.checkIn, snap.checkOut, snap.adults, snap.children, snap.propertyName, snap.roomName].join('|')
+  }
+  const applySnapshotRef = useRef(applySnapshot)
+  applySnapshotRef.current = applySnapshot
+
   const handleLoadLocalQuote = async (name: string) => {
     if (!window.confirm(`Load local quote "${name}"? This replaces the current unsaved editor contents.`)) return
     setError(null)
     setNotice(null)
     try {
       const snap = await apiGet<Record<string, unknown>>(`/api/quotation/local-quotes/${encodeURIComponent(name)}`)
-      const asItems = (rows: unknown, type: 'charge' | 'payment'): EditableInvoiceItem[] =>
-        Array.isArray(rows)
-          ? rows.map((r) => ({ localId: makeLocalId(), type, currency: 'EUR', ...(r as Record<string, unknown>) } as EditableInvoiceItem))
-          : []
-      depositManuallyEdited.current = true // a loaded quote's deposit is authoritative
-      if (typeof snap.firstName === 'string') setFirstName(snap.firstName)
-      if (typeof snap.lastName === 'string') setLastName(snap.lastName)
-      if (typeof snap.roomName === 'string') setRoomName(snap.roomName)
-      if (typeof snap.propertyName === 'string') setPropertyName(snap.propertyName)
-      if (typeof snap.checkIn === 'string') setCheckIn(snap.checkIn)
-      if (typeof snap.checkOut === 'string') setCheckOut(snap.checkOut)
-      if (typeof snap.securityDeposit === 'number') setSecurityDeposit(snap.securityDeposit)
-      if (typeof snap.adults === 'number') setAdults(snap.adults)
-      if (typeof snap.children === 'number') setChildren(snap.children)
-      if (typeof snap.ssiFlag === 'boolean') setSsiFlag(snap.ssiFlag)
-      if (typeof snap.bookingStatus === 'string') setBookingStatus(snap.bookingStatus)
-      if (typeof snap.subStatus === 'string') setSubStatus(snap.subStatus)
-      if (typeof snap.installments === 'number') setInstallments(snap.installments)
-      setCharges(asItems(snap.charges, 'charge'))
-      setPayments(asItems(snap.payments, 'payment'))
+      applySnapshot(snap)
+      markDirty()
       setNotice(`Loaded local quote "${name}".`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load local quote')
     }
+  }
+
+  // Debounced auto-save of the editor to localStorage once something has been changed.
+  const draftSignature = JSON.stringify(buildQuoteSnapshot())
+  useEffect(() => {
+    if (!bookingId || loading || !dirtyRef.current) return
+    const handle = window.setTimeout(() => {
+      writeDraft(bookingId, {
+        snapshot: JSON.parse(draftSignature) as Record<string, unknown>,
+        depositManuallyEdited: depositManuallyEdited.current,
+        beds24Signature: originalBeds24SnapshotRef.current,
+        savedAt: new Date().toISOString(),
+      })
+    }, 500)
+    return () => window.clearTimeout(handle)
+  }, [bookingId, loading, draftSignature])
+
+  const handleDiscardDraft = () => {
+    if (!bookingId) return
+    if (!window.confirm('Discard your unsaved changes and reload this booking from Beds24?')) return
+    clearDraft(bookingId)
+    loadBooking()
   }
 
   if (loading) {
@@ -798,7 +919,7 @@ export default function QuotationEditorPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-6">
+    <div className="mx-auto max-w-4xl space-y-4 p-6" onChangeCapture={markDirty}>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-gray-900">Quotation for booking {bookingId}</h1>
         <button type="button" onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:text-gray-700">
@@ -806,6 +927,21 @@ export default function QuotationEditorPage() {
         </button>
       </div>
 
+      {restoredDraftAt ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <span>
+            Restored your unsaved changes from {new Date(restoredDraftAt).toLocaleString()}.
+            {draftBeds24Changed ? ' Note: this booking has changed in Beds24 since then.' : ''}
+          </span>
+          <button
+            type="button"
+            onClick={handleDiscardDraft}
+            className="shrink-0 rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+          >
+            Discard changes
+          </button>
+        </div>
+      ) : null}
       {error ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>
       ) : null}
@@ -913,10 +1049,7 @@ export default function QuotationEditorPage() {
               className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-sm"
             />
           </label>
-          <label className="flex items-center gap-2 text-xs text-gray-500">
-            <input type="checkbox" checked={ssiFlag} onChange={(e) => setSsiFlag(e.target.checked)} />
-            SSI registration (municipality cost)
-          </label>
+          <FlagField value={flagText} onChange={setFlagText} />
         </div>
         {occupancy ? (
           <p className={`mt-2 text-xs font-medium ${occupancy.exceeded ? 'text-rose-600' : 'text-emerald-600'}`}>

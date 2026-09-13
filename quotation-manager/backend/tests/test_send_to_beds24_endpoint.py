@@ -62,3 +62,25 @@ def test_send_to_beds24_forwards_payment_status(client, auth_headers, monkeypatc
     items = captured["payload"]["invoice_items"]
     assert items[0]["status"] is None
     assert items[1]["status"] == "12-Sep-2026"
+
+
+def test_send_to_beds24_forwards_empty_flag_text(client, auth_headers, monkeypatch):
+    captured = {}
+
+    async def fake_send_invoice_items_to_beds24(booking_id, token, payload):
+        captured["payload"] = payload
+        return {"tenant_id": 1, "charges": [], "payments": []}
+
+    import app.api.quotation as quotation_module
+
+    monkeypatch.setattr(quotation_module.crm_client, "send_invoice_items_to_beds24", fake_send_invoice_items_to_beds24)
+
+    response = client.post(
+        "/api/quotation/12345/send-to-beds24",
+        json={"all_original_invoice_item_ids": [], "invoice_items": [], "flag_text": ""},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    # A cleared Flag is forwarded as "" so the CRM clears the Beds24 flag.
+    assert captured["payload"]["flag_text"] == ""

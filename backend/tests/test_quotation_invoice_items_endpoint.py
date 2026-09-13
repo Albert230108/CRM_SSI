@@ -96,3 +96,29 @@ def test_send_invoice_items_forwards_payment_status_to_beds24(client, db_session
     assert payment_item["description"] == "Installment 1 [PAYLINK: 100.00]"
     # D1: booking_fields are forwarded (all None here since no status/sub-status/flag was sent).
     assert captured["booking_fields"] == {"status": None, "subStatus": None, "flagText": None}
+
+
+def test_send_invoice_items_forwards_empty_flag_text(client, db_session, monkeypatch):
+    captured = {}
+
+    async def capturing_update(booking_id, original_invoice_item_ids, final_invoice_items, booking_fields=None):
+        captured["booking_fields"] = booking_fields
+
+    import app.api.quotation as quotation_module
+
+    monkeypatch.setattr(quotation_module, "update_booking_invoice_items", capturing_update)
+    monkeypatch.setattr(quotation_module, "sync_tenant_from_beds24_booking", fake_sync)
+
+    tenant = Tenant(booking_id="INV-4", name="Flag Tenant")
+    db_session.add(tenant)
+    db_session.commit()
+
+    response = client.post(
+        "/api/quotation/beds24-booking/INV-4/invoice-items",
+        json={"all_original_invoice_item_ids": [], "invoice_items": [], "status": "inquiry", "flag_text": ""},
+        headers=_auth_headers_for(tenant.id, "INV-4"),
+    )
+
+    assert response.status_code == 200
+    # "" (a cleared Flag) must survive as "" so Beds24 clears the flag, not be coerced to None.
+    assert captured["booking_fields"]["flagText"] == ""
