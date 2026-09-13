@@ -1,11 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import BalanceBanner from '../components/BalanceBanner'
 import ChargesTable from '../components/ChargesTable'
 import FlagField from '../components/FlagField'
 import PropertyRoomFields from '../components/PropertyRoomFields'
 import PaymentsTable from '../components/PaymentsTable'
-import { ApiError, apiPost } from '../lib/apiClient'
+import { ApiError, apiGet, apiPost } from '../lib/apiClient'
+import { syncDepositRefundRow } from '../lib/depositRefund'
+import { autoInstallments } from '../lib/installments'
 import { isPaymentPaid } from '../lib/payments'
+import { resolveConfiguredDeposit, type PricingConfig } from '../lib/pricing'
 import { downloadBase64Pdf } from '../lib/download'
 import {
   LONG_STAY_DEPOSIT_DEFAULT,
@@ -41,12 +45,15 @@ export default function NewQuotationPage() {
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
   const [securityDeposit, setSecurityDeposit] = useState(0)
+  // Once the operator edits the deposit by hand, stop auto-prefilling it from config.
+  const depositManuallyEdited = useRef(false)
   const [flagText, setFlagText] = useState('')
   const [companyInfo, setCompanyInfo] = useState('')
 
   const [charges, setCharges] = useState<EditableInvoiceItem[]>([])
   const [payments, setPayments] = useState<EditableInvoiceItem[]>([])
   const [installments, setInstallments] = useState(1)
+  const [pricesConfig, setPricesConfig] = useState<PricingConfig | null>(null)
 
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -79,7 +86,32 @@ export default function NewQuotationPage() {
       ),
     [payments],
   )
-  const balanceDiff = Math.round((chargesTotal - paymentsTotal) * 100) / 100
+
+  // Load the per-property pricing config once so the deposit can be prefilled from it.
+  useEffect(() => {
+    apiGet<PricingConfig>('/api/config/prices')
+      .then(setPricesConfig)
+      .catch(() => setPricesConfig(null)) // best-effort; deposit just stays whatever is entered
+  }, [])
+
+  // The configured deposit for the selected property/room/date (long-stay -> €1500), same rule as
+  // the editor + desktop.
+  const configuredDeposit = useMemo<number | null>(
+    () => resolveConfiguredDeposit(pricesConfig, propertyName, roomName, checkIn, nights),
+    [pricesConfig, propertyName, roomName, checkIn, nights],
+  )
+
+  // Prefill the deposit from config unless the operator has edited it by hand.
+  useEffect(() => {
+    if (depositManuallyEdited.current) return
+    if (configuredDeposit !== null) setSecurityDeposit(configuredDeposit)
+  }, [configuredDeposit])
+
+  // Keep the negative "Refund of Deposit" row in sync with the deposit field, live. Keyed on the
+  // deposit/check-out only (not payments) so it can't loop; returns the same array when unchanged.
+  useEffect(() => {
+    setPayments((prev) => syncDepositRefundRow(prev, securityDeposit, checkOut, makeLocalId))
+  }, [securityDeposit, checkOut])
 
   const handleChargeChange = (localId: string, patch: Partial<EditableInvoiceItem>) =>
     setCharges((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)))
@@ -99,15 +131,12 @@ export default function NewQuotationPage() {
     ])
   const handleRemovePayment = (localId: string) => setPayments((prev) => prev.filter((item) => item.localId !== localId))
 
-  const handleGenerateCharges = async () => {
-    if (!roomName || !propertyName || !checkIn || !checkOut) {
-      setError('Property, room, and valid dates are needed to generate charges.')
-      return
-    }
-    if (charges.length > 0 && !window.confirm('Replace the current charge lines with the standard generated set?')) return
+  // Core standard-charge generation. Replaces the full charge set and returns it (React state isn't
+  // visible synchronously, so the auto path passes the result straight into the plan builder).
+  const generateStandardCharges = useCallback(async (): Promise<EditableInvoiceItem[] | null> => {
+    if (!roomName || !propertyName || !checkIn || !checkOut) return null
     setBuildingCharges(true)
     setError(null)
-    setNotice(null)
     try {
       const result = await apiPost<BuildChargesResult>('/api/quotation/build-charges', {
         property_name: propertyName,
@@ -118,49 +147,56 @@ export default function NewQuotationPage() {
         children,
         quotation_flag: flagText === SSI_FLAG ? SSI_FLAG : null,
       })
-      setCharges(
-        result.charges.map((c) => ({
-          localId: makeLocalId(),
-          type: 'charge' as const,
-          description: c.description,
-          qty: c.qty,
-          amount: c.amount,
-          vat_rate: c.vat_rate,
-          currency: 'EUR',
-        })),
-      )
-      setNotice(result.notes.length ? result.notes.join(' ') : `Generated ${result.charges.length} charge lines.`)
+      const generated = result.charges.map((c) => ({
+        localId: makeLocalId(),
+        type: 'charge' as const,
+        description: c.description,
+        qty: c.qty,
+        amount: c.amount,
+        vat_rate: c.vat_rate,
+        currency: 'EUR',
+      }))
+      setCharges(generated)
+      return generated
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to generate charges')
+      return null
     } finally {
       setBuildingCharges(false)
     }
-  }
+  }, [propertyName, roomName, checkIn, checkOut, adults, children, flagText])
 
-  const handleAddPaymentPlan = async () => {
-    if (!checkIn || !checkOut) {
-      setError('Valid check-in and check-out dates are needed to build a payment plan.')
+  const handleGenerateCharges = async () => {
+    if (!roomName || !propertyName || !checkIn || !checkOut) {
+      setError('Property, room, and valid dates are needed to generate charges.')
       return
     }
-    const hasPaidRows = payments.some((p) => isPaymentPaid(p.status))
-    if (
-      payments.length > 0 &&
-      !window.confirm(
-        hasPaidRows
-          ? 'Regenerate the plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced.'
-          : 'Replace the current payment rows with the generated plan?',
-      )
-    )
+    if (charges.length > 0 && !window.confirm('Replace the current charge lines with the standard generated set?')) return
+    setNotice(null)
+    const generated = await generateStandardCharges()
+    if (generated) setNotice(`Generated ${generated.length} charge lines.`)
+  }
+
+  // Core plan build, taking charges/installments explicitly so the auto path can pass freshly
+  // generated charges. Keeps already-paid rows (existing_payments).
+  const buildPaymentPlanFrom = async (
+    chargeItems: EditableInvoiceItem[],
+    installmentCount: number,
+    { silent = false }: { silent?: boolean } = {},
+  ) => {
+    if (!checkIn || !checkOut) {
+      if (!silent) setError('Valid check-in and check-out dates are needed to build a payment plan.')
       return
+    }
     setBuildingPlan(true)
-    setError(null)
+    if (!silent) setError(null)
     try {
       const result = await apiPost<PaymentPlanResult>('/api/quotation/build-payment-plan', {
         check_in: checkIn,
         check_out: checkOut,
-        installments,
+        installments: installmentCount,
         security_deposit: securityDeposit,
-        charges: charges.map((c) => ({ description: c.description, qty: c.qty, amount: c.amount })),
+        charges: chargeItems.map((c) => ({ description: c.description, qty: c.qty, amount: c.amount })),
         existing_payments: payments.map((p) => ({
           description: p.description,
           qty: p.qty,
@@ -181,17 +217,55 @@ export default function NewQuotationPage() {
           status: p.status,
         })),
       )
-      setNotice(
-        result.kept_count > 0
-          ? `Kept ${result.kept_count} paid row(s); ${result.payments.length - result.kept_count} row(s) regenerated for the remaining €${result.remaining.toFixed(2)}.`
-          : `Generated ${result.payments.length} payment rows.`,
-      )
+      if (!silent) {
+        setNotice(
+          result.kept_count > 0
+            ? `Kept ${result.kept_count} paid row(s); ${result.payments.length - result.kept_count} row(s) regenerated for the remaining €${result.remaining.toFixed(2)}.`
+            : `Generated ${result.payments.length} payment rows.`,
+        )
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to build payment plan')
+      if (!silent) setError(err instanceof ApiError ? err.message : 'Failed to build payment plan')
     } finally {
       setBuildingPlan(false)
     }
   }
+
+  const handleAddPaymentPlan = async () => {
+    if (!checkIn || !checkOut) {
+      setError('Valid check-in and check-out dates are needed to build a payment plan.')
+      return
+    }
+    const hasPaidRows = payments.some((p) => isPaymentPaid(p.status))
+    if (
+      payments.length > 0 &&
+      !window.confirm(
+        hasPaidRows
+          ? 'Regenerate the plan? Rows with a paid date in Status are kept as-is; unpaid rows are replaced.'
+          : 'Replace the current payment rows with the generated plan?',
+      )
+    )
+      return
+    setNotice(null)
+    await buildPaymentPlanFrom(charges, installments, { silent: false })
+  }
+
+  // Auto-build the standard charges whenever the stay inputs change (and all are present) - the New
+  // page builds from scratch, so the first complete form auto-generates without the button. Also
+  // auto-selects installments (nights//30+1) and, for an Inquiry, rebuilds the payment plan.
+  useEffect(() => {
+    if (!roomName || !propertyName || !checkIn || !checkOut) return
+    const handle = window.setTimeout(async () => {
+      const nextInstallments = autoInstallments(nights, installments)
+      setInstallments(nextInstallments)
+      const newCharges = await generateStandardCharges()
+      if (status === 'inquiry' && newCharges) {
+        await buildPaymentPlanFrom(newCharges, nextInstallments, { silent: true })
+      }
+    }, 700)
+    return () => window.clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propertyName, roomName, checkIn, checkOut, adults, children])
 
   const handleDownloadPdf = async () => {
     if (!checkIn || !checkOut) {
@@ -352,7 +426,10 @@ export default function NewQuotationPage() {
               type="number"
               step="0.01"
               value={securityDeposit}
-              onChange={(e) => setSecurityDeposit(Number(e.target.value))}
+              onChange={(e) => {
+                depositManuallyEdited.current = true
+                setSecurityDeposit(Number(e.target.value))
+              }}
               className={inputClass}
             />
           </label>
@@ -374,7 +451,7 @@ export default function NewQuotationPage() {
         ) : null}
         {isLongStay ? (
           <p className="mt-1 text-xs font-medium text-amber-600">
-            Long stay ({nights} nights): a fixed €{LONG_STAY_DEPOSIT_DEFAULT} refundable deposit typically applies.
+            Long stay ({nights} nights): a fixed €{LONG_STAY_DEPOSIT_DEFAULT} refundable deposit applies.
           </p>
         ) : null}
         <div className="mt-3">
@@ -401,10 +478,7 @@ export default function NewQuotationPage() {
         buildingPlan={buildingPlan}
       />
 
-      <div className="text-sm text-gray-500">
-        Balance: charges €{chargesTotal.toFixed(2)} vs payments €{paymentsTotal.toFixed(2)}{' '}
-        {Math.abs(balanceDiff) <= 0.01 ? '(balanced)' : `(off by €${Math.abs(balanceDiff).toFixed(2)})`}
-      </div>
+      <BalanceBanner chargesTotal={chargesTotal} paymentsTotal={paymentsTotal} />
 
       <div className="flex gap-3">
         <button

@@ -66,8 +66,10 @@ def test_build_charges_entirely_in_2025():
 
     end_cleaning = [c for c in result["charges"] if c["kind"] == "end_cleaning"]
     assert len(end_cleaning) == 1
-    assert end_cleaning[0]["amount_excl_vat"] == round(_room(pricing_data, "Central-Day Inn", "Studio 1")["end_cleaning"], 2)
-    assert end_cleaning[0]["amount"] == vat.gross_amount(end_cleaning[0]["amount_excl_vat"], 9)
+    cleaning_rate = _room(pricing_data, "Central-Day Inn", "Studio 1")["end_cleaning"]
+    assert end_cleaning[0]["amount_excl_vat"] == round(cleaning_rate, 2)
+    # amount grosses the full-precision config value and rounds once (not gross(rounded-excl)).
+    assert end_cleaning[0]["amount"] == vat.gross_amount(cleaning_rate, 9)
     assert end_cleaning[0]["vat_rate"] == 9
 
     admin = [c for c in result["charges"] if c["kind"] == "admin_costs"]
@@ -386,6 +388,26 @@ def test_build_charges_emits_zero_extra_person_row():
     )
     extra = _one(result["charges"], "extra_person")
     assert extra["amount"] == 0.0 and extra["qty"] == 7
+
+
+def test_build_charges_discount_grosses_full_precision_not_double_rounded():
+    """Regression: a per-night discount must gross the full-precision net and round ONCE. Studio 5
+    / 35 nights / 2026 has net diff -8.26446 @21%, which is -10.00 grossed once but -9.99 if the
+    net is pre-rounded to -8.26 first."""
+    pricing_data = pricing_config.load_pricing_data()
+    result = charge_builder.build_standard_charges(
+        property_name="Central-Day Inn", room_name="Studio 5",
+        checkin_date=date(2026, 3, 1), checkout_date=date(2026, 4, 5), adults=1, pricing_data=pricing_data,
+    )
+    assert result["nights"] == 35
+    discount = _one(result["charges"], "long_stay_discount")
+    assert discount["amount"] == -10.00  # not -9.99
+
+
+def test_append_grosses_full_precision_net():
+    """Direct check of the gross-once rule that backs the discount fix."""
+    assert vat.gross_amount(-8.26446, 21) == -10.00
+    assert round(round(-8.26446, 2) * 1.21, 2) == -9.99  # what the old double-rounding produced
 
 
 @pytest.mark.parametrize("flag", ["(SSI)", "SSI", " (ssi) ", "(Ssi)"])

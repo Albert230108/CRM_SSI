@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import BalanceBanner from '../components/BalanceBanner'
 import ChargesTable from '../components/ChargesTable'
 import FlagField from '../components/FlagField'
 import PaymentsTable from '../components/PaymentsTable'
 import PropertyRoomFields from '../components/PropertyRoomFields'
 import { ApiError, apiGet, apiPost, decodeTokenClaims, getToken } from '../lib/apiClient'
+import { syncDepositRefundRow } from '../lib/depositRefund'
+import { autoInstallments } from '../lib/installments'
 import { isPaymentPaid } from '../lib/payments'
+import { resolveConfiguredDeposit, type PricingConfig } from '../lib/pricing'
 import { downloadBase64Pdf } from '../lib/download'
 import {
   ROOM_CAPACITY,
@@ -30,25 +34,6 @@ function bookingNights(booking: Beds24Booking): number {
   if (typeof arrival !== 'string' || typeof departure !== 'string') return 0
   const diff = (new Date(departure).getTime() - new Date(arrival).getTime()) / (1000 * 60 * 60 * 24)
   return Number.isFinite(diff) && diff > 0 ? Math.round(diff) : 0
-}
-
-// Shape of the /api/config/prices document we read for the deposit: property -> rooms ->
-// date ranges. Only the fields the editor needs are typed.
-type ExtraServices = { deposit?: number; city_tax?: number; municipality_cost?: number }
-type PriceRange = { start: string; end: string; price_tiers?: Record<string, number>; extra_services?: ExtraServices }
-type PricingRoom = { price_ranges?: PriceRange[] }
-type PricingProperty = { extra_services?: ExtraServices; rooms?: Record<string, PricingRoom> }
-type PricingConfig = Record<string, PricingProperty | undefined>
-
-// The price range covering `iso` (YYYY-MM-DD), else the latest range starting on/before it, else
-// the earliest - mirrors pricing_config.resolve_range on the backend.
-function resolveRange(room: PricingRoom | undefined, iso: string): PriceRange | undefined {
-  const ranges = room?.price_ranges ?? []
-  if (ranges.length === 0) return undefined
-  const containing = ranges.find((r) => r.start <= iso && iso <= r.end)
-  if (containing) return containing
-  const earlier = ranges.filter((r) => r.start <= iso).sort((a, b) => a.start.localeCompare(b.start))
-  return earlier.length ? earlier[earlier.length - 1] : [...ranges].sort((a, b) => a.start.localeCompare(b.start))[0]
 }
 
 // Today's date as DD-Mon-YYYY (e.g. 11-Sep-2026), matching the PDF's DISPLAY_DATE_FMT
@@ -325,18 +310,15 @@ export default function QuotationEditorPage() {
       .catch(() => setPricesConfig(null)) // best-effort; falls back to the carried/1500 defaults
   }, [])
 
-  // The configured deposit for the check-in date: the covering date range's deposit override,
-  // else the property default. Resolves the property by name, falling back to the property the
-  // selected room belongs to (Beds24 sometimes sends a property name that isn't a config key -
-  // this was the "deposit shows 0" bug).
-  const configuredDeposit = useMemo<number | null>(() => {
-    if (!pricesConfig) return null
-    const prop = pricesConfig[propertyName] ?? pricesConfig[propertyForRoom(roomName)]
-    if (!prop) return null
-    const range = resolveRange(prop.rooms?.[roomName], checkIn || '')
-    const deposit = range?.extra_services?.deposit ?? prop.extra_services?.deposit
-    return typeof deposit === 'number' ? deposit : null
-  }, [pricesConfig, propertyName, roomName, checkIn])
+  // The configured deposit for the check-in date: the covering date range's deposit override, else
+  // the property default - and the long-stay deposit (€1500) when nights > 183, matching the
+  // desktop's refresh_charges_table. Resolves the property by name, falling back to the property
+  // the selected room belongs to (Beds24 sometimes sends a name that isn't a config key - the
+  // "deposit shows 0" bug).
+  const configuredDeposit = useMemo<number | null>(
+    () => resolveConfiguredDeposit(pricesConfig, propertyName, roomName, checkIn, nights),
+    [pricesConfig, propertyName, roomName, checkIn, nights],
+  )
 
   // Prefill the deposit from config whenever the resolved value changes (property/room/dates),
   // unless the operator has edited it by hand. Falls back to a carried booking deposit.
@@ -345,6 +327,15 @@ export default function QuotationEditorPage() {
     const next = configuredDeposit ?? carriedDepositRef.current ?? null
     if (next !== null) setSecurityDeposit(next)
   }, [configuredDeposit])
+
+  // Keep the negative "Refund of Deposit" payment row in sync with the deposit field, live (the
+  // desktop's manage_security_deposit_refund_in_table). Keyed only on the deposit/check-out (not
+  // payments) so setting the row can't re-trigger this; syncDepositRefundRow returns the same
+  // array when nothing needs changing, so React bails out. Skipped during the initial load.
+  useEffect(() => {
+    if (loading) return
+    setPayments((prev) => syncDepositRefundRow(prev, securityDeposit, checkOut, makeLocalId))
+  }, [securityDeposit, checkOut, loading])
 
   const occupancy = useMemo(() => {
     const totalGuests = adults + children
@@ -366,12 +357,6 @@ export default function QuotationEditorPage() {
       ),
     [payments],
   )
-  const balance = useMemo(() => {
-    const diff = Math.round((chargesTotal - paymentsTotal) * 100) / 100
-    if (Math.abs(diff) <= 0.01) return { state: 'balanced' as const, diff: 0 }
-    return { state: paymentsTotal < chargesTotal ? ('under' as const) : ('over' as const), diff: Math.abs(diff) }
-  }, [chargesTotal, paymentsTotal])
-
   const handleChargeChange = (localId: string, patch: Partial<EditableInvoiceItem>) => {
     setCharges((prev) => prev.map((item) => (item.localId === localId ? { ...item, ...patch } : item)))
   }
@@ -389,9 +374,10 @@ export default function QuotationEditorPage() {
     setCharges((prev) => prev.filter((item) => item.localId !== localId))
   }
 
-  // Admin costs must stay in sync as other charges change. Unlike the desktop (which only
-  // auto-refreshed while status was "Inquiry"), the port recomputes it regardless of status;
-  // the backend mirrors charge_builder's admin math so a refresh matches the generated value.
+  // Admin costs must stay in sync as other charges change. Like the desktop, the auto-recompute
+  // only runs while the booking status is "Inquiry" (see the effect below); for Confirmed/Request
+  // the operator refreshes it explicitly via the "Refresh admin costs" button. The backend mirrors
+  // charge_builder's admin math so a refresh matches the generated value.
   const chargesRef = useRef<EditableInvoiceItem[]>([])
   chargesRef.current = charges
   const [refreshingAdmin, setRefreshingAdmin] = useState(false)
@@ -460,12 +446,12 @@ export default function QuotationEditorPage() {
     if (sig === loadedInputsSigRef.current) return
     if (!roomName || !propertyName || !checkIn || !checkOut) return
     const handle = window.setTimeout(async () => {
-      const autoInstallments = nights !== null ? Math.max(1, Math.min(Math.floor(nights / 30) + 1, 24)) : installments
-      setInstallments(autoInstallments)
+      const nextInstallments = autoInstallments(nights, installments)
+      setInstallments(nextInstallments)
       if (chargesRef.current.length === 0) return
       const newCharges = await generateStandardCharges({ preserveAdmin: true })
       if (bookingStatus === 'inquiry' && newCharges) {
-        await buildPaymentPlanFrom(newCharges, autoInstallments, { silent: true })
+        await buildPaymentPlanFrom(newCharges, nextInstallments, { silent: true })
       }
     }, 700)
     return () => window.clearTimeout(handle)
@@ -1099,21 +1085,7 @@ export default function QuotationEditorPage() {
         buildingPlan={buildingPlan}
       />
 
-      <div
-        className={`rounded-xl border p-3 text-sm font-medium ${
-          balance.state === 'balanced'
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : balance.state === 'under'
-              ? 'border-rose-200 bg-rose-50 text-rose-700'
-              : 'border-amber-200 bg-amber-50 text-amber-700'
-        }`}
-      >
-        {balance.state === 'balanced'
-          ? '✓ Charges and payments are balanced'
-          : balance.state === 'under'
-            ? `⚠️ Payments are €${balance.diff.toFixed(2)} less than charges`
-            : `⚠️ Payments are €${balance.diff.toFixed(2)} more than charges`}
-      </div>
+      <BalanceBanner chargesTotal={chargesTotal} paymentsTotal={paymentsTotal} />
 
       <div className="flex gap-3">
         <button

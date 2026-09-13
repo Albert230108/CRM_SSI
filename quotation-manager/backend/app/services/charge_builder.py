@@ -74,14 +74,18 @@ def _vat_segments(checkin_date: date, checkout_date: date) -> list[dict[str, Any
 def _append(charges: list[dict[str, Any]], kind: str, description: str, qty: float,
             net_amount: float, vat_rate: float, detail: Optional[str] = None) -> None:
     """Append a charge row, grossing the ex-VAT `net_amount` up to the VAT-inclusive amount the
-    form/Beds24 holds and keeping the ex-VAT value alongside for reference."""
-    net = round(net_amount, 2)
+    form/Beds24 holds and keeping the ex-VAT value alongside for reference.
+
+    The gross-up uses the FULL-PRECISION net and rounds exactly once (matching the desktop's
+    `round((actual-base)*(1+vat/100), 2)`). Pre-rounding the net to 2 dp first would double-round
+    and land a cent off on some values - e.g. a -8.26446 @21% per-night discount would show -9.99
+    instead of -10.00."""
     charges.append({
         "kind": kind,
         "description": description,
         "qty": float(qty),
-        "amount": vat.gross_amount(net, vat_rate),
-        "amount_excl_vat": net,
+        "amount": vat.gross_amount(net_amount, vat_rate),
+        "amount_excl_vat": round(net_amount, 2),
         "vat_rate": float(vat_rate),
         "detail": detail,
     })
