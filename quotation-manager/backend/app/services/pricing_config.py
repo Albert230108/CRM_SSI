@@ -106,14 +106,30 @@ def resolve_range(room: dict, d: date) -> dict:
 
 
 def select_tier_price(price_tiers: dict, nights: int) -> float:
-    """Highest night-count breakpoint <= `nights` (flexible: any breakpoints). If the stay is
-    shorter than the smallest breakpoint, use the smallest. Raises if there are no tiers."""
+    """Highest night-count breakpoint *strictly less than* `nights` (flexible: any breakpoints).
+    If the stay is at or below the smallest breakpoint, use the smallest. Raises if there are
+    no tiers.
+
+    The strict `<` reproduces the desktop Quotation Manager's tier thresholds, which used strict
+    `>` comparisons (nights > 90 -> "90", > 60 -> "60", ... else "7"). So a stay of *exactly* a
+    breakpoint length falls to the tier below it: 14 nights -> the "7" rate, 30 -> "14",
+    60 -> "30", 90 -> "60". Matching this exactly is required for parity with the desktop app."""
     breakpoints = sorted(int(k) for k in price_tiers)
     if not breakpoints:
         raise PricingConfigError("Price range has no tiers defined")
-    applicable = [b for b in breakpoints if b <= nights]
+    applicable = [b for b in breakpoints if b < nights]
     chosen = applicable[-1] if applicable else breakpoints[0]
     return float(price_tiers[str(chosen)])
+
+
+def shortest_tier_price(price_tiers: dict) -> float:
+    """The smallest-breakpoint (shortest-stay) rate - the desktop's "7-night" rack rate, which
+    accommodation is priced at before the Long Stay Discount line brings it down to the selected
+    tier. Raises if there are no tiers."""
+    breakpoints = sorted(int(k) for k in price_tiers)
+    if not breakpoints:
+        raise PricingConfigError("Price range has no tiers defined")
+    return float(price_tiers[str(breakpoints[0])])
 
 
 def resolve_extra_services(pricing_data: dict, property_name: str, room_name: str, d: date) -> dict:
@@ -147,11 +163,16 @@ def accommodation_segments(room: dict, checkin: date, checkout: date, nights: in
         if seg_nights <= 0:
             continue
         rng = resolve_range(room, seg_start)
+        price_tiers = rng.get("price_tiers", {})
         segments.append({
             "start": seg_start,
             "end": seg_end,
             "nights": seg_nights,
-            "unit_price": select_tier_price(rng.get("price_tiers", {}), nights),
+            # unit_price is the *selected* tier (by total stay length); base_unit is the range's
+            # shortest-stay rate. charge_builder prices accommodation at base_unit and emits a
+            # negative Long Stay Discount line down to unit_price, matching the desktop.
+            "unit_price": select_tier_price(price_tiers, nights),
+            "base_unit": shortest_tier_price(price_tiers),
             "vat": vat_rate_for_date(seg_start),
         })
     return segments

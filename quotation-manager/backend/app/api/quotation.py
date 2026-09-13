@@ -56,43 +56,45 @@ def recompute_admin(
     _token=Depends(verify_quotation_token),
 ) -> RecomputeAdminResponse:
     """Recompute the Administration costs line from the current charges, so it stays in sync as
-    other charges are edited (the editor calls this on change, status-independent - unlike the
-    desktop which only auto-refreshed while status was "Inquiry"). Mirrors charge_builder's admin
-    step exactly: the base is the ex-VAT (net) sum of every non-admin charge, with the pass-through
-    city tax and any explicit security-deposit line subtracted; the result is grossed up by the
-    check-in VAT rate to match the VAT-inclusive amounts the form holds."""
+    other charges are edited (the editor calls this on change; the frontend already gates the
+    auto-refresh on the "Inquiry" status, matching the desktop). Mirrors charge_builder's admin
+    step exactly (desktop-exact): the base is the VAT-INCLUSIVE sum of every non-admin charge,
+    minus the pass-through Citytax line (Municipality Cost is NOT subtracted) and any explicit
+    security-deposit line; the percentage result is clamped against the ex-VAT min/max and then
+    grossed up again by the check-in VAT rate to match the VAT-inclusive amounts the form holds."""
     try:
         checkin_date = datetime.strptime(request.check_in, "%Y-%m-%d").date()
     except ValueError:
         checkin_date = date.today()
     admin_vat = vat.vat_rate_for_date(checkin_date)
 
-    total_net = 0.0
-    deposit_net = 0.0
-    city_tax_net = 0.0
+    total_gross = 0.0
+    deposit_gross = 0.0
+    citytax_gross = 0.0
     for item in request.invoice_items:
         if item.type != "charge":
             continue
         desc = item.description.strip().lower()
         if "administration costs" in desc:
             continue  # never let the admin line feed its own base
-        line_net = item.qty * vat.net_amount(item.amount, item.vat_rate)
+        line_gross = item.qty * item.amount  # amounts on the form are already VAT-inclusive
         if desc == "security deposit":
-            deposit_net += line_net  # deposit is excluded from the admin base (matches charge_builder)
+            deposit_gross += line_gross  # excluded from the base (matches charge_builder)
             continue
-        total_net += line_net
-        if ("city" in desc and "tax" in desc) or "municipality" in desc:
-            city_tax_net += line_net
+        total_gross += line_gross
+        # Only the Citytax line is subtracted; Municipality Cost stays in the base, as the desktop.
+        if "city" in desc and "tax" in desc:
+            citytax_gross += line_gross
 
     result = admin_costs_service.calculate_admin_costs(
         property_name=request.property_name,
-        total_charges=round(total_net, 2),
-        deposit_amount=round(deposit_net, 2),
-        city_tax_amount=round(city_tax_net, 2),
+        total_charges=round(total_gross, 2),
+        deposit_amount=round(deposit_gross, 2),
+        city_tax_amount=round(citytax_gross, 2),
     )
     admin_excl = result["admin_cost"]
     return RecomputeAdminResponse(
-        admin_cost_incl=vat.gross_amount(admin_excl, admin_vat),
+        admin_cost_incl=round(admin_excl * (1 + admin_vat / 100.0), 2),
         admin_cost_excl=admin_excl,
         vat_rate=admin_vat,
         description=result["description"],

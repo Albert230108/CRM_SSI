@@ -18,12 +18,30 @@ ROOM = {
 DATA = {"P": {"extra_services": {"deposit": 400.0, "city_tax": 3.0}, "rooms": {"R": ROOM}}}
 
 
-def test_select_tier_picks_highest_breakpoint_at_or_below_nights():
-    assert pricing_config.select_tier_price({"7": 100.0, "14": 90.0, "30": 80.0}, 7) == 100.0
-    assert pricing_config.select_tier_price({"7": 100.0, "14": 90.0, "30": 80.0}, 20) == 90.0
-    assert pricing_config.select_tier_price({"7": 100.0, "14": 90.0, "30": 80.0}, 45) == 80.0
-    # Shorter than the smallest breakpoint -> use the smallest.
+def test_select_tier_picks_highest_breakpoint_strictly_below_nights():
+    tiers = {"7": 100.0, "14": 90.0, "30": 80.0}
+    assert pricing_config.select_tier_price(tiers, 20) == 90.0
+    assert pricing_config.select_tier_price(tiers, 45) == 80.0
+    # At or below the smallest breakpoint -> use the smallest.
+    assert pricing_config.select_tier_price(tiers, 7) == 100.0
     assert pricing_config.select_tier_price({"7": 100.0, "30": 80.0}, 3) == 100.0
+
+
+def test_select_tier_strict_threshold_at_exact_breakpoints():
+    """Desktop-exact strict '>' thresholds: a stay of exactly a breakpoint length falls to the
+    tier below it (14 -> "7", 30 -> "14", 60 -> "30", 90 -> "60")."""
+    tiers = {"7": 100.0, "14": 90.0, "30": 80.0, "60": 70.0, "90": 60.0}
+    assert pricing_config.select_tier_price(tiers, 14) == 100.0  # "7" rate, not "14"
+    assert pricing_config.select_tier_price(tiers, 30) == 90.0   # "14" rate, not "30"
+    assert pricing_config.select_tier_price(tiers, 60) == 80.0   # "30" rate
+    assert pricing_config.select_tier_price(tiers, 90) == 70.0   # "60" rate
+    assert pricing_config.select_tier_price(tiers, 91) == 60.0   # now "90"
+    assert pricing_config.select_tier_price(tiers, 15) == 90.0   # "14" rate
+
+
+def test_shortest_tier_price_returns_smallest_breakpoint_rate():
+    assert pricing_config.shortest_tier_price({"7": 100.0, "14": 90.0, "30": 80.0}) == 100.0
+    assert pricing_config.shortest_tier_price({"3": 200.0, "21": 150.0}) == 200.0
 
 
 def test_select_tier_supports_arbitrary_flexible_breakpoints():
