@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPut } from '../lib/apiClient'
+import { LONG_STAY_DEPOSIT_DEFAULT } from '../lib/constants'
 
 type TabKey = 'admin-costs' | 'prices'
 
@@ -16,7 +17,16 @@ function clone<T>(value: T): T {
 }
 
 const inputClass = 'w-full rounded border border-gray-200 px-2 py-1 text-sm'
-const EXTRA_KEYS = ['deposit', 'city_tax', 'municipality_cost']
+const EXTRA_KEYS = ['deposit', 'city_tax', 'municipality_cost', 'long_stay_deposit']
+const EXTRA_LABELS: Record<string, string> = {
+  deposit: 'Deposit',
+  city_tax: 'City tax',
+  municipality_cost: 'Municipality cost',
+  long_stay_deposit: 'Long-stay deposit (>183n)',
+}
+// The displayed default for an unset extra_services field. Long-stay deposit shows €1500 (the
+// same fallback resolveConfiguredDeposit uses) rather than 0, so a blank field means "use €1500".
+const extraDefault = (key: string): number => (key === 'long_stay_deposit' ? LONG_STAY_DEPOSIT_DEFAULT : 0)
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -166,7 +176,9 @@ function PriceTiersEditor({ data, saving, onSave }: { data: AnyRecord; saving: b
   const [draft, setDraft] = useState<AnyRecord>(() => clone(data))
   useEffect(() => setDraft(clone(data)), [data])
 
-  const properties = Object.keys(draft)
+  // Skip the top-level `last_updated` string that config_store writes on every save - it isn't a
+  // property and must not appear in the picker.
+  const properties = Object.keys(draft).filter((k) => k !== 'last_updated' && draft[k] && typeof draft[k] === 'object')
   const [prop, setProp] = useState(properties[0] ?? '')
   useEffect(() => {
     if (!properties.includes(prop)) setProp(properties[0] ?? '')
@@ -256,15 +268,15 @@ function PriceTiersEditor({ data, saving, onSave }: { data: AnyRecord; saving: b
 
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Property default services (excl. VAT)</h4>
-        <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-3">
+        <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
           {EXTRA_KEYS.map((k) => (
             <label key={k} className="text-xs text-gray-500">
-              {k}
-              <input type="number" step="0.01" value={propExtras[k] ?? 0} onChange={(e) => patchPropertyExtra(k, Number(e.target.value))} className={inputClass} />
+              {EXTRA_LABELS[k] ?? k}
+              <input type="number" step="0.01" value={propExtras[k] ?? extraDefault(k)} onChange={(e) => patchPropertyExtra(k, Number(e.target.value))} className={inputClass} />
             </label>
           ))}
         </div>
-        <p className="mt-1 text-[11px] text-gray-400">A date range can override any of these below; otherwise the property default applies.</p>
+        <p className="mt-1 text-[11px] text-gray-400">A date range can override any of these below; otherwise the property default applies. Long-stay deposit applies when a stay is over 183 nights; leave it at €{LONG_STAY_DEPOSIT_DEFAULT} unless this property differs.</p>
       </div>
 
       {rooms.map((room) => {
@@ -337,10 +349,10 @@ function PriceTiersEditor({ data, saving, onSave }: { data: AnyRecord; saving: b
                       </button>
                     </div>
 
-                    <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-3">
+                    <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
                       {EXTRA_KEYS.map((k) => (
                         <label key={k} className="text-[11px] text-gray-400">
-                          {k} override
+                          {EXTRA_LABELS[k] ?? k} override
                           <input
                             type="number"
                             step="0.01"

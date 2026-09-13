@@ -44,8 +44,10 @@ export function resolveConfiguredDeposit(
   if (!prop) return null
   const range = resolveRange(prop.rooms?.[roomName], checkIn || '')
   if (nights !== null && nights > LONG_STAY_DEPOSIT_NIGHT_THRESHOLD) {
+    // A missing or non-positive configured value falls back to the €1500 default, so an unset (or
+    // accidental-0) Settings field never zeroes the long-stay deposit.
     const longStay = range?.extra_services?.long_stay_deposit ?? prop.extra_services?.long_stay_deposit
-    return typeof longStay === 'number' ? longStay : LONG_STAY_DEPOSIT_DEFAULT
+    return typeof longStay === 'number' && longStay > 0 ? longStay : LONG_STAY_DEPOSIT_DEFAULT
   }
   const deposit = range?.extra_services?.deposit ?? prop.extra_services?.deposit
   return typeof deposit === 'number' ? deposit : null
