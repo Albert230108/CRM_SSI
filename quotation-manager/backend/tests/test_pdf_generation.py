@@ -136,3 +136,49 @@ def test_apply_payment_links_no_op_without_booking_number():
     payments = [{"description": "Installment 1", "line_total": 500.0}]
     result = pdf_service._apply_payment_links(payments, None)
     assert result[0]["description"] == "Installment 1"
+
+
+def test_apply_payment_links_no_op_for_draft_booking_number():
+    # Draft quotations pass booking_number="Draft" (no real Beds24 booking exists yet).
+    # Linking it would produce a dead bookpay.php?bookid=Draft URL, so drafts get no link.
+    from app.services import pdf_service
+
+    payments = [{"description": "Installment 1", "line_total": 500.0}]
+    result = pdf_service._apply_payment_links(payments, "Draft")
+    assert result[0]["description"] == "Installment 1"
+    assert "<a href" not in result[0]["description"]
+
+
+def test_create_invoice_pdf_room_link_present_with_room_id(tmp_path):
+    # STUDIO_LINK_MAPPING[262377] = Studio 1 - room_id must reach the PDF as a clickable link.
+    from app.services import pdf_service
+
+    output_path = tmp_path / "Quotation_12345_003.pdf"
+    pdf_service.create_invoice_pdf(
+        output_path=output_path,
+        tenant_name="John Doe",
+        booking_number="12345",
+        invoice_items=[{"type": "charge", "description": "Rent", "qty": 1, "amount": 100.0, "lineTotal": 100.0, "vatRate": 9}],
+        quotation_date="01 Jan 2026",
+        room_name="Studio 1",
+        room_id=262377,
+        first_night="2026-07-01",
+        leaving_day="2026-07-02",
+        first_name="John",
+        last_name="Doe",
+    )
+    text = output_path.read_bytes()
+    assert b"booking2.php?roomid=262377" in text
+
+
+def test_faq_link_url_encodes_names_and_uses_amp_entity():
+    # Regression: a raw "&" between query params breaks ReportLab's paraparser (it starts
+    # parsing an XML entity), silently dropping/breaking the FAQ link - it must be &amp;,
+    # and names must be URL-encoded rather than pasted in raw.
+    from urllib.parse import quote
+
+    first_name, last_name = "Jo Ann", "O'Brien"
+    faq_url = f"https://notre.guide/ShortStayInn?clientname={quote(last_name)}&amp;clientfirstname={quote(first_name)}"
+    assert "&amp;clientfirstname=" in faq_url
+    assert quote("Jo Ann") in faq_url
+    assert quote("O'Brien") in faq_url

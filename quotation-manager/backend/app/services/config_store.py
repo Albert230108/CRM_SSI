@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.services import admin_costs as admin_costs_service
+from app.services import pdf_texts
 from app.services import pricing_config
 
 
@@ -58,6 +59,10 @@ def _bust_pricing_caches() -> None:
     pricing_config.bust_cache()
 
 
+def _bust_pdf_texts_cache() -> None:
+    pdf_texts.bust_cache()
+
+
 # name -> (path-getter, required_top_level_key or None, cache-buster).
 # The path is read from the owning module at call time (not captured at import),
 # so tests can redirect the module's file constant to a tmp copy without
@@ -65,6 +70,7 @@ def _bust_pricing_caches() -> None:
 _CONFIGS: dict[str, tuple[Callable[[], Path], str | None, Callable[[], None]]] = {
     "admin-costs": (lambda: admin_costs_service.ADMIN_COSTS_FILE, "properties", _bust_admin_cache),
     "prices": (lambda: pricing_config.PRICING_FILE, None, _bust_pricing_caches),
+    "pdf-texts": (lambda: pdf_texts.PDF_TEXTS_FILE, "texts", _bust_pdf_texts_cache),
 }
 
 

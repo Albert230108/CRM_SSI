@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPut } from '../lib/apiClient'
 import { LONG_STAY_DEPOSIT_DEFAULT } from '../lib/constants'
 
-type TabKey = 'admin-costs' | 'prices'
+type TabKey = 'admin-costs' | 'prices' | 'pdf-texts'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'admin-costs', label: 'Admin costs' },
   { key: 'prices', label: 'Price tiers' },
+  { key: 'pdf-texts', label: 'PDF texts' },
 ]
 
 type AnyRecord = Record<string, any>
@@ -94,8 +95,10 @@ export default function SettingsPage() {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : tab === 'admin-costs' ? (
         <AdminCostsEditor data={data} saving={saving} onSave={save} />
-      ) : (
+      ) : tab === 'prices' ? (
         <PriceTiersEditor data={data} saving={saving} onSave={save} />
+      ) : (
+        <PdfTextsEditor data={data} saving={saving} onSave={save} />
       )}
     </div>
   )
@@ -375,6 +378,53 @@ function PriceTiersEditor({ data, saving, onSave }: { data: AnyRecord; saving: b
         )
       })}
 
+      <SaveBar saving={saving} onSave={() => onSave(draft)} />
+    </div>
+  )
+}
+
+// Standard boilerplate texts printed on every quotation PDF (company header, conditions,
+// footer, deposit/misc notes). Shaped { texts: { key: string } } - see backend
+// app/services/pdf_texts.py for the defaults and where each key renders in the PDF.
+const PDF_TEXT_FIELDS: { key: string; label: string; hint: string; rows: number }[] = [
+  { key: 'header_title', label: 'Header title', hint: 'Large title at the top of the PDF (default: "Quotation").', rows: 1 },
+  { key: 'company_info', label: 'Company info block', hint: 'Top-right of the header. Supports <b>, <br/> and <font size=\'7\'> tags.', rows: 4 },
+  { key: 'total_prices_header', label: '"Total prices" section header', rows: 1, hint: '' },
+  { key: 'deposit_refund_note', label: 'Deposit refund note', hint: 'Small note shown under the deposit line.', rows: 1 },
+  { key: 'conditions', label: 'Conditions paragraph', hint: 'Printed near the bottom of the PDF, above the footer.', rows: 5 },
+  { key: 'footer', label: 'Footer', hint: 'IBAN/BIC/contact line. Use a blank line to start a new footer line.', rows: 3 },
+]
+
+function PdfTextsEditor({ data, saving, onSave }: { data: AnyRecord; saving: boolean; onSave: (d: AnyRecord) => void }) {
+  const [draft, setDraft] = useState<AnyRecord>(() => clone(data))
+  useEffect(() => setDraft(clone(data)), [data])
+  const texts = (draft.texts ?? {}) as AnyRecord
+
+  const patch = (key: string, value: string) =>
+    setDraft((prev) => {
+      const next = clone(prev)
+      next.texts = next.texts ?? {}
+      next.texts[key] = value
+      return next
+    })
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">These texts appear on every generated quotation PDF. Tenant-specific details (name, dates, amounts) are not edited here.</p>
+      {PDF_TEXT_FIELDS.map((field) => (
+        <div key={field.key} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <label className="text-xs font-semibold text-gray-700">
+            {field.label}
+            <textarea
+              value={texts[field.key] ?? ''}
+              onChange={(e) => patch(field.key, e.target.value)}
+              rows={field.rows}
+              className={`${inputClass} mt-1 font-normal`}
+            />
+          </label>
+          {field.hint ? <p className="mt-1 text-[11px] text-gray-400">{field.hint}</p> : null}
+        </div>
+      ))}
       <SaveBar saving={saving} onSave={() => onSave(draft)} />
     </div>
   )

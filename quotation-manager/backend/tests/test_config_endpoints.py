@@ -4,6 +4,7 @@ import shutil
 import pytest
 
 from app.services import admin_costs as admin_costs_service
+from app.services import pdf_texts as pdf_texts_service
 
 
 @pytest.fixture()
@@ -14,6 +15,17 @@ def temp_admin_costs(tmp_path, monkeypatch):
     shutil.copy2(src, dst)
     monkeypatch.setattr(admin_costs_service, "ADMIN_COSTS_FILE", dst)
     monkeypatch.setattr(admin_costs_service, "_admin_costs_cache", None, raising=False)
+    return dst
+
+
+@pytest.fixture()
+def temp_pdf_texts(tmp_path, monkeypatch):
+    """Redirect pdf_texts.json to a tmp copy so tests never touch the tracked file."""
+    src = pdf_texts_service.PDF_TEXTS_FILE
+    dst = tmp_path / "pdf_texts.json"
+    shutil.copy2(src, dst)
+    monkeypatch.setattr(pdf_texts_service, "PDF_TEXTS_FILE", dst)
+    monkeypatch.setattr(pdf_texts_service, "_pdf_texts_cache", None, raising=False)
     return dst
 
 
@@ -50,3 +62,28 @@ def test_config_unknown_name_404(client, auth_headers):
 
 def test_config_requires_token(client):
     assert client.get("/api/config/admin-costs").status_code == 401
+
+
+def test_get_pdf_texts(client, auth_headers, temp_pdf_texts):
+    response = client.get("/api/config/pdf-texts", headers=auth_headers)
+    assert response.status_code == 200
+    assert "texts" in response.json()
+
+
+def test_put_pdf_texts_persists_and_busts_cache(client, auth_headers, temp_pdf_texts):
+    current = json.loads(temp_pdf_texts.read_text())
+    current["texts"]["conditions"] = "Custom conditions text."
+
+    response = client.put("/api/config/pdf-texts", headers=auth_headers, json=current)
+    assert response.status_code == 200
+    assert response.json()["texts"]["conditions"] == "Custom conditions text."
+
+    on_disk = json.loads(temp_pdf_texts.read_text())
+    assert on_disk["texts"]["conditions"] == "Custom conditions text."
+    assert temp_pdf_texts.with_suffix(".json.backup").exists()
+    assert pdf_texts_service.load_pdf_texts()["conditions"] == "Custom conditions text."
+
+
+def test_put_pdf_texts_rejects_missing_section(client, auth_headers, temp_pdf_texts):
+    response = client.put("/api/config/pdf-texts", headers=auth_headers, json={"nope": 1})
+    assert response.status_code == 400

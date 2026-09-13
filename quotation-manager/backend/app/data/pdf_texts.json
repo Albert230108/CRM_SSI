@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-09-13",
+  "texts": {
+    "header_title": "Quotation",
+    "company_info": "<b>Short-Stay Inn</b><br/><font size='7'>Hoedemakerplein 2<br/>7511 JP Enschede<br/>+31 (0) 53 820 0 946<br/>KvK: 62430610<br/>VAT-ID: NL002480262B34</font>",
+    "total_prices_header": "Total prices (Including Citytax & VAT, excluding deposit):",
+    "deposit_refund_note": "(Refunded after check-out if no damages)",
+    "conditions": "* Down payment will secure the reservation. * Extension of rental is based on availability. * Shortening of rental - minimum of 7 days before the new departure date. * Cancellation - when announced at least 7 days before arrival date then the deposit will be refunded. * Check in / out in consultation with the agency. * Liability - Tenant liable for damage or loss. * Modifications - to be communicated by email; administration costs €40,- excl. VAT per modification.",
+    "footer": "IBAN-number: NL 52 INGB 0007 1966 78 | BIC-number: INGBNL2A | chamber of commerce no. 062430610 | General conditions filed with the district court of Almelo\nE-mail: info@ShortStayInn.com | Website: www.ShortStayInn.com | Telephone no.: 0031 (0) 53-820 0946"
+  }
+}

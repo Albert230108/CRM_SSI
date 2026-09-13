@@ -17,6 +17,7 @@ import {
   PROPERTY_ROOMS,
   ROOM_CAPACITY,
   ROOM_ID_MAPPING,
+  roomIdForName,
   SSI_FLAG,
 } from '../lib/constants'
 import type { BuildChargesResult, EditableInvoiceItem, PaymentPlanResult } from '../lib/types'
@@ -283,6 +284,7 @@ export default function NewQuotationPage() {
           first_name: firstName,
           last_name: lastName,
           room_name: roomName,
+          room_id: roomIdForName(roomName),
           property_name: propertyName,
           check_in: checkIn,
           check_out: checkOut,

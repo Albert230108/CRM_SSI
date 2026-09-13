@@ -701,11 +701,18 @@ export default function QuotationEditorPage() {
       const overridePricePerNight = totalNights > 0 ? Math.round((totalChargesExclDeposit / totalNights) * 100) / 100 : 0
       const combinedRoomName = roomNames.length ? roomNames.join(' + ') : roomName
 
+      // The room "pictures & information" link can only point at one room - use the master
+      // booking's room, mirroring the desktop app's combined-PDF behavior.
+      const masterId = group.master_id != null ? String(group.master_id) : bookingId
+      const masterBooking = group.bookings.find((b) => b.id === masterId) ?? group.bookings[0]
+      const masterRoomName = masterBooking ? firstString(masterBooking.roomName, masterBooking.unitName) : roomName
+
       const result = await apiPost<{ file_path: string; quotation_number: number; location: string; web_url?: string | null; name?: string | null }>('/api/quotation/generate-pdf', {
         booking_id: String(group.master_id ?? bookingId),
         first_name: firstName,
         last_name: lastName,
         room_name: combinedRoomName,
+        room_id: roomIdForName(masterRoomName),
         property_name: propertyName,
         check_in: checkIn,
         check_out: checkOut,

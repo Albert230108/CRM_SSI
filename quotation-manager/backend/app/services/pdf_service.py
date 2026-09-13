@@ -17,6 +17,7 @@ import pathlib
 import re
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -26,6 +27,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.services import pdf_texts
 from app.services import vat as vat_service
 
 logger = logging.getLogger(__name__)
@@ -54,7 +56,9 @@ def _apply_payment_links(payments: list[dict], booking_number: str | None) -> li
     clickable "Pay" link (ported from the desktop's payment-link generation). Skips refunds and
     zero/negative rows, honours the ##NOLINK## marker (which suppresses the link and is stripped
     from the visible text), and never double-links a row that already carries an anchor."""
-    if not booking_number:
+    # Draft quotations pass booking_number="Draft" (no real Beds24 booking exists yet), which
+    # would otherwise produce a dead bookpay.php?bookid=Draft link - only link real numeric ids.
+    if not booking_number or not str(booking_number).isdigit():
         return payments
     for payment in payments:
         description = str(payment.get("description", "") or "")
@@ -249,6 +253,7 @@ def create_invoice_pdf(
     and the output_folder/glob bookkeeping.
     """
     charges, payments = process_invoice_items(invoice_items, room_name, first_night, leaving_day)
+    texts = pdf_texts.load_pdf_texts()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -265,14 +270,7 @@ def create_invoice_pdf(
 
     resolved_logo_path = logo_path or DEFAULT_LOGO_PATH
 
-    company_info = (
-        "<b>Short-Stay Inn</b><br/>"
-        "<font size='7'>Hoedemakerplein 2<br/>"
-        "7511 JP Enschede<br/>"
-        "+31 (0) 53 820 0 946<br/>"
-        "KvK: 62430610<br/>"
-        "VAT-ID: NL002480262B34</font>"
-    )
+    company_info = texts["company_info"]
 
     custom_color = HexColor("#0099cb")
 
@@ -289,7 +287,7 @@ def create_invoice_pdf(
         logo_element = Paragraph("", styles["Normal"])
 
     header_data = [[
-        Paragraph(f"<b><font color='{custom_color.hexval()}' size='20'>Quotation</font></b>", styles["Title"]),
+        Paragraph(f"<b><font color='{custom_color.hexval()}' size='20'>{escape(texts['header_title'])}</font></b>", styles["Title"]),
         logo_element,
         Paragraph(company_info, styles["Normal"]),
     ]]
@@ -468,7 +466,7 @@ def create_invoice_pdf(
     else:
         price_per_night = round(total_charges_excl_deposit / max(nights if isinstance(nights, int) else 1, 1), 2)
 
-    total_prices_header = Paragraph("<b>Total prices (Including Citytax & VAT, excluding deposit):</b>", styles["Heading2"])
+    total_prices_header = Paragraph(f"<b>{escape(texts['total_prices_header'])}</b>", styles["Heading2"])
     total_prices_header.style.fontSize = 10
     elements.append(total_prices_header)
     elements.append(Spacer(1, 0))
@@ -494,7 +492,7 @@ def create_invoice_pdf(
 
     deposit_para = Paragraph("Deposit:", small_style)
     deposit_value_para = Paragraph(f"€{deposit_amount:.2f}", small_style_right)
-    refunded_para = Paragraph("<font size='5'>(Refunded after check-out if no damages)</font>", small_style_right)
+    refunded_para = Paragraph(f"<font size='5'>{escape(texts['deposit_refund_note'])}</font>", small_style_right)
 
     correct_grand_total = total_charges_excl_deposit + deposit_amount
     grand_total_para = Paragraph("Grand Total (incl. deposit):", grand_total_style)
@@ -635,7 +633,9 @@ def create_invoice_pdf(
     faq_style.fontSize = 8
 
     if first_name and last_name:
-        faq_url = f"https://notre.guide/ShortStayInn?clientname={last_name}&clientfirstname={first_name}"
+        # URL-encode names and use &amp; between query params - ReportLab's paraparser treats a
+        # raw "&" as the start of an XML entity, which silently drops/breaks the second param.
+        faq_url = f"https://notre.guide/ShortStayInn?clientname={quote(last_name)}&amp;clientfirstname={quote(first_name)}"
     else:
         faq_url = "https://notre.guide/ShortStayInn/"
     faq_text = f'<b><font color="#0099cb"><a href="{faq_url}">FAQ page of Short-Stay Inn</a></font></b>'
@@ -655,19 +655,11 @@ def create_invoice_pdf(
     elements.append(conditions_title)
     elements.append(Spacer(1, 0))
 
-    conditions = (
-        "* Down payment will secure the reservation. "
-        "* Extension of rental is based on availability. "
-        "* Shortening of rental - minimum of 7 days before the new departure date. "
-        "* Cancellation - when announced at least 7 days before arrival date then the deposit will be refunded. "
-        "* Check in / out in consultation with the agency. "
-        "* Liability - Tenant liable for damage or loss. "
-        "* Modifications - to be communicated by email; administration costs €40,- excl. VAT per modification."
-    )
+    conditions = texts["conditions"]
     smaller_style = styles["Normal"].clone('SmallerStyle')
     smaller_style.fontSize = 7
     smaller_style.alignment = 1
-    conditions_paragraph = Paragraph(conditions, smaller_style)
+    conditions_paragraph = Paragraph(escape(conditions), smaller_style)
     elements.append(conditions_paragraph)
     elements.append(Spacer(1, 0))
 
@@ -675,15 +667,11 @@ def create_invoice_pdf(
     elements.append(line)
     elements.append(Spacer(1, 0))
 
-    footer = (
-        "IBAN-number: NL 52 INGB 0007 1966 78 | BIC-number: INGBNL2A | chamber of commerce no. 062430610 "
-        "| General conditions filed with the district court of Almelo\n"
-        "E-mail: info@ShortStayInn.com | Website: www.ShortStayInn.com | Telephone no.: 0031 (0) 53-820 0946"
-    )
+    footer = texts["footer"]
     footer_style = styles["Normal"].clone('FooterStyle')
     footer_style.fontSize = 7
     footer_style.alignment = 1
-    footer_paragraph = Paragraph(footer, footer_style)
+    footer_paragraph = Paragraph(escape(footer).replace("\n", "<br/>"), footer_style)
     elements.append(footer_paragraph)
 
     pdf.build(elements)
