@@ -305,6 +305,18 @@ def test_sales_manager_role_is_accepted(client):
     assert response.json()["role"] == "sales_manager"
 
 
+def test_run_qa_role_is_accepted_and_filterable(client):
+    # Regression: run_qa was missing from the AgentRole schema literal, so saving a Run QA
+    # profile 422'd even though the list/filter endpoints already accepted the role.
+    response = client.post("/api/ai-agent-profiles", json=_payload(name="Run QA", role="run_qa"))
+    assert response.status_code == 201
+    assert response.json()["role"] == "run_qa"
+
+    listed = client.get("/api/ai-agent-profiles", params={"role": "run_qa"})
+    assert listed.status_code == 200
+    assert {profile["role"] for profile in listed.json()} == {"run_qa"}
+
+
 def test_agent_graph_reflects_live_config(client, db_session):
     # An active planner reading Beds24 should show up as a beds24 context edge.
     client.post("/api/ai-agent-profiles", json=_payload(name="Planner", role="planner", include_beds24=True))
