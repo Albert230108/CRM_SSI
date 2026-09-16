@@ -12,19 +12,29 @@ only ever called from the API layer once a human clicks "save".
 """
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.models.ai_agent_profile import ASSISTANT_ROLE, AiAgentProfile
+from app.models.ai_agent_run import STATUS_COMPLETED, STATUS_FAILED, AiAgentRun
 from app.models.app_knowledge_entry import SOURCE_AI
 from app.models.assistant_conversation import AssistantConversation
 from app.models.assistant_message import ROLE_ASSISTANT, ROLE_USER, AssistantMessage
 from app.models.finance import Finance
 from app.models.tenant import Tenant
 from app.services import ai_agent_orchestrator, ai_prompt_blocks, ai_reply_service, app_knowledge_service, gemini_client, search_service
+from app.services.agent_run_recorder import AgentRunRecorder
+
+logger = logging.getLogger(__name__)
 
 _HISTORY_LIMIT = 10
 _MAX_ITERATIONS = 3
 _MAX_REQUESTS_PER_TURN = 4
+
+# Shown when the model errors or the tool loop ends without an answer. Also the sentinel the run
+# status is derived from, so it lives in one place.
+_FALLBACK_ANSWER = "Sorry, I couldn't answer that right now - please try again."
 
 _TOOL_CATALOG_BASE = (
     "- search_knowledge_base(query): search the app's how-it-works knowledge base.\n"
@@ -212,6 +222,40 @@ def list_messages(db: Session, conversation_id: int) -> list[AssistantMessage]:
     )
 
 
+def _coerce_tenant_id(screen_context: dict | None) -> int | None:
+    """The tenant currently open in the UI, when the chat was sent from a tenant screen."""
+    if not screen_context:
+        return None
+    raw = screen_context.get("tenantId")
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_run(db: Session, conversation: AssistantConversation, screen_context: dict | None) -> AiAgentRun:
+    """Reuse this conversation's run so more questions append to it, or create it on first ask.
+
+    Keeps one AiAgentRun per chat in the AI Planner Runs log rather than one per question.
+    """
+    if conversation.agent_run_id is not None:
+        run = db.query(AiAgentRun).filter(AiAgentRun.id == conversation.agent_run_id).first()
+        if run is not None:
+            return run
+
+    run = AiAgentRun(
+        tenant_id=_coerce_tenant_id(screen_context),
+        channel="assistant",
+        mode="manual",
+        status=STATUS_FAILED,
+        created_by_user_id=conversation.user_id,
+    )
+    db.add(run)
+    db.flush()
+    conversation.agent_run_id = run.id
+    return run
+
+
 def ask(
     db: Session,
     conversation: AssistantConversation,
@@ -226,11 +270,16 @@ def ask(
     blocks = ai_prompt_blocks.resolve_blocks(profile, ASSISTANT_ROLE)
     history = list_messages(db, conversation.id)
     generation_kwargs = ai_agent_orchestrator._generation_kwargs(profile)
+    resolved_model = generation_kwargs.get("model") or gemini_client.GEMINI_MODEL
+
+    run = _resolve_run(db, conversation, screen_context)
+    recorder = AgentRunRecorder(run=run, db=db)
 
     tool_results: list[tuple[str, str]] = []
     tool_trace: list[dict] = []
-    answer_text = "Sorry, I couldn't answer that right now - please try again."
+    answer_text = _FALLBACK_ANSWER
     knowledge_suggestion: dict | None = None
+    gemini_failed = False
 
     for _ in range(_MAX_ITERATIONS):
         prompt = _build_prompt(
@@ -244,9 +293,15 @@ def ask(
         )
         try:
             result = gemini_client.generate(prompt, response_schema=ASSISTANT_STEP_SCHEMA, **generation_kwargs)
-        except gemini_client.GeminiClientError:
+        except gemini_client.GeminiClientError as exc:
+            # Record the real upstream error (usually a transient Gemini 503) on the run and in
+            # the logs, instead of silently swallowing it behind the generic fallback.
+            gemini_failed = True
+            logger.warning("assistant Gemini call failed for conversation %s: %s", conversation.id, exc)
+            recorder.record("assistant", prompt=prompt, error=str(exc), model=resolved_model)
             break
 
+        recorder.record("assistant", prompt=prompt, result=result)
         parsed = result.parsed or {}
         action = parsed.get("action")
 
@@ -267,6 +322,15 @@ def ask(
         if isinstance(suggestion, dict) and (suggestion.get("title") or "").strip() and (suggestion.get("body") or "").strip():
             knowledge_suggestion = {"title": suggestion["title"].strip(), "body": suggestion["body"].strip()}
         break
+
+    answered = answer_text != _FALLBACK_ANSWER
+    if not answered and not gemini_failed:
+        logger.warning(
+            "assistant exhausted %s tool iterations without an answer for conversation %s",
+            _MAX_ITERATIONS,
+            conversation.id,
+        )
+    recorder.finish(STATUS_COMPLETED if answered else STATUS_FAILED)
 
     db.add(AssistantMessage(conversation_id=conversation.id, role=ROLE_USER, content=question))
     assistant_message = AssistantMessage(

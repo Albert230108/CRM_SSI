@@ -18,6 +18,11 @@ class AssistantConversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=False, default="New chat", server_default="New chat")
+    # One AiAgentRun logs this whole chat: later questions append steps to it instead of creating
+    # a fresh run each turn. SET NULL so deleting the run never removes the conversation.
+    agent_run_id = Column(
+        Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

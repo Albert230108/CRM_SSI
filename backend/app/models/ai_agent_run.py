@@ -21,7 +21,9 @@ class AiAgentRun(Base):
     __tablename__ = "ai_agent_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Nullable: the floating copilot logs its chats as runs too, and those are per-user and often
+    # have no tenant open.
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     channel = Column(String(20), nullable=False, index=True)
     mode = Column(String(20), nullable=False)  # manual | auto
     status = Column(String(20), nullable=False, index=True)

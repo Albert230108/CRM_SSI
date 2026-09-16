@@ -1,5 +1,8 @@
+import logging
+
 import pytest
 
+from app.models.ai_agent_run import STATUS_COMPLETED, STATUS_FAILED, AiAgentRun, AiAgentRunStep
 from app.models.app_knowledge_entry import AppKnowledgeEntry
 from app.models.assistant_conversation import AssistantConversation
 from app.models.assistant_message import AssistantMessage
@@ -143,3 +146,105 @@ def test_gemini_error_returns_fallback_message(db_session, monkeypatch):
     db_session.commit()
 
     assert "couldn't answer" in assistant_message.content
+
+
+def _answer_generate(text="An answer."):
+    def fake_generate(prompt, *, model=None, temperature=None, max_output_tokens=None, response_schema=None):
+        return _result({"action": "answer", "answer": text})
+
+    return fake_generate
+
+
+def test_ask_creates_and_links_one_assistant_run(db_session, monkeypatch):
+    conversation = _create_conversation(db_session, user_id=77)
+    monkeypatch.setattr(ai_assistant_service.gemini_client, "generate", _answer_generate())
+
+    ai_assistant_service.ask(db_session, conversation, "Where do I find tenants?")
+    db_session.commit()
+    db_session.refresh(conversation)
+
+    runs = db_session.query(AiAgentRun).all()
+    assert len(runs) == 1
+    run = runs[0]
+    assert conversation.agent_run_id == run.id
+    assert run.channel == "assistant"
+    assert run.mode == "manual"
+    assert run.status == STATUS_COMPLETED
+    assert run.created_by_user_id == 77
+    assert run.tenant_id is None
+
+    steps = db_session.query(AiAgentRunStep).filter(AiAgentRunStep.run_id == run.id).all()
+    assert len(steps) == 1
+    assert steps[0].stage == "assistant"
+    assert steps[0].step_index == 0
+    assert run.total_prompt_tokens == 1 and run.total_output_tokens == 1
+
+
+def test_second_ask_reuses_same_run_and_appends_step(db_session, monkeypatch):
+    conversation = _create_conversation(db_session)
+    monkeypatch.setattr(ai_assistant_service.gemini_client, "generate", _answer_generate())
+
+    ai_assistant_service.ask(db_session, conversation, "First question?")
+    db_session.commit()
+    db_session.refresh(conversation)
+    first_run_id = conversation.agent_run_id
+
+    ai_assistant_service.ask(db_session, conversation, "Second question?")
+    db_session.commit()
+    db_session.refresh(conversation)
+
+    # Same run, updated rather than duplicated.
+    assert conversation.agent_run_id == first_run_id
+    assert db_session.query(AiAgentRun).count() == 1
+
+    steps = (
+        db_session.query(AiAgentRunStep)
+        .filter(AiAgentRunStep.run_id == first_run_id)
+        .order_by(AiAgentRunStep.step_index)
+        .all()
+    )
+    assert [s.step_index for s in steps] == [0, 1]
+
+    run = db_session.get(AiAgentRun, first_run_id)
+    assert run.total_prompt_tokens == 2 and run.total_output_tokens == 2
+
+
+def test_ask_uses_tenant_id_from_screen_context(db_session, monkeypatch):
+    tenant = Tenant(name="Ctx Tenant", booking_id="B-ctx-1")
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+
+    conversation = _create_conversation(db_session)
+    monkeypatch.setattr(ai_assistant_service.gemini_client, "generate", _answer_generate())
+
+    ai_assistant_service.ask(
+        db_session, conversation, "Question", screen_context={"tenantId": tenant.id}
+    )
+    db_session.commit()
+    db_session.refresh(conversation)
+
+    run = db_session.get(AiAgentRun, conversation.agent_run_id)
+    assert run.tenant_id == tenant.id
+
+
+def test_gemini_error_records_failed_run_step_and_logs(db_session, monkeypatch, caplog):
+    conversation = _create_conversation(db_session)
+
+    def fake_generate(*args, **kwargs):
+        raise gemini_client.GeminiClientError("503 UNAVAILABLE")
+
+    monkeypatch.setattr(ai_assistant_service.gemini_client, "generate", fake_generate)
+
+    with caplog.at_level(logging.WARNING):
+        message = ai_assistant_service.ask(db_session, conversation, "Anything?")
+    db_session.commit()
+    db_session.refresh(conversation)
+
+    assert "couldn't answer" in message.content
+    run = db_session.get(AiAgentRun, conversation.agent_run_id)
+    assert run.status == STATUS_FAILED
+    steps = db_session.query(AiAgentRunStep).filter(AiAgentRunStep.run_id == run.id).all()
+    assert len(steps) == 1
+    assert "503 UNAVAILABLE" in (steps[0].error or "")
+    assert any("Gemini call failed" in r.getMessage() for r in caplog.records)

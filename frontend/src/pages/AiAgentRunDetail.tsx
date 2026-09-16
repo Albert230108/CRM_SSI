@@ -8,7 +8,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 type AgentRun = {
   id: number
-  tenant_id: number
+  tenant_id: number | null
   tenant_name: string | null
   channel: string
   mode: string
@@ -126,7 +126,7 @@ export default function AiAgentRunDetail() {
     <main className="mx-auto animate-slide-up max-w-4xl px-4 py-4">
       <Link to="/ai-runs" className="text-sm text-brand-700 hover:underline">&larr; Back to Planner Runs</Link>
       <h1 className="mt-1.5 text-lg font-semibold text-gray-900">
-        {run ? `AI Planner Run #${run.id} - ${run.tenant_name ?? `tenant ${run.tenant_id}`}` : 'AI Planner Run Detail'}
+        {run ? `AI Planner Run #${run.id} - ${run.tenant_name ?? (run.tenant_id != null ? `tenant ${run.tenant_id}` : 'Assistant chat')}` : 'AI Planner Run Detail'}
       </h1>
       <p className="mt-1 text-sm text-gray-500">
         Planning rationale, checker feedback, the final draft, and every step in sequence.

@@ -6,59 +6,15 @@ brain-writer, or action-writer run without any per-type code.
 """
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
-
 from sqlalchemy.orm import Session
 
 from app.models.ai_agent_profile import RUN_QA_ROLE, AiAgentProfile
-from app.models.ai_agent_run import STATUS_COMPLETED, STATUS_FAILED, AiAgentRun, AiAgentRunStep
+from app.models.ai_agent_run import STATUS_COMPLETED, STATUS_FAILED, AiAgentRun
 from app.models.run_qa_message import ROLE_ASSISTANT, ROLE_USER, RunQaMessage
 from app.services import ai_agent_orchestrator, ai_prompt_blocks, gemini_client, memory_redo_service
+from app.services.agent_run_recorder import AgentRunRecorder
 
 _QA_HISTORY_LIMIT = 10
-
-
-@dataclass
-class _QaRunRecorder:
-    """Keeps the QA-chat run log aligned with the planner run accounting model."""
-
-    run: AiAgentRun
-    db: Session
-    started: float = field(default_factory=time.monotonic)
-    _index: int = 0
-
-    def record(
-        self,
-        stage: str,
-        *,
-        prompt: str,
-        result: gemini_client.GenerationResult | None = None,
-        error: str | None = None,
-        model: str | None = None,
-    ) -> None:
-        step = AiAgentRunStep(
-            run_id=self.run.id,
-            step_index=self._index,
-            stage=stage,
-            model=result.model if result is not None else model,
-            prompt=prompt,
-            response=result.text if result is not None else None,
-            parsed=result.parsed if result is not None else None,
-            prompt_tokens=result.prompt_tokens if result is not None else None,
-            output_tokens=result.output_tokens if result is not None else None,
-            latency_ms=result.latency_ms if result is not None else None,
-            error=error,
-        )
-        self.db.add(step)
-        self._index += 1
-        if result is not None:
-            self.run.total_prompt_tokens += result.prompt_tokens or 0
-            self.run.total_output_tokens += result.output_tokens or 0
-
-    def finish(self, status: str) -> None:
-        self.run.status = status
-        self.run.duration_ms = int((time.monotonic() - self.started) * 1000)
 
 
 def _resolved_profile_and_blocks(db: Session) -> tuple[AiAgentProfile | None, dict[str, str]]:
@@ -160,7 +116,7 @@ def answer_question(db: Session, subject_run: AiAgentRun, question: str, asked_b
     )
     db.add(run)
     db.flush()
-    recorder = _QaRunRecorder(run=run, db=db)
+    recorder = AgentRunRecorder(run=run, db=db)
 
     context_text = build_context_text(db, subject_run, profile=profile, blocks=blocks)
     parts: list[str] = [blocks["qa_preamble"]]

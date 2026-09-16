@@ -12,7 +12,7 @@ const eurFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currenc
 
 type AgentRun = {
   id: number
-  tenant_id: number
+  tenant_id: number | null
   tenant_name: string | null
   channel: string
   mode: string
@@ -341,7 +341,7 @@ export default function AiAgentRuns() {
                   <tr key={run.id} className="border-t border-gray-100">
                     <td className="py-1.5 pr-3 text-gray-600">{run.id}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{new Date(run.created_at).toLocaleString()}</td>
-                    <td className="py-1.5 pr-3 text-gray-900">{run.tenant_name ?? `#${run.tenant_id}`}</td>
+                    <td className="py-1.5 pr-3 text-gray-900">{run.tenant_name ?? (run.tenant_id != null ? `#${run.tenant_id}` : 'Assistant')}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{run.channel}</td>
                     <td className="py-1.5 pr-3 text-gray-600">{run.display_mode}</td>
                     <td className="py-1.5 pr-3">

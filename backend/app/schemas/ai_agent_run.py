@@ -21,7 +21,7 @@ class AiAgentRunStepRead(BaseModel):
 
 class AiAgentRunRead(BaseModel):
     id: int
-    tenant_id: int
+    tenant_id: int | None = None
     tenant_name: str | None = None
     channel: str
     mode: str
