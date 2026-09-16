@@ -204,15 +204,31 @@ async def update_booking_invoice_items(
     single "replace invoice items" call, so existing items are deleted by id
     first, then the full new set is submitted as a second update.
 
+    The delete list is derived from the booking's *live* invoice items fetched
+    from Beds24, not from ``original_invoice_item_ids``. This keeps the send
+    idempotent: after a first send Beds24 deletes the old items and creates new
+    ones with new ids, so a second send (from a still-open editor whose client
+    ids are now stale) must delete whatever is currently on the booking - not
+    the ids the client last saw, which would fail with "invalid id". The
+    ``original_invoice_item_ids`` parameter is retained for caller compatibility
+    but no longer authoritative.
+
     Raises HTTPException if either step is rejected by Beds24 - callers
     should treat this as a hard failure rather than partially syncing.
     """
     headers = await _auth_headers()
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-        if original_invoice_item_ids:
+        current = await _get_bookings(client, {'id': booking_id, 'includeInvoiceItems': 'true'})
+        live_ids = [
+            item['id']
+            for booking in current
+            for item in (booking.get('invoiceItems') or [])
+            if isinstance(item, dict) and item.get('id') is not None
+        ]
+        if live_ids:
             delete_payload = {
                 'id': booking_id,
-                'invoiceItems': [{'id': item_id} for item_id in original_invoice_item_ids],
+                'invoiceItems': [{'id': item_id} for item_id in live_ids],
             }
             await _post_booking_update(client, booking_id, delete_payload, step='delete_invoice_items')
 
