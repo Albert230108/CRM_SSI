@@ -48,6 +48,11 @@ class Tenant(Base):
     # first outbound message to the tenant (see communications.send_tenant_communication) or when
     # the operator manually dismisses it (see tenants.dismiss_tenant_new).
     is_new = Column(Boolean, nullable=False, server_default=text("true"))
+    # When true, this tenant is skipped by every AI-settings bulk action (bulk planner/executor
+    # mode, brain/action-writer, formatter, template links) so a mass change can never touch a
+    # deliberately protected tenant. Toggled from the AI Tenants page; see tenants.set_tenant_lock
+    # and tenant_ai_settings._drop_locked.
+    bulk_action_locked = Column(Boolean, nullable=False, server_default=text("false"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

@@ -12,6 +12,8 @@ from app.schemas.tenant_ai_settings import (
     BulkTenantAiTemplateAssignmentResult,
     BulkTenantPlannerModeAssignment,
     BulkTenantPlannerModeAssignmentResult,
+    BulkTenantExecutorModeAssignment,
+    BulkTenantExecutorModeAssignmentResult,
     BulkTenantBrainWriterAssignment,
     BulkTenantBrainWriterAssignmentResult,
     BulkTenantActionWriterAssignment,
@@ -44,6 +46,20 @@ def _get_or_create_settings(db: Session, tenant_id: int) -> TenantAiSettings:
         db.commit()
         db.refresh(settings)
     return settings
+
+
+def _drop_locked(db: Session, tenant_ids: list[int]) -> tuple[list[int], int]:
+    """Split a bulk-action target list into (actionable, skipped_locked_count), removing any
+    tenant flagged Tenant.bulk_action_locked so a mass change never touches a protected tenant."""
+    if not tenant_ids:
+        return [], 0
+    locked = {
+        row.id
+        for row in db.query(Tenant.id)
+        .filter(Tenant.id.in_(tenant_ids), Tenant.bulk_action_locked.is_(True))
+        .all()
+    }
+    return [tid for tid in tenant_ids if tid not in locked], len(locked)
 
 
 def _to_read(db: Session, settings: TenantAiSettings) -> TenantAiSettingsRead:
@@ -164,9 +180,10 @@ def bulk_update_tenant_ai_templates(
     current_user: User = Depends(get_current_user),
 ) -> BulkTenantAiTemplateAssignmentResult:
     tenant_ids = sorted(set(payload.tenant_ids))
+    tenant_ids, skipped_locked = _drop_locked(db, tenant_ids)
     template_ids = sorted(set(payload.template_ids))
     if not tenant_ids or not template_ids:
-        return BulkTenantAiTemplateAssignmentResult(tenants_affected=0, links_added=0, links_removed=0)
+        return BulkTenantAiTemplateAssignmentResult(tenants_affected=0, links_added=0, links_removed=0, skipped_locked=skipped_locked)
 
     if payload.action == "add":
         existing_pairs = {
@@ -182,7 +199,7 @@ def bulk_update_tenant_ai_templates(
                     db.add(TenantAiTemplateLink(tenant_id=tenant_id, template_id=template_id))
                     links_added += 1
         db.commit()
-        return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=links_added, links_removed=0)
+        return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=links_added, links_removed=0, skipped_locked=skipped_locked)
 
     # action == "remove": also clear any default-template pointer left dangling by the removal,
     # since this bypasses the per-tenant settings form that would otherwise keep them in sync.
@@ -198,7 +215,7 @@ def bulk_update_tenant_ai_templates(
         if settings.default_whatsapp_template_id in template_ids:
             settings.default_whatsapp_template_id = None
     db.commit()
-    return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=0, links_removed=links_removed)
+    return BulkTenantAiTemplateAssignmentResult(tenants_affected=len(tenant_ids), links_added=0, links_removed=links_removed, skipped_locked=skipped_locked)
 
 
 @router.post("/tenant-ai-settings/bulk-planner-mode", response_model=BulkTenantPlannerModeAssignmentResult)
@@ -208,8 +225,9 @@ def bulk_update_tenant_planner_mode(
     current_user: User = Depends(get_current_user),
 ) -> BulkTenantPlannerModeAssignmentResult:
     tenant_ids = sorted(set(payload.tenant_ids))
+    tenant_ids, skipped_locked = _drop_locked(db, tenant_ids)
     if not tenant_ids:
-        return BulkTenantPlannerModeAssignmentResult(tenants_affected=0)
+        return BulkTenantPlannerModeAssignmentResult(tenants_affected=0, skipped_locked=skipped_locked)
 
     # Matches the single-tenant update endpoint's server-side guarantees: "auto-draft"/"auto-send"
     # implies the trigger toggles are on (otherwise the mode does nothing), and "auto-draft" must
@@ -228,7 +246,26 @@ def bulk_update_tenant_planner_mode(
             settings.auto_send_whatsapp = False
 
     db.commit()
-    return BulkTenantPlannerModeAssignmentResult(tenants_affected=len(tenant_ids))
+    return BulkTenantPlannerModeAssignmentResult(tenants_affected=len(tenant_ids), skipped_locked=skipped_locked)
+
+
+@router.post("/tenant-ai-settings/bulk-executor-mode", response_model=BulkTenantExecutorModeAssignmentResult)
+def bulk_update_tenant_executor_mode(
+    payload: BulkTenantExecutorModeAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantExecutorModeAssignmentResult:
+    """Set the executor mode ("manual"/"autonomous", or None to reset to the global default) on
+    every selected tenant, skipping any that are bulk-action-locked."""
+    tenant_ids = sorted(set(payload.tenant_ids))
+    tenant_ids, skipped_locked = _drop_locked(db, tenant_ids)
+    if not tenant_ids:
+        return BulkTenantExecutorModeAssignmentResult(tenants_affected=0, skipped_locked=skipped_locked)
+    for tenant_id in tenant_ids:
+        settings = _get_or_create_settings(db, tenant_id)
+        settings.executor_mode = payload.executor_mode
+    db.commit()
+    return BulkTenantExecutorModeAssignmentResult(tenants_affected=len(tenant_ids), skipped_locked=skipped_locked)
 
 
 @router.post("/tenant-ai-settings/bulk-brain-writer", response_model=BulkTenantBrainWriterAssignmentResult)
@@ -238,13 +275,14 @@ def bulk_update_tenant_brain_writer(
     current_user: User = Depends(get_current_user),
 ) -> BulkTenantBrainWriterAssignmentResult:
     tenant_ids = sorted(set(payload.tenant_ids))
+    tenant_ids, skipped_locked = _drop_locked(db, tenant_ids)
     if not tenant_ids:
-        return BulkTenantBrainWriterAssignmentResult(tenants_affected=0)
+        return BulkTenantBrainWriterAssignmentResult(tenants_affected=0, skipped_locked=skipped_locked)
     for tenant_id in tenant_ids:
         settings = _get_or_create_settings(db, tenant_id)
         settings.brain_writer_enabled = payload.brain_writer_enabled
     db.commit()
-    return BulkTenantBrainWriterAssignmentResult(tenants_affected=len(tenant_ids))
+    return BulkTenantBrainWriterAssignmentResult(tenants_affected=len(tenant_ids), skipped_locked=skipped_locked)
 
 
 @router.post("/tenant-ai-settings/bulk-action-writer", response_model=BulkTenantActionWriterAssignmentResult)
@@ -254,13 +292,14 @@ def bulk_update_tenant_action_writer(
     current_user: User = Depends(get_current_user),
 ) -> BulkTenantActionWriterAssignmentResult:
     tenant_ids = sorted(set(payload.tenant_ids))
+    tenant_ids, skipped_locked = _drop_locked(db, tenant_ids)
     if not tenant_ids:
-        return BulkTenantActionWriterAssignmentResult(tenants_affected=0)
+        return BulkTenantActionWriterAssignmentResult(tenants_affected=0, skipped_locked=skipped_locked)
     for tenant_id in tenant_ids:
         settings = _get_or_create_settings(db, tenant_id)
         settings.action_writer_enabled = payload.action_writer_enabled
     db.commit()
-    return BulkTenantActionWriterAssignmentResult(tenants_affected=len(tenant_ids))
+    return BulkTenantActionWriterAssignmentResult(tenants_affected=len(tenant_ids), skipped_locked=skipped_locked)
 
 
 @router.post("/tenant-ai-settings/bulk-formatter", response_model=BulkTenantFormatterAssignmentResult)
@@ -270,10 +309,11 @@ def bulk_update_tenant_formatter(
     current_user: User = Depends(get_current_user),
 ) -> BulkTenantFormatterAssignmentResult:
     tenant_ids = sorted(set(payload.tenant_ids))
+    tenant_ids, skipped_locked = _drop_locked(db, tenant_ids)
     if not tenant_ids:
-        return BulkTenantFormatterAssignmentResult(tenants_affected=0)
+        return BulkTenantFormatterAssignmentResult(tenants_affected=0, skipped_locked=skipped_locked)
     for tenant_id in tenant_ids:
         settings = _get_or_create_settings(db, tenant_id)
         settings.formatter_enabled = payload.formatter_enabled
     db.commit()
-    return BulkTenantFormatterAssignmentResult(tenants_affected=len(tenant_ids))
+    return BulkTenantFormatterAssignmentResult(tenants_affected=len(tenant_ids), skipped_locked=skipped_locked)

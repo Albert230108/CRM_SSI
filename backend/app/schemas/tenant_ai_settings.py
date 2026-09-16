@@ -71,10 +71,13 @@ class BulkTenantAiTemplateAssignment(BaseModel):
     action: Literal["add", "remove"]
 
 
+# `skipped_locked` on every bulk result counts tenants that were selected but excluded from the
+# change because they are bulk-action-locked (Tenant.bulk_action_locked), so the UI can report it.
 class BulkTenantAiTemplateAssignmentResult(BaseModel):
     tenants_affected: int
     links_added: int
     links_removed: int
+    skipped_locked: int = 0
 
 
 class BulkTenantPlannerModeAssignment(BaseModel):
@@ -84,6 +87,18 @@ class BulkTenantPlannerModeAssignment(BaseModel):
 
 class BulkTenantPlannerModeAssignmentResult(BaseModel):
     tenants_affected: int
+    skipped_locked: int = 0
+
+
+class BulkTenantExecutorModeAssignment(BaseModel):
+    tenant_ids: list[int]
+    # None resets the selected tenants to "use the global default" (AdminSettings.executor_default_mode).
+    executor_mode: ExecutorMode | None = None
+
+
+class BulkTenantExecutorModeAssignmentResult(BaseModel):
+    tenants_affected: int
+    skipped_locked: int = 0
 
 
 class BulkTenantBrainWriterAssignment(BaseModel):
@@ -93,6 +108,7 @@ class BulkTenantBrainWriterAssignment(BaseModel):
 
 class BulkTenantBrainWriterAssignmentResult(BaseModel):
     tenants_affected: int
+    skipped_locked: int = 0
 
 
 class BulkTenantActionWriterAssignment(BaseModel):
@@ -102,6 +118,7 @@ class BulkTenantActionWriterAssignment(BaseModel):
 
 class BulkTenantActionWriterAssignmentResult(BaseModel):
     tenants_affected: int
+    skipped_locked: int = 0
 
 
 class BulkTenantFormatterAssignment(BaseModel):
@@ -111,3 +128,4 @@ class BulkTenantFormatterAssignment(BaseModel):
 
 class BulkTenantFormatterAssignmentResult(BaseModel):
     tenants_affected: int
+    skipped_locked: int = 0

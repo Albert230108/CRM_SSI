@@ -14,6 +14,7 @@ type TenantSearchResult = {
   id: number
   name: string
   booking_id: string
+  bulk_action_locked: boolean
 }
 
 type AiTemplateOption = {
@@ -56,6 +57,10 @@ type AgentProfileOption = {
 
 const PAGE_SIZE = 20
 
+// Bulk endpoints skip bulk-action-locked tenants and report how many; surface that in the message.
+const skippedSuffix = (data: { skipped_locked?: number } | null): string =>
+  data && data.skipped_locked ? ` (${data.skipped_locked} locked tenant${data.skipped_locked === 1 ? '' : 's'} skipped)` : ''
+
 const emptySettings = (tenantId: number): TenantAiSettings => ({
   tenant_id: tenantId,
   available_template_ids: [],
@@ -86,6 +91,8 @@ export default function AiTenantSettings() {
   const token = useAuthStore((state) => state.token)
   const location = useLocation()
   const [searchQuery, setSearchQuery] = useState('')
+  // '' = all tenants, 'true' = locked only, 'false' = unlocked only.
+  const [lockedFilter, setLockedFilter] = useState<'' | 'true' | 'false'>('')
   const [tenants, setTenants] = useState<TenantSearchResult[]>([])
   const [templates, setTemplates] = useState<AiTemplateOption[]>([])
   const [agentProfiles, setAgentProfiles] = useState<AgentProfileOption[]>([])
@@ -112,6 +119,12 @@ export default function AiTenantSettings() {
   const [bulkFormatterMessage, setBulkFormatterMessage] = useState('')
   const [bulkActionWriterSaving, setBulkActionWriterSaving] = useState(false)
   const [bulkActionWriterMessage, setBulkActionWriterMessage] = useState('')
+  // '' sends executor_mode=null, i.e. "use the global default".
+  const [bulkExecutorMode, setBulkExecutorMode] = useState<'' | 'manual' | 'autonomous'>('manual')
+  const [bulkExecutorModeSaving, setBulkExecutorModeSaving] = useState(false)
+  const [bulkExecutorModeMessage, setBulkExecutorModeMessage] = useState('')
+  const [bulkLockSaving, setBulkLockSaving] = useState(false)
+  const [bulkLockMessage, setBulkLockMessage] = useState('')
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -136,6 +149,7 @@ export default function AiTenantSettings() {
       setPage(0)
       const params = new URLSearchParams()
       if (searchQuery) params.append('search', searchQuery)
+      if (lockedFilter) params.append('locked', lockedFilter)
       const response = await fetch(`${API_BASE_URL}/api/tenants?${params}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         signal: controller.signal,
@@ -146,7 +160,7 @@ export default function AiTenantSettings() {
     }
     loadTenants().catch(() => undefined)
     return () => controller.abort()
-  }, [token, searchQuery])
+  }, [token, searchQuery, lockedFilter])
 
   const selectTenant = async (tenant: TenantSearchResult) => {
     setSelectedTenant(tenant)
@@ -216,9 +230,9 @@ export default function AiTenantSettings() {
         return
       }
       setBulkMessage(
-        bulkAction === 'add'
+        (bulkAction === 'add'
           ? `Added ${data.links_added} template link(s) across ${data.tenants_affected} tenant(s).`
-          : `Removed ${data.links_removed} template link(s) across ${data.tenants_affected} tenant(s).`,
+          : `Removed ${data.links_removed} template link(s) across ${data.tenants_affected} tenant(s).`) + skippedSuffix(data),
       )
       // The selected tenant's currently-open panel may now be stale (e.g. its availability or
       // defaults changed), so reload it if it was part of this batch.
@@ -248,7 +262,7 @@ export default function AiTenantSettings() {
         setBulkPlannerModeMessage(data?.detail ?? 'Failed to run bulk action')
         return
       }
-      setBulkPlannerModeMessage(`Set planner mode to "${bulkPlannerMode}" for ${data.tenants_affected} tenant(s).`)
+      setBulkPlannerModeMessage(`Set planner mode to "${bulkPlannerMode}" for ${data.tenants_affected} tenant(s).${skippedSuffix(data)}`)
       if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
         await selectTenant(selectedTenant)
       }
@@ -275,7 +289,7 @@ export default function AiTenantSettings() {
         setBulkBrainWriterMessage(data?.detail ?? 'Failed to run bulk action')
         return
       }
-      setBulkBrainWriterMessage(`${enabled ? 'Activated' : 'Deactivated'} automatic brain updates for ${data.tenants_affected} tenant(s).`)
+      setBulkBrainWriterMessage(`${enabled ? 'Activated' : 'Deactivated'} automatic brain updates for ${data.tenants_affected} tenant(s).${skippedSuffix(data)}`)
       if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
         await selectTenant(selectedTenant)
       }
@@ -302,7 +316,7 @@ export default function AiTenantSettings() {
         setBulkFormatterMessage(data?.detail ?? 'Failed to run bulk action')
         return
       }
-      setBulkFormatterMessage(`${enabled ? 'Activated' : 'Deactivated'} rich formatting for ${data.tenants_affected} tenant(s).`)
+      setBulkFormatterMessage(`${enabled ? 'Activated' : 'Deactivated'} rich formatting for ${data.tenants_affected} tenant(s).${skippedSuffix(data)}`)
       if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
         await selectTenant(selectedTenant)
       }
@@ -329,12 +343,78 @@ export default function AiTenantSettings() {
         setBulkActionWriterMessage(data?.detail ?? 'Failed to run bulk action')
         return
       }
-      setBulkActionWriterMessage(`${enabled ? 'Activated' : 'Deactivated'} automatic action-item updates for ${data.tenants_affected} tenant(s).`)
+      setBulkActionWriterMessage(`${enabled ? 'Activated' : 'Deactivated'} automatic action-item updates for ${data.tenants_affected} tenant(s).${skippedSuffix(data)}`)
       if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
         await selectTenant(selectedTenant)
       }
     } finally {
       setBulkActionWriterSaving(false)
+    }
+  }
+
+  const runBulkExecutorModeAction = async () => {
+    if (!bulkTenantIds.size) return
+    setBulkExecutorModeSaving(true)
+    setBulkExecutorModeMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenant-ai-settings/bulk-executor-mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          tenant_ids: Array.from(bulkTenantIds),
+          executor_mode: bulkExecutorMode || null,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setBulkExecutorModeMessage(data?.detail ?? 'Failed to run bulk action')
+        return
+      }
+      const label = bulkExecutorMode || 'global default'
+      setBulkExecutorModeMessage(`Set executor mode to "${label}" for ${data.tenants_affected} tenant(s).${skippedSuffix(data)}`)
+      if (selectedTenant && bulkTenantIds.has(selectedTenant.id)) {
+        await selectTenant(selectedTenant)
+      }
+    } finally {
+      setBulkExecutorModeSaving(false)
+    }
+  }
+
+  const applyLockToLocalTenants = (ids: Set<number>, locked: boolean) => {
+    setTenants((current) => current.map((tenant) => (ids.has(tenant.id) ? { ...tenant, bulk_action_locked: locked } : tenant)))
+  }
+
+  const toggleTenantLock = async (tenant: TenantSearchResult) => {
+    const nextLocked = !tenant.bulk_action_locked
+    // Optimistic: flip the badge immediately; the locked filter only re-applies on the next fetch.
+    applyLockToLocalTenants(new Set([tenant.id]), nextLocked)
+    const response = await fetch(`${API_BASE_URL}/api/tenants/${tenant.id}/bulk-action-lock`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ locked: nextLocked }),
+    })
+    if (!response.ok) applyLockToLocalTenants(new Set([tenant.id]), tenant.bulk_action_locked)
+  }
+
+  const runBulkLockAction = async (locked: boolean) => {
+    if (!bulkTenantIds.size) return
+    setBulkLockSaving(true)
+    setBulkLockMessage('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tenants/bulk-action-lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ tenant_ids: Array.from(bulkTenantIds), locked }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setBulkLockMessage(data?.detail ?? 'Failed to run bulk action')
+        return
+      }
+      applyLockToLocalTenants(bulkTenantIds, locked)
+      setBulkLockMessage(`${locked ? 'Locked' : 'Unlocked'} ${data.tenants_affected} tenant(s) for bulk actions.`)
+    } finally {
+      setBulkLockSaving(false)
     }
   }
 
@@ -380,27 +460,39 @@ export default function AiTenantSettings() {
         <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="ai-tenant-search">
           Search tenants
         </label>
-        <div className="relative mt-1.5 w-full max-w-md">
-          <input
-            id="ai-tenant-search"
-            type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search by tenant name..."
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              aria-label="Clear search"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-gray-400 hover:text-gray-600"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                <path fillRule="evenodd" d="M10 8.586 5.707 4.293a1 1 0 0 0-1.414 1.414L8.586 10l-4.293 4.293a1 1 0 1 0 1.414 1.414L10 11.414l4.293 4.293a1 1 0 0 0 1.414-1.414L11.414 10l4.293-4.293a1 1 0 0 0-1.414-1.414L10 8.586Z" clipRule="evenodd" />
-              </svg>
-            </button>
-          )}
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-md">
+            <input
+              id="ai-tenant-search"
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search by tenant name..."
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900 outline-none placeholder:text-gray-500 focus:border-brand-500"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-gray-400 hover:text-gray-600"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                  <path fillRule="evenodd" d="M10 8.586 5.707 4.293a1 1 0 0 0-1.414 1.414L8.586 10l-4.293 4.293a1 1 0 1 0 1.414 1.414L10 11.414l4.293 4.293a1 1 0 0 0 1.414-1.414L11.414 10l4.293-4.293a1 1 0 0 0-1.414-1.414L10 8.586Z" clipRule="evenodd" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <Select
+            value={lockedFilter}
+            onChange={(event) => setLockedFilter(event.target.value as '' | 'true' | 'false')}
+            aria-label="Filter by bulk-action lock"
+            className="w-auto"
+          >
+            <option value="">All tenants</option>
+            <option value="true">Locked only</option>
+            <option value="false">Unlocked only</option>
+          </Select>
         </div>
 
         <div className="mt-3 overflow-x-auto">
@@ -443,16 +535,33 @@ export default function AiTenantSettings() {
                       className="h-4 w-4 rounded border-gray-300"
                     />
                   </td>
-                  <td className="py-1.5">{tenant.name}</td>
+                  <td className="py-1.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      {tenant.name}
+                      {tenant.bulk_action_locked ? (
+                        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">🔒 Locked</span>
+                      ) : null}
+                    </span>
+                  </td>
                   <td>{tenant.booking_id}</td>
                   <td className="py-1.5 text-right">
-                    <button
-                      type="button"
-                      onClick={() => selectTenant(tenant)}
-                      className={`rounded-lg border px-3 py-1 text-xs font-semibold ${selectedTenant?.id === tenant.id ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-300 text-gray-700'}`}
-                    >
-                      {selectedTenant?.id === tenant.id ? 'Selected' : 'Configure'}
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleTenantLock(tenant)}
+                        title={tenant.bulk_action_locked ? 'Unlock: allow bulk actions to affect this tenant' : 'Lock: exclude this tenant from bulk actions'}
+                        className={`rounded-lg border px-2 py-1 text-xs font-semibold ${tenant.bulk_action_locked ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-gray-300 text-gray-600'}`}
+                      >
+                        {tenant.bulk_action_locked ? 'Unlock' : 'Lock'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => selectTenant(tenant)}
+                        className={`rounded-lg border px-3 py-1 text-xs font-semibold ${selectedTenant?.id === tenant.id ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-300 text-gray-700'}`}
+                      >
+                        {selectedTenant?.id === tenant.id ? 'Selected' : 'Configure'}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -564,6 +673,39 @@ export default function AiTenantSettings() {
                 {bulkPlannerModeSaving ? 'Working…' : 'Apply'}
               </Button>
               {bulkPlannerModeMessage ? <p className="text-sm text-gray-600">{bulkPlannerModeMessage}</p> : null}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk executor mode</p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Select
+                value={bulkExecutorMode}
+                onChange={(event) => setBulkExecutorMode(event.target.value as '' | 'manual' | 'autonomous')}
+                className="w-auto"
+              >
+                <option value="">Use global default</option>
+                <option value="manual">Manual</option>
+                <option value="autonomous">Autonomous</option>
+              </Select>
+              <Button onClick={runBulkExecutorModeAction} loading={bulkExecutorModeSaving} disabled={!bulkTenantIds.size}>
+                {bulkExecutorModeSaving ? 'Working…' : 'Apply'}
+              </Button>
+              {bulkExecutorModeMessage ? <p className="text-sm text-gray-600">{bulkExecutorModeMessage}</p> : null}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-gray-500">Bulk lock / unlock</p>
+            <p className="mt-1 text-xs text-gray-500">Locked tenants are skipped by every bulk action above.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Button onClick={() => runBulkLockAction(true)} disabled={bulkLockSaving || !bulkTenantIds.size}>
+                Lock
+              </Button>
+              <Button variant="secondary" onClick={() => runBulkLockAction(false)} disabled={bulkLockSaving || !bulkTenantIds.size}>
+                Unlock
+              </Button>
+              {bulkLockMessage ? <p className="text-sm text-gray-600">{bulkLockMessage}</p> : null}
             </div>
           </div>
 

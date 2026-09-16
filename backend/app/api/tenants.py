@@ -452,10 +452,16 @@ def list_tenants(
     pinned_ids: Annotated[list[int] | None, Query()] = None,
     sort_by_message: bool = False,
     sort_desc: bool = True,
+    locked: bool | None = None,
 ) -> list[TenantRead]:
     from sqlalchemy import and_, desc, or_
 
     query = db.query(Tenant)
+
+    # Applied straight to the query (not via `conditions`, which get OR'd with pinned_ids below) so
+    # "locked only"/"unlocked only" is an exact filter regardless of pins.
+    if locked is not None:
+        query = query.filter(Tenant.bulk_action_locked.is_(locked))
 
     if search:
         search_term = f"%{search}%"
@@ -676,6 +682,56 @@ def dismiss_tenant_new(
     tenant.is_new = False
     db.commit()
     return {"is_new": False}
+
+
+class TenantLockUpdate(BaseModel):
+    locked: bool
+
+
+class BulkTenantLockAssignment(BaseModel):
+    tenant_ids: list[int]
+    locked: bool
+
+
+class BulkTenantLockAssignmentResult(BaseModel):
+    tenants_affected: int
+
+
+@router.patch("/tenants/{tenant_id}/bulk-action-lock")
+def set_tenant_lock(
+    tenant_id: int,
+    payload: TenantLockUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Lock/unlock a single tenant against AI-settings bulk actions (see tenant_ai_settings
+    bulk endpoints, which skip locked tenants)."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    tenant.bulk_action_locked = payload.locked
+    db.commit()
+    return {"bulk_action_locked": payload.locked}
+
+
+@router.post("/tenants/bulk-action-lock", response_model=BulkTenantLockAssignmentResult)
+def bulk_set_tenant_lock(
+    payload: BulkTenantLockAssignment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BulkTenantLockAssignmentResult:
+    """Lock/unlock many tenants at once. This action is deliberately NOT itself lock-gated - it is
+    how an operator lifts a lock."""
+    tenant_ids = sorted(set(payload.tenant_ids))
+    if not tenant_ids:
+        return BulkTenantLockAssignmentResult(tenants_affected=0)
+    affected = (
+        db.query(Tenant)
+        .filter(Tenant.id.in_(tenant_ids))
+        .update({Tenant.bulk_action_locked: payload.locked}, synchronize_session=False)
+    )
+    db.commit()
+    return BulkTenantLockAssignmentResult(tenants_affected=affected)
 
 
 class TenantNotesHistoryEntry(BaseModel):

@@ -76,6 +76,7 @@ class TenantRead(BaseModel):
     name: str
     responsible_comm: str | None = None
     is_new: bool = False
+    bulk_action_locked: bool = False
     created_at: datetime
     updated_at: datetime
     last_message_date: datetime | None = None
