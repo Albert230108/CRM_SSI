@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
@@ -56,6 +57,7 @@ def _to_read(db: Session, draft: AiAutoDraft) -> AiAutoDraftRead:
         scheduled_send_at=draft.scheduled_send_at,
         has_pending_execution=bool(draft.pending_execution),
         pending_execution=draft.pending_execution if isinstance(draft.pending_execution, dict) else None,
+        execution_status=draft.execution_status,
         quotation_filename=draft.quotation_filename,
         has_quotation=bool(draft.quotation_file_path or draft.quotation_attachment_id),
         created_at=draft.created_at,
@@ -78,7 +80,14 @@ def list_ai_auto_drafts(
     if status_filter is not None:
         query = query.filter(AiAutoDraft.status == status_filter)
     else:
-        query = query.filter(AiAutoDraft.status.in_(DEFAULT_STATUSES))
+        # Also surface drafts whose message was already sent but still carry an un-approved Beds24
+        # action (execution_status="pending"), so a decoupled Beds24 approval is never orphaned.
+        query = query.filter(
+            or_(
+                AiAutoDraft.status.in_(DEFAULT_STATUSES),
+                AiAutoDraft.execution_status == "pending",
+            )
+        )
     drafts = query.order_by(AiAutoDraft.created_at.desc(), AiAutoDraft.id.desc()).all()
     return [_to_read(db, draft) for draft in drafts]
 
@@ -100,6 +109,8 @@ def dismiss_ai_auto_draft(
     draft.resolution_source = "human_ui"
     draft.resolution_reason = (payload.reason or "").strip() or None
     # A dismissed draft's prepared Beds24 action (if any) is dropped, never pushed.
+    if draft.execution_status == "pending":
+        draft.execution_status = "rejected"
     draft.pending_execution = None
     db.commit()
     db.refresh(draft)
@@ -133,6 +144,8 @@ def mark_ai_auto_draft_used(
     draft.scheduled_send_at = None
     # The draft text is only being used to seed a manual reply, not sent as-is - any prepared
     # Beds24 action was computed for the AI's own wording and must not be pushed unattended.
+    if draft.execution_status == "pending":
+        draft.execution_status = "rejected"
     draft.pending_execution = None
     db.commit()
     db.refresh(draft)
@@ -221,6 +234,55 @@ def send_ai_auto_draft_now(
     sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db, draft, resolution_source="human_ui", reason=(payload.reason or "").strip() or None)
     if not sent:
         raise HTTPException(status_code=_send_now_status_for_detail(failure_reason), detail=failure_reason or "Failed to send draft")
+    db.commit()
+    db.refresh(draft)
+    return _to_read(db, draft)
+
+
+@router.put("/{draft_id}/execute-now", response_model=AiAutoDraftRead)
+def execute_ai_auto_draft_beds24(
+    draft_id: int,
+    payload: AiAutoDraftSendNowRequest = AiAutoDraftSendNowRequest(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiAutoDraftRead:
+    """Approve + push the staged Beds24 action on its own, without sending the message reply -
+    the Beds24 approval is decoupled from the message approval (its own column in the UI)."""
+    draft = _get_draft(db, draft_id)
+    if not draft.pending_execution:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This draft has no Beds24 action to approve")
+    ok, failure_reason = ai_auto_draft_service.execute_pending_now(db, draft, resolution_source="human_ui")
+    # Commit either way: on success the Beds24 write + "executed" status, on rejection/failure the
+    # executor's audit run and the "failed" status the message column warns on - both must persist.
+    db.commit()
+    db.refresh(draft)
+    if not ok:
+        raise HTTPException(
+            status_code=_send_now_status_for_detail(failure_reason),
+            detail=failure_reason or "Failed to push the Beds24 action",
+        )
+    return _to_read(db, draft)
+
+
+class AiAutoDraftRejectExecutionRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+@router.put("/{draft_id}/reject-execution", response_model=AiAutoDraftRead)
+def reject_ai_auto_draft_beds24(
+    draft_id: int,
+    payload: AiAutoDraftRejectExecutionRequest = AiAutoDraftRejectExecutionRequest(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AiAutoDraftRead:
+    """Drop the staged Beds24 action without pushing it; the message draft is kept so the reply
+    can still be sent or edited separately."""
+    draft = _get_draft(db, draft_id)
+    if not draft.pending_execution:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This draft has no Beds24 action to reject")
+    ai_auto_draft_service.reject_pending_execution(
+        db, draft, reason=(payload.reason or "").strip() or None, resolution_source="human_ui"
+    )
     db.commit()
     db.refresh(draft)
     return _to_read(db, draft)

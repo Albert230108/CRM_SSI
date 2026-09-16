@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.admin_settings import AdminSettings
 from app.models.ai_auto_draft import STATUS_GENERATING, AiAutoDraft
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
-from app.models.ai_agent_run import STATUS_NEEDS_REVIEW
+from app.models.ai_agent_run import STATUS_ESCALATED, STATUS_NEEDS_REVIEW, AiAgentRun
 from app.models.ai_reply_template import AiReplyTemplate
 from app.models.redo_request_log import RedoRequestLog
 from app.models.gmail_integration import Conversation, ConversationMessage, GmailAccount
@@ -152,8 +152,10 @@ def apply_planner_result_to_draft(
     draft.agent_run_id = result.run_id
     draft.checker_feedback = result.checker_feedback
     # Prepared by the sales manager (execute=true); validated and pushed to Beds24 by the
-    # executor agent - see send_scheduled_draft / _execute_pending.
+    # executor agent - see send_scheduled_draft / _execute_pending. A staged write starts life
+    # "pending" so it surfaces as its own approval in the AI Drafts Beds24 column.
     draft.pending_execution = getattr(result, "pending_execution", None)
+    draft.execution_status = "pending" if draft.pending_execution else None
     if getattr(result, "chosen_channel", None):
         draft.channel = result.chosen_channel
         draft.email_thread_id = result.chosen_email_thread_id
@@ -686,12 +688,14 @@ def _execute_pending(db: Session, draft: AiAutoDraft, *, resolution_source: str)
     )
     draft.executor_run_id = run_id
     if not result.approved:
+        draft.execution_status = "failed"
         return result.reason or "The executor did not approve this action"
 
     action = pending.get("action")
     if action == "create":
         new_booking_id, failure = _execute_create(pending.get("create_payload") or {})
         if failure:
+            draft.execution_status = "failed"
             return failure
         # Re-fetch and materialise the new booking as a Tenant + Finance rows, the same
         # deterministic sync app.api.quotation.create_quotation_beds24_booking uses - this does
@@ -701,23 +705,74 @@ def _execute_pending(db: Session, draft: AiAutoDraft, *, resolution_source: str)
     else:
         booking_id = pending.get("booking_id")
         if not booking_id:
+            draft.execution_status = "failed"
             return "Prepared Beds24 update is missing a booking id"
         failure = _execute_update(booking_id, pending.get("invoice_items") or [])
         if failure:
+            draft.execution_status = "failed"
             return failure
         # Re-fetch and rewrite Tenant/Finance deterministically, the same as the Quotation
         # Manager's own invoice-items push does (app.api.quotation.send_quotation_invoice_items_to_beds24).
         synced = asyncio.run(sync_tenant_from_beds24_booking(db, booking_id))
 
     if synced is None:
+        draft.execution_status = "failed"
         logger.warning("Beds24 accepted the prepared action but re-sync failed draft_id=%s", draft.id)
         return "Beds24 accepted the action but the booking could not be re-synced"
     draft.pending_execution = None
+    draft.execution_status = "executed"
     return None
 
 
+def execute_pending_now(
+    db: Session, draft: AiAutoDraft, *, resolution_source: str = "human_ui"
+) -> tuple[bool, str | None]:
+    """Approve + push the Beds24 action staged on this draft on its own, without sending the
+    message reply - the two are separate approvals in the AI Drafts UI. Runs the executor
+    validation and, if approved, performs the Beds24 write (via _execute_pending, which sets
+    execution_status). Returns (True, None) on success or (False, reason) on rejection/failure.
+    The caller commits.
+    """
+    if not draft.pending_execution:
+        return False, "This draft has no Beds24 action to approve"
+    failure = _execute_pending(db, draft, resolution_source=resolution_source)
+    if failure:
+        return False, failure
+    return True, None
+
+
+def reject_pending_execution(
+    db: Session, draft: AiAutoDraft, *, reason: str | None = None, resolution_source: str = "human_ui"
+) -> None:
+    """Drop the Beds24 action staged on this draft without pushing it, keeping the message draft
+    intact so the reply can still be sent or edited separately (decoupled approvals). Recorded as
+    an escalated executor AiAgentRun so the rejection shows up in the same audit trail the
+    executor's own verdicts use. The caller commits.
+    """
+    if not draft.pending_execution:
+        return
+    run = AiAgentRun(
+        tenant_id=draft.tenant_id,
+        channel="beds24",
+        mode="executor",
+        status=STATUS_ESCALATED,
+        escalation_reason="human_rejected",
+        final_text=(reason or "").strip() or "Beds24 action rejected by a human in the AI Drafts UI",
+    )
+    db.add(run)
+    db.flush()
+    draft.executor_run_id = run.id
+    draft.execution_status = "rejected"
+    draft.pending_execution = None
+
+
 def send_scheduled_draft(
-    db: Session, draft: AiAutoDraft, *, resolution_source: str = "human_ui", reason: str | None = None
+    db: Session,
+    draft: AiAutoDraft,
+    *,
+    resolution_source: str = "human_ui",
+    reason: str | None = None,
+    run_pending_execution: bool | None = None,
 ) -> tuple[bool, str | None]:
     """Sends a `pending_auto_send` draft via the same primitives manual sends use.
 
@@ -731,21 +786,28 @@ def send_scheduled_draft(
     The auto-timer path has no explicit reason of its own, so it falls back to the checker's
     feedback - the reason a draft was allowed to auto-send in the first place.
 
-    A draft carrying a prepared Beds24 write (sales manager execute=true) is validated by the
-    executor agent here, before the reply is sent, so the reply never describes a quote that
-    wasn't actually applied. In manual executor mode this only ever runs on a human-approved send
-    (never "auto_timer" - such a draft never reaches pending_auto_send in the first place, see
-    _planner_draft_status_and_schedule, but this is checked again as a defensive second gate); in
-    autonomous mode the timer may run it too. Either way, a rejection/failure blocks the send
-    entirely.
+    A draft carrying a prepared Beds24 write (sales manager execute=true) may be validated by the
+    executor agent and pushed here, before the reply is sent. Whether that push runs alongside the
+    send depends on the source (or an explicit run_pending_execution override): the CRM message
+    "Send" (human_ui) sends the reply only - the Beds24 push is a separate approval in the AI
+    Drafts UI (execute_pending_now) - while a WhatsApp YES keeps its original coupled behaviour and
+    the autonomous timer still pushes without a human. In manual executor mode the auto_timer path
+    never pushes (such a draft never reaches pending_auto_send, see _planner_draft_status_and_
+    schedule, but this is checked again as a defensive second gate). When the push does run, a
+    rejection/failure blocks the send entirely.
     """
     if draft.pending_execution:
         executor_mode = _resolve_executor_mode(db, draft.tenant_id)
         if resolution_source == "auto_timer" and executor_mode != "autonomous":
             return False, "This draft has a Beds24 action staged and needs human approval before it can send"
-        execution_failure = _execute_pending(db, draft, resolution_source=resolution_source)
-        if execution_failure:
-            return False, execution_failure
+        # Decoupled approvals: only the WhatsApp/auto-timer paths still run the coupled push; the
+        # CRM "Send" leaves the staged Beds24 action for its own approval column.
+        if run_pending_execution is None:
+            run_pending_execution = resolution_source != "human_ui"
+        if run_pending_execution:
+            execution_failure = _execute_pending(db, draft, resolution_source=resolution_source)
+            if execution_failure:
+                return False, execution_failure
 
     sent, failure_reason = _send_email_draft(db, draft) if draft.channel == "email" else _send_whatsapp_draft(db, draft)
     if not sent:

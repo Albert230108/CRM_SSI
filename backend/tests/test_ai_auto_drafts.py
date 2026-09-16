@@ -238,7 +238,9 @@ def test_send_scheduled_draft_executes_pending_execution_before_sending(db_sessi
     _stub_executor(monkeypatch, approved=True, reason="Guest confirmed the new price")
     monkeypatch.setattr(ai_auto_draft_service, "_send_whatsapp_draft", lambda db, draft_arg: (True, None))
 
-    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui")
+    # The coupled "validate + push, then send" behaviour now lives on the WhatsApp YES / auto-timer
+    # paths; the CRM "Send" (human_ui) is decoupled and no longer pushes (see the decoupled tests).
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_whatsapp")
 
     assert sent is True
     assert failure_reason is None
@@ -334,7 +336,8 @@ def test_send_scheduled_draft_beds24_push_failure_blocks_send(db_session, monkey
         lambda db, draft_arg: pytest.fail("Must not send when the Beds24 push failed"),
     )
 
-    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui")
+    # Coupled path (WhatsApp YES): a Beds24 push failure must still block the send.
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_whatsapp")
 
     assert sent is False
     assert "Beds24 rejected the update" in failure_reason
@@ -361,7 +364,8 @@ def test_send_scheduled_draft_executor_rejection_blocks_send(db_session, monkeyp
         lambda db, draft_arg: pytest.fail("Must not send when the executor rejects"),
     )
 
-    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_ui")
+    # Coupled path (WhatsApp YES): an executor rejection must still block the send.
+    sent, failure_reason = ai_auto_draft_service.send_scheduled_draft(db_session, draft, resolution_source="human_whatsapp")
 
     assert sent is False
     assert failure_reason == "Guest never confirmed the new price"

@@ -61,6 +61,12 @@ class AiAutoDraft(Base):
     # The executor's own AiAgentRun, once it has judged (or applied) pending_execution - lets the
     # approval UI show why it was approved/blocked.
     executor_run_id = Column(Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True)
+    # Lifecycle of the prepared Beds24 write above, tracked separately from the message `status` so
+    # the two can be approved independently in the AI Drafts UI (message column vs Beds24 column):
+    # NULL = no Beds24 action, "pending" = staged and awaiting a decision, "executed" = validated by
+    # the executor and pushed to Beds24, "rejected" = a human dropped it (the message draft is kept),
+    # "failed" = the executor blocked it or the Beds24 write errored. See ai_auto_draft_service.
+    execution_status = Column(String(20), nullable=True, index=True)
     # Why this draft ended up sent or dismissed, and who/what decided - set at every path that
     # reaches a final send/dismiss outcome (CRM UI buttons, a WhatsApp YES/NO reply, or the
     # automatic auto-send timer). Read by memory_redo_service as extra context for the redo

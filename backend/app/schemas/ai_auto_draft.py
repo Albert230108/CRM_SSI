@@ -29,6 +29,10 @@ class AiAutoDraftRead(BaseModel):
     # action="create"+create_payload), so the approval UI can show a before/after diff of what
     # will be pushed. None when nothing is prepared.
     pending_execution: dict[str, Any] | None = None
+    # Lifecycle of the prepared Beds24 write, tracked separately from `status` so the UI can show
+    # (and independently approve) the Beds24 action in its own column: None | "pending" |
+    # "executed" | "rejected" | "failed". See AiAutoDraft.execution_status.
+    execution_status: str | None = None
     # True when a quotation PDF (by path or, for older drafts, by stored attachment) is attached
     # to this draft.
     has_quotation: bool = False

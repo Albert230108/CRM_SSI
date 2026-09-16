@@ -40,6 +40,9 @@ type AiAutoDraftItem = {
       invoice_items?: Array<{ type?: string; description?: string; qty?: number; amount?: number; vat_rate?: number }>
     }
   } | null
+  // Lifecycle of the prepared Beds24 write, tracked separately from `status` so it can be approved
+  // in its own column: null (no action) | 'pending' | 'executed' | 'rejected' | 'failed'.
+  execution_status: 'pending' | 'executed' | 'rejected' | 'failed' | null
   has_quotation: boolean
   quotation_filename: string | null
   created_at: string
@@ -61,6 +64,11 @@ export default function AiPendingDrafts() {
   const [reasons, setReasons] = useState<Record<number, string>>({})
   const [diffOpenId, setDiffOpenId] = useState<number | null>(null)
   const [beforeItems, setBeforeItems] = useState<Record<number, FinanceLine[]>>({})
+  // Beds24-column (execution) approval state, kept separate from the message-column state above so
+  // the two approvals never share an input, error or busy flag.
+  const [execErrors, setExecErrors] = useState<Record<number, string>>({})
+  const [execReasons, setExecReasons] = useState<Record<number, string>>({})
+  const [execBusyId, setExecBusyId] = useState<number | null>(null)
 
   const toggleQuoteDiff = useCallback(
     async (draft: AiAutoDraftItem) => {
@@ -212,37 +220,212 @@ export default function AiPendingDrafts() {
     }
   }
 
+  // Approve + push the staged Beds24 action on its own, without sending the message reply.
+  const executeNow = async (draft: AiAutoDraftItem) => {
+    setExecErrors((prev) => {
+      const next = { ...prev }
+      delete next[draft.id]
+      return next
+    })
+    setExecBusyId(draft.id)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/execute-now`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ reason: execReasons[draft.id]?.trim() || null }),
+      })
+      if (!response.ok) {
+        let detail = 'Failed to push the Beds24 action.'
+        try {
+          const body = await response.json()
+          if (typeof body?.detail === 'string') detail = body.detail
+        } catch {
+          // response had no JSON body; keep the default message
+        }
+        setExecErrors((prev) => ({ ...prev, [draft.id]: detail }))
+      }
+      await loadDrafts()
+    } finally {
+      setExecBusyId(null)
+    }
+  }
+
+  // Drop the staged Beds24 action without pushing it; the message draft is kept.
+  const rejectExecution = async (draft: AiAutoDraftItem) => {
+    setExecBusyId(draft.id)
+    try {
+      await fetch(`${API_BASE_URL}/api/ai-auto-drafts/${draft.id}/reject-execution`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ reason: execReasons[draft.id]?.trim() || null }),
+      })
+      await loadDrafts()
+    } finally {
+      setExecBusyId(null)
+    }
+  }
+
+  // Message approvals: every draft whose reply still needs a decision. A draft whose message was
+  // already sent but that still carries an un-approved Beds24 action stays out of this column (its
+  // message is done) and only appears in the Beds24 column.
+  const messageDrafts = drafts.filter((draft) => draft.status !== 'sent')
+  // Beds24 approvals: drafts with a staged action still awaiting its own approval.
+  const beds24Drafts = drafts.filter((draft) => draft.execution_status === 'pending')
+
   return (
-    <main className="mx-auto animate-slide-up max-w-4xl px-6 py-4">
+    <main className="mx-auto animate-slide-up max-w-6xl px-6 py-4">
       <Link to="/settings" className="text-sm text-brand-700 hover:underline">&larr; Back to Settings</Link>
       <h1 className="mt-1.5 text-2xl font-semibold text-gray-900">Pending AI Drafts</h1>
       <p className="mt-1.5 text-sm text-gray-500">
-        AI-generated replies waiting for review across every tenant with auto-drafting enabled.
+        AI-generated replies and prepared Beds24 actions waiting for review. Message replies and
+        Beds24 pushes are approved independently — approving one never triggers the other.
       </p>
 
       {loading && !drafts.length ? <p className="mt-4 flex items-center gap-2 text-sm text-gray-500"><InlineSpinner size="sm" /> Loading…</p> : null}
       {!loading && !drafts.length ? <p className="mt-4 text-sm text-gray-500">No pending AI drafts.</p> : null}
 
-      <div className="mt-4 space-y-3 stagger-list">
-        {drafts.map((draft) => {
-          const isGenerating = draft.status === 'generating'
-          const redoInProgress = redoSubmitting && redoOpenDraftId === draft.id
-          return (
-          <div key={draft.id} className="rounded-2xl border border-indigo-200 bg-white p-3.5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
-                  {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
-                  {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
-                </p>
-                {draft.has_pending_execution ? (
-                  <div className="mt-1">
-                    <p className="text-xs font-medium text-amber-700">
-                      {draft.pending_execution?.action === 'create'
-                        ? 'Sending this will also ask the executor to create a new Beds24 booking, once approved.'
-                        : "Sending this will also ask the executor to push an updated quote to Beds24 for this booking, once approved."}
-                    </p>
-                    {draft.pending_execution?.action === 'create' ? null : (
+      <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Left column — message approvals */}
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">Message approvals</h2>
+          <div className="mt-3 space-y-3 stagger-list">
+            {!messageDrafts.length ? (
+              <p className="text-sm text-gray-400">No replies waiting for review.</p>
+            ) : null}
+            {messageDrafts.map((draft) => {
+              const isGenerating = draft.status === 'generating'
+              const redoInProgress = redoSubmitting && redoOpenDraftId === draft.id
+              return (
+                <div key={draft.id} className="rounded-2xl border border-indigo-200 bg-white p-3.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">
+                        {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
+                        {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
+                      </p>
+                      {/* Warn-only link to the Beds24 side: sending the reply never pushes the action. */}
+                      {draft.execution_status === 'pending' ? (
+                        <p className="mt-1 text-xs font-medium text-amber-700">
+                          ⚠ A Beds24 action for this draft is still awaiting approval in the Beds24 column — sending the reply now won't push it.
+                        </p>
+                      ) : draft.execution_status === 'rejected' ? (
+                        <p className="mt-1 text-xs font-medium text-amber-700">
+                          ⚠ The Beds24 action for this draft was rejected — the reply may mention a quote that wasn't pushed.
+                        </p>
+                      ) : draft.execution_status === 'failed' ? (
+                        <p className="mt-1 text-xs font-medium text-red-600">
+                          ⚠ The Beds24 push failed — review the executor run before sending.
+                        </p>
+                      ) : null}
+                      {draft.has_quotation ? (
+                        <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+                          <span aria-hidden="true">📎</span>
+                          {draft.quotation_filename || 'Quotation PDF'} attached
+                        </p>
+                      ) : null}
+                      <div className="relative">
+                        {renderDraftPreview(draft)}
+                        <TileLoadingOverlay active={redoInProgress} />
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={reasons[draft.id] ?? ''}
+                    onChange={(event) => setReasons((prev) => ({ ...prev, [draft.id]: event.target.value }))}
+                    placeholder="Reason for sending/dismissing (optional, logged for the redo agent)"
+                    className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 outline-none focus:border-brand-300"
+                  />
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => openTenant(draft)}>
+                      Open thread
+                    </Button>
+                    {draft.status === 'pending_auto_send' ? (
+                      <Button variant="secondary" size="sm" onClick={() => cancelAutoSend(draft)}>
+                        Cancel auto-send
+                      </Button>
+                    ) : null}
+                    <Button size="sm" onClick={() => sendNow(draft)} disabled={isGenerating}>
+                      Send
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={isGenerating}
+                      onClick={() => {
+                        setRedoOpenDraftId((current) => (current === draft.id ? null : draft.id))
+                        setRedoWhat('')
+                        setRedoWhy('')
+                      }}
+                    >
+                      Redo
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => dismiss(draft)}>
+                      Dismiss
+                    </Button>
+                  </div>
+                  {redoOpenDraftId === draft.id ? (
+                    <div className="mt-2 space-y-1.5 rounded-lg border border-gray-200 bg-gray-50 p-2">
+                      <input
+                        type="text"
+                        value={redoWhat}
+                        onChange={(event) => setRedoWhat(event.target.value)}
+                        placeholder="What to change (required)"
+                        className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
+                      />
+                      <input
+                        type="text"
+                        value={redoWhy}
+                        onChange={(event) => setRedoWhy(event.target.value)}
+                        placeholder="Why (optional)"
+                        className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
+                      />
+                      <div className="flex gap-1.5">
+                        <Button
+                          variant="ai"
+                          size="sm"
+                          loading={redoSubmitting}
+                          disabled={!redoWhat.trim()}
+                          onClick={() => submitRedo(draft)}
+                        >
+                          {redoSubmitting ? 'Redoing…' : 'Submit redo'}
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => setRedoOpenDraftId(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {sendErrors[draft.id] ? <p className="mt-1.5 text-xs text-red-600">{sendErrors[draft.id]}</p> : null}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        {/* Right column — Beds24 approvals */}
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">Beds24 approvals</h2>
+          <div className="mt-3 space-y-3 stagger-list">
+            {!beds24Drafts.length ? (
+              <p className="text-sm text-gray-400">No Beds24 actions waiting for approval.</p>
+            ) : null}
+            {beds24Drafts.map((draft) => {
+              const isCreate = draft.pending_execution?.action === 'create'
+              const busy = execBusyId === draft.id
+              return (
+                <div key={draft.id} className="rounded-2xl border border-amber-200 bg-white p-3.5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">
+                    {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} · Beds24 {isCreate ? 'new booking' : 'quote update'}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">Linked to draft #{draft.id} in the message column.</p>
+                  <p className="mt-1.5 text-xs font-medium text-amber-700">
+                    {isCreate
+                      ? 'Approving asks the executor to create a new Beds24 booking from this quote. It does not send the reply.'
+                      : 'Approving asks the executor to push the updated quote to this booking in Beds24. It does not send the reply.'}
+                  </p>
+                  {isCreate ? null : (
+                    <>
                       <button
                         type="button"
                         onClick={() => void toggleQuoteDiff(draft)}
@@ -250,120 +433,60 @@ export default function AiPendingDrafts() {
                       >
                         {diffOpenId === draft.id ? 'Hide quote changes' : 'Show quote changes'}
                       </button>
-                    )}
-                    {diffOpenId === draft.id && draft.pending_execution?.action !== 'create' ? (
-                      <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 text-xs">
-                        <div>
-                          <p className="font-semibold uppercase tracking-wide text-gray-500">Current in CRM</p>
-                          {(beforeItems[draft.id] ?? []).length === 0 ? (
-                            <p className="mt-1 text-gray-400">No current finance rows.</p>
-                          ) : (
+                      {diffOpenId === draft.id ? (
+                        <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 text-xs">
+                          <div>
+                            <p className="font-semibold uppercase tracking-wide text-gray-500">Current in CRM</p>
+                            {(beforeItems[draft.id] ?? []).length === 0 ? (
+                              <p className="mt-1 text-gray-400">No current finance rows.</p>
+                            ) : (
+                              <ul className="mt-1 space-y-0.5">
+                                {(beforeItems[draft.id] ?? []).map((item, i) => (
+                                  <li key={i} className={item.type === 'payment' ? 'text-emerald-700' : 'text-gray-700'}>
+                                    {item.description || item.type} — €{Number(item.amount).toFixed(2)}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-semibold uppercase tracking-wide text-gray-500">Will be sent to Beds24</p>
                             <ul className="mt-1 space-y-0.5">
-                              {(beforeItems[draft.id] ?? []).map((item, i) => (
+                              {(draft.pending_execution?.invoice_items ?? []).map((item, i) => (
                                 <li key={i} className={item.type === 'payment' ? 'text-emerald-700' : 'text-gray-700'}>
-                                  {item.description || item.type} — €{Number(item.amount).toFixed(2)}
+                                  {item.description || item.type} — €{((item.qty ?? 1) * (item.amount ?? 0)).toFixed(2)}
                                 </li>
                               ))}
                             </ul>
-                          )}
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-semibold uppercase tracking-wide text-gray-500">Will be sent to Beds24</p>
-                          <ul className="mt-1 space-y-0.5">
-                            {(draft.pending_execution?.invoice_items ?? []).map((item, i) => (
-                              <li key={i} className={item.type === 'payment' ? 'text-emerald-700' : 'text-gray-700'}>
-                                {item.description || item.type} — €{((item.qty ?? 1) * (item.amount ?? 0)).toFixed(2)}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    ) : null}
+                      ) : null}
+                    </>
+                  )}
+                  <input
+                    type="text"
+                    value={execReasons[draft.id] ?? ''}
+                    onChange={(event) => setExecReasons((prev) => ({ ...prev, [draft.id]: event.target.value }))}
+                    placeholder="Reason (optional, logged on the executor run)"
+                    className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 outline-none focus:border-brand-300"
+                  />
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => openTenant(draft)}>
+                      Open thread
+                    </Button>
+                    <Button size="sm" loading={busy} onClick={() => executeNow(draft)}>
+                      Approve &amp; push
+                    </Button>
+                    <Button variant="ghost" size="sm" disabled={busy} onClick={() => rejectExecution(draft)}>
+                      Reject
+                    </Button>
                   </div>
-                ) : null}
-                {draft.has_quotation ? (
-                  <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
-                    <span aria-hidden="true">📎</span>
-                    {draft.quotation_filename || 'Quotation PDF'} attached
-                  </p>
-                ) : null}
-                <div className="relative">
-                  {renderDraftPreview(draft)}
-                  <TileLoadingOverlay active={redoInProgress} />
+                  {execErrors[draft.id] ? <p className="mt-1.5 text-xs text-red-600">{execErrors[draft.id]}</p> : null}
                 </div>
-              </div>
-            </div>
-            <input
-              type="text"
-              value={reasons[draft.id] ?? ''}
-              onChange={(event) => setReasons((prev) => ({ ...prev, [draft.id]: event.target.value }))}
-              placeholder="Reason for sending/dismissing (optional, logged for the redo agent)"
-              className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700 outline-none focus:border-brand-300"
-            />
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" onClick={() => openTenant(draft)}>
-                Open thread
-              </Button>
-              {draft.status === 'pending_auto_send' ? (
-                <Button variant="secondary" size="sm" onClick={() => cancelAutoSend(draft)}>
-                  Cancel auto-send
-                </Button>
-              ) : null}
-              <Button size="sm" onClick={() => sendNow(draft)} disabled={isGenerating}>
-                Send
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={isGenerating}
-                onClick={() => {
-                  setRedoOpenDraftId((current) => (current === draft.id ? null : draft.id))
-                  setRedoWhat('')
-                  setRedoWhy('')
-                }}
-              >
-                Redo
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => dismiss(draft)}>
-                Dismiss
-              </Button>
-            </div>
-            {redoOpenDraftId === draft.id ? (
-              <div className="mt-2 space-y-1.5 rounded-lg border border-gray-200 bg-gray-50 p-2">
-                <input
-                  type="text"
-                  value={redoWhat}
-                  onChange={(event) => setRedoWhat(event.target.value)}
-                  placeholder="What to change (required)"
-                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
-                />
-                <input
-                  type="text"
-                  value={redoWhy}
-                  onChange={(event) => setRedoWhy(event.target.value)}
-                  placeholder="Why (optional)"
-                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-900 outline-none focus:border-brand-300"
-                />
-                <div className="flex gap-1.5">
-                  <Button
-                    variant="ai"
-                    size="sm"
-                    loading={redoSubmitting}
-                    disabled={!redoWhat.trim()}
-                    onClick={() => submitRedo(draft)}
-                  >
-                    {redoSubmitting ? 'Redoing…' : 'Submit redo'}
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => setRedoOpenDraftId(null)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {sendErrors[draft.id] ? <p className="mt-1.5 text-xs text-red-600">{sendErrors[draft.id]}</p> : null}
+              )
+            })}
           </div>
-          )
-        })}
+        </section>
       </div>
     </main>
   )
