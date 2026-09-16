@@ -269,8 +269,10 @@ export default function AiPendingDrafts() {
   // already sent but that still carries an un-approved Beds24 action stays out of this column (its
   // message is done) and only appears in the Beds24 column.
   const messageDrafts = drafts.filter((draft) => draft.status !== 'sent')
-  // Beds24 approvals: drafts with a staged action still awaiting its own approval.
-  const beds24Drafts = drafts.filter((draft) => draft.execution_status === 'pending')
+  // Beds24 approvals: drafts with a staged action still awaiting its own approval. Require an
+  // actual payload too, so a row whose execution_status drifted out of sync with an empty
+  // pending_execution never renders a card the approve/reject endpoints would 409 on.
+  const beds24Drafts = drafts.filter((draft) => draft.execution_status === 'pending' && draft.has_pending_execution)
 
   return (
     <main className="mx-auto animate-slide-up max-w-6xl px-6 py-4">

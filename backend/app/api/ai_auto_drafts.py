@@ -42,6 +42,14 @@ def _to_read(db: Session, draft: AiAutoDraft) -> AiAutoDraftRead:
         open_thread_tenant_id = visible_tenant_for_conversation(
             db, draft.email_thread_id, prefer_tenant_id=draft.tenant_id
         )
+    # A JSON `null`/`{}` payload is not SQL NULL, so the 0102 backfill wrongly stamped such rows
+    # "pending" (see 0103). Guard the read so we never surface a "pending" Beds24 card that the
+    # execute/reject endpoints would 409 on for having no actual payload: report it the way the
+    # backfill should have (executed if the executor already ran, else no action).
+    has_payload = isinstance(draft.pending_execution, dict) and bool(draft.pending_execution)
+    execution_status = draft.execution_status
+    if execution_status == "pending" and not has_payload:
+        execution_status = "executed" if draft.executor_run_id is not None else None
     return AiAutoDraftRead(
         id=draft.id,
         tenant_id=draft.tenant_id,
@@ -55,9 +63,9 @@ def _to_read(db: Session, draft: AiAutoDraft) -> AiAutoDraftRead:
         quoted_context=draft.quoted_context,
         status=draft.status,
         scheduled_send_at=draft.scheduled_send_at,
-        has_pending_execution=bool(draft.pending_execution),
+        has_pending_execution=has_payload,
         pending_execution=draft.pending_execution if isinstance(draft.pending_execution, dict) else None,
-        execution_status=draft.execution_status,
+        execution_status=execution_status,
         quotation_filename=draft.quotation_filename,
         has_quotation=bool(draft.quotation_file_path or draft.quotation_attachment_id),
         created_at=draft.created_at,

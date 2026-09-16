@@ -210,3 +210,36 @@ def test_list_returns_sent_draft_with_pending_beds24_action(non_admin_client, db
     assert lingering.id in items
     assert items[lingering.id]["status"] == "sent"
     assert items[lingering.id]["execution_status"] == "pending"
+
+
+def test_list_does_not_report_pending_beds24_when_payload_is_empty(non_admin_client, db_session):
+    """Regression: the 0102 backfill stamped rows "pending" WHERE `pending_execution IS NOT NULL`,
+    but a JSON `null`/`{}` payload is not SQL NULL, so empty-payload rows were wrongly marked
+    "pending". They rendered an un-actionable Beds24 card whose approve/reject endpoints 409 for
+    having no payload. The read guard must normalise those back: no executor run -> no action;
+    an executor run already fired -> "executed"."""
+    tenant = _create_tenant(db_session)
+    # No payload at all, and an empty-dict payload: both are falsy in Python but not SQL NULL.
+    null_payload = AiAutoDraft(
+        tenant_id=tenant.id, channel="whatsapp", generated_text="ghost, no payload",
+        status="sent", pending_execution=None, execution_status="pending",
+    )
+    empty_payload = AiAutoDraft(
+        tenant_id=tenant.id, channel="whatsapp", generated_text="ghost, empty payload",
+        status="sent", pending_execution={}, execution_status="pending",
+    )
+    already_executed = AiAutoDraft(
+        tenant_id=tenant.id, channel="whatsapp", generated_text="ghost, already pushed",
+        status="sent", pending_execution=None, execution_status="pending", executor_run_id=999,
+    )
+    db_session.add_all([null_payload, empty_payload, already_executed])
+    db_session.commit()
+
+    items = {item["id"]: item for item in non_admin_client.get(f"/api/ai-auto-drafts?tenant_id={tenant.id}").json()}
+
+    for ghost in (null_payload, empty_payload):
+        assert items[ghost.id]["execution_status"] is None
+        assert items[ghost.id]["has_pending_execution"] is False
+    # An empty payload but a recorded executor run means the push already happened.
+    assert items[already_executed.id]["execution_status"] == "executed"
+    assert items[already_executed.id]["has_pending_execution"] is False
