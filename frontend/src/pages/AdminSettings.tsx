@@ -217,6 +217,7 @@ export default function AdminSettings() {
   const [brainWriterDefaultEnabled, setBrainWriterDefaultEnabled] = useState(false)
   const [actionWriterDefaultEnabled, setActionWriterDefaultEnabled] = useState(false)
   const [formatterDefaultEnabled, setFormatterDefaultEnabled] = useState(false)
+  const [executorDefaultMode, setExecutorDefaultMode] = useState<'manual' | 'autonomous'>('manual')
   const [savingAutoApplyTemplates, setSavingAutoApplyTemplates] = useState(false)
   const [modelPricingRows, setModelPricingRows] = useState<AiModelPricingRow[]>([])
   const [modelPricingModel, setModelPricingModel] = useState('')
@@ -391,6 +392,9 @@ export default function AdminSettings() {
           if (typeof data.brain_writer_default_enabled === 'boolean') setBrainWriterDefaultEnabled(data.brain_writer_default_enabled)
           if (typeof data.action_writer_default_enabled === 'boolean') setActionWriterDefaultEnabled(data.action_writer_default_enabled)
           if (typeof data.formatter_default_enabled === 'boolean') setFormatterDefaultEnabled(data.formatter_default_enabled)
+          if (data.executor_default_mode === 'manual' || data.executor_default_mode === 'autonomous') {
+            setExecutorDefaultMode(data.executor_default_mode)
+          }
         } else {
           showError('Failed to load admin settings')
         }
@@ -910,6 +914,29 @@ export default function AdminSettings() {
     }
   }
 
+  const saveExecutorDefaultMode = async (nextValue: 'manual' | 'autonomous') => {
+    const previousValue = executorDefaultMode
+    setExecutorDefaultMode(nextValue)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ executor_default_mode: nextValue }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setExecutorDefaultMode(previousValue)
+        showError(typeof data.detail === 'string' ? data.detail : 'Failed to save')
+        return
+      }
+      setExecutorDefaultMode(data.executor_default_mode)
+      showSuccess('Saved')
+    } catch {
+      setExecutorDefaultMode(previousValue)
+      showError('Failed to save')
+    }
+  }
+
 
   const saveModelPricing = async (event: FormEvent) => {
     event.preventDefault()
@@ -1271,6 +1298,25 @@ export default function AdminSettings() {
                     />
                     Enable the formatter by default for newly created tenants
                   </label>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700" htmlFor="executor-default-mode">
+                    Executor default mode
+                  </label>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Applies to tenants that have not set their own executor mode. Manual only pushes a
+                    prepared Beds24 action once a human approves the draft; autonomous may validate and
+                    push it without a human.
+                  </p>
+                  <select
+                    id="executor-default-mode"
+                    value={executorDefaultMode}
+                    onChange={(event) => void saveExecutorDefaultMode(event.target.value as 'manual' | 'autonomous')}
+                    className="mt-1 w-full max-w-xs rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
+                  >
+                    <option value="manual">Manual</option>
+                    <option value="autonomous">Autonomous</option>
+                  </select>
                 </div>
               </div>
             </section>

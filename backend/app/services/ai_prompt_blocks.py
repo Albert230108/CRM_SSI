@@ -23,6 +23,7 @@ CHECKER_ROLE = "checker"
 DRAFTER_ROLE = "drafter"
 FORMATTER_ROLE = "formatter"
 SALES_MANAGER_ROLE = "sales_manager"
+EXECUTOR_ROLE = "executor"
 MEMORY_REDO_ROLE = "memory_redo"
 MEMORY_QA_ROLE = "memory_qa"
 RUN_QA_ROLE = "run_qa"
@@ -216,12 +217,15 @@ PLANNER_BLOCKS: tuple[PromptBlock, ...] = (
             "`needed` true and `scope` to `\"price\"` (numbers only), `\"pdf\"` (also produce and "
             "attach a PDF quotation), or `\"both\"`, and fill in the booking parameters you want "
             "quoted (room, dates, guests); leave any unknown to use the tenant's booking. Set "
-            "`action` to `\"update\"` only when the guest has an existing booking and has clearly "
-            "accepted a price/date/charge change that should be applied to it - this stages a "
-            "Beds24 update that a human must approve before it is pushed, so do not tell the guest "
-            "the booking is already updated. Leave `action` out (or `\"price\"`) for an ordinary "
-            "quote that changes nothing. Leave `sales_request` out or `needed` false when no quote "
-            "is called for."
+            "`action` to `\"update_quotation\"` when the guest has an existing booking and has "
+            "clearly accepted a price/date/charge change, or `\"create_quotation\"` for a brand-new "
+            "booking (also fill `room_id` and the `guest_*` fields) - both are prepared locally "
+            "only. Set `execute` true on either to hand that prepared action to the executor agent, "
+            "which validates it against its own rules and only then pushes it to Beds24 (on human "
+            "approval or autonomously, depending on the tenant's setting) - so do not tell the guest "
+            "the booking is already updated/created yet, only that this is the price. Leave `action` "
+            "out (or `\"price\"`) and `execute` unset for an ordinary quote that changes nothing. "
+            "Leave `sales_request` out or `needed` false when no quote is called for."
         ),
     ),
 ) + _context_blocks(include_inbound=True, include_actions=True)
@@ -485,9 +489,11 @@ SALES_MANAGER_BLOCKS: tuple[PromptBlock, ...] = (
         help="The opening line that tells the model what job it is doing. Emitted first.",
         default=(
             "You are the sales manager for a short-stay rental CRM. The planner has asked you to "
-            "price a stay for a guest. Turn the computed charge lines into a clear, factual price "
-            "summary the drafter can use in the reply. Never invent or alter prices - use the "
-            "figures given."
+            "price a stay for a guest, and may also ask you to prepare an updated or brand-new "
+            "quotation. You work locally only - you never write to Beds24 yourself; a separate "
+            "executor agent validates and applies anything you prepare. Turn the computed charge "
+            "lines into a clear, factual price summary the drafter can use in the reply. Never "
+            "invent or alter prices - use the figures given."
         ),
     ),
     PromptBlock(
@@ -531,6 +537,66 @@ SALES_MANAGER_BLOCKS: tuple[PromptBlock, ...] = (
         label="Guest message framing",
         help="Sits above the guest's latest message, so the summary matches what they asked.",
         default="## Guest Message",
+    ),
+)
+
+
+EXECUTOR_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        key="preamble",
+        label="Role preamble",
+        help="The opening line that tells the model what job it is doing. Emitted first.",
+        default=(
+            "You are the executor for a short-stay rental CRM. The sales manager has prepared a "
+            "Beds24 write - either an updated invoice-item set for an existing booking or a "
+            "brand-new booking - built entirely from figures the pricing engine already computed. "
+            "Your only job is to judge, against your instructions below, whether this specific "
+            "action may be pushed to Beds24. Never invent facts about the booking or the guest; "
+            "judge only what is shown to you."
+        ),
+    ),
+    PromptBlock(
+        key="instructions_header",
+        label="Instructions heading",
+        help=(
+            "Sits above the Instructions you wrote for this profile - this is where the operator's "
+            "own natural-language validation rules live (e.g. \"only approve when the guest has "
+            "explicitly accepted the price\"). Omitted when Instructions is blank."
+        ),
+        default=_INSTRUCTIONS_HEADER_DEFAULT,
+    ),
+    PromptBlock(
+        key="rules",
+        label="Rules framing",
+        help="Sits above a short reminder to judge strictly against the Instructions above.",
+        default="## Validation",
+    ),
+    PromptBlock(
+        key="payload",
+        label="Prepared action framing",
+        help="Sits above the exact Beds24 write the sales manager prepared (invoice items or a new-booking payload).",
+        default="## Prepared Action\nThis is exactly what would be sent to Beds24 if approved.",
+    ),
+    PromptBlock(
+        key="context",
+        label="Context framing",
+        help="Sits above supporting context (the price summary, booking info) for this decision.",
+        default="## Context",
+    ),
+    PromptBlock(
+        key="output",
+        label="Output instruction",
+        help=(
+            "Emitted last. Keep the field names - approved, reason, blocking_issues - because the "
+            "response schema in code enforces them."
+        ),
+        default=(
+            "## Output\n"
+            "Return JSON only. Set `approved` to true only when the prepared action satisfies every "
+            "one of your instructions above. `reason` explains the decision in one or two sentences "
+            "(shown to the human approver, or kept in the audit log for an autonomous run). List any "
+            "specific problems in `blocking_issues`; leave it empty when approved."
+        ),
     ),
 )
 
@@ -935,6 +1001,7 @@ BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     DRAFTER_ROLE: DRAFTER_BLOCKS,
     FORMATTER_ROLE: FORMATTER_BLOCKS,
     SALES_MANAGER_ROLE: SALES_MANAGER_BLOCKS,
+    EXECUTOR_ROLE: EXECUTOR_BLOCKS,
     MEMORY_QA_ROLE: MEMORY_QA_BLOCKS,
     MEMORY_REDO_ROLE: MEMORY_REDO_BLOCKS,
     RUN_QA_ROLE: RUN_QA_BLOCKS,

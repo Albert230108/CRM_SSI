@@ -244,6 +244,65 @@ def test_regenerate_with_fewer_new_installments_than_paid_makes_one_remainder_ro
     assert result["remaining"] > 0
 
 
+def test_even_spread_dates_unpaid_installments_between_latest_paid_and_checkout():
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=3,
+        security_deposit=0.0,
+        existing_payments=[_paid_row("Installment 1 - Confirms booking", 150.0, status="10-Jun-2025")],
+        today=date(2025, 5, 1),
+        even_spread=True,
+    )
+    new_installments = [p for p in result["payments"] if p["kind"] == "installment"]
+    assert len(new_installments) == 2
+    due_dates = [
+        datetime.strptime(p["description"].split("due: ")[1], "%d-%b-%Y").date() for p in new_installments
+    ]
+    # Both new due dates fall strictly after the latest paid date and no later than check-out,
+    # and they are spread out rather than clustered on the same day.
+    for due in due_dates:
+        assert date(2025, 6, 10) < due <= date(2025, 9, 1)
+    assert due_dates[0] < due_dates[1]
+    # Paid row and its amount/status are untouched.
+    kept = [p for p in result["payments"] if p["kind"] == "kept"]
+    assert kept[0]["amount"] == 150.0
+    assert kept[0]["status"] == "10-Jun-2025"
+
+
+def test_even_spread_false_reproduces_classic_due_dates():
+    kwargs = dict(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=3,
+        security_deposit=0.0,
+        existing_payments=[_paid_row("Installment 1 - Confirms booking", 150.0, status="10-Jun-2025")],
+        today=date(2025, 5, 1),
+    )
+    without_flag = payment_plan.build_payment_plan(**kwargs)
+    explicit_false = payment_plan.build_payment_plan(**kwargs, even_spread=False)
+    assert without_flag["payments"] == explicit_false["payments"]
+
+
+def test_even_spread_falls_back_to_today_when_paid_status_unparseable():
+    result = payment_plan.build_payment_plan(
+        charges=_charges(),
+        check_in=date(2025, 6, 1),
+        check_out=date(2025, 9, 1),
+        installments=2,
+        security_deposit=0.0,
+        existing_payments=[_paid_row("Installment 1 - Confirms booking", 150.0, status="paid on arrival")],
+        today=date(2025, 5, 1),
+        even_spread=True,
+    )
+    new_installments = [p for p in result["payments"] if p["kind"] == "installment"]
+    assert len(new_installments) == 1
+    due = datetime.strptime(new_installments[0]["description"].split("due: ")[1], "%d-%b-%Y").date()
+    assert date(2025, 5, 1) < due <= date(2025, 9, 1)
+
+
 def test_regenerate_refunds_overpayment_instead_of_new_installments():
     result = payment_plan.build_payment_plan(
         charges=_charges(),

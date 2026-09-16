@@ -23,6 +23,7 @@ from app.models.admin_settings import AdminSettings
 from app.models.ai_agent_profile import (
     CHECKER_ROLE,
     DRAFTER_ROLE,
+    EXECUTOR_ROLE,
     FORMATTER_ROLE,
     PLANNER_ROLE,
     SALES_MANAGER_ROLE,
@@ -65,24 +66,34 @@ PLANNER_SCHEMA = {
         # Optional. Set needed=true to have the sales-manager agent price and/or render a PDF
         # quotation before the reply is drafted. `scope` is "price" (numbers for the reply only),
         # "pdf" (also render+file+attach the PDF), or "both". `action` is "price" (just quote,
-        # the default) or "update" (also stage a Beds24 invoice-item update for this booking -
-        # it is only pushed once a human approves the resulting draft, never sent automatically).
-        # The remaining fields are the exact booking parameters to quote; leave any unknown and
-        # the tenant's booking is used.
+        # the default), "update_quotation" (prepare an updated Beds24 invoice-item set for this
+        # booking, locally only), or "create_quotation" (prepare a brand-new booking, locally
+        # only). Set `execute` true to hand that prepared action to the executor agent, which
+        # validates it against its own rules and - only then - pushes it to Beds24 (on human
+        # approval or autonomously, depending on the tenant's executor setting); leave `execute`
+        # false/omitted for a quote that changes nothing in Beds24. The remaining fields are the
+        # exact booking parameters to quote; leave any unknown and the tenant's booking is used.
+        # The guest_*/room_id fields are only used for action="create_quotation".
         "sales_request": {
             "type": "object",
             "properties": {
                 "needed": {"type": "boolean"},
                 "scope": {"type": "string"},
                 "action": {"type": "string"},
+                "execute": {"type": ["boolean", "null"]},
                 "property_name": {"type": ["string", "null"]},
                 "room_name": {"type": ["string", "null"]},
+                "room_id": {"type": ["integer", "null"]},
                 "check_in": {"type": ["string", "null"]},
                 "check_out": {"type": ["string", "null"]},
                 "adults": {"type": ["integer", "null"]},
                 "children": {"type": ["integer", "null"]},
                 "security_deposit": {"type": ["number", "null"]},
                 "notes": {"type": ["string", "null"]},
+                "guest_first_name": {"type": ["string", "null"]},
+                "guest_last_name": {"type": ["string", "null"]},
+                "guest_email": {"type": ["string", "null"]},
+                "guest_phone": {"type": ["string", "null"]},
             },
         },
         "confidence": {"type": "number"},
@@ -134,6 +145,19 @@ SALES_MANAGER_SCHEMA = {
     "required": ["price_summary"],
 }
 
+EXECUTOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        # Whether the staged Beds24 write (an invoice-item update or a brand-new booking) may be
+        # pushed. Judged against the operator's own natural-language rules (profile.instructions),
+        # not invented here.
+        "approved": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "blocking_issues": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["approved", "reason"],
+}
+
 
 @dataclass
 class PlannerRunResult:
@@ -154,15 +178,17 @@ class PlannerRunResult:
     chosen_channel: str | None = None
     chosen_email_thread_id: int | None = None
     chosen_whatsapp_endpoint_id: int | None = None
-    # Set when the sales-manager agent produced a PDF quotation for this reply. The caller persists
-    # the bytes as a CommunicationAttachment and attaches it to the outgoing message.
-    quotation_pdf_bytes: bytes | None = None
+    # Set when the sales-manager agent produced a PDF quotation for this reply. Relative to
+    # TENANT_FILES_ROOT - the caller reads the bytes lazily at send time (see
+    # ai_auto_draft_service._draft_quotation_attachments) rather than carrying them through here.
+    quotation_file_path: str | None = None
     quotation_pdf_filename: str | None = None
     quotation_web_url: str | None = None
-    # Set only when the sales-manager agent staged a Beds24 invoice-item update (action="update").
-    # The caller persists it on the draft and only pushes it to Beds24 once a human approves that
-    # draft - see ai_auto_draft_service.apply_planner_result_to_draft/send_scheduled_draft.
-    pending_beds24_update: dict | None = None
+    # Set only when the sales manager prepared a Beds24 write (action="update_quotation" or
+    # "create_quotation" with execute=true). The caller persists it on the draft and hands it to
+    # the executor agent for validation - see ai_auto_draft_service._execute_pending. The sales
+    # manager never pushes to Beds24 itself.
+    pending_execution: dict | None = None
 
 
 @dataclass
@@ -665,21 +691,21 @@ def formatter_output_looks_like_html(value: str | None) -> bool:
 class SalesManagerResult:
     # The factual price summary the drafter should weave into the reply (already grounded on the
     # pricing engine's numbers), plus a note the drafter should include and, when a PDF was made,
-    # its bytes/filename/link so the caller can attach it and reference it.
+    # its file path/filename/link so the caller can attach it and reference it.
     ok: bool
     drafter_note: str = ""
     escalation_reason: str | None = None
-    pdf_bytes: bytes | None = None
+    pdf_file_path: str | None = None
     pdf_filename: str | None = None
     pdf_web_url: str | None = None
-    # Set only when action="update": the Beds24 invoice-item update the sales manager computed,
-    # staged for a human to approve rather than pushed here. Shape matches
-    # sales_manager_service.build_pending_invoice_update.
-    pending_beds24_update: dict | None = None
+    # Set only when the planner asked to execute an update/create: the data-only Beds24 write the
+    # sales manager prepared locally, handed to the executor agent for validation rather than
+    # pushed here. Shape matches sales_manager_service.build_pending_execution.
+    pending_execution: dict | None = None
 
 
 _SALES_SCOPES = {"price", "pdf", "both"}
-_SALES_ACTIONS = {"price", "update"}
+_SALES_ACTIONS = {"price", "update_quotation", "create_quotation"}
 
 
 def _normalize_sales_scope(value: object) -> str:
@@ -735,17 +761,19 @@ def _run_sales_manager(
     user_id: int | None,
     is_redo: bool,
 ) -> SalesManagerResult:
-    """Price and, when asked, render a PDF quotation and/or stage a Beds24 invoice-item update,
-    returning what the drafter needs.
+    """Price and, when asked, render a PDF quotation and/or prepare a Beds24 write, returning what
+    the drafter needs.
 
     The pricing figures come from the quotation engine (never the model); the model only turns
     them into a guest-facing summary. Any failure escalates rather than sending a reply with a
-    made-up or missing quote. action="update" only stages the Beds24 write on the result - it is
-    never pushed from here. The caller (ai_auto_draft_service) persists it on the draft and only
-    pushes it once a human approves that draft (see send_scheduled_draft).
+    made-up or missing quote. The sales manager is strictly local: it never touches Beds24. When
+    execute is set, it only *prepares* the write (sales_manager_service.build_pending_execution)
+    for the executor agent to validate and, if approved, push - see
+    ai_auto_draft_service._execute_pending.
     """
     scope = _normalize_sales_scope(sales_request.get("scope"))
     action = _normalize_sales_action(sales_request.get("action"))
+    execute = bool(sales_request.get("execute")) and action in ("update_quotation", "create_quotation")
     params = sales_manager_service.resolve_quote_params(tenant, sales_request)
 
     try:
@@ -754,17 +782,6 @@ def _run_sales_manager(
         recorder.record("sales_manager", prompt=f"build-charges {params}", error=str(exc))
         logger.warning("Sales manager pricing failed tenant_id=%s: %s", tenant.id, exc)
         return SalesManagerResult(ok=False, escalation_reason="sales_manager_pricing_failed")
-
-    # Fetched before the model call below so a Beds24 outage escalates immediately instead of
-    # spending a model call on a quote that can't be staged as an update anyway.
-    original_item_ids: list[str] | None = None
-    if action == "update":
-        try:
-            original_item_ids = sales_manager_service.fetch_original_invoice_item_ids(tenant)
-        except sales_manager_service.SalesManagerError as exc:
-            recorder.record("sales_manager", prompt="fetch-invoice-items", error=str(exc))
-            logger.warning("Sales manager could not fetch existing invoice items tenant_id=%s: %s", tenant.id, exc)
-            return SalesManagerResult(ok=False, escalation_reason="sales_manager_update_fetch_failed")
 
     charges_text = sales_manager_service.render_charges_text(quote)
     prompt = _build_sales_manager_prompt(
@@ -799,14 +816,17 @@ def _run_sales_manager(
 
     sales_result = SalesManagerResult(ok=True)
 
-    if action == "update":
-        sales_result.pending_beds24_update = sales_manager_service.build_pending_invoice_update(
-            tenant, quote.charges, original_item_ids or []
+    if execute:
+        sales_result.pending_execution = sales_manager_service.build_pending_execution(
+            tenant, action, quote.charges, params, sales_request
+        )
+        target_description = (
+            "a new Beds24 booking" if action == "create_quotation" else "this booking's Beds24 invoice items"
         )
         drafter_note_parts.append(
-            "An updated quote is staged for this booking's Beds24 invoice items; it will be "
-            "pushed to Beds24 only once a human approves this reply - do not tell the guest the "
-            "booking has been updated yet, only that this is the updated price."
+            f"An action is prepared for the executor to apply on approval ({target_description}); "
+            "it will only be pushed to Beds24 once the executor validates and applies it - do not "
+            "tell the guest the booking has been updated/created yet, only that this is the price."
         )
 
     if scope in ("pdf", "both"):
@@ -823,7 +843,7 @@ def _run_sales_manager(
             recorder.record("sales_manager", prompt="generate-pdf", error=str(exc))
             logger.warning("Sales manager PDF generation failed tenant_id=%s: %s", tenant.id, exc)
             return SalesManagerResult(ok=False, escalation_reason="sales_manager_pdf_failed")
-        sales_result.pdf_bytes = pdf.content
+        sales_result.pdf_file_path = pdf.file_path
         sales_result.pdf_filename = pdf.filename
         sales_result.pdf_web_url = pdf.web_url
         drafter_note_parts.append(
@@ -834,6 +854,142 @@ def _run_sales_manager(
 
     sales_result.drafter_note = "\n".join(drafter_note_parts)
     return sales_result
+
+
+@dataclass
+class ExecutorResult:
+    approved: bool
+    reason: str = ""
+
+
+def _build_executor_prompt(
+    profile: AiAgentProfile,
+    *,
+    payload_text: str,
+    context_text: str,
+) -> str:
+    """Assemble the executor prompt: the operator's natural-language validation rules
+    (profile.instructions) plus the exact Beds24 write the sales manager prepared, so the model
+    judges the actual payload against the actual rules rather than a paraphrase of either."""
+    text = ai_prompt_blocks.resolve_blocks(profile, EXECUTOR_ROLE)
+    parts: list[str] = []
+
+    preamble = (text["preamble"] or "").strip()
+    if preamble:
+        parts.append(preamble)
+
+    instructions = resolve_datetime_placeholders((profile.instructions or "").strip())
+    if instructions:
+        parts.append(ai_prompt_blocks.join(text["instructions_header"], instructions))
+
+    parts.append(ai_prompt_blocks.join(text["rules"], "Judge the request below strictly against your instructions above."))
+    parts.append(ai_prompt_blocks.join(text["payload"], payload_text))
+    if context_text.strip():
+        parts.append(ai_prompt_blocks.join(text["context"], context_text.strip()))
+
+    output = (text["output"] or "").strip()
+    if output:
+        parts.append(output)
+    return "\n\n".join(part for part in parts if part.strip())
+
+
+def _render_pending_execution_text(pending_execution: dict) -> str:
+    action = pending_execution.get("action")
+    if action == "create":
+        payload = pending_execution.get("create_payload") or {}
+        lines = ["Action: create a brand-new Beds24 booking"]
+        lines += [f"- {key}: {value}" for key, value in payload.items() if key != "invoice_items"]
+        lines.append("Invoice items:")
+        lines += [f"  - {item}" for item in (payload.get("invoice_items") or [])]
+        return "\n".join(lines)
+    lines = [
+        "Action: update this booking's Beds24 invoice items",
+        f"- booking_id: {pending_execution.get('booking_id')}",
+        "Invoice items:",
+    ]
+    lines += [f"  - {item}" for item in (pending_execution.get("invoice_items") or [])]
+    return "\n".join(lines)
+
+
+def _run_executor(
+    db: Session,
+    *,
+    recorder,
+    executor_profile: AiAgentProfile,
+    pending_execution: dict,
+    price_context: str,
+    is_redo: bool,
+) -> ExecutorResult:
+    """Judge a prepared Beds24 write against the operator's natural-language rules. Never pushes
+    anything itself - the caller (ai_auto_draft_service._execute_pending) performs the actual
+    write only when this returns approved=True."""
+    payload_text = _render_pending_execution_text(pending_execution)
+    prompt = _build_executor_prompt(executor_profile, payload_text=payload_text, context_text=price_context)
+    try:
+        result = gemini_client.generate(
+            prompt,
+            **_generation_kwargs(executor_profile, is_redo=is_redo),
+            response_schema=EXECUTOR_SCHEMA,
+        )
+    except gemini_client.GeminiClientError as exc:
+        recorder.record("executor", prompt=prompt, error=str(exc), model=_generation_kwargs(executor_profile, is_redo=is_redo)["model"])
+        logger.warning("Executor model call failed: %s", exc)
+        return ExecutorResult(approved=False, reason=f"Executor could not be run: {exc}")
+
+    recorder.record("executor", prompt=prompt, result=result)
+    parsed = result.parsed or {}
+    approved = bool(parsed.get("approved"))
+    reason = str(parsed.get("reason") or "").strip()
+    issues = [str(issue).strip() for issue in (parsed.get("blocking_issues") or []) if str(issue).strip()]
+    if issues:
+        reason = f"{reason}\n\nBlocking issues:\n" + "\n".join(f"- {issue}" for issue in issues)
+    return ExecutorResult(approved=approved, reason=reason or ("Approved" if approved else "The executor did not approve this action"))
+
+
+def run_executor_validation(
+    db: Session,
+    *,
+    tenant: Tenant,
+    pending_execution: dict,
+    price_context: str = "",
+    is_redo: bool = False,
+) -> tuple[ExecutorResult, int | None]:
+    """Public entry point: resolves this tenant's executor profile and runs one validation as its
+    own auditable AiAgentRun (mode="executor"), returning the verdict and that run's id so the
+    caller can link it on the draft. Called from ai_auto_draft_service._execute_pending, next to
+    the DB session that performs the actual Beds24 write on approval.
+    """
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant.id).first()
+    executor_profile = resolve_profile(
+        db, EXECUTOR_ROLE, ai_settings.executor_profile_id if ai_settings else None
+    )
+    if executor_profile is None:
+        return ExecutorResult(approved=False, reason="No executor profile is configured"), None
+
+    run = AiAgentRun(
+        tenant_id=tenant.id,
+        channel="beds24",
+        mode="executor",
+        status=STATUS_FAILED,
+    )
+    db.add(run)
+    db.flush()
+    recorder = _RunRecorder(run=run, db=db)
+
+    result = _run_executor(
+        db,
+        recorder=recorder,
+        executor_profile=executor_profile,
+        pending_execution=pending_execution,
+        price_context=price_context,
+        is_redo=is_redo,
+    )
+    recorder.finish(
+        STATUS_COMPLETED if result.approved else STATUS_ESCALATED,
+        escalation_reason=None if result.approved else "executor_blocked",
+        final_text=result.reason,
+    )
+    return result, run.id
 
 
 def run_planner_loop(
@@ -1002,10 +1158,10 @@ def run_planner_loop(
     # Sales manager: runs between planner and drafter, but only when the planner asked for a quote.
     # It prices the stay (and optionally renders+files a PDF) and hands the drafter the exact
     # figures. A failure escalates rather than drafting a reply with a missing/made-up quote.
-    quotation_pdf_bytes: bytes | None = None
+    quotation_file_path: str | None = None
     quotation_pdf_filename: str | None = None
     quotation_web_url: str | None = None
-    pending_beds24_update: dict | None = None
+    pending_execution: dict | None = None
     sales_request = plan.get("sales_request") or {}
     if isinstance(sales_request, dict) and sales_request.get("needed"):
         sales_profile = resolve_profile(
@@ -1035,9 +1191,9 @@ def run_planner_loop(
             )
         # The sales manager's factual figures lead the drafter's instruction.
         drafter_instruction = "\n\n".join(part for part in [drafter_instruction, sales_result.drafter_note] if part)
-        quotation_pdf_bytes = sales_result.pdf_bytes
+        quotation_file_path = sales_result.pdf_file_path
         quotation_pdf_filename = sales_result.pdf_filename
-        pending_beds24_update = sales_result.pending_beds24_update
+        pending_execution = sales_result.pending_execution
         quotation_web_url = sales_result.pdf_web_url
 
     # Titles/paths only, no section bodies - cheap enough to give the checker every run so it
@@ -1192,10 +1348,10 @@ def run_planner_loop(
             chosen_channel=chosen_channel,
             chosen_email_thread_id=chosen_email_thread_id,
             chosen_whatsapp_endpoint_id=chosen_whatsapp_endpoint_id,
-            quotation_pdf_bytes=quotation_pdf_bytes,
+            quotation_file_path=quotation_file_path,
             quotation_pdf_filename=quotation_pdf_filename,
             quotation_web_url=quotation_web_url,
-            pending_beds24_update=pending_beds24_update,
+            pending_execution=pending_execution,
         )
 
     # Attempts exhausted (or no checker configured): keep the last draft and park it for a human.
@@ -1220,8 +1376,8 @@ def run_planner_loop(
         chosen_channel=chosen_channel,
         chosen_email_thread_id=chosen_email_thread_id,
         chosen_whatsapp_endpoint_id=chosen_whatsapp_endpoint_id,
-        quotation_pdf_bytes=quotation_pdf_bytes,
+        quotation_file_path=quotation_file_path,
         quotation_pdf_filename=quotation_pdf_filename,
         quotation_web_url=quotation_web_url,
-        pending_beds24_update=pending_beds24_update,
+        pending_execution=pending_execution,
     )

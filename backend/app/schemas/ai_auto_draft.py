@@ -21,11 +21,16 @@ class AiAutoDraftRead(BaseModel):
     quoted_context: str | None = None
     status: str
     scheduled_send_at: datetime | None = None
-    # True when the sales-manager agent staged a Beds24 invoice-item update for this draft
-    # (action="update"): approving/sending this draft pushes that update to Beds24 first.
-    has_pending_beds24_update: bool = False
-    # The staged Beds24 invoice-item update itself (booking_id, all_original_invoice_item_ids,
-    # invoice_items), so the approval UI can show a before/after diff of what will be pushed.
-    # None when nothing is staged.
-    pending_beds24_update: dict[str, Any] | None = None
+    # True when the sales manager prepared a Beds24 write for this draft (an invoice-item update
+    # or a brand-new booking): approving/sending this draft runs it past the executor agent, which
+    # pushes it to Beds24 first if approved.
+    has_pending_execution: bool = False
+    # The prepared Beds24 write itself (action + booking_id/invoice_items, or
+    # action="create"+create_payload), so the approval UI can show a before/after diff of what
+    # will be pushed. None when nothing is prepared.
+    pending_execution: dict[str, Any] | None = None
+    # True when a quotation PDF (by path or, for older drafts, by stored attachment) is attached
+    # to this draft.
+    has_quotation: bool = False
+    quotation_filename: str | None = None
     created_at: datetime

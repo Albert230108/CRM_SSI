@@ -37,6 +37,7 @@ const POS: Record<string, Box> = {
   // The reply pipeline
   planner: { x: 250, y: 288, w: 160, h: 66 },
   sales_manager: { x: 470, y: 180, w: 170, h: 66 },
+  executor: { x: 470, y: 80, w: 170, h: 66 },
   drafter: { x: 470, y: 330, w: 160, h: 66 },
   checker: { x: 700, y: 330, w: 160, h: 66 },
   formatter: { x: 920, y: 330, w: 160, h: 66 },

@@ -193,6 +193,10 @@ export default function QuotationEditorPage() {
   const [sending, setSending] = useState(false)
   const [buildingCharges, setBuildingCharges] = useState(false)
   const [installments, setInstallments] = useState(1)
+  // When at least one payment is paid and the installment count changes, spread only the
+  // unpaid/new installments' due dates evenly between the latest paid date and check-out.
+  // Checked by default; unchecking reproduces the classic today/check-in/monthly schedule.
+  const [evenSpread, setEvenSpread] = useState(true)
   const [buildingPlan, setBuildingPlan] = useState(false)
   const [generatingCombined, setGeneratingCombined] = useState(false)
   const [pdfLink, setPdfLink] = useState<{ url: string; name: string } | null>(null)
@@ -502,6 +506,7 @@ export default function QuotationEditorPage() {
           status: p.status ?? 'not paid',
           vat_rate: p.vat_rate,
         })),
+        even_spread: evenSpread,
       })
       setPayments(
         result.payments.map((p) => ({
@@ -1090,6 +1095,8 @@ export default function QuotationEditorPage() {
         onInstallmentsChange={setInstallments}
         onAddPaymentPlan={() => handleAddPaymentPlan()}
         buildingPlan={buildingPlan}
+        evenSpread={evenSpread}
+        onEvenSpreadChange={setEvenSpread}
       />
 
       <BalanceBanner chargesTotal={chargesTotal} paymentsTotal={paymentsTotal} />

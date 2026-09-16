@@ -54,8 +54,10 @@ def _to_read(db: Session, draft: AiAutoDraft) -> AiAutoDraftRead:
         quoted_context=draft.quoted_context,
         status=draft.status,
         scheduled_send_at=draft.scheduled_send_at,
-        has_pending_beds24_update=bool(draft.pending_beds24_update),
-        pending_beds24_update=draft.pending_beds24_update if isinstance(draft.pending_beds24_update, dict) else None,
+        has_pending_execution=bool(draft.pending_execution),
+        pending_execution=draft.pending_execution if isinstance(draft.pending_execution, dict) else None,
+        quotation_filename=draft.quotation_filename,
+        has_quotation=bool(draft.quotation_file_path or draft.quotation_attachment_id),
         created_at=draft.created_at,
     )
 
@@ -97,8 +99,8 @@ def dismiss_ai_auto_draft(
     draft.scheduled_send_at = None
     draft.resolution_source = "human_ui"
     draft.resolution_reason = (payload.reason or "").strip() or None
-    # A dismissed draft's staged Beds24 update (if any) is dropped, never pushed.
-    draft.pending_beds24_update = None
+    # A dismissed draft's prepared Beds24 action (if any) is dropped, never pushed.
+    draft.pending_execution = None
     db.commit()
     db.refresh(draft)
     return _to_read(db, draft)
@@ -129,9 +131,9 @@ def mark_ai_auto_draft_used(
     draft = _get_draft(db, draft_id)
     draft.status = "used_as_manual_seed"
     draft.scheduled_send_at = None
-    # The draft text is only being used to seed a manual reply, not sent as-is - any staged
-    # Beds24 update was computed for the AI's own wording and must not be pushed unattended.
-    draft.pending_beds24_update = None
+    # The draft text is only being used to seed a manual reply, not sent as-is - any prepared
+    # Beds24 action was computed for the AI's own wording and must not be pushed unattended.
+    draft.pending_execution = None
     db.commit()
     db.refresh(draft)
     return _to_read(db, draft)

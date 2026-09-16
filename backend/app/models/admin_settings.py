@@ -35,6 +35,10 @@ class AdminSettings(Base):
     # Formatter default for newly created tenants only; existing tenants are never retro-fitted,
     # so toggling this cannot silently turn on rich formatting for live tenants.
     formatter_default_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Default executor mode ("manual" or "autonomous") for a tenant whose own
+    # TenantAiSettings.executor_mode is unset. Ships "manual" so a fresh deployment never pushes to
+    # Beds24 unattended without an explicit opt-in.
+    executor_default_mode = Column(String(12), nullable=False, default="manual", server_default="manual")
     # Ceiling on tokens the planner/checker loop may spend per calendar day (UTC) across all
     # tenants. NULL means unlimited. BigInteger because a busy day can exceed a 32-bit count.
     ai_daily_token_cap = Column(BigInteger, nullable=True)

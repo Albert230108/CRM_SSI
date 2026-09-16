@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 PlannerMode = Literal["off", "manual", "auto-draft", "auto-send"]
+ExecutorMode = Literal["manual", "autonomous"]
 
 
 class TenantAiSettingsRead(BaseModel):
@@ -34,6 +35,10 @@ class TenantAiSettingsRead(BaseModel):
     formatter_profile_id: int | None = None
     # The sales-manager profile the planner uses when it requests a quotation.
     sales_manager_profile_id: int | None = None
+    # The executor profile that validates/applies a prepared Beds24 write.
+    executor_profile_id: int | None = None
+    # None means "use AdminSettings.executor_default_mode" (ships "manual").
+    executor_mode: ExecutorMode | None = None
 
 
 class TenantAiSettingsUpdate(BaseModel):
@@ -56,6 +61,8 @@ class TenantAiSettingsUpdate(BaseModel):
     formatter_enabled: bool = False
     formatter_profile_id: int | None = None
     sales_manager_profile_id: int | None = None
+    executor_profile_id: int | None = None
+    executor_mode: ExecutorMode | None = None
 
 
 class BulkTenantAiTemplateAssignment(BaseModel):

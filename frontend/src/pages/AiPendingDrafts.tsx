@@ -23,11 +23,25 @@ type AiAutoDraftItem = {
   quoted_context: string | null
   status: string
   scheduled_send_at: string | null
-  has_pending_beds24_update: boolean
-  pending_beds24_update: {
+  // A Beds24 write the sales manager prepared for this draft, run past the executor agent
+  // (validated + pushed) before the reply is sent. action="update" targets booking_id's invoice
+  // items; action="create" builds a brand-new booking from create_payload.
+  has_pending_execution: boolean
+  pending_execution: {
+    action?: 'update' | 'create'
     booking_id?: string
     invoice_items?: Array<{ type?: string; description?: string; qty?: number; amount?: number; vat_rate?: number }>
+    create_payload?: {
+      room_id?: number
+      arrival?: string
+      departure?: string
+      first_name?: string
+      last_name?: string
+      invoice_items?: Array<{ type?: string; description?: string; qty?: number; amount?: number; vat_rate?: number }>
+    }
   } | null
+  has_quotation: boolean
+  quotation_filename: string | null
   created_at: string
 }
 
@@ -221,19 +235,23 @@ export default function AiPendingDrafts() {
                   {draft.tenant_name ?? `Tenant #${draft.tenant_id}`} - {draft.channel}
                   {draft.status === 'pending_auto_send' ? ' - sending automatically soon' : ''}
                 </p>
-                {draft.has_pending_beds24_update ? (
+                {draft.has_pending_execution ? (
                   <div className="mt-1">
                     <p className="text-xs font-medium text-amber-700">
-                      Sending this will also push an updated quote to Beds24 for this booking.
+                      {draft.pending_execution?.action === 'create'
+                        ? 'Sending this will also ask the executor to create a new Beds24 booking, once approved.'
+                        : "Sending this will also ask the executor to push an updated quote to Beds24 for this booking, once approved."}
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => void toggleQuoteDiff(draft)}
-                      className="mt-1 text-xs font-medium text-indigo-600 underline hover:text-indigo-800"
-                    >
-                      {diffOpenId === draft.id ? 'Hide quote changes' : 'Show quote changes'}
-                    </button>
-                    {diffOpenId === draft.id ? (
+                    {draft.pending_execution?.action === 'create' ? null : (
+                      <button
+                        type="button"
+                        onClick={() => void toggleQuoteDiff(draft)}
+                        className="mt-1 text-xs font-medium text-indigo-600 underline hover:text-indigo-800"
+                      >
+                        {diffOpenId === draft.id ? 'Hide quote changes' : 'Show quote changes'}
+                      </button>
+                    )}
+                    {diffOpenId === draft.id && draft.pending_execution?.action !== 'create' ? (
                       <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 text-xs">
                         <div>
                           <p className="font-semibold uppercase tracking-wide text-gray-500">Current in CRM</p>
@@ -252,7 +270,7 @@ export default function AiPendingDrafts() {
                         <div>
                           <p className="font-semibold uppercase tracking-wide text-gray-500">Will be sent to Beds24</p>
                           <ul className="mt-1 space-y-0.5">
-                            {(draft.pending_beds24_update?.invoice_items ?? []).map((item, i) => (
+                            {(draft.pending_execution?.invoice_items ?? []).map((item, i) => (
                               <li key={i} className={item.type === 'payment' ? 'text-emerald-700' : 'text-gray-700'}>
                                 {item.description || item.type} — €{((item.qty ?? 1) * (item.amount ?? 0)).toFixed(2)}
                               </li>
@@ -262,6 +280,12 @@ export default function AiPendingDrafts() {
                       </div>
                     ) : null}
                   </div>
+                ) : null}
+                {draft.has_quotation ? (
+                  <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+                    <span aria-hidden="true">📎</span>
+                    {draft.quotation_filename || 'Quotation PDF'} attached
+                  </p>
                 ) : null}
                 <div className="relative">
                   {renderDraftPreview(draft)}

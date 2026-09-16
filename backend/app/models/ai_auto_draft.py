@@ -38,20 +38,29 @@ class AiAutoDraft(Base):
     # Set when the draft came out of the planner loop, linking it to its full execution log.
     agent_run_id = Column(Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True)
     checker_feedback = Column(Text, nullable=True)
-    # Set when the sales-manager agent generated a quotation PDF for this reply; the PDF is stored
-    # as a CommunicationAttachment and attached to the outgoing email/WhatsApp at send time (so a
-    # delayed auto-send still has it).
+    # Legacy: set when the sales-manager agent stored a quotation PDF as a CommunicationAttachment
+    # (before the path-based attachment flow). Still read as a fallback for old drafts - see
+    # ai_auto_draft_service._draft_quotation_attachments. New drafts use quotation_file_path below.
     quotation_attachment_id = Column(
         Integer, ForeignKey("communication_attachments.id", ondelete="SET NULL"), nullable=True
     )
-    # Set when the sales-manager agent staged a Beds24 invoice-item update for this reply
-    # (sales_manager_service.build_pending_invoice_update's shape: booking_id,
-    # all_original_invoice_item_ids, invoice_items). It is never pushed to Beds24 until a human
-    # approves this draft (send_scheduled_draft, human_ui/human_whatsapp only - the auto-send
-    # timer refuses to send a draft that still carries one), then cleared. A draft carrying this
-    # is never auto-sent: _planner_draft_status_and_schedule keeps it in "pending", never
-    # "pending_auto_send", regardless of the tenant's auto-send setting.
-    pending_beds24_update = Column(JSON, nullable=True)
+    # The quotation PDF path the sales manager generated for this reply, relative to
+    # TENANT_FILES_ROOT (the mount shared with the quotation-manager service). Bytes are read
+    # lazily at send time (tenant_files_storage.resolve_download_path) rather than stored here, so
+    # a delayed auto-send still attaches it without carrying the PDF through the draft row.
+    quotation_file_path = Column(Text, nullable=True)
+    quotation_filename = Column(String(255), nullable=True)
+    # Set when the sales manager prepared a Beds24 write for this reply (an invoice-item update or
+    # a brand-new booking - sales_manager_service.build_pending_execution's shape). It is never
+    # pushed to Beds24 until the executor agent validates it, which happens either on human
+    # approval of this draft or autonomously, depending on the tenant's executor_mode setting (see
+    # ai_auto_draft_service._execute_pending / send_scheduled_draft). Cleared on success. A draft
+    # carrying this is kept out of "pending_auto_send" in manual mode (_planner_draft_status_and_
+    # schedule); autonomous mode allows it there, subject to the usual auto-send checks.
+    pending_execution = Column(JSON, nullable=True)
+    # The executor's own AiAgentRun, once it has judged (or applied) pending_execution - lets the
+    # approval UI show why it was approved/blocked.
+    executor_run_id = Column(Integer, ForeignKey("ai_agent_runs.id", ondelete="SET NULL"), nullable=True)
     # Why this draft ended up sent or dismissed, and who/what decided - set at every path that
     # reaches a final send/dismiss outcome (CRM UI buttons, a WhatsApp YES/NO reply, or the
     # automatic auto-send timer). Read by memory_redo_service as extra context for the redo

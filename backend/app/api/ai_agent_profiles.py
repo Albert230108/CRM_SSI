@@ -99,7 +99,7 @@ class PromptBlockDefinition(BaseModel):
 
 @router.get("/prompt-blocks", response_model=list[PromptBlockDefinition])
 def list_prompt_blocks(
-    role: str = Query(..., pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|memory_redo|memory_qa|run_qa|assistant)$"),
+    role: str = Query(..., pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|executor|memory_redo|memory_qa|run_qa|assistant)$"),
     current_user: User = Depends(get_current_user),
 ) -> list[PromptBlockDefinition]:
     """The blocks a profile of this role may override, with their built-in default text.
@@ -117,7 +117,7 @@ def list_prompt_blocks(
 
 @router.get("", response_model=list[AiAgentProfileRead])
 def list_agent_profiles(
-    role: str | None = Query(None, pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|memory_redo|memory_qa|run_qa|assistant)$"),
+    role: str | None = Query(None, pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|executor|memory_redo|memory_qa|run_qa|assistant)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AiAgentProfile]:
@@ -131,7 +131,8 @@ def list_agent_profiles(
 # the profile editor never disagree about which roles exist or what they do.
 _AGENT_META: tuple[dict, ...] = (
     {"role": "planner", "label": "Planner", "description": "Reads the conversation, picks a template and channel, and decides whether the sales manager is needed."},
-    {"role": "sales_manager", "label": "Sales Manager", "description": "Prices a stay and, when asked, renders a PDF quotation via the quotation manager, then hands the figures to the drafter."},
+    {"role": "sales_manager", "label": "Sales Manager", "description": "Prices a stay locally and, when asked, renders a PDF quotation via the quotation manager, then hands the figures to the drafter. Never writes to Beds24."},
+    {"role": "executor", "label": "Executor", "description": "The only agent that writes to Beds24. Validates a Beds24 write the sales manager prepared against its own rules, then applies it if approved."},
     {"role": "drafter", "label": "Drafter", "description": "Writes the actual reply text from the planner's instruction and any quote."},
     {"role": "checker", "label": "Checker", "description": "Proof-reads the draft; approves it or sends it back to the drafter to redraft."},
     {"role": "formatter", "label": "Formatter", "description": "Reformats an approved reply into channel-specific output (HTML for email, markdown for WhatsApp)."},
@@ -146,6 +147,7 @@ _ROLE_PIN_COLUMN = {
     "drafter": "drafter_profile_id",
     "formatter": "formatter_profile_id",
     "sales_manager": "sales_manager_profile_id",
+    "executor": "executor_profile_id",
     "brain_writer": "brain_writer_profile_id",
     "action_writer": "action_writer_profile_id",
 }
@@ -235,6 +237,8 @@ def get_agent_graph(
         {"from": "planner", "to": "drafter", "label": "instruction", "kind": "flow"},
         {"from": "sales_manager", "to": "drafter", "label": "prices", "kind": "flow"},
         {"from": "sales_manager", "to": "quotation_manager", "label": "price + PDF", "kind": "integration"},
+        {"from": "sales_manager", "to": "executor", "label": "prepared action", "kind": "flow"},
+        {"from": "executor", "to": "beds24", "label": "writes (on approval)", "kind": "integration"},
         {"from": "planner", "to": "templates", "label": "picks template", "kind": "integration"},
         {"from": "drafter", "to": "checker", "label": "draft", "kind": "flow"},
         {"from": "checker", "to": "drafter", "label": "redraft", "kind": "loop"},

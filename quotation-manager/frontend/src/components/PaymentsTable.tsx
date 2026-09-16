@@ -12,6 +12,8 @@ interface PaymentsTableProps {
   onInstallmentsChange: (n: number) => void
   onAddPaymentPlan: () => void
   buildingPlan: boolean
+  evenSpread: boolean
+  onEvenSpreadChange: (checked: boolean) => void
 }
 
 export default function PaymentsTable({
@@ -23,6 +25,8 @@ export default function PaymentsTable({
   onInstallmentsChange,
   onAddPaymentPlan,
   buildingPlan,
+  evenSpread,
+  onEvenSpreadChange,
 }: PaymentsTableProps) {
   // The deposit-refund row (negative) is excluded from the "total paid" figure,
   // matching the desktop app's calculate_and_display_total_payments.
@@ -51,6 +55,15 @@ export default function PaymentsTable({
                 ),
               )}
             </select>
+          </label>
+          <label className="flex items-center gap-1 text-xs text-gray-500" title="When at least one payment is already paid, spread the remaining unpaid installments' due dates evenly between the last paid date and check-out. Unchecked keeps the classic schedule.">
+            <input
+              type="checkbox"
+              checked={evenSpread}
+              onChange={(e) => onEvenSpreadChange(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            Even-spread unpaid dates
           </label>
           <button
             type="button"

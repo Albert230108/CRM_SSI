@@ -136,7 +136,7 @@ def test_sales_request_price_only_feeds_drafter_no_pdf(db_session, fake_gemini, 
     db_session.commit()
 
     assert result.status == "completed"
-    assert result.quotation_pdf_bytes is None
+    assert result.quotation_file_path is None
     stages = [s.stage for s in db_session.query(AiAgentRun).filter(AiAgentRun.id == result.run_id).one().steps]
     assert stages == ["planner", "sales_manager", "drafter", "checker"]
     # The drafter prompt (4th gemini call) carries the sales manager's exact figures.
@@ -157,8 +157,9 @@ def test_sales_request_both_generates_and_carries_pdf(db_session, fake_gemini, m
         captured["security_deposit"] = security_deposit
         captured["invoice_items"] = invoice_items
         return sales_manager_service.QuotationPdf(
-            content=b"%PDF-1.4 fake", filename="Quotation_B-quote-1.pdf",
-            web_url="https://onedrive/quote.pdf", quotation_number=7, location="onedrive",
+            file_path="2026/B-quote-1_Sam_Jones/Quotation_B-quote-1_007.pdf",
+            filename="Quotation_B-quote-1.pdf",
+            web_url="https://onedrive/quote.pdf", quotation_number=7, location="local",
         )
 
     monkeypatch.setattr(sales_manager_service, "generate_quotation_pdf", fake_pdf)
@@ -175,7 +176,7 @@ def test_sales_request_both_generates_and_carries_pdf(db_session, fake_gemini, m
     db_session.commit()
 
     assert result.status == "completed"
-    assert result.quotation_pdf_bytes == b"%PDF-1.4 fake"
+    assert result.quotation_file_path == "2026/B-quote-1_Sam_Jones/Quotation_B-quote-1_007.pdf"
     assert result.quotation_pdf_filename == "Quotation_B-quote-1.pdf"
     assert result.quotation_web_url == "https://onedrive/quote.pdf"
     # The security deposit the model chose (250) flows into the PDF, and the priced lines become items.
@@ -206,9 +207,11 @@ def test_no_sales_request_skips_sales_manager(db_session, fake_gemini, monkeypat
     assert stages == ["planner", "drafter", "checker"]
 
 
-def test_sales_request_update_stages_beds24_update_no_push(db_session, fake_gemini, monkeypatch):
-    """action="update" stages a Beds24 invoice-item update on the result but never pushes it -
-    only a human-approved draft send (ai_auto_draft_service.send_scheduled_draft) does that."""
+def test_sales_request_update_quotation_execute_prepares_pending_execution_no_push(db_session, fake_gemini, monkeypatch):
+    """action="update_quotation" with execute=true prepares a Beds24 invoice-item update on the
+    result but never pushes it - the sales manager is strictly local. Only the executor agent,
+    validated on a human-approved (or autonomous) draft send, ever pushes to Beds24 - see
+    ai_auto_draft_service._execute_pending."""
     tenant = _tenant(db_session)
     template = _template(db_session)
     _profile(db_session, "planner")
@@ -217,14 +220,11 @@ def test_sales_request_update_stages_beds24_update_no_push(db_session, fake_gemi
     _settings(db_session, tenant)
     _stub_charges(monkeypatch)
     monkeypatch.setattr(
-        sales_manager_service, "fetch_original_invoice_item_ids", lambda tenant_arg: ["item-1", "item-2"]
-    )
-    monkeypatch.setattr(
         "app.services.beds24_service.update_booking_invoice_items",
         lambda *a, **k: pytest.fail("The sales manager must never push to Beds24 itself"),
     )
     fake_gemini([
-        _plan(template.id, {"needed": True, "scope": "price", "action": "update"}),
+        _plan(template.id, {"needed": True, "scope": "price", "action": "update_quotation", "execute": True}),
         {"price_summary": "Updated stay: EUR 400.", "security_deposit": 200, "notes": ""},
         "Dear Sam, here is your updated price.",
         {"passed": True, "feedback": ""},
@@ -237,16 +237,17 @@ def test_sales_request_update_stages_beds24_update_no_push(db_session, fake_gemi
     db_session.commit()
 
     assert result.status == "completed"
-    assert result.pending_beds24_update == {
+    assert result.pending_execution == {
+        "action": "update",
         "booking_id": tenant.booking_id,
-        "all_original_invoice_item_ids": ["item-1", "item-2"],
         "invoice_items": [
             {"type": "charge", "description": "Studio A x 4 nights", "qty": 4, "amount": 100, "vat_rate": 9},
         ],
     }
 
 
-def test_sales_request_update_escalates_when_fetch_fails(db_session, fake_gemini, monkeypatch):
+def test_sales_request_update_quotation_without_execute_prepares_nothing(db_session, fake_gemini, monkeypatch):
+    """An ordinary update quote (execute not set) never prepares a Beds24 write at all."""
     tenant = _tenant(db_session)
     template = _template(db_session)
     _profile(db_session, "planner")
@@ -254,34 +255,37 @@ def test_sales_request_update_escalates_when_fetch_fails(db_session, fake_gemini
     _profile(db_session, "sales_manager")
     _settings(db_session, tenant)
     _stub_charges(monkeypatch)
-
-    def _boom(tenant_arg):
-        raise sales_manager_service.SalesManagerError("Beds24 unreachable")
-
-    monkeypatch.setattr(sales_manager_service, "fetch_original_invoice_item_ids", _boom)
-    fake_gemini([_plan(template.id, {"needed": True, "scope": "price", "action": "update"})])
+    fake_gemini([
+        _plan(template.id, {"needed": True, "scope": "price", "action": "update_quotation"}),
+        {"price_summary": "Updated stay: EUR 400.", "security_deposit": 200, "notes": ""},
+        "Dear Sam, here is your updated price.",
+        {"passed": True, "feedback": ""},
+    ])
 
     result = ai_agent_orchestrator.run_planner_loop(
-        db_session, tenant=tenant, channel="email", mode="manual", inbound_text="Update my booking."
+        db_session, tenant=tenant, channel="email", mode="manual",
+        inbound_text="What would 4 nights cost?",
     )
     db_session.commit()
 
-    assert result.status == ai_agent_orchestrator.STATUS_ESCALATED
-    assert result.escalation_reason == "sales_manager_update_fetch_failed"
+    assert result.status == "completed"
+    assert result.pending_execution is None
 
 
-def test_apply_result_with_pending_beds24_update_never_auto_sends(db_session, monkeypatch):
-    """Even with auto-send enabled and an approved draft, a staged Beds24 update forces `pending`,
-    never `pending_auto_send` - the write only ever happens once a human approves it."""
+def test_apply_result_with_pending_execution_never_auto_sends_in_manual_mode(db_session, monkeypatch):
+    """Even with auto-send enabled and an approved draft, a prepared Beds24 action forces
+    `pending`, never `pending_auto_send`, when the tenant's executor mode is manual (the default:
+    no AdminSettings row means _resolve_executor_mode falls back to "manual") - the write only
+    ever happens once a human approves it."""
     from app.models.ai_auto_draft import AiAutoDraft
 
     tenant = _tenant(db_session)
     template = _template(db_session)
     ai_settings = _settings(db_session, tenant, planner_mode="auto-send", auto_send_email=True)
 
-    pending_update = {
+    pending = {
+        "action": "update",
         "booking_id": tenant.booking_id,
-        "all_original_invoice_item_ids": ["item-1"],
         "invoice_items": [{"type": "charge", "description": "Studio A", "qty": 1, "amount": 100, "vat_rate": 9}],
     }
 
@@ -296,10 +300,10 @@ def test_apply_result_with_pending_beds24_update_never_auto_sends(db_session, mo
         chosen_channel = None
         chosen_email_thread_id = None
         chosen_whatsapp_endpoint_id = None
-        quotation_pdf_bytes = None
+        quotation_file_path = None
         quotation_pdf_filename = None
         quotation_web_url = None
-        pending_beds24_update = pending_update
+        pending_execution = pending
 
     draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="", status="pending")
     db_session.add(draft)
@@ -313,7 +317,55 @@ def test_apply_result_with_pending_beds24_update_never_auto_sends(db_session, mo
 
     assert draft.status == "pending"
     assert draft.scheduled_send_at is None
-    assert draft.pending_beds24_update == pending_update
+    assert draft.pending_execution == pending
+
+
+def test_apply_result_with_pending_execution_auto_sends_in_autonomous_mode(db_session, monkeypatch):
+    """With the tenant's executor mode set to autonomous, an approved draft carrying a prepared
+    Beds24 action is allowed into pending_auto_send like any other approved draft - the executor
+    itself still validates (and can still block) the write when the timer actually sends it."""
+    from app.models.ai_auto_draft import AiAutoDraft
+
+    tenant = _tenant(db_session)
+    template = _template(db_session)
+    ai_settings = _settings(
+        db_session, tenant, planner_mode="auto-send", auto_send_email=True, executor_mode="autonomous"
+    )
+
+    pending = {
+        "action": "update",
+        "booking_id": tenant.booking_id,
+        "invoice_items": [{"type": "charge", "description": "Studio A", "qty": 1, "amount": 100, "vat_rate": 9}],
+    }
+
+    class _Result:
+        status = "completed"
+        auto_send_allowed = True
+        generated_text = "Dear Sam, updated price attached."
+        formatted_text = None
+        template_id = template.id
+        run_id = None
+        checker_feedback = None
+        chosen_channel = None
+        chosen_email_thread_id = None
+        chosen_whatsapp_endpoint_id = None
+        quotation_file_path = None
+        quotation_pdf_filename = None
+        quotation_web_url = None
+        pending_execution = pending
+
+    draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="", status="pending")
+    db_session.add(draft)
+    db_session.commit()
+
+    ai_auto_draft_service.apply_planner_result_to_draft(
+        db_session, draft, tenant=tenant, ai_settings=ai_settings, channel="email",
+        result=_Result(), inbound_text="Please update my booking.",
+    )
+    db_session.commit()
+
+    assert draft.status == "pending_auto_send"
+    assert draft.scheduled_send_at is not None
 
 
 def test_missing_sales_manager_profile_escalates(db_session, fake_gemini, monkeypatch):
@@ -334,18 +386,14 @@ def test_missing_sales_manager_profile_escalates(db_session, fake_gemini, monkey
     assert result.escalation_reason == "sales_manager_unavailable"
 
 
-def test_apply_result_persists_quotation_attachment(db_session, monkeypatch):
-    """The shared apply step stores the PDF and links it so the send path can attach it."""
+def test_apply_result_persists_quotation_path(db_session, monkeypatch):
+    """The shared apply step stores the PDF's path/filename (not its bytes) so the send path can
+    read and attach it lazily - see ai_auto_draft_service._draft_quotation_attachments."""
     from app.models.ai_auto_draft import AiAutoDraft
 
     tenant = _tenant(db_session)
     template = _template(db_session)
     ai_settings = _settings(db_session, tenant)
-
-    class _StoredAttachment:
-        id = 4321
-
-    monkeypatch.setattr(ai_auto_draft_service, "store_upload", lambda *a, **k: _StoredAttachment())
 
     class _Result:
         status = "completed"
@@ -358,9 +406,10 @@ def test_apply_result_persists_quotation_attachment(db_session, monkeypatch):
         chosen_channel = None
         chosen_email_thread_id = None
         chosen_whatsapp_endpoint_id = None
-        quotation_pdf_bytes = b"%PDF-1.4 fake"
+        quotation_file_path = "2026/B-quote-1_Sam_Jones/Quotation_B-quote-1_007.pdf"
         quotation_pdf_filename = "Quotation_B-quote-1.pdf"
         quotation_web_url = "https://onedrive/quote.pdf"
+        pending_execution = None
 
     draft = AiAutoDraft(tenant_id=tenant.id, channel="email", generated_text="", status="pending")
     db_session.add(draft)
@@ -372,4 +421,5 @@ def test_apply_result_persists_quotation_attachment(db_session, monkeypatch):
     )
     db_session.commit()
 
-    assert draft.quotation_attachment_id == 4321
+    assert draft.quotation_file_path == "2026/B-quote-1_Sam_Jones/Quotation_B-quote-1_007.pdf"
+    assert draft.quotation_filename == "Quotation_B-quote-1.pdf"

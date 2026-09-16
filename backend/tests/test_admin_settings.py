@@ -13,6 +13,7 @@ def test_get_admin_settings_defaults_to_null(non_admin_client):
         "brain_writer_default_enabled": False,
         "action_writer_default_enabled": False,
         "formatter_default_enabled": False,
+        "executor_default_mode": "manual",
         "ai_daily_token_cap": None,
         "notification_whatsapp_debounce_seconds": 120,
         "notification_whatsapp_external_account_id": None,

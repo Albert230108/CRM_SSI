@@ -164,13 +164,19 @@ def _generate_pdf_local(request: GeneratePdfRequest) -> GeneratePdfResponse:
         checkout_date_str=request.check_out,
     )
     _render_pdf(request, next_output.path, next_output.quotation_number)
+    # file_path is relative to TENANT_FILES_ROOT (not absolute) so a server-to-server caller (the
+    # CRM's sales-manager agent) can resolve it against its own mount of the same tree via
+    # tenant_files_storage.resolve_download_path, without ever shipping the PDF bytes through this
+    # API - content_base64 is now reserved for the interactive delivery="download" path below.
+    relative_path = next_output.path.relative_to(tenant_files.TENANT_FILES_ROOT_PATH)
     content_base64 = None
     if request.include_content:
         content_base64 = base64.b64encode(next_output.path.read_bytes()).decode("ascii")
     return GeneratePdfResponse(
-        file_path=str(next_output.path),
+        file_path=str(relative_path),
         quotation_number=next_output.quotation_number,
         location="local",
+        name=next_output.path.name,
         content_base64=content_base64,
     )
 
@@ -360,6 +366,7 @@ def build_payment_plan(
             installments=request.installments,
             security_deposit=request.security_deposit,
             existing_payments=existing_payments,
+            even_spread=request.even_spread,
         )
     except payment_plan_service.PaymentPlanError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

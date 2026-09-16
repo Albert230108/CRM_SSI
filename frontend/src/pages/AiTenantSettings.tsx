@@ -42,12 +42,15 @@ type TenantAiSettings = {
   formatter_enabled: boolean
   formatter_profile_id: number | null
   sales_manager_profile_id: number | null
+  executor_profile_id: number | null
+  // null means "use the admin-configured global default" (AdminSettings.executor_default_mode).
+  executor_mode: 'manual' | 'autonomous' | null
 }
 
 type AgentProfileOption = {
   id: number
   name: string
-  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'sales_manager' | 'memory_redo'
+  role: 'planner' | 'checker' | 'drafter' | 'brain_writer' | 'action_writer' | 'formatter' | 'sales_manager' | 'executor' | 'memory_redo'
   is_default: boolean
 }
 
@@ -74,6 +77,8 @@ const emptySettings = (tenantId: number): TenantAiSettings => ({
   formatter_enabled: false,
   formatter_profile_id: null,
   sales_manager_profile_id: null,
+  executor_profile_id: null,
+  executor_mode: null,
 })
 
 export default function AiTenantSettings() {
@@ -742,6 +747,57 @@ export default function AiTenantSettings() {
                     {agentProfiles.filter((profile) => profile.role === 'sales_manager').map((profile) => (
                       <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
                     ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-2.5">
+                <p className="text-sm font-semibold text-gray-900">Executor</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  The only agent that writes to Beds24. When the sales manager prepares an update or a
+                  brand-new booking, the executor judges it against the rules on its profile and, if
+                  approved, applies it. Configure the rules on the{' '}
+                  <Link to="/settings/ai-agents" className="text-brand-700 hover:underline">profiles page</Link>.
+                </p>
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="executor-profile">
+                    Executor profile
+                  </label>
+                  <select
+                    id="executor-profile"
+                    value={settings.executor_profile_id ?? ''}
+                    onChange={(event) =>
+                      setSettings((current) =>
+                        current ? { ...current, executor_profile_id: event.target.value ? Number(event.target.value) : null } : current,
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
+                  >
+                    <option value="">Use the default</option>
+                    {agentProfiles.filter((profile) => profile.role === 'executor').map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.name}{profile.is_default ? ' (default)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-gray-500" htmlFor="executor-mode">
+                    Executor mode
+                  </label>
+                  <select
+                    id="executor-mode"
+                    value={settings.executor_mode ?? ''}
+                    onChange={(event) =>
+                      setSettings((current) =>
+                        current
+                          ? { ...current, executor_mode: (event.target.value || null) as 'manual' | 'autonomous' | null }
+                          : current,
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-brand-500"
+                  >
+                    <option value="">Use the global default</option>
+                    <option value="manual">Manual - only pushes to Beds24 once a human approves the draft</option>
+                    <option value="autonomous">Autonomous - may validate and push to Beds24 without a human</option>
                   </select>
                 </div>
               </div>

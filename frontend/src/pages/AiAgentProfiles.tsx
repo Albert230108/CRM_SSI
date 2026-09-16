@@ -16,6 +16,7 @@ const ROLE_LABELS: Record<AgentRole, string> = {
   action_writer: 'Action writer',
   formatter: 'Formatter',
   sales_manager: 'Sales manager',
+  executor: 'Executor',
   memory_redo: 'Redo log agent',
   memory_qa: 'Memory QA',
   run_qa: 'Run debug QA',
@@ -164,7 +165,8 @@ export default function AiAgentProfiles() {
       {renderRole('brain_writer', 'Brain writer profiles', 'Decides, independently of the planner, whether a message is worth remembering long-term for a tenant.')}
       {renderRole('action_writer', 'Action writer profiles', 'Decides, independently of the planner and brain writer, whether a tenant’s action-item list needs a new task or a change to an existing one.')}
       {renderRole('formatter', 'Formatter profiles', 'Turns an approved plain-text reply into HTML for email or markdown for WhatsApp without changing the meaning.')}
-      {renderRole('sales_manager', 'Sales manager profiles', 'Runs between planner and drafter when the planner asks for a quote. Prices the stay and, when asked, renders a PDF quotation via the quotation manager, then hands the figures to the drafter.')}
+      {renderRole('sales_manager', 'Sales manager profiles', 'Runs between planner and drafter when the planner asks for a quote. Prices the stay locally and, when asked, renders a PDF quotation via the quotation manager, then hands the figures to the drafter. Never writes to Beds24 itself.')}
+      {renderRole('executor', 'Executor profiles', 'The only agent that writes to Beds24. Judges a Beds24 write the sales manager prepared (an invoice-item update or a brand-new booking) against the instructions below, then applies it if approved — either on human approval of the draft or autonomously, per the tenant’s executor setting.')}
       {renderRole('memory_qa', 'Memory QA profiles', 'Answers ad-hoc tenant questions using the context you choose below.')}
       {renderRole('memory_redo', 'Redo log agent profiles', 'Reads redo logs and suggests durable rule changes for review.')}
       {renderRole('run_qa', 'Run debug QA profiles', 'Answers your questions about a specific planner, brain-writer, or action-writer run, grounded on that run’s own log. Opens from the button on each row in the runs log.')}

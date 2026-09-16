@@ -13,19 +13,15 @@ returns plain data. Persisting the returned PDF as an attachment happens in the 
 
 from __future__ import annotations
 
-import asyncio
-import base64
 import logging
 import os
 from dataclasses import dataclass, field
 from datetime import date
 
 import httpx
-from fastapi import HTTPException
 
 from app.core.quotation_token import create_quotation_token
 from app.models.tenant import Tenant
-from app.services import beds24_service
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +46,10 @@ class SalesQuote:
 
 @dataclass
 class QuotationPdf:
-    content: bytes
+    # Relative to TENANT_FILES_ROOT (the shared mount the quotation-manager writes into) - see
+    # app.services.tenant_files_storage.resolve_download_path, which the caller uses to read the
+    # bytes lazily at send time rather than shipping them through this API call.
+    file_path: str
     filename: str
     web_url: str | None
     quotation_number: int
@@ -139,34 +138,43 @@ def charges_to_invoice_items(charges: list[dict]) -> list[dict]:
     ]
 
 
-def fetch_original_invoice_item_ids(tenant: Tenant) -> list[str]:
-    """Fetch the ids of every invoice item currently on the tenant's Beds24 booking.
-
-    Beds24 has no "replace invoice items" call (see beds24_service.update_booking_invoice_items):
-    the full existing set must be deleted by id before the recomputed set is pushed. This runs
-    the async Beds24 fetch via asyncio.run - the same pattern ai_auto_draft_service already uses
-    to call send_whatsapp_message from this sync planner-loop call chain, since nothing in that
-    chain is itself inside a running event loop.
-    """
-    if not tenant.booking_id:
-        raise SalesManagerError("This tenant has no Beds24 booking to update")
-    try:
-        booking = asyncio.run(beds24_service.fetch_booking_with_invoice(tenant.booking_id))
-    except HTTPException as exc:
-        raise SalesManagerError(f"Could not fetch the existing booking from Beds24: {exc.detail}") from exc
-    items = booking.get("invoiceItems") or []
-    return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
-
-
-def build_pending_invoice_update(
-    tenant: Tenant, charges: list[dict], original_item_ids: list[str]
+def build_pending_execution(
+    tenant: Tenant,
+    action: str,
+    charges: list[dict],
+    params: dict,
+    planner_request: dict,
 ) -> dict:
-    """The Beds24 invoice-item update payload for this booking, staged on the draft rather than
-    pushed here - see ai_agent_orchestrator._run_sales_manager and
-    ai_auto_draft_service.send_scheduled_draft, which is the only place this is ever sent."""
+    """The data-only Beds24 write the sales manager prepared, handed to the executor agent for
+    validation and (once approved) the actual push - see ai_agent_orchestrator._run_executor and
+    ai_auto_draft_service._execute_pending. The sales manager itself never touches Beds24: this is
+    the entire handoff object, built from data already computed locally (never sent here).
+
+    action="update_quotation" -> update this tenant's existing Beds24 booking's invoice items.
+    action="create_quotation" -> create a brand-new Beds24 booking from the quoted stay. The
+    executor blocks with a clear reason if room_id is missing rather than guessing one - see
+    ai_auto_draft_service._execute_pending.
+    """
+    if action == "create_quotation":
+        return {
+            "action": "create",
+            "create_payload": {
+                "room_id": planner_request.get("room_id"),
+                "arrival": params.get("check_in"),
+                "departure": params.get("check_out"),
+                "status": "inquiry",
+                "first_name": planner_request.get("guest_first_name") or tenant.first_name or "",
+                "last_name": planner_request.get("guest_last_name") or tenant.last_name or "",
+                "email": planner_request.get("guest_email") or tenant.email or "",
+                "phone": planner_request.get("guest_phone") or "",
+                "num_adults": int(params.get("adults") or 1),
+                "num_children": int(params.get("children") or 0),
+                "invoice_items": charges_to_invoice_items(charges),
+            },
+        }
     return {
+        "action": "update",
         "booking_id": tenant.booking_id,
-        "all_original_invoice_item_ids": original_item_ids,
         "invoice_items": charges_to_invoice_items(charges),
     }
 
@@ -192,7 +200,13 @@ def generate_quotation_pdf(
     security_deposit: float,
     issued_by_user_id: int | None = None,
 ) -> QuotationPdf:
-    """Render the PDF quotation, file it in the tenant's OneDrive folder, and return its bytes."""
+    """Render the PDF quotation and file it in the tenant's folder.
+
+    Requests include_content=False: the quotation-manager and this backend share the
+    TENANT_FILES_ROOT mount, so the caller reads the bytes lazily by path
+    (tenant_files_storage.resolve_download_path) at send time instead of shipping them through
+    this S2S call.
+    """
     token = _mint_token(tenant, issued_by_user_id)
     body = {
         "booking_id": tenant.booking_id,
@@ -205,18 +219,14 @@ def generate_quotation_pdf(
         "security_deposit": float(security_deposit or 0),
         "invoice_items": invoice_items,
         "quotation_date": date.today().isoformat(),
-        "include_content": True,
+        "include_content": False,
     }
     data = _post("generate-pdf", token, body)
-    content_base64 = data.get("content_base64")
-    if not content_base64:
-        raise SalesManagerError("Quotation service did not return the PDF content to attach")
-    try:
-        content = base64.b64decode(content_base64)
-    except (ValueError, TypeError) as exc:
-        raise SalesManagerError("Quotation PDF content was not valid base64") from exc
+    file_path = data.get("file_path")
+    if not file_path or str(data.get("location") or "local") != "local":
+        raise SalesManagerError("Quotation service did not return a local file path to attach")
     return QuotationPdf(
-        content=content,
+        file_path=str(file_path),
         filename=data.get("name") or f"Quotation_{tenant.booking_id}.pdf",
         web_url=data.get("web_url"),
         quotation_number=int(data.get("quotation_number") or 0),

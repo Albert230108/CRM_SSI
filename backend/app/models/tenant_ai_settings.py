@@ -45,4 +45,11 @@ class TenantAiSettings(Base):
     # The sales-manager profile this tenant uses when the planner asks for a quotation. NULL falls
     # back to the role's active default profile, like the other pins.
     sales_manager_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
+    # The executor profile this tenant uses to validate/apply a prepared Beds24 write. NULL falls
+    # back to the role's active default profile, like the other pins.
+    executor_profile_id = Column(Integer, ForeignKey("ai_agent_profiles.id", ondelete="SET NULL"), nullable=True)
+    # "manual" (validate on human approval, then push) or "autonomous" (validate and push without
+    # a human). NULL means "inherit AdminSettings.executor_default_mode" - ships "manual", so no
+    # tenant starts pushing to Beds24 unattended without an explicit opt-in.
+    executor_mode = Column(String(12), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

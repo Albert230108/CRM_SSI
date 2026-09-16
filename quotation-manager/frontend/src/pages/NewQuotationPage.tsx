@@ -54,6 +54,9 @@ export default function NewQuotationPage() {
   const [charges, setCharges] = useState<EditableInvoiceItem[]>([])
   const [payments, setPayments] = useState<EditableInvoiceItem[]>([])
   const [installments, setInstallments] = useState(1)
+  // A New Quotation starts with no paid rows, so this rarely matters here, but the checkbox is
+  // still offered for consistency with the editor and in case a draft is reopened with paid rows.
+  const [evenSpread, setEvenSpread] = useState(true)
   const [pricesConfig, setPricesConfig] = useState<PricingConfig | null>(null)
 
   const [error, setError] = useState<string | null>(null)
@@ -205,6 +208,7 @@ export default function NewQuotationPage() {
           status: p.status ?? 'not paid',
           vat_rate: p.vat_rate,
         })),
+        even_spread: evenSpread,
       })
       setPayments(
         result.payments.map((p) => ({
@@ -478,6 +482,8 @@ export default function NewQuotationPage() {
         onInstallmentsChange={setInstallments}
         onAddPaymentPlan={handleAddPaymentPlan}
         buildingPlan={buildingPlan}
+        evenSpread={evenSpread}
+        onEvenSpreadChange={setEvenSpread}
       />
 
       <BalanceBanner chargesTotal={chargesTotal} paymentsTotal={paymentsTotal} />

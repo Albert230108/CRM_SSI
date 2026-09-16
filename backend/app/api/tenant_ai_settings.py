@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.ai_agent_profile import ACTION_WRITER_ROLE, BRAIN_WRITER_ROLE, CHECKER_ROLE, DRAFTER_ROLE, FORMATTER_ROLE, PLANNER_ROLE, SALES_MANAGER_ROLE, AiAgentProfile
+from app.models.ai_agent_profile import ACTION_WRITER_ROLE, BRAIN_WRITER_ROLE, CHECKER_ROLE, DRAFTER_ROLE, EXECUTOR_ROLE, FORMATTER_ROLE, PLANNER_ROLE, SALES_MANAGER_ROLE, AiAgentProfile
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_ai_template_link import TenantAiTemplateLink
@@ -72,6 +72,8 @@ def _to_read(db: Session, settings: TenantAiSettings) -> TenantAiSettingsRead:
         formatter_enabled=getattr(settings, "formatter_enabled", False),
         formatter_profile_id=getattr(settings, "formatter_profile_id", None),
         sales_manager_profile_id=getattr(settings, "sales_manager_profile_id", None),
+        executor_profile_id=getattr(settings, "executor_profile_id", None),
+        executor_mode=getattr(settings, "executor_mode", None),
     )
 
 
@@ -147,6 +149,8 @@ def update_tenant_ai_settings(
     settings.sales_manager_profile_id = _validated_profile_id(
         db, payload.sales_manager_profile_id, SALES_MANAGER_ROLE
     )
+    settings.executor_profile_id = _validated_profile_id(db, payload.executor_profile_id, EXECUTOR_ROLE)
+    settings.executor_mode = payload.executor_mode
 
     db.commit()
     db.refresh(settings)

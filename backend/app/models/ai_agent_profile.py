@@ -20,8 +20,17 @@ ACTION_WRITER_ROLE = "action_writer"
 FORMATTER_ROLE = "formatter"
 # Runs between the planner and the drafter, but only when the planner asks for it. Prices and/or
 # renders a full PDF quotation via the quotation-manager service (see sales_manager_service.py),
-# files the PDF in the tenant's OneDrive folder, and hands a factual price summary to the drafter.
+# files the PDF in the tenant's folder, and hands a factual price summary to the drafter. Strictly
+# local: it never writes to Beds24 itself - see EXECUTOR_ROLE.
 SALES_MANAGER_ROLE = "sales_manager"
+# The only role that ever writes to Beds24. Runs when the sales manager prepared an update to an
+# existing booking's invoice items or a brand-new booking (see sales_manager_service.
+# build_pending_execution) and the planner set execute=true. Judges the prepared action against
+# the operator's own natural-language rules (its profile.instructions) before applying it - see
+# ai_agent_orchestrator.run_executor_validation and ai_auto_draft_service._execute_pending. Runs
+# either on human approval of the draft or autonomously, per TenantAiSettings.executor_mode
+# (falling back to AdminSettings.executor_default_mode) - manual by default for every tenant.
+EXECUTOR_ROLE = "executor"
 # Reads a redo's "what"/"why" feedback and proposes working-memory/rule changes for a human to
 # approve - see memory_redo_service.py. Never applies anything itself.
 MEMORY_REDO_ROLE = "memory_redo"
@@ -51,7 +60,7 @@ class AiAgentProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False, index=True)  # planner | checker | drafter | brain_writer | action_writer | memory_redo | memory_qa
+    role = Column(String(20), nullable=False, index=True)  # planner | checker | drafter | brain_writer | action_writer | formatter | sales_manager | executor | memory_redo | memory_qa | run_qa | assistant
     # Exactly one profile per role is the fallback used by tenants that have not pinned one.
     is_default = Column(Boolean, nullable=False, default=False, server_default="false")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")

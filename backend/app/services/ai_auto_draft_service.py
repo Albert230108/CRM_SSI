@@ -16,9 +16,9 @@ from app.models.tenant_conversation_link import TenantConversationLink
 from app.models.tenant import Tenant
 from app.models.tenant_ai_settings import TenantAiSettings
 from app.models.tenant_channel_endpoint import TenantChannelEndpoint
-from app.services import ai_agent_orchestrator, ai_reply_service
-from app.services.attachment_service import load_outbound_attachments, store_upload
-from app.services.beds24_service import update_booking_invoice_items
+from app.services import ai_agent_orchestrator, ai_reply_service, tenant_files_storage
+from app.services.attachment_service import OutboundAttachment, load_outbound_attachments
+from app.services import beds24_service
 from app.services.beds24_sync import sync_tenant_from_beds24_booking
 from app.services.email_outbound_persistence import is_own_mailbox_address, persist_gmail_outbound_message
 from app.services.gmail_client import build_gmail_credentials, send_gmail_reply
@@ -66,6 +66,18 @@ def _build_quoted_context(original_text: str | None) -> str | None:
     return f'Replying to: "{original}"'
 
 
+def _resolve_executor_mode(db: Session, tenant_id: int) -> str:
+    """"manual" (validate on human approval, then push) or "autonomous" (validate and push
+    without a human). A tenant's own TenantAiSettings.executor_mode wins; NULL falls back to
+    AdminSettings.executor_default_mode, which ships "manual" so no tenant starts pushing to
+    Beds24 unattended without an explicit opt-in."""
+    ai_settings = db.query(TenantAiSettings).filter(TenantAiSettings.tenant_id == tenant_id).first()
+    if ai_settings is not None and ai_settings.executor_mode:
+        return ai_settings.executor_mode
+    admin_settings = db.query(AdminSettings).first()
+    return (admin_settings.executor_default_mode if admin_settings is not None else None) or "manual"
+
+
 def _planner_draft_status_and_schedule(
     db: Session,
     *,
@@ -79,14 +91,17 @@ def _planner_draft_status_and_schedule(
     A draft the checker never approved is stored as `needs_review` so staff still see it, but it
     is deliberately kept out of the auto-send path regardless of the tenant's auto_send setting.
     Same for any draft generated under "auto-draft" mode: even an approved one never auto-sends.
-    A draft carrying a staged Beds24 update (sales-manager action="update") never auto-sends
-    either, regardless of the tenant's auto_send setting - that write only ever happens once a
-    human approves it (see send_scheduled_draft).
+    A draft carrying a prepared Beds24 write (sales manager execute=true) never auto-sends in
+    manual executor mode, regardless of the tenant's auto_send setting - that write only ever
+    happens once a human approves it (see send_scheduled_draft). Autonomous executor mode allows
+    it into pending_auto_send like any other approved draft; the executor itself still validates
+    (and can still block) the write when the timer actually sends it.
     """
-    has_pending_beds24_update = bool(getattr(result, "pending_beds24_update", None))
+    has_pending_execution = bool(getattr(result, "pending_execution", None))
+    executor_blocks_auto_send = has_pending_execution and _resolve_executor_mode(db, ai_settings.tenant_id) != "autonomous"
     auto_send_enabled = (
         planner_mode == "auto-send"
-        and not has_pending_beds24_update
+        and not executor_blocks_auto_send
         and (
             (ai_settings.auto_send_email if channel == "email" else ai_settings.auto_send_whatsapp)
             and result.auto_send_allowed
@@ -136,27 +151,17 @@ def apply_planner_result_to_draft(
     draft.scheduled_send_at = scheduled_send_at
     draft.agent_run_id = result.run_id
     draft.checker_feedback = result.checker_feedback
-    # Staged by the sales-manager agent (action="update"); pushed to Beds24 only once a human
-    # approves this draft - see send_scheduled_draft.
-    draft.pending_beds24_update = getattr(result, "pending_beds24_update", None)
+    # Prepared by the sales manager (execute=true); validated and pushed to Beds24 by the
+    # executor agent - see send_scheduled_draft / _execute_pending.
+    draft.pending_execution = getattr(result, "pending_execution", None)
     if getattr(result, "chosen_channel", None):
         draft.channel = result.chosen_channel
         draft.email_thread_id = result.chosen_email_thread_id
         draft.whatsapp_endpoint_id = result.chosen_whatsapp_endpoint_id
-    # Persist any sales-manager PDF as an attachment so it can be attached to the outgoing message
-    # (including a delayed auto-send, which reloads it by id at send time).
-    pdf_bytes = getattr(result, "quotation_pdf_bytes", None)
-    if pdf_bytes:
-        attachment = store_upload(
-            db,
-            tenant_id=tenant.id,
-            filename=result.quotation_pdf_filename or "quotation.pdf",
-            mime_type="application/pdf",
-            data=pdf_bytes,
-            user_id=None,
-            origin="ai_quote",
-        )
-        draft.quotation_attachment_id = attachment.id
+    # Store the quotation PDF's path (not its bytes) so it can be attached to the outgoing
+    # message at send time - including a delayed auto-send, which reads the file by path then.
+    draft.quotation_file_path = getattr(result, "quotation_file_path", None)
+    draft.quotation_filename = getattr(result, "quotation_pdf_filename", None) if draft.quotation_file_path else None
     return draft
 
 
@@ -384,8 +389,28 @@ def generate_draft_for_trigger(db: Session, trigger: AiAutoDraftTrigger) -> AiAu
     return draft
 
 
-def _draft_quotation_attachments(db: Session, draft: AiAutoDraft):
-    """Load the sales-manager PDF (if any) linked to this draft, for attaching at send time."""
+def _draft_quotation_attachments(db: Session, draft: AiAutoDraft) -> list[OutboundAttachment]:
+    """Load the sales-manager PDF (if any) linked to this draft, for attaching at send time.
+
+    Reads bytes lazily by path (the current flow) so a delayed auto-send still attaches the file
+    without it ever being carried through the draft row; quotation_attachment_id is a fallback for
+    drafts created before this flow existed.
+    """
+    if draft.quotation_file_path:
+        try:
+            path = tenant_files_storage.resolve_download_path(draft.quotation_file_path)
+            return [
+                OutboundAttachment(
+                    attachment_id=0,
+                    filename=draft.quotation_filename or path.name,
+                    mime_type="application/pdf",
+                    content=path.read_bytes(),
+                )
+            ]
+        except Exception:
+            # A missing/oversized quotation must not block the reply itself - log and send without it.
+            logger.exception("Could not load quotation file for draft_id=%s path=%s", draft.id, draft.quotation_file_path)
+            return []
     if not draft.quotation_attachment_id:
         return []
     try:
@@ -396,7 +421,6 @@ def _draft_quotation_attachments(db: Session, draft: AiAutoDraft):
             channel=draft.channel,
         )
     except Exception:
-        # A missing/oversized quotation must not block the reply itself - log and send without it.
         logger.exception("Could not load quotation attachment for draft_id=%s", draft.id)
         return []
 
@@ -582,23 +606,12 @@ def _send_whatsapp_draft(db: Session, draft: AiAutoDraft) -> tuple[bool, str | N
     return True, None
 
 
-def _push_pending_beds24_update(db: Session, draft: AiAutoDraft) -> str | None:
-    """Pushes a sales-manager-staged Beds24 invoice-item update (see
-    sales_manager_service.build_pending_invoice_update) before the draft itself is sent, so the
-    reply is never sent describing a quote that wasn't actually applied. Returns a failure reason
-    on error, or None on success (also clearing draft.pending_beds24_update).
-    """
-    pending = draft.pending_beds24_update
-    if not pending:
-        return None
-    booking_id = pending.get("booking_id")
-    if not booking_id:
-        return "Staged Beds24 update is missing a booking id"
+def _execute_update(booking_id: str, invoice_items: list[dict]) -> str | None:
     try:
         asyncio.run(
-            update_booking_invoice_items(
+            beds24_service.update_booking_invoice_items(
                 booking_id=booking_id,
-                original_invoice_item_ids=pending.get("all_original_invoice_item_ids") or [],
+                original_invoice_item_ids=[],
                 final_invoice_items=[
                     {
                         "type": item.get("type"),
@@ -607,21 +620,99 @@ def _push_pending_beds24_update(db: Session, draft: AiAutoDraft) -> str | None:
                         "amount": item.get("amount") or 0,
                         "vatRate": item.get("vat_rate") or 0,
                     }
-                    for item in (pending.get("invoice_items") or [])
+                    for item in invoice_items
                 ],
             )
         )
+    except Exception as exc:  # noqa: BLE001 - surfaced to the approver, not swallowed
+        logger.exception("Beds24 update push failed booking_id=%s", booking_id)
+        return str(getattr(exc, "detail", None) or exc)
+    return None
+
+
+def _execute_create(create_payload: dict) -> tuple[str | None, str | None]:
+    """Returns (new_booking_id, failure_reason)."""
+    room_id = create_payload.get("room_id")
+    if not room_id:
+        return None, "The prepared booking is missing a room - cannot create it in Beds24"
+    payload = {
+        "roomId": room_id,
+        "arrival": create_payload.get("arrival"),
+        "departure": create_payload.get("departure"),
+        "status": create_payload.get("status") or "inquiry",
+        "firstName": create_payload.get("first_name") or "",
+        "lastName": create_payload.get("last_name") or "",
+        "email": create_payload.get("email") or "",
+        "phone": create_payload.get("phone") or "",
+        "numAdult": create_payload.get("num_adults") or 1,
+        "numChild": create_payload.get("num_children") or 0,
+        "invoiceItems": [
+            {
+                "type": item.get("type"),
+                "description": item.get("description") or "",
+                "qty": item.get("qty") or 1,
+                "amount": item.get("amount") or 0,
+                "vatRate": item.get("vat_rate") or 0,
+            }
+            for item in (create_payload.get("invoice_items") or [])
+        ],
+    }
+    try:
+        new_booking_id = asyncio.run(beds24_service.create_booking(payload))
+    except Exception as exc:  # noqa: BLE001 - surfaced to the approver, not swallowed
+        logger.exception("Beds24 booking create failed")
+        return None, str(getattr(exc, "detail", None) or exc)
+    return new_booking_id, None
+
+
+def _execute_pending(db: Session, draft: AiAutoDraft, *, resolution_source: str) -> str | None:
+    """Validates (via the executor agent) and, if approved, applies a Beds24 write the sales
+    manager prepared for this draft (draft.pending_execution) - before the draft itself is sent,
+    so the reply is never sent describing a quote that wasn't actually applied. Returns a failure
+    reason on error/rejection, or None on success (also clearing draft.pending_execution).
+    """
+    pending = draft.pending_execution
+    if not pending:
+        return None
+    tenant = db.query(Tenant).filter(Tenant.id == draft.tenant_id).first()
+    if tenant is None:
+        return "Tenant for this draft could not be found"
+
+    result, run_id = ai_agent_orchestrator.run_executor_validation(
+        db,
+        tenant=tenant,
+        pending_execution=pending,
+        price_context=draft.quoted_context or "",
+    )
+    draft.executor_run_id = run_id
+    if not result.approved:
+        return result.reason or "The executor did not approve this action"
+
+    action = pending.get("action")
+    if action == "create":
+        new_booking_id, failure = _execute_create(pending.get("create_payload") or {})
+        if failure:
+            return failure
+        # Re-fetch and materialise the new booking as a Tenant + Finance rows, the same
+        # deterministic sync app.api.quotation.create_quotation_beds24_booking uses - this does
+        # not touch `tenant` (the conversation this draft answers) since the new booking is its
+        # own tenant record.
+        synced = asyncio.run(sync_tenant_from_beds24_booking(db, new_booking_id))
+    else:
+        booking_id = pending.get("booking_id")
+        if not booking_id:
+            return "Prepared Beds24 update is missing a booking id"
+        failure = _execute_update(booking_id, pending.get("invoice_items") or [])
+        if failure:
+            return failure
         # Re-fetch and rewrite Tenant/Finance deterministically, the same as the Quotation
         # Manager's own invoice-items push does (app.api.quotation.send_quotation_invoice_items_to_beds24).
-        tenant = asyncio.run(sync_tenant_from_beds24_booking(db, booking_id))
-    except Exception as exc:  # noqa: BLE001 - surfaced to the approver, not swallowed
-        logger.exception("Beds24 update push failed draft_id=%s booking_id=%s", draft.id, booking_id)
-        detail = getattr(exc, "detail", None)
-        return str(detail or exc)
-    if tenant is None:
-        logger.warning("Beds24 accepted the staged update but re-sync failed draft_id=%s booking_id=%s", draft.id, booking_id)
-        return "Beds24 accepted the update but the booking could not be re-synced"
-    draft.pending_beds24_update = None
+        synced = asyncio.run(sync_tenant_from_beds24_booking(db, booking_id))
+
+    if synced is None:
+        logger.warning("Beds24 accepted the prepared action but re-sync failed draft_id=%s", draft.id)
+        return "Beds24 accepted the action but the booking could not be re-synced"
+    draft.pending_execution = None
     return None
 
 
@@ -640,18 +731,21 @@ def send_scheduled_draft(
     The auto-timer path has no explicit reason of its own, so it falls back to the checker's
     feedback - the reason a draft was allowed to auto-send in the first place.
 
-    A draft carrying a staged Beds24 update (sales-manager action="update") only pushes it here,
-    on a human-approved send (never "auto_timer" - such a draft never reaches pending_auto_send
-    in the first place, see _planner_draft_status_and_schedule, but this is checked again as a
-    defensive second gate). The update is pushed before the reply is sent, and a failure blocks
-    the send entirely rather than telling the guest about a quote that was never applied.
+    A draft carrying a prepared Beds24 write (sales manager execute=true) is validated by the
+    executor agent here, before the reply is sent, so the reply never describes a quote that
+    wasn't actually applied. In manual executor mode this only ever runs on a human-approved send
+    (never "auto_timer" - such a draft never reaches pending_auto_send in the first place, see
+    _planner_draft_status_and_schedule, but this is checked again as a defensive second gate); in
+    autonomous mode the timer may run it too. Either way, a rejection/failure blocks the send
+    entirely.
     """
-    if draft.pending_beds24_update:
-        if resolution_source == "auto_timer":
-            return False, "This draft has a Beds24 update staged and needs human approval before it can send"
-        beds24_failure = _push_pending_beds24_update(db, draft)
-        if beds24_failure:
-            return False, beds24_failure
+    if draft.pending_execution:
+        executor_mode = _resolve_executor_mode(db, draft.tenant_id)
+        if resolution_source == "auto_timer" and executor_mode != "autonomous":
+            return False, "This draft has a Beds24 action staged and needs human approval before it can send"
+        execution_failure = _execute_pending(db, draft, resolution_source=resolution_source)
+        if execution_failure:
+            return False, execution_failure
 
     sent, failure_reason = _send_email_draft(db, draft) if draft.channel == "email" else _send_whatsapp_draft(db, draft)
     if not sent:

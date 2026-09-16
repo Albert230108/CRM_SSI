@@ -12,6 +12,7 @@ class AdminSettingsRead(BaseModel):
     brain_writer_default_enabled: bool = False
     action_writer_default_enabled: bool = False
     formatter_default_enabled: bool = False
+    executor_default_mode: Literal["manual", "autonomous"] = "manual"
     ai_daily_token_cap: int | None = None
     notification_whatsapp_debounce_seconds: int
     notification_whatsapp_external_account_id: str | None = None
@@ -27,6 +28,7 @@ class AdminSettingsUpdate(BaseModel):
     brain_writer_default_enabled: bool | None = None
     action_writer_default_enabled: bool | None = None
     formatter_default_enabled: bool | None = None
+    executor_default_mode: Literal["manual", "autonomous"] | None = None
     ai_daily_token_cap: int | None = Field(default=None, ge=0)
     notification_whatsapp_debounce_seconds: int | None = None
     notification_whatsapp_external_account_id: str | None = None

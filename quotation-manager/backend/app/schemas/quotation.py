@@ -207,6 +207,11 @@ class PaymentPlanRequest(BaseModel):
     # Current payment rows on the quotation. Any row whose status is a date (i.e. not
     # "not paid") is kept as-is and excluded from regeneration - see payment_plan.build_payment_plan.
     existing_payments: list[PaymentPlanExistingRow] = []
+    # When at least one row is already paid and the installment count changes, spread only the
+    # new/unpaid installments' due dates evenly between the latest paid row's actual paid date
+    # and check-out, instead of the desktop-mirrored today/check-in/monthly schedule. Checked by
+    # default in the editor; unchecking it reproduces the classic schedule.
+    even_spread: bool = True
 
 
 class GeneratedPayment(BaseModel):

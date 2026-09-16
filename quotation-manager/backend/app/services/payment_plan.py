@@ -27,10 +27,18 @@ exactly that - a non-empty status other than "not paid". Paid rows are kept
 verbatim; only the remaining balance (new total minus what's already paid) is
 re-split across new installments, or refunded if the new total came out lower
 than what was already collected (e.g. the stay was shortened).
+
+When at least one row is already paid and the installment count changes,
+`even_spread=True` (the default the frontend checkbox starts checked with)
+re-dates only the new/unpaid installments, spreading them evenly between the
+latest paid row's actual paid date (parsed from its Status) and check-out,
+instead of the desktop-mirrored today/check-in/monthly schedule `_due_dates`
+otherwise uses. Paid rows and every amount are untouched either way -
+`even_spread` only ever changes due dates on rows that aren't paid yet.
 """
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 MIN_INSTALLMENTS = 1
@@ -70,6 +78,26 @@ class PaymentRow:
     @property
     def line_total(self) -> float:
         return round(self.qty * self.amount, 2)
+
+
+# Formats a paid row's Status field may realistically hold - the PDF's own display format
+# (_DATE_FMT), plain ISO, and the day/month/year form a staff member might type by hand.
+_PAID_DATE_FORMATS = (_DATE_FMT, "%Y-%m-%d", "%d/%m/%Y")
+
+
+def _parse_paid_date(status: Optional[str]) -> Optional[date]:
+    """Best-effort parse of a paid row's Status field back into a date. Returns None for
+    anything that isn't a recognisable date (including "not paid"), so callers can fall back
+    to another anchor rather than crashing on an unexpected format."""
+    cleaned = (status or "").strip()
+    if not cleaned:
+        return None
+    for fmt in _PAID_DATE_FORMATS:
+        try:
+            return datetime.strptime(cleaned, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def is_paid(status: Optional[str]) -> bool:
@@ -140,6 +168,23 @@ def _due_dates(check_in: date, check_out: date, n_installments: int, today: date
         if due > check_out:
             due = check_out
         dates.append(max(due, dates[-1]))
+    return dates
+
+
+def _even_spread_dates(latest_paid: date, check_out: date, n_new: int) -> list[date]:
+    """Evenly divide the span from the latest paid date to check-out into n_new due dates, each
+    strictly after the previous one and never past check-out. Used only for the unpaid/new
+    installments of a regenerated plan when even_spread is on - paid rows keep their own dates."""
+    span_days = max((check_out - latest_paid).days, n_new)
+    step = span_days / n_new
+    dates: list[date] = []
+    for i in range(1, n_new + 1):
+        due = latest_paid + timedelta(days=round(step * i))
+        due = min(due, check_out)
+        due = max(due, dates[-1] + timedelta(days=1) if dates else latest_paid + timedelta(days=1))
+        if due > check_out:
+            due = check_out
+        dates.append(due)
     return dates
 
 
@@ -246,6 +291,7 @@ def build_payment_plan(
     security_deposit: float = 0.0,
     existing_payments: Optional[list[PaymentRow]] = None,
     today: Optional[date] = None,
+    even_spread: bool = False,
 ) -> dict[str, Any]:
     if check_out <= check_in:
         raise PaymentPlanError("check_out must be after check_in")
@@ -299,7 +345,19 @@ def build_payment_plan(
         n_new = n_installments - paid_installments
         if n_new <= 0:
             n_new = 1
-        due_dates = _due_dates(check_in, check_out, paid_installments + n_new, today)[paid_installments:]
+        if even_spread:
+            # "Latest paid date" is the most recent actual paid date among the kept rows
+            # (parsed from their free-text Status); an unparseable/missing status falls back
+            # to today rather than blocking the spread.
+            latest_paid = max(
+                (d for d in (_parse_paid_date(row.status) for row in kept) if d is not None),
+                default=today,
+            )
+            if latest_paid >= check_out:
+                latest_paid = today
+            due_dates = _even_spread_dates(latest_paid, check_out, n_new)
+        else:
+            due_dates = _due_dates(check_in, check_out, paid_installments + n_new, today)[paid_installments:]
         due_strs = [d.strftime(_DATE_FMT) for d in due_dates]
         payments.extend(_remainder_rows(remaining, n_new, paid_installments, due_strs))
     elif remaining < -_ROUNDING_EPSILON:

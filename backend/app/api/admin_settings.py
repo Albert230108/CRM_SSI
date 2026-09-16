@@ -41,6 +41,8 @@ def update_admin_settings(payload: AdminSettingsUpdate, db: Session = Depends(ge
         settings.action_writer_default_enabled = payload.action_writer_default_enabled
     if payload.formatter_default_enabled is not None:
         settings.formatter_default_enabled = payload.formatter_default_enabled
+    if payload.executor_default_mode is not None:
+        settings.executor_default_mode = payload.executor_default_mode
     if payload.ai_daily_token_cap is not None:
         # Omitting the field leaves the cap alone; sending 0 is how the UI clears it, since a
         # null would be indistinguishable from "not included in this partial update".
