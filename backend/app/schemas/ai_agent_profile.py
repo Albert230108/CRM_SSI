@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.ai_reply_template import AiReplyTemplateNote, AiReplyTemplateSection
 
-AgentRole = Literal["planner", "checker", "drafter", "brain_writer", "action_writer", "formatter", "sales_manager", "memory_redo", "memory_qa", "run_qa"]
+AgentRole = Literal["planner", "checker", "drafter", "brain_writer", "action_writer", "formatter", "sales_manager", "memory_redo", "memory_qa", "run_qa", "assistant"]
 HistoryChannels = Literal["both", "inbound", "email", "whatsapp"]
 NoMatchBehaviour = Literal["escalate", "skip"]
 

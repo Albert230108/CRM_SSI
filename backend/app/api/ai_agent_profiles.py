@@ -99,7 +99,7 @@ class PromptBlockDefinition(BaseModel):
 
 @router.get("/prompt-blocks", response_model=list[PromptBlockDefinition])
 def list_prompt_blocks(
-    role: str = Query(..., pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|memory_redo|memory_qa|run_qa)$"),
+    role: str = Query(..., pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|memory_redo|memory_qa|run_qa|assistant)$"),
     current_user: User = Depends(get_current_user),
 ) -> list[PromptBlockDefinition]:
     """The blocks a profile of this role may override, with their built-in default text.
@@ -117,7 +117,7 @@ def list_prompt_blocks(
 
 @router.get("", response_model=list[AiAgentProfileRead])
 def list_agent_profiles(
-    role: str | None = Query(None, pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|memory_redo|memory_qa|run_qa)$"),
+    role: str | None = Query(None, pattern="^(planner|checker|drafter|brain_writer|action_writer|formatter|sales_manager|memory_redo|memory_qa|run_qa|assistant)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AiAgentProfile]:

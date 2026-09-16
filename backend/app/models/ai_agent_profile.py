@@ -31,6 +31,12 @@ MEMORY_QA_ROLE = "memory_qa"
 # Answers a staff member's questions about one specific AI agent run (planner, brain writer, or
 # action writer), grounded on that run's own step log - see run_qa_service.py. Read-only.
 RUN_QA_ROLE = "run_qa"
+# The floating CRM copilot - answers ad-hoc "where is X / how does X work" and live-data
+# questions from any screen, using a tool-emulation loop (it can ask the backend to search the
+# app knowledge base, search the CRM, or load a tenant's context before answering) - see
+# ai_assistant_service.py. Read-only; may only *suggest* a new knowledge-base entry, never write
+# one directly - see app_knowledge_service.py.
+ASSISTANT_ROLE = "assistant"
 
 
 class AiAgentProfile(Base):

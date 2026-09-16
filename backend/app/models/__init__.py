@@ -7,6 +7,9 @@ from app.models.ai_auto_draft import AiAutoDraft
 from app.models.ai_auto_draft_approval_request import AiAutoDraftApprovalRequest
 from app.models.ai_auto_draft_trigger import AiAutoDraftTrigger
 from app.models.ai_reply_template import AiReplyTemplate, AiReplyTemplateBrainSection
+from app.models.app_knowledge_entry import AppKnowledgeEntry
+from app.models.assistant_conversation import AssistantConversation
+from app.models.assistant_message import AssistantMessage
 from app.models.action_item import ActionItem
 from app.models.action_item_tag import ActionItemTag
 from app.models.action_saved_view import ActionSavedView

@@ -7,6 +7,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import SessionExpiredModal from './components/SessionExpiredModal'
 import UnsavedNotesModal from './components/UnsavedNotesModal'
 import InlineSpinner from './components/InlineSpinner'
+import AiAssistantWidget from './components/AiAssistantWidget'
 // Core CRM (Dashboard) loads eagerly; the heavier off-Core routes (AI subsystem,
 // settings, admin, auth flows) are code-split so they don't inflate the initial bundle.
 const Settings = lazy(() => import('./pages/Settings'))
@@ -125,6 +126,7 @@ export default function App() {
             <ProtectedRoute>
               <div className="flex h-screen flex-col overflow-hidden bg-gray-50">
                 <Navbar />
+                <AiAssistantWidget />
                 <div className="min-h-0 flex-1 overflow-auto">
                   <Routes>
                     <Route path="/" element={<Dashboard />} />

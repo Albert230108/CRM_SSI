@@ -2,8 +2,8 @@ import { useCallback, useRef, useState } from 'react'
 
 export type DraggablePosition = { x: number; y: number }
 
-export function useDraggablePosition() {
-  const [position, setPosition] = useState<DraggablePosition>({ x: 0, y: 0 })
+export function useDraggablePosition(initialPosition: DraggablePosition = { x: 0, y: 0 }) {
+  const [position, setPosition] = useState<DraggablePosition>(initialPosition)
   const dragStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
 
   const handlePointerDown = useCallback(

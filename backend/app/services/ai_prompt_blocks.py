@@ -26,6 +26,7 @@ SALES_MANAGER_ROLE = "sales_manager"
 MEMORY_REDO_ROLE = "memory_redo"
 MEMORY_QA_ROLE = "memory_qa"
 RUN_QA_ROLE = "run_qa"
+ASSISTANT_ROLE = "assistant"
 
 STRUCTURE_GROUP = "structure"
 CONTEXT_GROUP = "context"
@@ -836,6 +837,98 @@ RUN_QA_BLOCKS: tuple[PromptBlock, ...] = (
 )
 
 
+ASSISTANT_BLOCKS: tuple[PromptBlock, ...] = (
+    PromptBlock(
+        key="preamble",
+        label="Assistant preamble",
+        help="The opening line for the floating CRM copilot chat. Emitted first.",
+        default=(
+            "You are the in-app copilot for a short-stay rental CRM, answering a staff member's "
+            "question from wherever they currently are in the app. You may see what is on their "
+            "screen right now, and you can request more information - the app's own how-it-works "
+            "knowledge base, a cross-CRM search, or one tenant's live context - before answering. "
+            "Prefer the screen context and the knowledge base first; only reach for live CRM data "
+            "when the question actually needs it. If you still don't know, say so plainly rather "
+            "than guessing - never invent a feature, a location in the app, or a data value."
+        ),
+    ),
+    PromptBlock(
+        key="instructions_header",
+        label="Instructions heading",
+        help="Sits above the Instructions you wrote for this profile. Omitted when Instructions is blank.",
+        default=_INSTRUCTIONS_HEADER_DEFAULT,
+    ),
+    PromptBlock(
+        key="tool_catalog",
+        label="Tool catalog heading",
+        help="Sits above the list of tools the assistant may request this turn.",
+        default="## Tools Available This Turn",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_screen",
+        label="Current screen heading",
+        help="Sits above what the staff member currently has open (route, page title, visible text).",
+        default="## What The Staff Member Is Currently Looking At",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_knowledge",
+        label="Knowledge base heading",
+        help="Sits above app-knowledge-base entries returned by a `search_knowledge_base` tool call.",
+        default="## App Knowledge Base",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_crm_search",
+        label="CRM search results heading",
+        help="Sits above results returned by a `search_crm` tool call.",
+        default="## CRM Search Results",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_tenant",
+        label="Tenant context heading",
+        help="Sits above one tenant's live context returned by a `get_tenant_context` tool call.",
+        default="## Tenant Context",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_history",
+        label="Conversation history heading",
+        help="Sits above prior turns in this saved chat.",
+        default="## Earlier In This Conversation",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="ctx_question",
+        label="Question heading",
+        help="Sits above the staff member's question.",
+        default="## Question",
+        group=CONTEXT_GROUP,
+    ),
+    PromptBlock(
+        key="output",
+        label="Output instruction",
+        help=(
+            "Emitted last. Reword freely, but keep the field names - action, requests, tool, args, "
+            "answer, knowledge_suggestion, title, body - because the response schema in code "
+            "enforces them."
+        ),
+        default=(
+            "## Output\n"
+            "Return JSON only. Set `action` to `\"use_tools\"` and fill `requests` (each with a "
+            "`tool` name and its `args`) when you need more information before answering - you will "
+            "be called again with the results. Set `action` to `\"answer\"` and fill `answer` once "
+            "you can respond. When the question exposed a real gap in the App Knowledge Base (an "
+            "answer that took real digging, or that isn't covered there yet), optionally propose "
+            "`knowledge_suggestion` with a short `title` and a factual `body` a human can save - "
+            "leave it out when the knowledge base already covered the question well."
+        ),
+    ),
+)
+
+
 BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     PLANNER_ROLE: PLANNER_BLOCKS,
     CHECKER_ROLE: CHECKER_BLOCKS,
@@ -845,6 +938,7 @@ BLOCKS_BY_ROLE: dict[str, tuple[PromptBlock, ...]] = {
     MEMORY_QA_ROLE: MEMORY_QA_BLOCKS,
     MEMORY_REDO_ROLE: MEMORY_REDO_BLOCKS,
     RUN_QA_ROLE: RUN_QA_BLOCKS,
+    ASSISTANT_ROLE: ASSISTANT_BLOCKS,
 }
 
 DEFAULTS_BY_ROLE: dict[str, dict[str, str]] = {

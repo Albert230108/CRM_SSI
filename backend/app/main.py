@@ -15,6 +15,7 @@ from app.api.action_tags import router as action_tags_router
 from app.api.admin_sync import router as admin_sync_router
 from app.api.ai_agent_profiles import router as ai_agent_profiles_router
 from app.api.ai_agent_runs import router as ai_agent_runs_router
+from app.api.ai_assistant import router as ai_assistant_router
 from app.api.ai_model_pricing import router as ai_model_pricing_router
 from app.api.ai_auto_drafts import router as ai_auto_drafts_router
 from app.api.ai_reply_templates import router as ai_reply_templates_router
@@ -452,6 +453,7 @@ app.include_router(tenant_ai_settings_router, prefix="/api")
 app.include_router(ai_auto_drafts_router, prefix="/api")
 app.include_router(ai_agent_profiles_router, prefix="/api")
 app.include_router(ai_agent_runs_router, prefix="/api")
+app.include_router(ai_assistant_router, prefix="/api")
 app.include_router(ai_model_pricing_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(devices_router, prefix="/api")
