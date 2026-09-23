@@ -1,7 +1,6 @@
 # Server Commands
 
 Personal cheat-sheet for operating CRM_SSI on the production server.
-
 ## Quick Deploy: Rebuild + Restart + Migrate
 
 The original copy-paste block — rebuild the backend, restart it, apply
